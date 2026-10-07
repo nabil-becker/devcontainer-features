@@ -18,6 +18,8 @@ Be respectful and constructive in discussions.
 The development container mounts the host Docker socket. It grants host-level
 Docker access: only open trusted code in it. On Windows/macOS, use Docker Desktop
 with Linux containers. CI uses GitHub-hosted Ubuntu runners.
+The checked-in feature lockfile pins the Docker helper feature; review lockfile
+updates when changing development dependencies.
 
 ## Adding or modifying a feature
 

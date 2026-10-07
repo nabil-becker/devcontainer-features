@@ -17,7 +17,7 @@ case "$ID" in
     *) echo "Only Debian and Ubuntu are supported." >&2; exit 1 ;;
 esac
 
-packages=(python3 python3-venv)
+packages=(ca-certificates python3 python3-venv)
 if [[ "$INSTALLPIP" == "true" ]]; then
     packages+=(python3-pip)
 fi

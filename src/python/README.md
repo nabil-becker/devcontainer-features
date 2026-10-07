@@ -23,7 +23,8 @@ not this feature: Debian 12 provides Python 3.11 and Ubuntu 24.04 provides 3.12.
 Use another base image if you need a different Python version. This feature
 does not install pyenv or build CPython from source.
 
-The installer uses signed apt repositories and preserves the system Python.
+The installer uses signed apt repositories, installs CA certificates for HTTPS,
+and preserves the system Python.
 Use `python3` outside a virtual environment; no system-wide `python` alias is
 created. It does not upgrade global pip or remove the externally managed
 environment marker.
