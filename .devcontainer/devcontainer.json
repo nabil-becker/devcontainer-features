@@ -1,0 +1,15 @@
+{
+  "name": "Dev Container Features development",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "features": {
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {}
+  },
+  "remoteUser": "vscode",
+  "remoteEnv": {
+    "PATH": "${containerEnv:PATH}:/home/vscode/.local/bin"
+  },
+  "postCreateCommand": "npm install --global --prefix /home/vscode/.local @devcontainers/cli@0.89.0 && sudo apt-get update && sudo apt-get install -y --no-install-recommends shellcheck"
+}

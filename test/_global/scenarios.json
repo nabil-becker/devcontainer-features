@@ -1,0 +1,10 @@
+{
+  "node_and_python": {
+    "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+    "remoteUser": "vscode",
+    "features": {
+      "node": {},
+      "python": {}
+    }
+  }
+}

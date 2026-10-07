@@ -1,0 +1,13 @@
+node_modules/
+.venv/
+__pycache__/
+*.py[cod]
+*.log
+.DS_Store
+.env
+.env.*
+!.env.example
+dist/
+*.tgz
+*.tar.gz
+.devcontainer-feature-packages/

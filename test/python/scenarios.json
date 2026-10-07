@@ -1,0 +1,8 @@
+{
+  "without_pip": {
+    "image": "ubuntu:24.04",
+    "features": {
+      "python": { "installPip": false }
+    }
+  }
+}

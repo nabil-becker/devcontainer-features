@@ -1,0 +1,8 @@
+{
+  "pinned": {
+    "image": "ubuntu:24.04",
+    "features": {
+      "node": { "version": "22.23.3" }
+    }
+  }
+}

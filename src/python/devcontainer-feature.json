@@ -1,0 +1,15 @@
+{
+  "id": "python",
+  "version": "0.1.0",
+  "name": "Python",
+  "description": "Installs distribution-managed Python 3 and venv on Debian or Ubuntu, with optional pip.",
+  "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/python",
+  "licenseURL": "https://github.com/nabil-becker/devcontainer-features/blob/main/LICENSE",
+  "options": {
+    "installPip": {
+      "type": "boolean",
+      "default": true,
+      "description": "Install the distribution's python3-pip package."
+    }
+  }
+}

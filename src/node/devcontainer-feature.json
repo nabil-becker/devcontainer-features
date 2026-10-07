@@ -1,0 +1,19 @@
+{
+  "id": "node",
+  "version": "0.1.0",
+  "name": "Node.js",
+  "description": "Installs an exact official Node.js release and its bundled npm on Debian or Ubuntu.",
+  "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/node",
+  "licenseURL": "https://github.com/nabil-becker/devcontainer-features/blob/main/LICENSE",
+  "options": {
+    "version": {
+      "type": "string",
+      "default": "24.21.0",
+      "proposals": ["24.21.0", "22.23.3"],
+      "description": "Exact Node.js release (X.Y.Z), without a leading v."
+    }
+  },
+  "containerEnv": {
+    "PATH": "/usr/local/share/devcontainer-node/current/bin:${PATH}"
+  }
+}
