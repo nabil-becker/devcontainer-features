@@ -14,4 +14,4 @@
 - [ ] `install.sh` is idempotent and does not assume a `remoteUser`
 - [ ] Tests updated (`test/<id>/test.sh`, `scenarios.json`) and `task test FEATURE=<id>` passes locally or in the workbench
 - [ ] `task lint` passes
-- [ ] `NOTES.md` updated if behaviour or options changed (README is generated)
+- [ ] `NOTES.md` updated if behaviour or options changed, and `task docs` run so `src/<id>/README.md` is current
