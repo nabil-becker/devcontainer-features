@@ -142,6 +142,9 @@ with, and why it exists if a similar Feature is published elsewhere.
 ### Code style
 
 - Shell: bash, `shellcheck`-clean, 2-space indent, `set -euo pipefail`.
+- YAML: `yamllint`-clean under `.yamllint`, and block style rather than
+  `{ }` / `[ ]` flow mappings with inner spaces - files vendored into other
+  repos (`bootstrap/devcontainer.yml`) get linted by their default rules.
 - PowerShell: PowerShell 7, `PSScriptAnalyzer`-clean, comment-based help.
 - Host-side tooling ships in two flavours that must stay in step:
   `bootstrap/host/*.ps*1` + `bootstrap/bootstrap.ps1` (Windows, primary)
