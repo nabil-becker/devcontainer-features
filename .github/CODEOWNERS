@@ -3,5 +3,4 @@
 *                       @nabil-becker
 /src/                   @nabil-becker
 /.github/               @nabil-becker
-/taskfiles/             @nabil-becker
-/bootstrap.ps1          @nabil-becker
+/bootstrap/             @nabil-becker

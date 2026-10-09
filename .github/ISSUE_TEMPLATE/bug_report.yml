@@ -17,8 +17,8 @@ body:
         - kubeconform
         - argocd
         - dsc
-        - taskfiles/devcontainer.yml (host-side tasks)
-        - bootstrap.ps1
+        - bootstrap/devcontainer.yml (host-side tasks)
+        - bootstrap/bootstrap.ps1 or bootstrap.sh
         - CI / release workflow
     validations:
       required: true

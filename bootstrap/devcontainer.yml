@@ -1,20 +1,24 @@
 # Reusable devcontainer:* tasks - drive @devcontainers/cli against the
 # including repo's .devcontainer without installing Node.js or the CLI on the
-# host. Vendored into a repo (together with ./devcontainer/*) by
-#   irm  https://raw.githubusercontent.com/nabil-becker/devcontainer-features/main/bootstrap.ps1 | iex   (Windows)
-#   curl -fsSL https://raw.githubusercontent.com/nabil-becker/devcontainer-features/main/bootstrap.sh | bash  (Linux/macOS)
+# host. Vendored into a repo (together with ./host/*) by
+#   irm  https://raw.githubusercontent.com/nabil-becker/devcontainer-features/main/bootstrap/bootstrap.ps1 | iex   (Windows)
+#   curl -fsSL https://raw.githubusercontent.com/nabil-becker/devcontainer-features/main/bootstrap/bootstrap.sh | bash  (Linux/macOS)
 # and included from the repo's Taskfile.yml as
 #   includes:
 #     devcontainer:
-#       taskfile: ./taskfiles/devcontainer.yml
+#       taskfile: ./bootstrap/devcontainer.yml
 # It cannot be a *remote* include: the tasks run the scripts next to this
 # file and Task leaves TASKFILE_DIR empty for remote Taskfiles. Re-run the
 # bootstrap to refresh the vendored copy.
 #
-# Platforms: Windows runs devcontainer/Invoke-DevcontainerCli.ps1 (pwsh,
-# portable Node.js cached in %LOCALAPPDATA%); Linux/macOS run
-# devcontainer/devcontainer-cli.sh (`devcontainer` on PATH, else a portable
-# Node.js cached in ~/.cache). Same behaviour and settings on both.
+# Platforms: Windows runs host/Invoke-DevcontainerCli.ps1 (pwsh, portable
+# Node.js cached in %LOCALAPPDATA%); Linux/macOS run devcontainer-cli.sh
+# (`devcontainer` on PATH, else a portable Node.js cached in ~/.cache). That
+# bash script is the devcontainer-cli Feature's own installer: in a
+# consuming repo it is vendored to host/devcontainer-cli.sh, in the
+# collection repo it stays at src/devcontainer-cli/devcontainer-cli.sh -
+# _BASH_CLI below finds whichever exists. Same behaviour and settings on
+# both platforms.
 #
 # Settings - each is a Task var that falls back to the environment variable
 # of the same name, so a .env file (root Taskfile `dotenv:`) or a plain
@@ -35,6 +39,8 @@ vars:
   DEVCONTAINER_NODE_VERSION: '{{.DEVCONTAINER_NODE_VERSION | default ""}}'
   DEVCONTAINER_CLI_VERSION: '{{.DEVCONTAINER_CLI_VERSION | default ""}}'
   _PS_SETTINGS: -DockerPath '{{.DEVCONTAINER_DOCKER_PATH}}' -NodeVersion '{{.DEVCONTAINER_NODE_VERSION}}' -CliVersion '{{.DEVCONTAINER_CLI_VERSION}}'
+  _BASH_CLI:
+    sh: 'f="{{.TASKFILE_DIR}}/host/devcontainer-cli.sh"; if [ -f "$f" ]; then echo "$f"; else echo "{{.TASKFILE_DIR}}/../src/devcontainer-cli/devcontainer-cli.sh"; fi'
 
 env:
   # The bash flavour reads these from the environment; export the resolved
@@ -54,9 +60,9 @@ tasks:
       ARGS: '{{.ARGS | default ""}}'
       CMD: '{{.CMD | default ""}}'
     cmds:
-      - cmd: pwsh -NoLogo -NoProfile -File '{{.TASKFILE_DIR}}/devcontainer/Invoke-DevcontainerCli.ps1' -WorkspaceFolder '{{.WORKSPACE_FOLDER}}' {{._PS_SETTINGS}} -Subcommand '{{.SUBCOMMAND}}' -CliArgsB64 '{{.ARGS | splitArgs | toJson | b64enc}}' {{if .CMD}}-CommandB64 '{{.CMD | b64enc}}'{{end}}
+      - cmd: pwsh -NoLogo -NoProfile -File '{{.TASKFILE_DIR}}/host/Invoke-DevcontainerCli.ps1' -WorkspaceFolder '{{.WORKSPACE_FOLDER}}' {{._PS_SETTINGS}} -Subcommand '{{.SUBCOMMAND}}' -CliArgsB64 '{{.ARGS | splitArgs | toJson | b64enc}}' {{if .CMD}}-CommandB64 '{{.CMD | b64enc}}'{{end}}
         platforms: [windows]
-      - cmd: bash '{{.TASKFILE_DIR}}/devcontainer/devcontainer-cli.sh' run '{{.SUBCOMMAND}}' --workspace-folder '{{.WORKSPACE_FOLDER}}' {{if .CMD}}--cmd-b64 '{{.CMD | b64enc}}'{{end}} -- {{.ARGS}}
+      - cmd: bash '{{._BASH_CLI}}' run '{{.SUBCOMMAND}}' --workspace-folder '{{.WORKSPACE_FOLDER}}' {{if .CMD}}--cmd-b64 '{{.CMD | b64enc}}'{{end}} -- {{.ARGS}}
         platforms: [linux, darwin]
 
   init:
@@ -64,9 +70,9 @@ tasks:
     vars:
       FORCE: '{{.FORCE | default "false"}}'
     cmds:
-      - cmd: pwsh -NoLogo -NoProfile -File '{{.TASKFILE_DIR}}/devcontainer/Initialize-DevcontainerCli.ps1' {{._PS_SETTINGS}} {{if eq .FORCE "true"}}-Force{{end}}
+      - cmd: pwsh -NoLogo -NoProfile -File '{{.TASKFILE_DIR}}/host/Initialize-DevcontainerCli.ps1' {{._PS_SETTINGS}} {{if eq .FORCE "true"}}-Force{{end}}
         platforms: [windows]
-      - cmd: bash '{{.TASKFILE_DIR}}/devcontainer/devcontainer-cli.sh' init {{if eq .FORCE "true"}}--force{{end}}
+      - cmd: bash '{{._BASH_CLI}}' init {{if eq .FORCE "true"}}--force{{end}}
         platforms: [linux, darwin]
 
   up:
@@ -112,7 +118,7 @@ tasks:
     desc: 'wslc.exe only: reset WSL Containers'' backing storage after a "read-only file system" BuildKit error. Destroys ALL wslc images and containers. Windows-only.'
     platforms: [windows]
     cmds:
-      - pwsh -NoLogo -NoProfile -File '{{.TASKFILE_DIR}}/devcontainer/Reset-WslcStorage.ps1'
+      - pwsh -NoLogo -NoProfile -File '{{.TASKFILE_DIR}}/host/Reset-WslcStorage.ps1'
 
   '*':
     desc: 'Passthrough: the part after "devcontainer:" becomes the @devcontainers/cli subcommand, args after --. e.g. task devcontainer:outdated, task devcontainer:features -- test -f go-task.'

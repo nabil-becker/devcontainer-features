@@ -1,6 +1,6 @@
 # Tasks contributed by the devcontainer-cli Feature (namespace:
 # devcontainer-cli). For driving *this* repo's devcontainer from a host, use
-# the taskfiles/devcontainer.yml include from the collection instead; these
+# the bootstrap/devcontainer.yml include from the collection instead; these
 # are for using the CLI inside the container (nested builds, Feature tests).
 version: '3'
 

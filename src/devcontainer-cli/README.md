@@ -37,9 +37,12 @@ knows about it. `node` is deliberately *not* on PATH afterwards.
 
 ## Host-side counterpart
 
-The Taskfile + PowerShell in this repository's `taskfiles/` folder (vendored
-into a repo by `bootstrap.ps1`) do the same trick on the Windows host: a
-portable Node.js cached under `%LOCALAPPDATA%`, never installed globally.
+The same `devcontainer-cli.sh` that installs this Feature also has `init`
+and `run` modes for a Linux/macOS host, where it caches a portable Node.js
+under `~/.cache/devcontainer-features` (or just uses a `devcontainer` already
+on PATH). Together with the PowerShell flavour for Windows it backs the
+`task devcontainer:*` tasks that `bootstrap/bootstrap.ps1` / `bootstrap.sh`
+vendor into a repo; nothing is installed globally on any host.
 
 
 ---
