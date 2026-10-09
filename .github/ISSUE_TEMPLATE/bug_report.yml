@@ -10,6 +10,13 @@ body:
         - go-task
         - devcontainer-cli
         - claude-code
+        - coder-cli
+        - openbao
+        - velero
+        - kustomize
+        - kubeconform
+        - argocd
+        - dsc
         - taskfiles/devcontainer.yml (host-side tasks)
         - bootstrap.ps1
         - CI / release workflow

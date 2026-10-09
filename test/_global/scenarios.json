@@ -2,9 +2,17 @@
   "all_features": {
     "image": "mcr.microsoft.com/devcontainers/base:debian",
     "features": {
+      "ghcr.io/devcontainers/features/powershell:1": {},
       "go-task": {},
       "devcontainer-cli": {},
-      "claude-code": {}
+      "claude-code": {},
+      "coder-cli": {},
+      "openbao": {},
+      "velero": {},
+      "kustomize": {},
+      "kubeconform": {},
+      "argocd": {},
+      "dsc": {}
     },
     "remoteUser": "vscode"
   }

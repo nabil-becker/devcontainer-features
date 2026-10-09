@@ -68,3 +68,17 @@ if [ -f "$tmp/task/completion/zsh/_task" ]; then
 fi
 
 /usr/local/bin/task --version
+
+# ------------------------------------------------ Feature Taskfile registry ----
+# Other Features from this collection drop a taskfile.yml into includes.d/;
+# task-features-registry turns that folder into one includable Taskfile. It
+# is installed unconditionally (a tiny sh script) and run now, so Features
+# that installed before go-task are picked up; Features installing later run
+# it themselves. See NOTES.md for the root Taskfile include.
+feature_dir="$(cd "$(dirname "$0")" && pwd)"
+install -m 0755 "$feature_dir/task-features-registry" /usr/local/bin/task-features-registry
+mkdir -p /usr/local/share/go-task/includes.d
+if [ "${INSTALLTASKFILE:-true}" = "true" ]; then
+  install -m 0644 "$feature_dir/taskfile.yml" /usr/local/share/go-task/includes.d/go-task.yml
+fi
+task-features-registry

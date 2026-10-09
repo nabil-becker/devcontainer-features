@@ -7,6 +7,12 @@ dotenv: ['.env', '.devcontainer/.env']
 includes:
   devcontainer:
     taskfile: ./taskfiles/devcontainer.yml
+  # Tasks contributed by the Features installed in this repo's devcontainer
+  # (go-task:*, devcontainer-cli:*); absent on the host.
+  features:
+    taskfile: /usr/local/share/go-task/features.yml
+    optional: true
+    flatten: true
 
 vars:
   TEST_IMAGE: '{{.IMAGE | default "mcr.microsoft.com/devcontainers/base:debian"}}'
@@ -18,7 +24,7 @@ tasks:
       - task --list
 
   test:
-    desc: 'Run `devcontainer features test` for one Feature (FEATURE=go-task) or all of them. IMAGE overrides the base image for the auto-generated test; SCENARIOS=false skips scenarios.json. Linux/macOS only (the CLI shells out to chmod/bash on the host) - run it inside the workbench devcontainer (docker-in-docker) or let CI do it.'
+    desc: 'Run `devcontainer features test` for one Feature (FEATURE=go-task) or all of them. IMAGE overrides the base image for the auto-generated test; SCENARIOS=false skips scenarios.json. Linux/macOS only (the CLI shells out to chmod/bash on the host) - run it inside this repo''s devcontainer (docker-in-docker) or let CI do it.'
     platforms: [linux, darwin]
     vars:
       FEATURE: '{{.FEATURE | default ""}}'
@@ -50,14 +56,18 @@ tasks:
           ARGS: 'generate-docs -p src -n nabil-becker/devcontainer-features --github-owner nabil-becker --github-repo devcontainer-features'
 
   docs:check:
-    desc: 'Fail if any src/<id>/README.md differs from what `task docs` generates (the check CI runs).'
+    desc: 'Fail if any src/<id>/README.md in the working tree differs from what `task docs` generates (the check CI runs). Compares before/after regeneration, so it works on uncommitted changes too.'
     dir: '{{.ROOT_DIR}}'
     cmds:
-      - task: docs
-      - git diff --exit-code --stat -- 'src/*/README.md'
       - cmd: |
-          untracked="$(git ls-files --others --exclude-standard -- 'src/*/README.md')"
-          if [ -n "$untracked" ]; then echo "Uncommitted generated README(s): $untracked"; exit 1; fi
+          snapshot() { for f in src/*/README.md; do [ -f "$f" ] && printf '%s ' "$f" && sha256sum < "$f"; done; }
+          before="$(snapshot)"
+          task docs >/dev/null
+          after="$(snapshot)"
+          if [ "$before" != "$after" ]; then
+            echo "src/<id>/README.md was stale - regenerated now; review and commit:"; git status --short -- 'src/*/README.md'; exit 1
+          fi
+          echo "generated READMEs are up to date"
 
   lint:
     desc: 'shellcheck every shell script, PSScriptAnalyzer every PowerShell file (same checks as CI; both tools must be installed).'

@@ -1,11 +1,16 @@
 {
   "id": "go-task",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "name": "Task (go-task)",
   "description": "Installs Task (https://taskfile.dev), the Taskfile task runner, as a sha256-verified release binary at /usr/local/bin/task with bash/zsh completions.",
   "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/go-task",
   "licenseURL": "https://github.com/nabil-becker/devcontainer-features/blob/main/LICENSE",
   "options": {
+    "installTaskfile": {
+      "type": "boolean",
+      "default": true,
+      "description": "Also install this Feature's Taskfile into /usr/local/share/go-task/includes.d so its tasks appear under the <id>: namespace of a root Taskfile that includes /usr/local/share/go-task/features.yml (see the go-task Feature)."
+    },
     "version": {
       "type": "string",
       "default": "latest",

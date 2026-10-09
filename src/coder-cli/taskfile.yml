@@ -1,0 +1,36 @@
+# Tasks contributed by the coder-cli Feature (namespace: coder-cli). The
+# login session lives under CODER_CONFIG_DIR (persist it across rebuilds, see
+# the Feature README).
+version: '3'
+
+tasks:
+  version:
+    desc: 'Show the client (and server, when logged in) Coder versions.'
+    cmds:
+      - coder version
+
+  login:
+    desc: 'Log in to URL=<https://coder.example.com>. Extra flags after --.'
+    requires:
+      vars: [URL]
+    interactive: true
+    cmds:
+      - coder login '{{.URL}}' {{.CLI_ARGS}}
+
+  workspaces:
+    desc: 'List your workspaces.'
+    cmds:
+      - coder list {{.CLI_ARGS}}
+
+  templates:
+    desc: 'List templates on the server.'
+    cmds:
+      - coder templates list {{.CLI_ARGS}}
+
+  ssh:
+    desc: 'Open an SSH session to WORKSPACE=<name>.'
+    requires:
+      vars: [WORKSPACE]
+    interactive: true
+    cmds:
+      - coder ssh '{{.WORKSPACE}}' {{.CLI_ARGS}}

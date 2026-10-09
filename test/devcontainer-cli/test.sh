@@ -10,4 +10,6 @@ check "devcontainer runs" bash -c "devcontainer --version | grep -E '^[0-9]+\.[0
 check "private node present" test -x /opt/devcontainer-cli/node/bin/node
 check "node not on PATH" bash -c "! command -v node"
 
+check "taskfile registered" test -f /usr/local/share/go-task/includes.d/devcontainer-cli.yml
+
 reportResults

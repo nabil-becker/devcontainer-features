@@ -15,6 +15,7 @@ Installs Anthropic's Claude Code CLI (https://code.claude.com/docs) as its nativ
 
 | Options Id | Description | Type | Default Value |
 |-----|-----|-----|-----|
+| installTaskfile | Also install this Feature's Taskfile into /usr/local/share/go-task/includes.d so its tasks appear under the <id>: namespace of a root Taskfile that includes /usr/local/share/go-task/features.yml (see the go-task Feature). | boolean | true |
 | version | Claude Code version to install (e.g. '2.1.286'), or a release channel: 'stable' or 'latest'. | string | stable |
 
 ## Customizations

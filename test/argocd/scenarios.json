@@ -1,0 +1,11 @@
+{
+  "pinned_version": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "argocd": {
+        "version": "3.5.4"
+      }
+    },
+    "remoteUser": "vscode"
+  }
+}

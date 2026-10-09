@@ -1,0 +1,25 @@
+# Tasks contributed by the devcontainer-cli Feature (namespace:
+# devcontainer-cli). For driving *this* repo's devcontainer from a host, use
+# the taskfiles/devcontainer.yml include from the collection instead; these
+# are for using the CLI inside the container (nested builds, Feature tests).
+version: '3'
+
+tasks:
+  version:
+    desc: 'Show the installed @devcontainers/cli version.'
+    cmds:
+      - devcontainer --version
+
+  config:
+    desc: 'Print the resolved devcontainer configuration for WORKSPACE (default: current directory).'
+    vars:
+      WORKSPACE: '{{.WORKSPACE | default "."}}'
+    cmds:
+      - devcontainer read-configuration --workspace-folder '{{.WORKSPACE}}' --include-merged-configuration
+
+  features:test:
+    desc: 'Run `devcontainer features test` for a Features repo at PROJECT (default: current directory). Needs a Docker daemon (docker-in-docker). Extra flags (e.g. -f <id>) after --.'
+    vars:
+      PROJECT: '{{.PROJECT | default "."}}'
+    cmds:
+      - devcontainer features test -p '{{.PROJECT}}' {{.CLI_ARGS}}

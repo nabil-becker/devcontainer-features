@@ -32,10 +32,15 @@ jobs:
       # the change and the release job never has to open a bot PR.
       - name: "Generated READMEs are up to date"
         run: |
+          snapshot() { for f in src/*/README.md; do [ -f "$f" ] && printf '%s ' "$f" && sha256sum < "$f"; done; }
+          before="$(snapshot)"
           devcontainer features generate-docs -p src -n nabil-becker/devcontainer-features --github-owner nabil-becker --github-repo devcontainer-features
-          git diff --exit-code --stat -- 'src/*/README.md' || { echo '::error::src/<id>/README.md is stale - run `task docs` and commit the result'; exit 1; }
-          untracked="$(git ls-files --others --exclude-standard -- 'src/*/README.md')"
-          if [ -n "$untracked" ]; then echo "::error::uncommitted generated README(s): $untracked"; exit 1; fi
+          after="$(snapshot)"
+          if [ "$before" != "$after" ]; then
+            echo '::error::src/<id>/README.md is stale or missing - run `task docs` and commit the result'
+            git status --short -- 'src/*/README.md'; git diff -- 'src/*/README.md' | head -40
+            exit 1
+          fi
 
       - name: "Feature folders have tests and NOTES.md"
         run: |

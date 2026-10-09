@@ -1,0 +1,32 @@
+# Tasks contributed by the kubeconform Feature (namespace: kubeconform).
+# CRD_CATALOG points at a kubeconform-compatible schema catalog for CRDs; the
+# default is the community datree catalog. KUBECONFORM_FLAGS replaces the
+# default flags.
+version: '3'
+
+vars:
+  KUBECONFORM_FLAGS: '{{.KUBECONFORM_FLAGS | default "-strict -summary -ignore-missing-schemas"}}'
+  CRD_CATALOG: '{{.CRD_CATALOG | default "https://raw.githubusercontent.com/datreeio/CRDs-catalog/main"}}'
+  # kubeconform's own {{.Group}}-style placeholders must reach it literally;
+  # {{"{{"}} is how a Taskfile emits a literal brace pair.
+  _SCHEMAS: -schema-location default -schema-location '{{.CRD_CATALOG}}/{{"{{"}}.Group{{"}}"}}/{{"{{"}}.ResourceKind{{"}}"}}_{{"{{"}}.ResourceAPIVersion{{"}}"}}.json'
+
+tasks:
+  version:
+    desc: 'Show the installed kubeconform version.'
+    cmds:
+      - kubeconform -v
+
+  validate:
+    desc: 'Validate the manifest file(s) or directory TARGET (default: current directory) against the Kubernetes and CRD schemas. Extra flags after --.'
+    vars:
+      TARGET: '{{.TARGET | default "."}}'
+    cmds:
+      - kubeconform {{.KUBECONFORM_FLAGS}} {{._SCHEMAS}} {{.CLI_ARGS}} '{{.TARGET}}'
+
+  validate:kustomize:
+    desc: 'Render the kustomization in DIR (default: current directory) with kustomize and validate the output. Needs kustomize on PATH (the kustomize Feature).'
+    vars:
+      DIR: '{{.DIR | default "."}}'
+    cmds:
+      - kustomize build '{{.DIR}}' | kubeconform {{.KUBECONFORM_FLAGS}} {{._SCHEMAS}} {{.CLI_ARGS}}

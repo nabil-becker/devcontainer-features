@@ -1,0 +1,24 @@
+{
+  "id": "kubeconform",
+  "version": "1.0.0",
+  "name": "kubeconform",
+  "description": "Installs kubeconform (https://github.com/yannh/kubeconform), the fast Kubernetes manifest validator, as a release binary at /usr/local/bin/kubeconform, verified against the release's CHECKSUMS file.",
+  "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/kubeconform",
+  "licenseURL": "https://github.com/nabil-becker/devcontainer-features/blob/main/LICENSE",
+  "options": {
+    "installTaskfile": {
+      "type": "boolean",
+      "default": true,
+      "description": "Also install this Feature's Taskfile into /usr/local/share/go-task/includes.d so its tasks appear under the <id>: namespace of a root Taskfile that includes /usr/local/share/go-task/features.yml (see the go-task Feature)."
+    },
+    "version": {
+      "type": "string",
+      "default": "latest",
+      "description": "kubeconform release to install (e.g. '0.8.0', with or without a leading 'v'), or 'latest'. Pin it to what your CI uses."
+    }
+  },
+  "installsAfter": [
+    "ghcr.io/nabil-becker/devcontainer-features/go-task",
+    "ghcr.io/devcontainers/features/common-utils"
+  ]
+}

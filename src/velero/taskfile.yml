@@ -1,0 +1,42 @@
+# Tasks contributed by the velero Feature (namespace: velero). All talk to
+# the cluster in your current kubeconfig context; NAMESPACE overrides the
+# Velero namespace (default: velero).
+version: '3'
+
+vars:
+  NAMESPACE: '{{.NAMESPACE | default "velero"}}'
+
+tasks:
+  version:
+    desc: 'Show client and (if reachable) server Velero versions.'
+    cmds:
+      - velero version -n '{{.NAMESPACE}}' || velero version --client-only
+
+  backups:
+    desc: 'List backups.'
+    cmds:
+      - velero backup get -n '{{.NAMESPACE}}' {{.CLI_ARGS}}
+
+  backup:
+    desc: 'Create an on-demand backup NAME=<name>. Extra flags (e.g. --include-namespaces) after --.'
+    requires:
+      vars: [NAME]
+    cmds:
+      - velero backup create '{{.NAME}}' -n '{{.NAMESPACE}}' {{.CLI_ARGS}}
+
+  describe:
+    desc: 'Describe backup NAME=<name> with details.'
+    requires:
+      vars: [NAME]
+    cmds:
+      - velero backup describe '{{.NAME}}' -n '{{.NAMESPACE}}' --details {{.CLI_ARGS}}
+
+  restores:
+    desc: 'List restores.'
+    cmds:
+      - velero restore get -n '{{.NAMESPACE}}' {{.CLI_ARGS}}
+
+  schedules:
+    desc: 'List backup schedules.'
+    cmds:
+      - velero schedule get -n '{{.NAMESPACE}}' {{.CLI_ARGS}}

@@ -1,0 +1,24 @@
+{
+  "id": "kustomize",
+  "version": "1.0.0",
+  "name": "kustomize",
+  "description": "Installs kustomize (https://kustomize.io), the Kubernetes manifest customization tool, as a release binary at /usr/local/bin/kustomize, verified against the release's checksums.txt. Standalone - does not require kubectl.",
+  "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/kustomize",
+  "licenseURL": "https://github.com/nabil-becker/devcontainer-features/blob/main/LICENSE",
+  "options": {
+    "installTaskfile": {
+      "type": "boolean",
+      "default": true,
+      "description": "Also install this Feature's Taskfile into /usr/local/share/go-task/includes.d so its tasks appear under the <id>: namespace of a root Taskfile that includes /usr/local/share/go-task/features.yml (see the go-task Feature)."
+    },
+    "version": {
+      "type": "string",
+      "default": "latest",
+      "description": "kustomize release to install (e.g. '5.8.3', with or without a leading 'v'), or 'latest'. Pin it to what your CI uses so `kustomize build` output matches."
+    }
+  },
+  "installsAfter": [
+    "ghcr.io/nabil-becker/devcontainer-features/go-task",
+    "ghcr.io/devcontainers/features/common-utils"
+  ]
+}

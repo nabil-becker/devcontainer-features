@@ -1,0 +1,11 @@
+{
+  "pinned_version": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "openbao": {
+        "version": "2.7.1"
+      }
+    },
+    "remoteUser": "vscode"
+  }
+}

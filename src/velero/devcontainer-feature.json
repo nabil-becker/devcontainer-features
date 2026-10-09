@@ -1,0 +1,24 @@
+{
+  "id": "velero",
+  "version": "1.0.0",
+  "name": "Velero CLI",
+  "description": "Installs the Velero CLI (https://velero.io), for Kubernetes backup and restore, as a release binary at /usr/local/bin/velero, verified against the release's CHECKSUM file. Needs a kubeconfig at runtime (e.g. the kubectl-helm-minikube Feature plus KUBECONFIG).",
+  "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/velero",
+  "licenseURL": "https://github.com/nabil-becker/devcontainer-features/blob/main/LICENSE",
+  "options": {
+    "installTaskfile": {
+      "type": "boolean",
+      "default": true,
+      "description": "Also install this Feature's Taskfile into /usr/local/share/go-task/includes.d so its tasks appear under the <id>: namespace of a root Taskfile that includes /usr/local/share/go-task/features.yml (see the go-task Feature)."
+    },
+    "version": {
+      "type": "string",
+      "default": "latest",
+      "description": "Velero release to install (e.g. '1.18.4', with or without a leading 'v'), or 'latest'. Match the Velero server deployed in your cluster."
+    }
+  },
+  "installsAfter": [
+    "ghcr.io/nabil-becker/devcontainer-features/go-task",
+    "ghcr.io/devcontainers/features/common-utils"
+  ]
+}

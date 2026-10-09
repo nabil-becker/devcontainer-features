@@ -77,3 +77,15 @@ curl -fsSL -o "$tmp" "$BASE_URL/$VERSION/$platform/claude"
 echo "$checksum  $tmp" | sha256sum -c -
 install -m 0755 "$tmp" /usr/local/bin/claude
 /usr/local/bin/claude --version
+
+# ---------------------------------------------------- Feature Taskfile ----
+# Drop this Feature's taskfile.yml where the go-task Feature's registry picks
+# it up (namespace = Feature id), and refresh the registry if go-task is
+# already installed; otherwise go-task refreshes it when it installs. See
+# the go-task Feature README for the one-line root Taskfile include.
+if [ "${INSTALLTASKFILE:-true}" = "true" ]; then
+  includes_d=/usr/local/share/go-task/includes.d
+  mkdir -p "$includes_d"
+  install -m 0644 "$(cd "$(dirname "$0")" && pwd)/taskfile.yml" "$includes_d/claude-code.yml"
+  if command -v task-features-registry >/dev/null 2>&1; then task-features-registry; fi
+fi
