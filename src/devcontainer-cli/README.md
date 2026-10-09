@@ -15,6 +15,7 @@ Installs @devcontainers/cli as /usr/local/bin/devcontainer, backed by a private,
 
 | Options Id | Description | Type | Default Value |
 |-----|-----|-----|-----|
+| installTaskfile | Also install this Feature's Taskfile into /usr/local/share/go-task/includes.d so its tasks appear under the <id>: namespace of a root Taskfile that includes /usr/local/share/go-task/features.yml (see the go-task Feature). | boolean | true |
 | version | @devcontainers/cli npm version to install (e.g. '0.89.0'), or 'latest'. | string | latest |
 | nodeVersion | Node.js release used privately by the CLI. Downloaded from nodejs.org and verified against its SHASUMS256.txt. | string | 24.21.0 |
 

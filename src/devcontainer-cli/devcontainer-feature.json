@@ -1,11 +1,16 @@
 {
   "id": "devcontainer-cli",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "name": "Dev Container CLI",
   "description": "Installs @devcontainers/cli as /usr/local/bin/devcontainer, backed by a private, sha256-verified Node.js under /opt/devcontainer-cli that is NOT added to PATH - so `devcontainer up/build/exec/features test` work inside a container without a system-wide Node.js. Pair with docker-in-docker (needed for features test and nested `up` on Windows/macOS hosts) or docker-outside-of-docker (Linux hosts, same paths).",
   "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/devcontainer-cli",
   "licenseURL": "https://github.com/nabil-becker/devcontainer-features/blob/main/LICENSE",
   "options": {
+    "installTaskfile": {
+      "type": "boolean",
+      "default": true,
+      "description": "Also install this Feature's Taskfile into /usr/local/share/go-task/includes.d so its tasks appear under the <id>: namespace of a root Taskfile that includes /usr/local/share/go-task/features.yml (see the go-task Feature)."
+    },
     "version": {
       "type": "string",
       "default": "latest",
@@ -18,6 +23,7 @@
     }
   },
   "installsAfter": [
+    "ghcr.io/nabil-becker/devcontainer-features/go-task",
     "ghcr.io/devcontainers/features/common-utils",
     "ghcr.io/devcontainers/features/docker-in-docker",
     "ghcr.io/devcontainers/features/docker-outside-of-docker"

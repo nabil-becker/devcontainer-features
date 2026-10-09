@@ -1,0 +1,23 @@
+# Tasks contributed by the claude-code Feature (namespace: claude-code).
+version: '3'
+
+tasks:
+  version:
+    desc: 'Show the installed Claude Code version (updates come from rebuilding; the auto-updater is off).'
+    cmds:
+      - claude --version
+
+  doctor:
+    desc: 'Run Claude Code''s self-check (installation, auth, config dir).'
+    interactive: true
+    cmds:
+      - claude doctor
+
+  config:
+    desc: 'Show where Claude Code keeps its state in this container (CLAUDE_CONFIG_DIR) and whether a login is present.'
+    silent: true
+    cmds:
+      - |
+        dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+        echo "config dir : $dir"
+        if [ -f "$dir/.credentials.json" ]; then echo "login      : present"; else echo "login      : none (run claude and sign in)"; fi

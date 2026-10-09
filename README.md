@@ -11,19 +11,55 @@ installing Node.js, and a one-line bootstrap that wires both into any repo.
 | [`go-task`](src/go-task) | [Task](https://taskfile.dev) (`task`), sha256-verified from GitHub releases, with bash/zsh completions. |
 | [`devcontainer-cli`](src/devcontainer-cli) | `@devcontainers/cli` as `devcontainer`, on a private Node.js under `/opt/devcontainer-cli` that is never put on PATH. |
 | [`claude-code`](src/claude-code) | [Claude Code](https://code.claude.com/docs) as its native release binary (no Node.js), auto-updater off, version pinnable. |
+| [`coder-cli`](src/coder-cli) | [Coder](https://coder.com) CLI from GitHub releases, verified against the release checksums. |
+| [`openbao`](src/openbao) | [OpenBao](https://openbao.org) CLI (`bao`), verified against the release checksums. |
+| [`velero`](src/velero) | [Velero](https://velero.io) CLI, verified against the release `CHECKSUM`. |
+| [`kustomize`](src/kustomize) | Standalone [kustomize](https://kustomize.io), verified against the release checksums. |
+| [`kubeconform`](src/kubeconform) | [kubeconform](https://github.com/yannh/kubeconform) manifest validator, verified against the release `CHECKSUMS`. |
+| [`argocd`](src/argocd) | [Argo CD](https://argo-cd.readthedocs.io) CLI, verified against the release `cli_checksums.txt`. |
+| [`dsc`](src/dsc) | [Microsoft DSC v3](https://github.com/PowerShell/DSC) in `/opt/dsc`, verified against the GitHub-published asset digest (or a pinned `sha256`). |
+
+Every Feature takes a `version` option (`latest` or a pinned release) and
+verifies what it downloads before installing it.
+
+### Feature Taskfiles
+
+Each Feature also ships a Taskfile for its tool (`dsc:get`, `velero:backups`,
+`kustomize:build:all`, `argocd:sync`, ...). With the default
+`installTaskfile: true` it is registered at build time under
+`/usr/local/share/go-task/includes.d/`, and the `go-task` Feature keeps
+`/usr/local/share/go-task/features.yml` including all of them. One include in
+the root Taskfile, never edited again:
+
+```yaml
+includes:
+  features:
+    taskfile: /usr/local/share/go-task/features.yml
+    optional: true
+    flatten: true
+```
+
+Add a Feature and rebuild: its tasks appear. Remove it: they disappear.
+`bootstrap.ps1` / `bootstrap.sh` write that include into the starter
+`Taskfile.yml`.
 
 ```json
 "features": {
   "ghcr.io/nabil-becker/devcontainer-features/go-task:1": {},
   "ghcr.io/nabil-becker/devcontainer-features/devcontainer-cli:1": {},
-  "ghcr.io/nabil-becker/devcontainer-features/claude-code:1": {}
+  "ghcr.io/nabil-becker/devcontainer-features/claude-code:1": {},
+  "ghcr.io/nabil-becker/devcontainer-features/kustomize:1": { "version": "5.8.3" }
 }
 ```
 
-While developing, a local reference works as long as the Feature folder sits
-under `.devcontainer/` (the CLI refuses paths that escape it). The
-`nabil-becker` workbench folder does this with a directory junction
-`.devcontainer/features -> devcontainer-features/src`.
+Not in this collection on purpose: the GitHub Copilot CLI (now an official
+`ghcr.io/devcontainers/features/copilot-cli`), code-server (Coder publishes
+`ghcr.io/coder/devcontainer-features/code-server`), and shellcheck/yamllint
+(`ghcr.io/devcontainers-extra/features/*`).
+
+To try an unpublished change, reference the Feature folder locally
+(`"./features/<id>": {}`); the CLI only accepts local Features that live
+under the `.devcontainer/` folder, so copy or link it there.
 
 ## Bootstrap a repo
 
@@ -120,9 +156,10 @@ task docs                    # regenerate src/<id>/README.md (commit the result)
 ```
 
 `devcontainer features test` does not run on a Windows host (the CLI shells
-out to `chmod`/bash), so `task test` is gated to Linux/macOS: run it inside
-the workbench devcontainer (docker-in-docker + the `devcontainer-cli`
-Feature) or let CI do it.
+out to `chmod`/bash), so `task test` is gated to Linux/macOS. The easiest
+place is this repository's own devcontainer (`.devcontainer/`: docker-in-docker,
+shellcheck, PowerShell, and the collection's `go-task` and `devcontainer-cli`
+Features); otherwise let CI do it.
 
 Layout follows [devcontainers/feature-starter](https://github.com/devcontainers/feature-starter):
 `src/<id>/devcontainer-feature.json` + `install.sh` + `NOTES.md`, with
@@ -152,7 +189,7 @@ open a PR against
 in `devcontainers/devcontainers.github.io` adding:
 
 ```yaml
-- name: Nabil Becker's Dev Container Features
+- name: Dev Container Features by nabil-becker
   maintainer: Nabil Becker
   contact: https://github.com/nabil-becker/devcontainer-features/issues
   repository: https://github.com/nabil-becker/devcontainer-features

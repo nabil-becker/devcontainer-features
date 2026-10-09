@@ -1,0 +1,19 @@
+{
+  "pinned_version": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "dsc": {
+        "version": "3.3.0"
+      }
+    },
+    "remoteUser": "vscode"
+  },
+  "no_taskfile": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "dsc": {
+        "installTaskfile": false
+      }
+    }
+  }
+}

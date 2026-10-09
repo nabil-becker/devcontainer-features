@@ -1,0 +1,27 @@
+# Tasks contributed by the openbao Feature (namespace: openbao). BAO_ADDR
+# must point at your server (set it in containerEnv).
+version: '3'
+
+tasks:
+  version:
+    desc: 'Show the installed bao CLI version.'
+    cmds:
+      - bao version
+
+  status:
+    desc: 'Show the server status (seal state, HA, version) at BAO_ADDR.'
+    cmds:
+      - bao status {{.CLI_ARGS}}
+
+  login:
+    desc: 'Log in to BAO_ADDR. Auth method and flags after --, e.g. task openbao:login -- -method=oidc'
+    interactive: true
+    cmds:
+      - bao login {{.CLI_ARGS}}
+
+  kv:get:
+    desc: 'Read secret KEY=<mount/path> from a KV engine (KEY, not PATH: Task would read the shell PATH).'
+    requires:
+      vars: [KEY]
+    cmds:
+      - bao kv get {{.CLI_ARGS}} '{{.KEY}}'

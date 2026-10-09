@@ -1,0 +1,14 @@
+# Tasks contributed by the go-task Feature (namespace: go-task).
+version: '3'
+
+tasks:
+  registered:
+    desc: 'List the Feature Taskfiles registered under /usr/local/share/go-task/includes.d - what the "features" include of your root Taskfile exposes.'
+    silent: true
+    cmds:
+      - ls -1 /usr/local/share/go-task/includes.d/*.yml 2>/dev/null | sed -e 's#.*/##' -e 's/\.yml$//' || echo '(none)'
+
+  registry:refresh:
+    desc: 'Regenerate /usr/local/share/go-task/features.yml from includes.d. Normally done at image build; only needed after editing includes.d by hand (needs root).'
+    cmds:
+      - if [ "$(id -u)" -eq 0 ]; then task-features-registry; else sudo task-features-registry; fi

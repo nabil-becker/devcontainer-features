@@ -1,0 +1,36 @@
+{
+  "name": "devcontainer-features",
+  "image": "mcr.microsoft.com/devcontainers/base:debian",
+  // Everything `task lint`, `task test` and `task docs` need, so Features can
+  // be developed and tested without installing anything on the host.
+  "features": {
+    "ghcr.io/devcontainers/features/powershell:1": {},
+    // docker-in-docker rather than -outside-of-: `devcontainer features test`
+    // bind-mounts paths from inside this container into the test containers,
+    // which only a daemon sharing this filesystem can resolve. moby:false
+    // because the base image is Debian 13 (no moby packages).
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {
+      "moby": false
+    },
+    "ghcr.io/devcontainers-extra/features/shellcheck:1": {},
+    // The collection's own published Features: the task runner, and the
+    // devcontainer CLI that runs the Feature tests.
+    "ghcr.io/nabil-becker/devcontainer-features/go-task:1": {},
+    "ghcr.io/nabil-becker/devcontainer-features/devcontainer-cli:1": {}
+  },
+  "containerEnv": {
+    "GH_CONFIG_DIR": "${containerWorkspaceFolder}/.devcontainer/env_mnt/gh",
+    "GIT_CONFIG_GLOBAL": "${containerWorkspaceFolder}/.devcontainer/env_mnt/git/gitconfig"
+  },
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "remoteUser": "vscode",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-vscode.powershell",
+        "redhat.vscode-yaml",
+        "timonwong.shellcheck"
+      ]
+    }
+  }
+}

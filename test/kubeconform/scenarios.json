@@ -1,0 +1,11 @@
+{
+  "pinned_version": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "kubeconform": {
+        "version": "0.8.0"
+      }
+    },
+    "remoteUser": "vscode"
+  }
+}

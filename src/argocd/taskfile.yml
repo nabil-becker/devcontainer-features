@@ -1,0 +1,37 @@
+# Tasks contributed by the argocd Feature (namespace: argocd). Log in once
+# with `task argocd:login SERVER=...`; the session lives under
+# ARGOCD_CONFIG_DIR (persist it across rebuilds, see the Feature README).
+version: '3'
+
+tasks:
+  version:
+    desc: 'Show the client (and server, when logged in) Argo CD versions.'
+    cmds:
+      - argocd version --short || argocd version --client --short
+
+  login:
+    desc: 'Log in to SERVER=<host[:port]>. Extra flags (e.g. --sso, --grpc-web) after --.'
+    requires:
+      vars: [SERVER]
+    interactive: true
+    cmds:
+      - argocd login '{{.SERVER}}' {{.CLI_ARGS}}
+
+  apps:
+    desc: 'List applications.'
+    cmds:
+      - argocd app list {{.CLI_ARGS}}
+
+  diff:
+    desc: 'Show the live-vs-desired diff for APP=<name>.'
+    requires:
+      vars: [APP]
+    cmds:
+      - argocd app diff '{{.APP}}' {{.CLI_ARGS}}
+
+  sync:
+    desc: 'Sync APP=<name> now. Extra flags (e.g. --prune) after --.'
+    requires:
+      vars: [APP]
+    cmds:
+      - argocd app sync '{{.APP}}' {{.CLI_ARGS}}

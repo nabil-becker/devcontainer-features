@@ -1,11 +1,16 @@
 {
   "id": "claude-code",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "name": "Claude Code",
   "description": "Installs Anthropic's Claude Code CLI (https://code.claude.com/docs) as its native, sha256-verified release binary at /usr/local/bin/claude - no Node.js required - and disables the in-app auto-updater so the pinned version is what runs. Persist login and sessions across rebuilds by pointing CLAUDE_CONFIG_DIR at a mounted folder (see the notes).",
   "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/claude-code",
   "licenseURL": "https://github.com/nabil-becker/devcontainer-features/blob/main/LICENSE",
   "options": {
+    "installTaskfile": {
+      "type": "boolean",
+      "default": true,
+      "description": "Also install this Feature's Taskfile into /usr/local/share/go-task/includes.d so its tasks appear under the <id>: namespace of a root Taskfile that includes /usr/local/share/go-task/features.yml (see the go-task Feature)."
+    },
     "version": {
       "type": "string",
       "default": "stable",

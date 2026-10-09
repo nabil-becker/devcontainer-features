@@ -11,4 +11,6 @@ check "claude reports a version" bash -c "claude --version | grep -E '^[0-9]+\.[
 check "binary is root-owned" bash -c "[ \"\$(stat -c %U /usr/local/bin/claude)\" = root ]"
 check "autoupdater disabled" bash -c "[ \"\$DISABLE_AUTOUPDATER\" = 1 ]"
 
+check "taskfile registered" test -f /usr/local/share/go-task/includes.d/claude-code.yml
+
 reportResults

@@ -9,6 +9,13 @@ dotenv: ['.env', '.devcontainer/.env']
 includes:
   devcontainer:
     taskfile: ./taskfiles/devcontainer.yml
+  # Tasks contributed by the Features installed in the devcontainer (dsc:*,
+  # velero:*, ...). The file only exists inside the container; on the host it
+  # is skipped. See the go-task Feature README.
+  features:
+    taskfile: /usr/local/share/go-task/features.yml
+    optional: true
+    flatten: true
 
 tasks:
   default:

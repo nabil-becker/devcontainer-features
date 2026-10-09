@@ -1,0 +1,33 @@
+{
+  "id": "dsc",
+  "version": "1.0.0",
+  "name": "Microsoft DSC v3",
+  "description": "Installs Microsoft Desired State Configuration v3 (https://github.com/PowerShell/DSC) whole into /opt/dsc (dsc discovers its bundled resources from its own directory on PATH) and verifies the release tarball against the sha256 digest GitHub publishes for the asset, or a digest you pin via the sha256 option. The PowerShell adapter resources need pwsh (ghcr.io/devcontainers/features/powershell).",
+  "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/dsc",
+  "licenseURL": "https://github.com/nabil-becker/devcontainer-features/blob/main/LICENSE",
+  "options": {
+    "installTaskfile": {
+      "type": "boolean",
+      "default": true,
+      "description": "Also install this Feature's Taskfile into /usr/local/share/go-task/includes.d so its tasks appear under the <id>: namespace of a root Taskfile that includes /usr/local/share/go-task/features.yml (see the go-task Feature)."
+    },
+    "version": {
+      "type": "string",
+      "default": "latest",
+      "description": "DSC release to install (e.g. '3.3.0', with or without a leading 'v'), or 'latest'."
+    },
+    "sha256": {
+      "type": "string",
+      "default": "",
+      "description": "Expected sha256 of the release tarball for this platform. When empty, the digest is read from the GitHub Releases API (set GITHUB_TOKEN in the build environment to avoid the unauthenticated rate limit)."
+    }
+  },
+  "containerEnv": {
+    "PATH": "/opt/dsc:${PATH}"
+  },
+  "installsAfter": [
+    "ghcr.io/nabil-becker/devcontainer-features/go-task",
+    "ghcr.io/devcontainers/features/common-utils",
+    "ghcr.io/devcontainers/features/powershell"
+  ]
+}

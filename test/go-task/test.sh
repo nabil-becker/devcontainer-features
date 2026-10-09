@@ -10,4 +10,6 @@ check "task is on PATH" command -v task
 check "task reports a version" bash -c "task --version | grep -E '^[0-9]+\.[0-9]+\.[0-9]+'"
 check "bash completion installed" test -f /etc/bash_completion.d/task
 
+check "taskfile registered" test -f /usr/local/share/go-task/includes.d/go-task.yml
+
 reportResults

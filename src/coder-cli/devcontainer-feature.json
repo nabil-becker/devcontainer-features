@@ -1,0 +1,24 @@
+{
+  "id": "coder-cli",
+  "version": "1.0.0",
+  "name": "Coder CLI",
+  "description": "Installs the Coder CLI (https://coder.com) as a release binary at /usr/local/bin/coder, verified against the release's coder_<version>_checksums.txt. Pin version to your coderd server version to avoid 'version mismatch' warnings.",
+  "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/coder-cli",
+  "licenseURL": "https://github.com/nabil-becker/devcontainer-features/blob/main/LICENSE",
+  "options": {
+    "installTaskfile": {
+      "type": "boolean",
+      "default": true,
+      "description": "Also install this Feature's Taskfile into /usr/local/share/go-task/includes.d so its tasks appear under the <id>: namespace of a root Taskfile that includes /usr/local/share/go-task/features.yml (see the go-task Feature)."
+    },
+    "version": {
+      "type": "string",
+      "default": "latest",
+      "description": "Coder release to install (e.g. '2.36.7', with or without a leading 'v'), or 'latest'. Match your Coder server's version."
+    }
+  },
+  "installsAfter": [
+    "ghcr.io/nabil-becker/devcontainer-features/go-task",
+    "ghcr.io/devcontainers/features/common-utils"
+  ]
+}
