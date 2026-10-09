@@ -1,0 +1,7 @@
+# Code owners are requested for review automatically and their approval is
+# required by the main-branch ruleset (see .github/scripts/Set-RepoGovernance.ps1).
+*                       @nabil-becker
+/src/                   @nabil-becker
+/.github/               @nabil-becker
+/taskfiles/             @nabil-becker
+/bootstrap.ps1          @nabil-becker

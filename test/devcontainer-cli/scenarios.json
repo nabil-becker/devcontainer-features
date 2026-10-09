@@ -1,0 +1,11 @@
+{
+  "pinned_version": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "devcontainer-cli": {
+        "version": "0.89.0"
+      }
+    },
+    "remoteUser": "vscode"
+  }
+}

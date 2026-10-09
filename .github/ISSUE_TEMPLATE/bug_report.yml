@@ -1,0 +1,43 @@
+name: Bug report
+description: A Feature or script does not behave as documented.
+labels: [bug]
+body:
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - go-task
+        - devcontainer-cli
+        - claude-code
+        - taskfiles/devcontainer.yml (host-side tasks)
+        - bootstrap.ps1
+        - CI / release workflow
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Feature version / tag used
+      placeholder: ghcr.io/nabil-becker/devcontainer-features/go-task:1.0.0
+  - type: textarea
+    id: config
+    attributes:
+      label: devcontainer.json snippet
+      render: json
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant build / install log
+      render: shell
+  - type: input
+    id: env
+    attributes:
+      label: Host and engine
+      placeholder: Windows 11 + Docker Desktop 4.x / wslc.exe / Codespaces

@@ -1,0 +1,11 @@
+{
+  "pinned_version": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "claude-code": {
+        "version": "2.1.286"
+      }
+    },
+    "remoteUser": "vscode"
+  }
+}

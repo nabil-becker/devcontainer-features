@@ -1,0 +1,21 @@
+#!/bin/sh
+# Adds the DCO "Signed-off-by: Name <email>" trailer to every commit message
+# that does not already carry one for this author, so contributors never have
+# to remember `git commit -s`. Activated per clone by `task repo:setup`
+# (core.hooksPath = .githooks via the tracked .gitconfig).
+#
+# Arguments from git: <message file> [<source> [<sha>]]. Runs for every
+# commit source (message, template, merge, squash, commit) - a merge or amend
+# without a sign-off is still a commit you are certifying.
+msg_file="$1"
+
+name="$(git config user.name)"
+email="$(git config user.email)"
+if [ -z "$name" ] || [ -z "$email" ]; then
+	# No identity: let git produce its own "please tell me who you are" error.
+	exit 0
+fi
+
+# addIfDifferent: keep existing sign-offs from other people, add ours once.
+git interpret-trailers --in-place --if-exists addIfDifferent \
+	--trailer "Signed-off-by: $name <$email>" "$msg_file"

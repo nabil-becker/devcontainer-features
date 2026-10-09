@@ -1,0 +1,27 @@
+{
+  // Starter devcontainer written by bootstrap.ps1 from
+  // github.com/nabil-becker/devcontainer-features. Edit freely; bootstrap
+  // never overwrites this file once it exists.
+  "name": "${localWorkspaceFolderBasename}",
+  "image": "mcr.microsoft.com/devcontainers/base:debian",
+  "features": {
+    "ghcr.io/devcontainers/features/common-utils:2": {},
+    // Shares the host's Docker daemon (Docker Desktop / wslc). Swap for
+    // ghcr.io/devcontainers/features/docker-in-docker:2 (with "moby": false
+    // on Debian 13) if you need `devcontainer features test` or nested
+    // `devcontainer up` from inside on a Windows/macOS host.
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {},
+    "ghcr.io/nabil-becker/devcontainer-features/go-task:1": {},
+    "ghcr.io/nabil-becker/devcontainer-features/devcontainer-cli:1": {},
+    // "ghcr.io/nabil-becker/devcontainer-features/claude-code:1": {},
+    "ghcr.io/devcontainers/features/powershell:1": {}
+  },
+  // Tool state that must survive rebuilds goes under .devcontainer/env_mnt
+  // (gitignored) - e.g. "CLAUDE_CONFIG_DIR": "${containerWorkspaceFolder}/.devcontainer/env_mnt/claude"
+  "containerEnv": {
+    "GH_CONFIG_DIR": "${containerWorkspaceFolder}/.devcontainer/env_mnt/gh",
+    "GIT_CONFIG_GLOBAL": "${containerWorkspaceFolder}/.devcontainer/env_mnt/git/gitconfig"
+  },
+  "postCreateCommand": "mkdir -p .devcontainer/env_mnt/gh .devcontainer/env_mnt/git && git config --global --add safe.directory '*'",
+  "remoteUser": "vscode"
+}

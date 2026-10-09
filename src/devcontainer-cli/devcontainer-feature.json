@@ -1,0 +1,25 @@
+{
+  "id": "devcontainer-cli",
+  "version": "1.0.0",
+  "name": "Dev Container CLI",
+  "description": "Installs @devcontainers/cli as /usr/local/bin/devcontainer, backed by a private, sha256-verified Node.js under /opt/devcontainer-cli that is NOT added to PATH - so `devcontainer up/build/exec/features test` work inside a container without a system-wide Node.js. Pair with docker-in-docker (needed for features test and nested `up` on Windows/macOS hosts) or docker-outside-of-docker (Linux hosts, same paths).",
+  "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/devcontainer-cli",
+  "licenseURL": "https://github.com/nabil-becker/devcontainer-features/blob/main/LICENSE",
+  "options": {
+    "version": {
+      "type": "string",
+      "default": "latest",
+      "description": "@devcontainers/cli npm version to install (e.g. '0.89.0'), or 'latest'."
+    },
+    "nodeVersion": {
+      "type": "string",
+      "default": "24.21.0",
+      "description": "Node.js release used privately by the CLI. Downloaded from nodejs.org and verified against its SHASUMS256.txt."
+    }
+  },
+  "installsAfter": [
+    "ghcr.io/devcontainers/features/common-utils",
+    "ghcr.io/devcontainers/features/docker-in-docker",
+    "ghcr.io/devcontainers/features/docker-outside-of-docker"
+  ]
+}

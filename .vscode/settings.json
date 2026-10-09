@@ -1,0 +1,7 @@
+{
+  // Commits made from the VS Code Source Control view get the DCO
+  // Signed-off-by trailer (see CONTRIBUTING.md "Sign your work").
+  "git.alwaysSignOff": true,
+  "files.insertFinalNewline": true,
+  "files.trimTrailingWhitespace": true
+}

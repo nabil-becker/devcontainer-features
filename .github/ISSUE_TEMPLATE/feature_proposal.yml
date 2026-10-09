@@ -1,0 +1,28 @@
+name: New Feature proposal
+description: Propose adding a new Dev Container Feature to this collection.
+labels: [proposal]
+body:
+  - type: input
+    id: tool
+    attributes:
+      label: Tool and upstream project URL
+    validations:
+      required: true
+  - type: textarea
+    id: source
+    attributes:
+      label: Where would it be downloaded from, and how is integrity verified?
+      description: Release checksums, signed artifacts, distro packages, ...
+    validations:
+      required: true
+  - type: textarea
+    id: existing
+    attributes:
+      label: Why not an existing Feature?
+      description: Check https://containers.dev/features first.
+    validations:
+      required: true
+  - type: textarea
+    id: options
+    attributes:
+      label: Proposed options
