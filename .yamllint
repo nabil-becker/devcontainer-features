@@ -1,0 +1,15 @@
+# yamllint config for `task lint` and the Lint workflow. Files vendored into
+# other repos (bootstrap/devcontainer.yml) must pass a default-rules yamllint
+# too, since consumers lint them with their own configs.
+extends: default
+rules:
+  line-length: disable       # task descriptions are long on purpose
+  document-start: disable
+  truthy:
+    allowed-values: ['true', 'false']
+    check-keys: false          # GitHub workflows' `on:` key
+  comments:
+    min-spaces-from-content: 1
+ignore: |
+  .task/
+  node_modules/

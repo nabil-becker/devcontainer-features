@@ -13,6 +13,7 @@
       "moby": false
     },
     "ghcr.io/devcontainers-extra/features/shellcheck:1": {},
+    "ghcr.io/devcontainers-extra/features/yamllint:2": {},
     // The collection's own published Features: the task runner, and the
     // devcontainer CLI that runs the Feature tests.
     "ghcr.io/nabil-becker/devcontainer-features/go-task:1": {},

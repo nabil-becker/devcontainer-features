@@ -18,6 +18,11 @@ jobs:
       - name: "shellcheck"
         run: shellcheck -x src/*/*.sh test/*/*.sh bootstrap/*.sh .githooks/*
 
+      - name: "yamllint"
+        run: |
+          pip install --quiet yamllint
+          yamllint --strict .
+
       - name: "PSScriptAnalyzer"
         shell: pwsh
         run: |

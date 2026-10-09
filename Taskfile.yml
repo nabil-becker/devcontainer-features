@@ -70,9 +70,10 @@ tasks:
           echo "generated READMEs are up to date"
 
   lint:
-    desc: 'shellcheck every shell script, PSScriptAnalyzer every PowerShell file (same checks as CI; both tools must be installed).'
+    desc: 'shellcheck every shell script, yamllint every YAML file (.yamllint), PSScriptAnalyzer every PowerShell file (same checks as CI; the tools must be installed - this repo''s devcontainer has them).'
     cmds:
       - shellcheck -x src/*/*.sh test/*/*.sh bootstrap/*.sh .githooks/*
+      - yamllint --strict .
       - pwsh -NoLogo -NoProfile -File '{{.ROOT_DIR}}/.github/scripts/Invoke-PSScriptAnalyzer.ps1'
 
   repo:setup:

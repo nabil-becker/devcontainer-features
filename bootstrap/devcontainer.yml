@@ -79,19 +79,25 @@ tasks:
     desc: 'Build (if needed) and start the devcontainer for {{.WORKSPACE_FOLDER}}. Idempotent. Extra `devcontainer up` flags after --, e.g. task devcontainer:up -- --remove-existing-container.'
     cmds:
       - task: cli
-        vars: { SUBCOMMAND: up, ARGS: '{{.CLI_ARGS}}' }
+        vars:
+          SUBCOMMAND: up
+          ARGS: '{{.CLI_ARGS}}'
 
   rebuild:
     desc: 'Recreate the devcontainer from scratch (devcontainer up --remove-existing-container --build-no-cache). VS Code windows attached to the old container must reload.'
     cmds:
       - task: cli
-        vars: { SUBCOMMAND: up, ARGS: '--remove-existing-container --build-no-cache' }
+        vars:
+          SUBCOMMAND: up
+          ARGS: '--remove-existing-container --build-no-cache'
 
   build:
     desc: 'Build the devcontainer image without starting a container (validates devcontainer.json and every Feature install).'
     cmds:
       - task: cli
-        vars: { SUBCOMMAND: build, ARGS: '{{.CLI_ARGS}}' }
+        vars:
+          SUBCOMMAND: build
+          ARGS: '{{.CLI_ARGS}}'
 
   exec:
     desc: 'Run CMD="<command>" inside the running devcontainer via bash -lc, as the configured remoteUser. CMD is base64-encoded on the way through, so nested quotes/newlines need no escaping.'
@@ -99,20 +105,26 @@ tasks:
       vars: [CMD]
     cmds:
       - task: cli
-        vars: { SUBCOMMAND: exec, CMD: '{{.CMD}}' }
+        vars:
+          SUBCOMMAND: exec
+          CMD: '{{.CMD}}'
 
   shell:
     desc: 'Open an interactive login shell inside the running devcontainer.'
     interactive: true
     cmds:
       - task: cli
-        vars: { SUBCOMMAND: exec, ARGS: 'bash -l' }
+        vars:
+          SUBCOMMAND: exec
+          ARGS: 'bash -l'
 
   config:
     desc: 'Print the fully resolved devcontainer configuration (devcontainer read-configuration --include-merged-configuration).'
     cmds:
       - task: cli
-        vars: { SUBCOMMAND: read-configuration, ARGS: '--include-merged-configuration' }
+        vars:
+          SUBCOMMAND: read-configuration
+          ARGS: '--include-merged-configuration'
 
   reset-storage:
     desc: 'wslc.exe only: reset WSL Containers'' backing storage after a "read-only file system" BuildKit error. Destroys ALL wslc images and containers. Windows-only.'
@@ -124,4 +136,6 @@ tasks:
     desc: 'Passthrough: the part after "devcontainer:" becomes the @devcontainers/cli subcommand, args after --. e.g. task devcontainer:outdated, task devcontainer:features -- test -f go-task.'
     cmds:
       - task: cli
-        vars: { SUBCOMMAND: '{{index .MATCH 0}}', ARGS: '{{.CLI_ARGS}}' }
+        vars:
+          SUBCOMMAND: '{{index .MATCH 0}}'
+          ARGS: '{{.CLI_ARGS}}'
