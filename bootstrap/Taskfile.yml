@@ -1,6 +1,6 @@
 version: '3'
 
-# devcontainer:* tasks come from taskfiles/devcontainer.yml, vendored by
+# devcontainer:* tasks come from bootstrap/devcontainer.yml, vendored by
 # bootstrap.ps1 / bootstrap.sh from github.com/nabil-becker/devcontainer-features.
 # Re-run the bootstrap to refresh it. Settings (DEVCONTAINER_DOCKER_PATH, ...)
 # can live in .devcontainer/.env - see .devcontainer/.env.example.
@@ -8,7 +8,7 @@ dotenv: ['.env', '.devcontainer/.env']
 
 includes:
   devcontainer:
-    taskfile: ./taskfiles/devcontainer.yml
+    taskfile: ./bootstrap/devcontainer.yml
   # Tasks contributed by the Features installed in the devcontainer (dsc:*,
   # velero:*, ...). The file only exists inside the container; on the host it
   # is skipped. See the go-task Feature README.

@@ -4,7 +4,7 @@
 # Run from the repo root on a host that has Task and a Docker-compatible
 # engine:
 #
-#   curl -fsSL https://raw.githubusercontent.com/nabil-becker/devcontainer-features/main/bootstrap.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/nabil-becker/devcontainer-features/main/bootstrap/bootstrap.sh | bash
 #
 # Every setting can come from the command line, from an environment variable,
 # or from a .env file in the repo (./.env or ./.devcontainer/.env, loaded
@@ -16,10 +16,11 @@
 #   --docker-path <cli>      DEVCONTAINER_DOCKER_PATH        (default docker on PATH)
 #   --no-up                  DEVCONTAINER_BOOTSTRAP_NO_UP=true
 #
-# What it does: (1) vendors taskfiles/devcontainer.yml + taskfiles/devcontainer/*
-# into the repo (always refreshed - re-run to update); (2) writes
-# Taskfile.yml, .devcontainer/devcontainer.json, .devcontainer/env_mnt/.gitignore
-# and .devcontainer/.env.example only if they don't exist, and gitignores
+# What it does: (1) vendors bootstrap/devcontainer.yml, bootstrap/host/* and
+# the devcontainer-cli Feature's devcontainer-cli.sh into ./bootstrap/
+# (always refreshed - re-run to update); (2) writes Taskfile.yml,
+# .devcontainer/devcontainer.json, .devcontainer/env_mnt/.gitignore and
+# .devcontainer/.env.example only if they don't exist, and gitignores
 # .devcontainer/.env; (3) runs `task devcontainer:init` and `task devcontainer:up`.
 set -euo pipefail
 
@@ -31,7 +32,7 @@ while [ $# -gt 0 ]; do
     --source) source="$2"; shift 2 ;;
     --docker-path) docker_path="$2"; shift 2 ;;
     --no-up) no_up=true; shift ;;
-    -h | --help) sed -n '2,24p' "$0"; exit 0 ;;
+    -h | --help) sed -n '2,25p' "$0"; exit 0 ;;
     *) echo "bootstrap: unknown argument $1" >&2; exit 2 ;;
   esac
 done
@@ -73,21 +74,24 @@ get_source_file() { # <relative> <destination>
 echo "Bootstrapping $path from $source"
 [ -n "$docker_path" ] && echo "  engine    DEVCONTAINER_DOCKER_PATH=$docker_path"
 
-# 1. Vendor the devcontainer tasks (always refreshed).
-for rel in \
-  taskfiles/devcontainer.yml \
-  taskfiles/devcontainer/DevcontainerCli.psm1 \
-  taskfiles/devcontainer/Invoke-DevcontainerCli.ps1 \
-  taskfiles/devcontainer/Initialize-DevcontainerCli.ps1 \
-  taskfiles/devcontainer/Reset-WslcStorage.ps1 \
-  taskfiles/devcontainer/devcontainer-cli.sh; do
-  get_source_file "$rel" "$path/$rel"
-  echo "  vendored  $rel"
-done
-chmod +x "$path/taskfiles/devcontainer/devcontainer-cli.sh"
+# 1. Vendor the devcontainer tasks (always refreshed): "<source path> <dest>".
+#    The bash flavour is the devcontainer-cli Feature's own script, vendored
+#    next to the PowerShell flavour.
+while read -r src dest; do
+  get_source_file "$src" "$path/$dest"
+  echo "  vendored  $dest"
+done <<'EOF'
+bootstrap/devcontainer.yml bootstrap/devcontainer.yml
+bootstrap/host/DevcontainerCli.psm1 bootstrap/host/DevcontainerCli.psm1
+bootstrap/host/Invoke-DevcontainerCli.ps1 bootstrap/host/Invoke-DevcontainerCli.ps1
+bootstrap/host/Initialize-DevcontainerCli.ps1 bootstrap/host/Initialize-DevcontainerCli.ps1
+bootstrap/host/Reset-WslcStorage.ps1 bootstrap/host/Reset-WslcStorage.ps1
+src/devcontainer-cli/devcontainer-cli.sh bootstrap/host/devcontainer-cli.sh
+EOF
+chmod +x "$path/bootstrap/host/devcontainer-cli.sh"
 
 # 2. Templates, only where nothing exists yet.
-while IFS=' ' read -r src dest; do
+while read -r src dest; do
   if [ -e "$path/$dest" ]; then
     echo "  kept      $dest (exists)"
   else
@@ -106,14 +110,18 @@ if ! grep -qxF '.devcontainer/.env' "$path/.gitignore" 2>/dev/null; then
   echo "  gitignored .devcontainer/.env"
 fi
 
-if ! grep -q 'taskfiles/devcontainer\.yml' "$path/Taskfile.yml"; then
+if ! grep -q 'bootstrap/devcontainer\.yml' "$path/Taskfile.yml"; then
   cat >&2 <<'EOF'
 WARNING: Taskfile.yml already exists and does not include the devcontainer tasks. Add:
 
   dotenv: ['.env', '.devcontainer/.env']
   includes:
     devcontainer:
-      taskfile: ./taskfiles/devcontainer.yml
+      taskfile: ./bootstrap/devcontainer.yml
+    features:
+      taskfile: /usr/local/share/go-task/features.yml
+      optional: true
+      flatten: true
 EOF
 fi
 

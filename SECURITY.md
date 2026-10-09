@@ -16,7 +16,8 @@ days for confirmed issues.
 ## Scope
 
 - `src/*/install.sh` and `devcontainer-feature.json`
-- the host-side scripts in `taskfiles/` and `bootstrap.ps1`
+- the host-side scripts in `bootstrap/` (including the vendored
+  `devcontainer-cli.sh` shared with the `devcontainer-cli` Feature)
 - the release and CI workflows in `.github/workflows/`
 
 ## What we do to keep it safe

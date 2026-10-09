@@ -5,7 +5,7 @@
     use bootstrap.sh. Run it from the repo root on a host that has Task and
     a Docker-compatible engine:
 
-      irm https://raw.githubusercontent.com/nabil-becker/devcontainer-features/main/bootstrap.ps1 | iex
+      irm https://raw.githubusercontent.com/nabil-becker/devcontainer-features/main/bootstrap/bootstrap.ps1 | iex
 
     Every parameter can come from the command line, from an environment
     variable, or from a .env file in the repo (./.env or ./.devcontainer/.env,
@@ -17,21 +17,22 @@
 
     or, with parameters:
 
-      & ([scriptblock]::Create((irm https://raw.githubusercontent.com/nabil-becker/devcontainer-features/main/bootstrap.ps1))) -DockerPath wslc -NoUp
+      & ([scriptblock]::Create((irm https://raw.githubusercontent.com/nabil-becker/devcontainer-features/main/bootstrap/bootstrap.ps1))) -DockerPath wslc -NoUp
 
 .DESCRIPTION
     Breaks the chicken-and-egg between "the devcontainer tasks live in the
     devcontainer-features repo" and "I don't have that repo checked out":
 
-      1. Vendors taskfiles/devcontainer.yml + taskfiles/devcontainer/* (the
-         PowerShell and bash flavours) from this repository (at -Ref) into
-         ./taskfiles/ - always refreshed, so re-running the bootstrap is how
-         you update them.
-      2. Writes a starter Taskfile.yml (includes the vendored tasks, loads
-         .env files), .devcontainer/devcontainer.json (go-task,
-         devcontainer-cli, docker-outside-of-docker, PowerShell),
-         .devcontainer/env_mnt/.gitignore and .devcontainer/.env.example -
-         only if they don't exist - and gitignores .devcontainer/.env.
+      1. Vendors bootstrap/devcontainer.yml, bootstrap/host/* (the PowerShell
+         flavour) and the devcontainer-cli Feature's devcontainer-cli.sh (the
+         bash flavour) into ./bootstrap/ - always refreshed, so re-running
+         the bootstrap is how you update them.
+      2. Writes a starter Taskfile.yml (includes the vendored tasks and the
+         Feature-Taskfile registry, loads .env files),
+         .devcontainer/devcontainer.json (go-task, devcontainer-cli,
+         docker-outside-of-docker, PowerShell), .devcontainer/env_mnt/.gitignore
+         and .devcontainer/.env.example - only if they don't exist - and
+         gitignores .devcontainer/.env.
       3. Runs `task devcontainer:init` (caches the portable Node.js +
          @devcontainers/cli, reports the engine) and then
          `task devcontainer:up`, unless -NoUp.
@@ -118,18 +119,20 @@ function Get-SourceFile([string]$RelativePath, [string]$Destination) {
 Write-Host "Bootstrapping $Path from $Source"
 if ($DockerPath) { Write-Host "  engine    DEVCONTAINER_DOCKER_PATH=$DockerPath" }
 
-# 1. Vendor the devcontainer tasks (always refreshed).
-$vendored = @(
-    'taskfiles/devcontainer.yml',
-    'taskfiles/devcontainer/DevcontainerCli.psm1',
-    'taskfiles/devcontainer/Invoke-DevcontainerCli.ps1',
-    'taskfiles/devcontainer/Initialize-DevcontainerCli.ps1',
-    'taskfiles/devcontainer/Reset-WslcStorage.ps1',
-    'taskfiles/devcontainer/devcontainer-cli.sh'
-)
-foreach ($rel in $vendored) {
-    Get-SourceFile -RelativePath $rel -Destination (Join-Path $Path $rel)
-    Write-Host "  vendored  $rel"
+# 1. Vendor the devcontainer tasks (always refreshed). Source path in the
+#    collection repo -> destination in this repo. The bash flavour is the
+#    devcontainer-cli Feature's own script, vendored next to the PowerShell.
+$vendored = [ordered]@{
+    'bootstrap/devcontainer.yml'                   = 'bootstrap/devcontainer.yml'
+    'bootstrap/host/DevcontainerCli.psm1'          = 'bootstrap/host/DevcontainerCli.psm1'
+    'bootstrap/host/Invoke-DevcontainerCli.ps1'    = 'bootstrap/host/Invoke-DevcontainerCli.ps1'
+    'bootstrap/host/Initialize-DevcontainerCli.ps1' = 'bootstrap/host/Initialize-DevcontainerCli.ps1'
+    'bootstrap/host/Reset-WslcStorage.ps1'         = 'bootstrap/host/Reset-WslcStorage.ps1'
+    'src/devcontainer-cli/devcontainer-cli.sh'     = 'bootstrap/host/devcontainer-cli.sh'
+}
+foreach ($entry in $vendored.GetEnumerator()) {
+    Get-SourceFile -RelativePath $entry.Key -Destination (Join-Path $Path $entry.Value)
+    Write-Host "  vendored  $($entry.Value)"
 }
 
 # 2. Templates, only where nothing exists yet.
@@ -157,14 +160,18 @@ if (-not (Test-Path $gitignore) -or -not ((Get-Content $gitignore) -contains $ig
 }
 
 $taskfile = Join-Path $Path 'Taskfile.yml'
-if ((Get-Content $taskfile -Raw) -notmatch 'taskfiles/devcontainer\.yml') {
+if ((Get-Content $taskfile -Raw) -notmatch 'bootstrap/devcontainer\.yml') {
     Write-Warning @"
 Taskfile.yml already exists and does not include the devcontainer tasks. Add:
 
   dotenv: ['.env', '.devcontainer/.env']
   includes:
     devcontainer:
-      taskfile: ./taskfiles/devcontainer.yml
+      taskfile: ./bootstrap/devcontainer.yml
+    features:
+      taskfile: /usr/local/share/go-task/features.yml
+      optional: true
+      flatten: true
 "@
 }
 

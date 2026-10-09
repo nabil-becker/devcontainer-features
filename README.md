@@ -40,7 +40,7 @@ includes:
 ```
 
 Add a Feature and rebuild: its tasks appear. Remove it: they disappear.
-`bootstrap.ps1` / `bootstrap.sh` write that include into the starter
+`bootstrap/bootstrap.ps1` / `bootstrap.sh` write that include into the starter
 `Taskfile.yml`.
 
 ```json
@@ -69,19 +69,20 @@ host-side script. From the repo root:
 
 ```powershell
 # Windows
-irm https://raw.githubusercontent.com/nabil-becker/devcontainer-features/main/bootstrap.ps1 | iex
+irm https://raw.githubusercontent.com/nabil-becker/devcontainer-features/main/bootstrap/bootstrap.ps1 | iex
 ```
 
 ```bash
 # Linux / macOS
-curl -fsSL https://raw.githubusercontent.com/nabil-becker/devcontainer-features/main/bootstrap.sh | bash
+curl -fsSL https://raw.githubusercontent.com/nabil-becker/devcontainer-features/main/bootstrap/bootstrap.sh | bash
 ```
 
-[`bootstrap.ps1`](bootstrap.ps1) / [`bootstrap.sh`](bootstrap.sh):
+[`bootstrap/bootstrap.ps1`](bootstrap/bootstrap.ps1) / [`bootstrap/bootstrap.sh`](bootstrap/bootstrap.sh):
 
-1. vendor `taskfiles/devcontainer.yml` and `taskfiles/devcontainer/*` (both
-   flavours) into the repo - always refreshed, so re-running is the update
-   path;
+1. vendor `bootstrap/devcontainer.yml`, `bootstrap/host/*` (the PowerShell
+   flavour) and the `devcontainer-cli` Feature's `devcontainer-cli.sh` (the
+   bash flavour) into the repo's `bootstrap/` folder - always refreshed, so
+   re-running is the update path;
 2. write `Taskfile.yml`, `.devcontainer/devcontainer.json` (go-task,
    devcontainer-cli, docker-outside-of-docker, PowerShell),
    `.devcontainer/env_mnt/.gitignore` and `.devcontainer/.env.example` from
@@ -113,14 +114,14 @@ by Task's `dotenv:` in the generated Taskfile). That is how a piped
 | Stop before `up` | `DEVCONTAINER_BOOTSTRAP_NO_UP=true` | `-NoUp` / `--no-up` |
 
 ```powershell
-$env:DEVCONTAINER_DOCKER_PATH = 'wslc'; irm https://raw.githubusercontent.com/nabil-becker/devcontainer-features/main/bootstrap.ps1 | iex
+$env:DEVCONTAINER_DOCKER_PATH = 'wslc'; irm https://raw.githubusercontent.com/nabil-becker/devcontainer-features/main/bootstrap/bootstrap.ps1 | iex
 # or with parameters
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/nabil-becker/devcontainer-features/main/bootstrap.ps1))) -DockerPath wslc -NoUp
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/nabil-becker/devcontainer-features/main/bootstrap/bootstrap.ps1))) -DockerPath wslc -NoUp
 ```
 
 See [`bootstrap/env.example`](bootstrap/env.example) for a commented `.env`.
 
-## Host-side devcontainer CLI (`taskfiles/devcontainer.yml`)
+## Host-side devcontainer CLI (`bootstrap/devcontainer.yml`)
 
 | Task | Does |
 | --- | --- |
@@ -133,13 +134,14 @@ See [`bootstrap/env.example`](bootstrap/env.example) for a commented `.env`.
 
 Each task dispatches per platform (Task's per-command `platforms`):
 
-- **Windows** runs `Invoke-DevcontainerCli.ps1`: a pinned portable Node.js is
-  downloaded once (sha256-verified) into
+- **Windows** runs `bootstrap/host/Invoke-DevcontainerCli.ps1`: a pinned
+  portable Node.js is downloaded once (sha256-verified) into
   `%LOCALAPPDATA%\devcontainer-features\devcontainer-node`, the CLI is
   npm-installed next to it, nothing lands on PATH. Needs PowerShell 7.
-- **Linux/macOS** run `devcontainer-cli.sh`: `devcontainer` on PATH if present
-  (e.g. from the `devcontainer-cli` Feature), else the same portable Node.js
-  trick under `~/.cache/devcontainer-features`. Needs bash and curl.
+- **Linux/macOS** run `devcontainer-cli.sh`, the very script that installs
+  the `devcontainer-cli` Feature (vendored as `bootstrap/host/devcontainer-cli.sh`):
+  `devcontainer` on PATH if present, else the same portable Node.js trick
+  under `~/.cache/devcontainer-features`. Needs bash and curl.
 
 Both honour the `DEVCONTAINER_*` settings above. The include must be a
 *local* include - the tasks run the scripts next to the Taskfile, which

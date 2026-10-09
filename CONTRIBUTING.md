@@ -144,10 +144,14 @@ with, and why it exists if a similar Feature is published elsewhere.
 - Shell: bash, `shellcheck`-clean, 2-space indent, `set -euo pipefail`.
 - PowerShell: PowerShell 7, `PSScriptAnalyzer`-clean, comment-based help.
 - Host-side tooling ships in two flavours that must stay in step:
-  `taskfiles/devcontainer/*.ps*1` + `bootstrap.ps1` (Windows, primary) and
-  `taskfiles/devcontainer/devcontainer-cli.sh` + `bootstrap.sh`
-  (Linux/macOS). A behaviour or setting added to one goes into the other in
-  the same PR, with the same `DEVCONTAINER_*` variable name.
+  `bootstrap/host/*.ps*1` + `bootstrap/bootstrap.ps1` (Windows, primary)
+  and `src/devcontainer-cli/devcontainer-cli.sh` + `bootstrap/bootstrap.sh`
+  (Linux/macOS). That bash script is also the `devcontainer-cli` Feature's
+  installer (`install` mode), so it is the single source of the bash logic;
+  the bootstrap vendors it into consuming repos as
+  `bootstrap/host/devcontainer-cli.sh`. A behaviour or setting added to one
+  flavour goes into the other in the same PR, with the same `DEVCONTAINER_*`
+  variable name.
 - Keep comments to the *why*; the code says the *what*.
 
 ## Sign your work (DCO)

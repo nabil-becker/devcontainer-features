@@ -6,7 +6,7 @@ dotenv: ['.env', '.devcontainer/.env']
 
 includes:
   devcontainer:
-    taskfile: ./taskfiles/devcontainer.yml
+    taskfile: ./bootstrap/devcontainer.yml
   # Tasks contributed by the Features installed in this repo's devcontainer
   # (go-task:*, devcontainer-cli:*); absent on the host.
   features:
@@ -72,7 +72,7 @@ tasks:
   lint:
     desc: 'shellcheck every shell script, PSScriptAnalyzer every PowerShell file (same checks as CI; both tools must be installed).'
     cmds:
-      - shellcheck -x src/*/install.sh test/*/*.sh taskfiles/devcontainer/*.sh bootstrap.sh .githooks/*
+      - shellcheck -x src/*/*.sh test/*/*.sh bootstrap/*.sh .githooks/*
       - pwsh -NoLogo -NoProfile -File '{{.ROOT_DIR}}/.github/scripts/Invoke-PSScriptAnalyzer.ps1'
 
   repo:setup:

@@ -1,5 +1,5 @@
 {
-  // Starter devcontainer written by bootstrap.ps1 from
+  // Starter devcontainer written by bootstrap/bootstrap.ps1 (or .sh) from
   // github.com/nabil-becker/devcontainer-features. Edit freely; bootstrap
   // never overwrites this file once it exists.
   "name": "${localWorkspaceFolderBasename}",

@@ -36,5 +36,6 @@ Feature tasks run in your current directory, so paths such as `CONFIG=` or
 ## Driving devcontainers with Task
 
 The `devcontainer-cli` Feature in this repository puts `devcontainer` on PATH
-inside the container; the `taskfiles/devcontainer.yml` include (vendored into
-a repo by `bootstrap.ps1`) gives `task devcontainer:up|exec|...` on the host.
+inside the container; the `bootstrap/devcontainer.yml` include (vendored into
+a repo by `bootstrap/bootstrap.ps1` or `bootstrap.sh`) gives
+`task devcontainer:up|exec|...` on the host.
