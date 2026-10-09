@@ -15,8 +15,10 @@ Every Feature in `src/<id>/` must:
 
 1. Follow the [Feature specification](https://containers.dev/implementors/features/)
    and the [feature-starter](https://github.com/devcontainers/feature-starter)
-   layout: `devcontainer-feature.json`, `install.sh`, `NOTES.md` (the README
-   is generated on release - do not edit `src/<id>/README.md` by hand).
+   layout: `devcontainer-feature.json`, `install.sh`, `NOTES.md`. The
+   `README.md` next to them is generated: never edit it by hand, run
+   `task docs` after changing the JSON or the notes and commit the result
+   (CI fails on a stale README).
 2. **Verify what it downloads.** Release artifacts are checked against the
    publisher's checksum file (or a pinned sha256). No piping unverified
    content into a shell.
@@ -38,13 +40,14 @@ Every Feature in `src/<id>/` must:
 
 1. Fork, branch from `main`, and run `task repo:setup` once in the clone
    (see "Sign your work" below).
-2. Make the change; run `task lint` and, on Linux/macOS or inside the
-   workbench devcontainer, `task test FEATURE=<id>`.
+2. Make the change; run `task docs` (if the JSON or notes changed),
+   `task lint` and, on Linux/macOS or inside the workbench devcontainer,
+   `task test FEATURE=<id>`.
 3. Open a pull request using the template. CI (`validate`, `lint`, `tests`,
    `DCO`) must pass and a code owner must approve; `main` only accepts
    squash merges through pull requests.
 4. A maintainer runs the release workflow, which publishes to
-   `ghcr.io/nabil-becker/devcontainer-features/<id>` and regenerates docs.
+   `ghcr.io/nabil-becker/devcontainer-features/<id>`.
 
 ## Sign your work (DCO)
 

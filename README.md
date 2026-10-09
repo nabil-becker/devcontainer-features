@@ -115,7 +115,8 @@ remote includes cannot reach.
 task test                    # devcontainer features test, all Features
 task test FEATURE=go-task    # one Feature
 task test:global             # combined scenario in test/_global
-task lint                    # shellcheck
+task lint                    # shellcheck + PSScriptAnalyzer
+task docs                    # regenerate src/<id>/README.md (commit the result)
 ```
 
 `devcontainer features test` does not run on a Windows host (the CLI shells
@@ -124,15 +125,17 @@ the workbench devcontainer (docker-in-docker + the `devcontainer-cli`
 Feature) or let CI do it.
 
 Layout follows [devcontainers/feature-starter](https://github.com/devcontainers/feature-starter):
-`src/<id>/devcontainer-feature.json` + `install.sh` (+ `NOTES.md`, folded into
-the generated README on release), `test/<id>/test.sh` + `scenarios.json`.
+`src/<id>/devcontainer-feature.json` + `install.sh` + `NOTES.md`, with
+`README.md` generated from those two by `task docs` and checked by CI, and
+`test/<id>/test.sh` + `scenarios.json`.
 
 ## Releasing
 
 Run the **Release dev container features** workflow (`workflow_dispatch` on
 `main`, `release` environment). It publishes every `src/<id>` to
-`ghcr.io/nabil-becker/devcontainer-features/<id>` and opens a PR regenerating
-each Feature's README. Bump `version` in the Feature's
+`ghcr.io/nabil-becker/devcontainer-features/<id>`; it has no write access to
+the repository, since READMEs are committed with each change rather than
+generated at release time. Bump `version` in the Feature's
 `devcontainer-feature.json` before releasing a change.
 
 After the **first** release, GHCR packages are private by default: open each

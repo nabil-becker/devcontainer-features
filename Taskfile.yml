@@ -38,6 +38,27 @@ tasks:
           SUBCOMMAND: features
           ARGS: 'test -p "{{.ROOT_DIR}}" --global-scenarios-only'
 
+  docs:
+    desc: 'Regenerate src/<id>/README.md from each devcontainer-feature.json + NOTES.md with `devcontainer features generate-docs`. Run after changing either and commit the result; CI (lint) fails when a README is stale.'
+    # Relative -p on purpose: the CLI embeds the given path in each README's
+    # footer link, so an absolute path would leak the local checkout path.
+    dir: '{{.ROOT_DIR}}'
+    cmds:
+      - task: devcontainer:cli
+        vars:
+          SUBCOMMAND: features
+          ARGS: 'generate-docs -p src -n nabil-becker/devcontainer-features --github-owner nabil-becker --github-repo devcontainer-features'
+
+  docs:check:
+    desc: 'Fail if any src/<id>/README.md differs from what `task docs` generates (the check CI runs).'
+    dir: '{{.ROOT_DIR}}'
+    cmds:
+      - task: docs
+      - git diff --exit-code --stat -- 'src/*/README.md'
+      - cmd: |
+          untracked="$(git ls-files --others --exclude-standard -- 'src/*/README.md')"
+          if [ -n "$untracked" ]; then echo "Uncommitted generated README(s): $untracked"; exit 1; fi
+
   lint:
     desc: 'shellcheck every shell script, PSScriptAnalyzer every PowerShell file (same checks as CI; both tools must be installed).'
     cmds:
