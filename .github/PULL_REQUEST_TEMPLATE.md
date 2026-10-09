@@ -8,6 +8,7 @@
 
 ## Checklist
 
+- [ ] Every commit is signed off (`Signed-off-by:`, DCO) - automatic after `task repo:setup`
 - [ ] `version` bumped in `src/<id>/devcontainer-feature.json` (semver)
 - [ ] Downloads remain checksum-verified; nothing unverified is piped into a shell
 - [ ] `install.sh` is idempotent and does not assume a `remoteUser`

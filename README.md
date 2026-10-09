@@ -165,8 +165,10 @@ Codespaces, so the repo is run as a public project: see
 
 - `main` is protected by the `protect-main` ruleset: pull requests only, one
   approval including a code owner, conversations resolved, required checks
-  `validate` / `lint` / `tests`, squash merges, no force-push. Repo admins may
-  bypass only through a PR.
+  `validate` / `lint` / `tests` / `DCO`, squash merges, no force-push. Repo
+  admins may bypass only through a PR.
+- Every commit is signed off under the Developer Certificate of Origin;
+  `task repo:setup` makes that automatic per clone (see CONTRIBUTING).
 - Workflows run with a read-only `GITHUB_TOKEN`; the release job alone gets
   `packages: write`, inside the `release` environment restricted to `main`.
   Actions are SHA-pinned and limited to GitHub-owned ones plus

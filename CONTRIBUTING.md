@@ -36,14 +36,55 @@ Every Feature in `src/<id>/` must:
 
 ## Workflow
 
-1. Fork, branch from `main`.
+1. Fork, branch from `main`, and run `task repo:setup` once in the clone
+   (see "Sign your work" below).
 2. Make the change; run `task lint` and, on Linux/macOS or inside the
    workbench devcontainer, `task test FEATURE=<id>`.
-3. Open a pull request using the template. CI (`validate`, `lint`, `tests`)
-   must pass and a code owner must approve; `main` only accepts squash
-   merges through pull requests.
+3. Open a pull request using the template. CI (`validate`, `lint`, `tests`,
+   `DCO`) must pass and a code owner must approve; `main` only accepts
+   squash merges through pull requests.
 4. A maintainer runs the release workflow, which publishes to
    `ghcr.io/nabil-becker/devcontainer-features/<id>` and regenerates docs.
+
+## Sign your work (DCO)
+
+Every commit must carry a `Signed-off-by: Your Name <you@example.com>`
+trailer. By adding it you certify the
+[Developer Certificate of Origin 1.1](https://developercertificate.org/):
+that you wrote the change or otherwise have the right to submit it under
+this project's MIT license. The `DCO` check on each pull request enforces
+it; no CLA, no separate signing.
+
+You should not have to think about it:
+
+- `task repo:setup` activates the tracked [`.gitconfig`](.gitconfig) for
+  your clone (`git config --local include.path ../.gitconfig`). That turns
+  on the repo hook `.githooks/prepare-commit-msg`, which adds the trailer to
+  every commit automatically, and defines `git cs` as `commit -s`. Only
+  this clone's `.git/config` is touched, never your global git config.
+- VS Code's Source Control view signs off too
+  ([`.vscode/settings.json`](.vscode/settings.json) sets `git.alwaysSignOff`).
+- Edits made in the GitHub web editor are signed off by the repository
+  setting.
+
+Forgot one? `git commit --amend -s` (or `git rebase --signoff main` for a
+whole branch) and force-push your branch.
+
+## AI-assisted contributions
+
+This project is maintained with AI assistance (Claude Code co-authors
+commits), and AI-assisted contributions are welcome under the same terms as
+any other:
+
+- **You are the author.** You must understand, test and be able to explain
+  every line you submit, and your sign-off certifies you have the right to
+  contribute it. "The model wrote it" is not an answer in review.
+- **Say so.** Add a `Co-Authored-By:` trailer or a sentence in the PR when a
+  model produced a substantial part of the change.
+- **Quality bar is unchanged.** Unsolicited bulk or low-effort generated
+  pull requests, issues or reviews will be closed without discussion.
+- **Security reports need a reproduction.** A model's guess that something
+  might be vulnerable is not a report; see [SECURITY.md](SECURITY.md).
 
 ## Proposing a new Feature
 

@@ -12,6 +12,9 @@
         without leaking credentials or shipping known-vulnerable actions.
       - Squash-only merges, delete branch on merge: linear, reviewable
         history on main.
+      - DCO: web-based commits must be signed off, and the 'DCO' status
+        check (from the DCO GitHub App, https://github.com/apps/dco - install
+        it on the repo first, by hand) is required on main.
       - Actions: only GitHub-owned actions plus devcontainers/action; default
         GITHUB_TOKEN read-only; Actions may create PRs (the release workflow
         opens the generated-docs PR); fork PR workflows need approval from a
@@ -62,6 +65,7 @@ if ($PSCmdlet.ShouldProcess($Repo, 'repository settings')) {
         allow_rebase_merge          = $false
         delete_branch_on_merge      = $true
         allow_update_branch         = $true
+        web_commit_signoff_required = $true
         squash_merge_commit_title   = 'PR_TITLE'
         squash_merge_commit_message = 'PR_BODY'
         has_wiki                    = $false
@@ -70,7 +74,7 @@ if ($PSCmdlet.ShouldProcess($Repo, 'repository settings')) {
             secret_scanning_push_protection = @{ status = 'enabled' }
         }
     } | Out-Null
-    Write-Host '  repository: squash-only merges, branch cleanup, secret scanning + push protection'
+    Write-Host '  repository: squash-only merges, branch cleanup, web commits signed off, secret scanning + push protection'
 
     Invoke-Gh PUT "repos/$Repo/private-vulnerability-reporting" | Out-Null
     Invoke-Gh PUT "repos/$Repo/vulnerability-alerts" | Out-Null
@@ -131,7 +135,8 @@ if ($PSCmdlet.ShouldProcess($Repo, "ruleset 'protect-main'")) {
                     required_status_checks               = @(
                         @{ context = 'validate' },
                         @{ context = 'lint' },
-                        @{ context = 'tests' }
+                        @{ context = 'tests' },
+                        @{ context = 'DCO' }
                     )
                 } }
         )
@@ -150,6 +155,8 @@ if ($PSCmdlet.ShouldProcess($Repo, "ruleset 'protect-main'")) {
 
 Write-Host @'
 Done. Manual follow-ups GitHub does not expose via API:
+  - Install the DCO app on this repo (https://github.com/apps/dco) - the
+    required 'DCO' check blocks every PR until it reports.
   - After the first release, set each ghcr.io package to Public
     (https://github.com/nabil-becker?tab=packages) and link it to this repo.
   - Settings > Code security: confirm "Dependabot version updates" is on

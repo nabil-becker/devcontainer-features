@@ -1,0 +1,14 @@
+# Repo-local git settings. Git never reads a tracked config file on its own
+# (that would let a clone run arbitrary hooks), so activate it once per clone:
+#
+#   task repo:setup        # = git config --local include.path ../.gitconfig
+#
+# This writes one line into .git/config and leaves your global ~/.gitconfig
+# untouched. It can be removed with: git config --local --unset include.path
+[core]
+	# Repo-provided hooks (.githooks/): prepare-commit-msg adds the DCO
+	# Signed-off-by trailer, so you can forget about `-s`.
+	hooksPath = .githooks
+[alias]
+	# Explicit sign-off commit, for clones where the hook is not active.
+	cs = commit -s

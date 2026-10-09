@@ -41,8 +41,20 @@ tasks:
   lint:
     desc: 'shellcheck every shell script, PSScriptAnalyzer every PowerShell file (same checks as CI; both tools must be installed).'
     cmds:
-      - shellcheck -x src/*/install.sh test/*/*.sh taskfiles/devcontainer/*.sh bootstrap.sh
+      - shellcheck -x src/*/install.sh test/*/*.sh taskfiles/devcontainer/*.sh bootstrap.sh .githooks/*
       - pwsh -NoLogo -NoProfile -File '{{.ROOT_DIR}}/.github/scripts/Invoke-PSScriptAnalyzer.ps1'
+
+  repo:setup:
+    desc: 'Once per clone: activate the tracked .gitconfig (git config --local include.path ../.gitconfig), which turns on the repo hooks in .githooks/ (auto DCO sign-off) and the `git cs` alias. Touches only this clone''s .git/config, never your global config. Idempotent.'
+    silent: true
+    cmds:
+      - cmd: |
+          if [ "$(git config --local --get-all include.path | grep -cx '../.gitconfig')" = "0" ]; then
+            git config --local --add include.path ../.gitconfig && echo 'Activated .gitconfig (hooks + alias) for this clone.'
+          else
+            echo '.gitconfig already active for this clone.'
+          fi
+      - git config --get core.hooksPath
 
   repo:govern:
     desc: 'Apply the GitHub governance settings (security features, squash-only merges, Actions allowlist, release environment, protect-main ruleset) with gh - see .github/scripts/Set-RepoGovernance.ps1. Idempotent; needs gh logged in as a repo admin.'
