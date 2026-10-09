@@ -1,0 +1,34 @@
+name: "Lint"
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: "shellcheck"
+        run: shellcheck -x src/*/install.sh test/*/*.sh taskfiles/devcontainer/*.sh bootstrap.sh
+
+      - name: "PSScriptAnalyzer"
+        shell: pwsh
+        run: |
+          Install-Module PSScriptAnalyzer -Scope CurrentUser -Force
+          ./.github/scripts/Invoke-PSScriptAnalyzer.ps1
+
+      - name: "Feature folders have tests and NOTES.md"
+        run: |
+          set -e
+          for d in src/*/; do
+            id=$(basename "$d")
+            test -f "test/$id/test.sh" || { echo "missing test/$id/test.sh"; exit 1; }
+            test -f "$d/NOTES.md" || { echo "missing $d/NOTES.md"; exit 1; }
+          done

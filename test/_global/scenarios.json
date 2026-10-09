@@ -1,0 +1,11 @@
+{
+  "all_features": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "go-task": {},
+      "devcontainer-cli": {},
+      "claude-code": {}
+    },
+    "remoteUser": "vscode"
+  }
+}

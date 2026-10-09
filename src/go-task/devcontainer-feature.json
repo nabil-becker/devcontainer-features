@@ -1,0 +1,18 @@
+{
+  "id": "go-task",
+  "version": "1.0.0",
+  "name": "Task (go-task)",
+  "description": "Installs Task (https://taskfile.dev), the Taskfile task runner, as a sha256-verified release binary at /usr/local/bin/task with bash/zsh completions.",
+  "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/go-task",
+  "licenseURL": "https://github.com/nabil-becker/devcontainer-features/blob/main/LICENSE",
+  "options": {
+    "version": {
+      "type": "string",
+      "default": "latest",
+      "description": "Task release to install (e.g. '3.54.0', with or without a leading 'v'), or 'latest'."
+    }
+  },
+  "installsAfter": [
+    "ghcr.io/devcontainers/features/common-utils"
+  ]
+}

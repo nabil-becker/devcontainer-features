@@ -1,0 +1,50 @@
+version: '3'
+
+# Host-side settings (DEVCONTAINER_DOCKER_PATH, ...) may live in a .env file -
+# see bootstrap/env.example.
+dotenv: ['.env', '.devcontainer/.env']
+
+includes:
+  devcontainer:
+    taskfile: ./taskfiles/devcontainer.yml
+
+vars:
+  TEST_IMAGE: '{{.IMAGE | default "mcr.microsoft.com/devcontainers/base:debian"}}'
+
+tasks:
+  default:
+    silent: true
+    cmds:
+      - task --list
+
+  test:
+    desc: 'Run `devcontainer features test` for one Feature (FEATURE=go-task) or all of them. IMAGE overrides the base image for the auto-generated test; SCENARIOS=false skips scenarios.json. Linux/macOS only (the CLI shells out to chmod/bash on the host) - run it inside the workbench devcontainer (docker-in-docker) or let CI do it.'
+    platforms: [linux, darwin]
+    vars:
+      FEATURE: '{{.FEATURE | default ""}}'
+      SCENARIOS: '{{.SCENARIOS | default "true"}}'
+    cmds:
+      - task: devcontainer:cli
+        vars:
+          SUBCOMMAND: features
+          ARGS: 'test -p "{{.ROOT_DIR}}" -i {{.TEST_IMAGE}} --skip-duplicated{{if .FEATURE}} -f {{.FEATURE}}{{end}}{{if ne .SCENARIOS "true"}} --skip-scenarios{{end}} {{.CLI_ARGS}}'
+
+  test:global:
+    desc: 'Run only test/_global scenarios (Features combined). Linux/macOS only, like test.'
+    platforms: [linux, darwin]
+    cmds:
+      - task: devcontainer:cli
+        vars:
+          SUBCOMMAND: features
+          ARGS: 'test -p "{{.ROOT_DIR}}" --global-scenarios-only'
+
+  lint:
+    desc: 'shellcheck every shell script, PSScriptAnalyzer every PowerShell file (same checks as CI; both tools must be installed).'
+    cmds:
+      - shellcheck -x src/*/install.sh test/*/*.sh taskfiles/devcontainer/*.sh bootstrap.sh
+      - pwsh -NoLogo -NoProfile -File '{{.ROOT_DIR}}/.github/scripts/Invoke-PSScriptAnalyzer.ps1'
+
+  repo:govern:
+    desc: 'Apply the GitHub governance settings (security features, squash-only merges, Actions allowlist, release environment, protect-main ruleset) with gh - see .github/scripts/Set-RepoGovernance.ps1. Idempotent; needs gh logged in as a repo admin.'
+    cmds:
+      - pwsh -NoLogo -NoProfile -File '{{.ROOT_DIR}}/.github/scripts/Set-RepoGovernance.ps1'

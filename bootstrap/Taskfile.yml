@@ -1,0 +1,17 @@
+version: '3'
+
+# devcontainer:* tasks come from taskfiles/devcontainer.yml, vendored by
+# bootstrap.ps1 / bootstrap.sh from github.com/nabil-becker/devcontainer-features.
+# Re-run the bootstrap to refresh it. Settings (DEVCONTAINER_DOCKER_PATH, ...)
+# can live in .devcontainer/.env - see .devcontainer/.env.example.
+dotenv: ['.env', '.devcontainer/.env']
+
+includes:
+  devcontainer:
+    taskfile: ./taskfiles/devcontainer.yml
+
+tasks:
+  default:
+    silent: true
+    cmds:
+      - task --list
