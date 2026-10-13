@@ -38,16 +38,8 @@ vars:
   DEVCONTAINER_DOCKER_PATH: '{{.DEVCONTAINER_DOCKER_PATH | default ""}}'
   DEVCONTAINER_NODE_VERSION: '{{.DEVCONTAINER_NODE_VERSION | default ""}}'
   DEVCONTAINER_CLI_VERSION: '{{.DEVCONTAINER_CLI_VERSION | default ""}}'
-  _PS_SETTINGS: -DockerPath '{{.DEVCONTAINER_DOCKER_PATH}}' -NodeVersion '{{.DEVCONTAINER_NODE_VERSION}}' -CliVersion '{{.DEVCONTAINER_CLI_VERSION}}'
   _BASH_CLI:
     sh: 'f="{{.TASKFILE_DIR}}/host/devcontainer-cli.sh"; if [ -f "$f" ]; then echo "$f"; else echo "{{.TASKFILE_DIR}}/../src/devcontainer-cli/devcontainer-cli.sh"; fi'
-
-env:
-  # The bash flavour reads these from the environment; export the resolved
-  # values so .env / CLI vars reach it too.
-  DEVCONTAINER_DOCKER_PATH: '{{.DEVCONTAINER_DOCKER_PATH}}'
-  DEVCONTAINER_NODE_VERSION: '{{.DEVCONTAINER_NODE_VERSION}}'
-  DEVCONTAINER_CLI_VERSION: '{{.DEVCONTAINER_CLI_VERSION}}'
 
 tasks:
   cli:
@@ -59,6 +51,13 @@ tasks:
     vars:
       ARGS: '{{.ARGS | default ""}}'
       CMD: '{{.CMD | default ""}}'
+      _PS_SETTINGS: -DockerPath '{{.DEVCONTAINER_DOCKER_PATH}}' -NodeVersion '{{.DEVCONTAINER_NODE_VERSION}}' -CliVersion '{{.DEVCONTAINER_CLI_VERSION}}'
+    # Global env entries mask root dotenv keys in Task. Export only at the
+    # task level, after dotenv and CLI vars have been resolved.
+    env: &cli-env
+      DEVCONTAINER_DOCKER_PATH: '{{.DEVCONTAINER_DOCKER_PATH}}'
+      DEVCONTAINER_NODE_VERSION: '{{.DEVCONTAINER_NODE_VERSION}}'
+      DEVCONTAINER_CLI_VERSION: '{{.DEVCONTAINER_CLI_VERSION}}'
     cmds:
       - cmd: pwsh -NoLogo -NoProfile -File '{{.TASKFILE_DIR}}/host/Invoke-DevcontainerCli.ps1' -WorkspaceFolder '{{.WORKSPACE_FOLDER}}' {{._PS_SETTINGS}} -Subcommand '{{.SUBCOMMAND}}' -CliArgsB64 '{{.ARGS | splitArgs | toJson | b64enc}}' {{if .CMD}}-CommandB64 '{{.CMD | b64enc}}'{{end}}
         platforms: [windows]
@@ -69,6 +68,8 @@ tasks:
     desc: 'Prepare the host side once: cache the portable Node.js + @devcontainers/cli (Windows: %LOCALAPPDATA%\devcontainer-features; Linux/macOS: ~/.cache/devcontainer-features, skipped when `devcontainer` is already on PATH) and report the container engine. Nothing is installed globally. FORCE=true reinstalls the cached CLI.'
     vars:
       FORCE: '{{.FORCE | default "false"}}'
+      _PS_SETTINGS: -DockerPath '{{.DEVCONTAINER_DOCKER_PATH}}' -NodeVersion '{{.DEVCONTAINER_NODE_VERSION}}' -CliVersion '{{.DEVCONTAINER_CLI_VERSION}}'
+    env: *cli-env
     cmds:
       - cmd: pwsh -NoLogo -NoProfile -File '{{.TASKFILE_DIR}}/host/Initialize-DevcontainerCli.ps1' {{._PS_SETTINGS}} {{if eq .FORCE "true"}}-Force{{end}}
         platforms: [windows]
