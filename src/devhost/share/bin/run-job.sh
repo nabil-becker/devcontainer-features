@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2317  # job_claude and redact are called by the sourced job file
 # The backs' runner, on PATH as devhost-run-job. Usage, from a Claude Code hook:
 #   devhost-run-job <job>            (the hook's JSON on stdin)
 # <job> is a name (scribe, secretary, librarian, tester: jobs/<job>/job.sh under
@@ -99,7 +100,6 @@ fi
 # For the job: run its model headless, with hooks off, no session saved (its cost is in the
 # metrics line, so the transcripts never count it twice) and the child guard set. Prints the
 # model's reply; the run's metrics (cost, tokens, turns) stay in $TMP/claude.json.
-# shellcheck disable=SC2317  # job_claude and redact are called by the sourced job file
 job_claude() {
   DEVHOST_JOB_CHILD=1 timeout 540 claude -p --model "$MODEL" --settings '{"disableAllHooks": true}' \
     --no-session-persistence --output-format json "$@" >"$TMP/claude.json" || return 1
