@@ -1,0 +1,70 @@
+# The way of working (devhost)
+
+Included from CLAUDE.md. The words are in [LEXICON.md](../LEXICON.md), the process in
+[PROCESS.md](../PROCESS.md), what is open in [TODO.md](../TODO.md); the ledger is
+`docs/ledger/`, the ADRs `docs/adr/`.
+
+## How work flows
+
+1. **Start:** the briefing arrives on its own at session start (`devhost-briefing` on a
+   workstation): the ledger entries since the last review and whether a review is due, what the
+   backs left pending, the open backlog items and decisions, the month's agent spend. Read
+   `TODO.md`, then branch; never commit to the base branch directly.
+2. **Work:** commands through the Taskfile (`task --list`); propose rather than decide where the
+   Operator's confirmation is needed; brief subagents (cons) with the hand-off shape and size
+   their models by blast radius; a permission counts only when the Operator grants it in their
+   own settings. Unattended work only under `/night-shift`.
+3. **Close:** `/close-session`: the records checked (the scribe's entries, the backlog, the
+   lexicon, the ADRs), `task devhost:verify` green, a Conventional Commit on a topic branch, the
+   report in the hand-off shape (Outcome, Outputs, Friction, For the repository, Decisions
+   needed). Commit and push only when asked.
+
+## The ledger
+
+`docs/ledger/YYYY-MM.md` is append-only: one entry per unit of work, written by the scribe back
+after each turn and each con's job, with its measured cost. A wrong entry is never edited; a
+new entry with a `Corrects:` line replaces it. Every five or so entries the briefing asks for a
+review (`/ledger-review`), which reads the cost report first and turns each group of friction
+into one action.
+
+## Backs, stakes and quiet notices
+
+Backs do the record-keeping in the background, inside the devhost only, never making you wait:
+the **scribe** keeps the ledger, the **secretary** `TODO.md` (new items, decisions for the
+Operator, ticking finished items), the **librarian** `LEXICON.md` and `docs/adr/` (new records,
+a superseded status), the **tester** runs the suite when code changed.
+
+- **Do not do their chores.** When something belongs to one of them (the Operator asks for a
+  to-do, a term is settled, a decision is taken, work finishes), acknowledge it in one line and
+  move on; the back collects it from the session.
+- **Leave a stake when unsure.** If it might not be caught (it was implicit, or spread over
+  several messages), put one plain line in your reply: `Stake for the <back>: <what> needs
+  <what>.` Stakes are always read and treated as explicit requests. The Operator can write one
+  too.
+- **Do yourself only what they may not do:** reword or remove a `TODO.md` item, change a lexicon
+  definition, rewrite or supersede an ADR, correct a wrong ledger entry (with a correcting entry,
+  never an edit). Backs only add (and the secretary ticks); a guard undoes anything else.
+- **Read their changes before each commit**: `git status` shows them; fix anything wrong,
+  anything that quotes content or names a person the redact list covers.
+- **Their notices are quiet**: they reach you as context on your next turn. Do not relay them.
+  Mention one only when the Operator asks, when a back got something wrong, or when it is a
+  pending item the Operator must act on, and then as a short closing line.
+- On a workstation there are no backs: do their chores by hand at close (`/close-session`).
+
+## Git rules
+
+- Topic branches off the base branch; never commit to it directly; Conventional Commits naming
+  the backlog ids; the co-author trailer when an agent wrote the commit.
+- The pre-commit hook runs `devhost-verify`: the ledger append-only and well-formed, no secrets,
+  no forbidden words, the ADR shape, every task described, every skill named. A refused commit is
+  fixed, never bypassed (`--no-verify` only on the Operator's say-so, with the reason in the
+  message and in the ledger entry).
+- Paths and ids, never content: nothing committed holds real data, credentials, identifiers or a
+  name from `.devhost/redact-names.txt` (ignored by git; the person is "the Operator").
+- Commit and push only when asked.
+
+## Tasks are the API
+
+One way to do each action: its task in `Taskfile.yml`, for engineers and agents alike, each with
+a `desc`. The devhost tasks: `task devhost:briefing`, `task devhost:report`, `task devhost:costs`,
+`task devhost:adr -- <title>`, `task devhost:verify`, `task devhost:init`.
