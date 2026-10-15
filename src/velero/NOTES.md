@@ -16,7 +16,7 @@ A typical pairing:
 },
 "initializeCommand": ["task", "devcontainer:homes", "NAME=myrepo", "--", "kube"],
 "mounts": [
-  "source=${localEnv:USERPROFILE}${localEnv:HOME}/.devcontainer-homes/myrepo/kube,target=/var/lib/devcontainer-features/kube,type=bind"
+  "source=${localEnv:USERPROFILE}/.devcontainer-homes/myrepo/kube,target=/var/lib/devcontainer-features/kube,type=bind"
 ],
 "containerEnv": {
   "KUBECONFIG": "/var/lib/devcontainer-features/kube/config"

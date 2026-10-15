@@ -77,6 +77,15 @@ tasks:
       - pwsh -NoLogo -NoProfile -File '{{.ROOT_DIR}}/.github/scripts/Invoke-PSScriptAnalyzer.ps1'
       - task: common:check
 
+  features:stage:
+    desc: 'Copy every src/<id> Feature into .devcontainer/features/<id> (gitignored), so this repo''s own devcontainer references the unpublished Features by local path. The devcontainer runs it as initializeCommand before every start.'
+    silent: true
+    cmds:
+      - cmd: pwsh -NoLogo -NoProfile -Command 'Remove-Item -Recurse -Force .devcontainer/features -ErrorAction SilentlyContinue; New-Item -ItemType Directory -Force .devcontainer/features | Out-Null; Get-ChildItem src -Directory | ForEach-Object { Copy-Item -Recurse $_.FullName (Join-Path .devcontainer/features $_.Name) }; "staged $((Get-ChildItem src -Directory).Count) Features into .devcontainer/features"'
+        platforms: [windows]
+      - cmd: rm -rf .devcontainer/features && mkdir -p .devcontainer/features && for d in src/*/; do cp -r "$d" ".devcontainer/features/$(basename "$d")"; done && echo "staged $(ls src | wc -l | tr -d ' ') Features into .devcontainer/features"
+        platforms: [linux, darwin]
+
   common:check:
     desc: 'Fail if a Feature''s copy of a src/common helper (dcf-persist.sh) differs from the canonical file. Run `task common:sync` to refresh the copies.'
     silent: true

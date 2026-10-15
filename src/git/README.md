@@ -84,7 +84,7 @@ without rebuilding the image.
   `${devcontainerId}` changes when the checkout moves, leaving the old one
   behind. For the host disk, bind-mount a host folder on the same target (a
   repo's `mounts` merge after the Features', last source on a target wins):
-  `"source=${localEnv:USERPROFILE}${localEnv:HOME}/.devcontainer-homes/myrepo/git,target=/var/lib/devcontainer-features/git,type=bind"`,
+  `"source=${localEnv:USERPROFILE}/.devcontainer-homes/myrepo/git,target=/var/lib/devcontainer-features/git,type=bind"`,
   created before the first start by
   `"initializeCommand": ["task", "devcontainer:homes", "NAME=myrepo", "--", "git"]`.
 - A checkout whose git dir is bind-mounted, with `GIT_DIR` (the mount
