@@ -30,8 +30,8 @@
   // quotes and %VARS%):
   //   "initializeCommand": ["task", "devcontainer:homes", "NAME=myrepo", "--", "claude-code", "gh"],
   //   "mounts": [
-  //     "source=${localEnv:USERPROFILE}${localEnv:HOME}/.devcontainer-homes/myrepo/claude-code,target=/var/lib/devcontainer-features/claude-code,type=bind",
-  //     "source=${localEnv:USERPROFILE}${localEnv:HOME}/.devcontainer-homes/myrepo/gh,target=/var/lib/devcontainer-features/gh,type=bind"
+  //     "source=${localEnv:USERPROFILE}/.devcontainer-homes/myrepo/claude-code,target=/var/lib/devcontainer-features/claude-code,type=bind",
+  //     "source=${localEnv:USERPROFILE}/.devcontainer-homes/myrepo/gh,target=/var/lib/devcontainer-features/gh,type=bind"
   //   ],
   "remoteUser": "vscode"
 }
