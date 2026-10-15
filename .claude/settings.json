@@ -1,0 +1,50 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(task *)",
+      "PowerShell(task *)",
+      "Bash(git status*)",
+      "Bash(git log*)",
+      "Bash(git diff*)",
+      "Bash(git show*)",
+      "Bash(git branch*)",
+      "Bash(git rev-parse*)",
+      "Bash(git ls-files*)",
+      "Bash(devhost-briefing*)",
+      "Bash(devhost-costs*)",
+      "Bash(devhost-report*)",
+      "Bash(devhost-verify*)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {"type": "command", "command": "devhost-briefing", "timeout": 30}
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {"type": "command", "command": "devhost-run-job scribe", "async": true, "timeout": 600},
+          {"type": "command", "command": "devhost-run-job librarian", "async": true, "timeout": 600},
+          {"type": "command", "command": "devhost-run-job secretary", "async": true, "timeout": 600},
+          {"type": "command", "command": "devhost-run-job tester", "async": true, "timeout": 600}
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {"type": "command", "command": "devhost-run-job scribe", "async": true, "timeout": 600},
+          {"type": "command", "command": "devhost-run-job librarian", "async": true, "timeout": 600}
+        ]
+      }
+    ]
+  }
+}
