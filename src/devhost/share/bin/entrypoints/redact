@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# devhost-redact: the name guard (see /usr/local/share/devhost/bin/redact.py).
+exec python3 "${DEVHOST_SHARE:-/usr/local/share/devhost}/bin/redact.py" "$@"

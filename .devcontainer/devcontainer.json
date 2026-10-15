@@ -26,7 +26,8 @@
       "hooksPath": ".githooks"
     },
     "./features/gh": {},
-    "./features/claude-code": {}
+    "./features/claude-code": {},
+    "./features/devhost": {}
   },
   // Host side, before every start: stage the Features, and check the git dir
   // that the checkout's .git pointer file names (kept outside OneDrive).

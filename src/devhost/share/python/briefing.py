@@ -1,0 +1,108 @@
+#!/usr/bin/env python3
+"""The briefing (`devhost-briefing`): where the repository's records stand, with no model.
+
+Usage: briefing.py [--json] [--no-refresh]
+
+Says, in a few sentences: the ledger entries since the last review and whether a review is due
+(five or more), what the backs left pending, how many backlog items and decisions for the
+Operator are open, any night-shift report not yet reviewed, and the month-to-date agent spend
+on this machine. Refreshes this month's cost report (`costs-YYYY-MM-<engineer>.md` in the ledger
+directory) on the way, unless --no-refresh. The SessionStart hook prints it as --json, for the
+inter's context and a one-line message; the entrypoint prints the text when stdin is a terminal.
+"""
+from __future__ import annotations
+
+import json
+import re
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import report  # noqa: E402
+from devhost_common import (DECISIONS_HEADING, REVIEWED_MARKER, backlog_path, ledger_dir, month,  # noqa: E402
+                            night_shift_dir, rel, repo_root, state_dir)
+
+ENTRY = re.compile(r"^### (\d{4}-\d{2}-\d{2})", re.M)
+REVIEW = re.compile(r"^## Review (\S+)", re.M)
+FRICTION = re.compile(r"^- \*\*Friction:\*\*\s*(.*)$", re.M)
+REVIEW_DUE_AT = 5
+
+
+def ledger_status(root: Path) -> list[str]:
+    folder = ledger_dir(root)
+    files = sorted(folder.glob("[0-9][0-9][0-9][0-9]-[0-9][0-9].md")) if folder.is_dir() else []
+    text = "".join(f.read_text(encoding="utf-8", errors="replace") + "\n" for f in files)
+    reviews = list(REVIEW.finditer(text))
+    since = text[reviews[-1].end():] if reviews else text
+    entries = ENTRY.findall(since)
+    friction = [f for f in FRICTION.findall(since) if not f.strip().lower().startswith("none")]
+    where = f"the last review ({reviews[-1].group(1)})" if reviews else "the start (no review yet)"
+    lines = [f"Ledger ({rel(root, folder)}/): {len(entries)} entries since {where}, {len(friction)} with friction."]
+    if len(entries) >= REVIEW_DUE_AT:
+        lines.append("Review due: run /ledger-review (it reads the cost report first).")
+    return lines
+
+
+def pending(root: Path) -> list[str]:
+    out = []
+    state = state_dir()
+    if not state.is_dir():
+        return out
+    for job in sorted(p for p in state.glob("*") if p.is_dir()):
+        items = []
+        for f in sorted(job.glob("pending-*"), key=lambda p: p.stat().st_mtime)[-1:]:
+            text = f.read_text(encoding="utf-8", errors="replace").strip()
+            if text:
+                items.append(text)
+        log = job / "job.log"
+        if log.exists():
+            last = log.read_text(encoding="utf-8", errors="replace").strip().splitlines()[-1:]
+            if last and "status=pending" in last[0]:
+                items.append(last[0].split("notice=", 1)[-1])
+        if items:
+            out.append(f"The {job.name} left something pending: " + "; ".join(dict.fromkeys(items)) + ".")
+    return out
+
+
+def backlog_status(root: Path) -> list[str]:
+    path = backlog_path(root)
+    if not path.exists():
+        return []
+    text = path.read_text(encoding="utf-8", errors="replace")
+    parts = text.split(DECISIONS_HEADING, 1)
+    open_items = len(re.findall(r"^- \[ \]", parts[0], re.M))
+    open_decisions = len(re.findall(r"^- \[ \]", parts[1], re.M)) if len(parts) > 1 else 0
+    return [f"{rel(root, path)}: {open_items} open items, {open_decisions} decisions for the Operator."]
+
+
+def night_shift_status(root: Path) -> list[str]:
+    folder = night_shift_dir(root)
+    waiting = sorted(p.stem for p in folder.glob("????-??-??.md")
+                     if REVIEWED_MARKER not in p.read_text(encoding="utf-8", errors="replace")) if folder.is_dir() else []
+    return [f"Night-shift report not yet reviewed: {', '.join(waiting)} (say 'morning report')."] if waiting else []
+
+
+def briefing(root: Path, refresh: bool = True) -> str:
+    this_month = month()
+    lines = ledger_status(root) + pending(root) + backlog_status(root) + night_shift_status(root)
+    try:
+        if refresh:
+            report.write_report(root, this_month)
+        lines.append(report.summary(root, this_month) + " Details: devhost-report.")
+    except Exception as exc:  # the briefing never fails a session start
+        lines.append(f"Agent spend not computed ({type(exc).__name__}).")
+    return " ".join(lines)
+
+
+def main(argv: list[str]) -> int:
+    text = briefing(repo_root(), refresh="--no-refresh" not in argv)
+    if "--json" in argv:
+        print(json.dumps({"systemMessage": text,
+                          "hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": text}}))
+    else:
+        print(text)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

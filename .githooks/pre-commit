@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# The devhost's guards before every commit: the ledger append-only and
+# well-formed, no secrets or forbidden words, the ADR shape, every task
+# described, every skill named. Only inside the devhost (the devhost Feature
+# installs devhost-verify); a workstation commit is not blocked by it.
+if command -v devhost-verify >/dev/null 2>&1; then
+  exec devhost-verify --quiet
+fi
+exit 0

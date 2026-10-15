@@ -72,10 +72,19 @@ tasks:
   lint:
     desc: 'shellcheck every shell script, yamllint every YAML file (.yamllint), PSScriptAnalyzer every PowerShell file, and the vendored copies of src/common/*.sh identical to the canonical ones (same checks as CI; the tools must be installed - this repo''s devcontainer has them).'
     cmds:
-      - shellcheck -x src/*/*.sh test/*/*.sh bootstrap/*.sh bootstrap/host/*.sh .githooks/*
+      - shellcheck -x src/*/*.sh src/*/share/bin/*.sh src/*/share/jobs/*/*.sh test/*/*.sh bootstrap/*.sh bootstrap/host/*.sh .githooks/*
       - yamllint --strict .
       - pwsh -NoLogo -NoProfile -File '{{.ROOT_DIR}}/.github/scripts/Invoke-PSScriptAnalyzer.ps1'
       - task: common:check
+      - task: test:devhost
+
+  test:devhost:
+    desc: 'Unit tests of the devhost Feature''s Python tooling (session cost, guards, verify, adr, init, briefing), stdlib only, against temp repos; runs on any host with python3 and git, so it is part of lint.'
+    cmds:
+      - cmd: python -m unittest discover -s test/devhost/python -q
+        platforms: [windows]
+      - cmd: python3 -m unittest discover -s test/devhost/python -q
+        platforms: [linux, darwin]
 
   features:stage:
     desc: 'Copy every src/<id> Feature into .devcontainer/features/<id> (gitignored), so this repo''s own devcontainer references the unpublished Features by local path. The devcontainer runs it as initializeCommand before every start.'
