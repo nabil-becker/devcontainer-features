@@ -1,0 +1,28 @@
+{
+  "pinned_version": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "gh": {
+        "version": "2.80.0"
+      }
+    },
+    "remoteUser": "vscode"
+  },
+  "augment_official": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "ghcr.io/devcontainers/features/github-cli:1": {},
+      "gh": {}
+    },
+    "remoteUser": "vscode"
+  },
+  "no_credential_helper": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "gh": {
+        "gitCredentialHelper": false
+      }
+    },
+    "remoteUser": "vscode"
+  }
+}

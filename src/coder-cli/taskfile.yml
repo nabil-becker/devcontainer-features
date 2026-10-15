@@ -1,6 +1,6 @@
 # Tasks contributed by the coder-cli Feature (namespace: coder-cli). The
-# login session lives under CODER_CONFIG_DIR (persist it across rebuilds, see
-# the Feature README).
+# login session lives under CODER_CONFIG_DIR, which the Feature points into
+# its named volume so it survives rebuilds (see the Feature README).
 version: '3'
 
 tasks:
@@ -8,6 +8,11 @@ tasks:
     desc: 'Show the client (and server, when logged in) Coder versions.'
     cmds:
       - coder version
+
+  setup:
+    desc: 'Re-run the post-create setup: make CODER_CONFIG_DIR (the Feature''s named volume, or a repo''s bind mount over it) belong to you and report what backs it and whether a login is present (idempotent).'
+    cmds:
+      - coder-cli-setup
 
   login:
     desc: 'Log in to URL=<https://coder.example.com>. Extra flags after --.'

@@ -70,11 +70,43 @@ tasks:
           echo "generated READMEs are up to date"
 
   lint:
-    desc: 'shellcheck every shell script, yamllint every YAML file (.yamllint), PSScriptAnalyzer every PowerShell file (same checks as CI; the tools must be installed - this repo''s devcontainer has them).'
+    desc: 'shellcheck every shell script, yamllint every YAML file (.yamllint), PSScriptAnalyzer every PowerShell file, and the vendored copies of src/common/*.sh identical to the canonical ones (same checks as CI; the tools must be installed - this repo''s devcontainer has them).'
     cmds:
-      - shellcheck -x src/*/*.sh test/*/*.sh bootstrap/*.sh .githooks/*
+      - shellcheck -x src/*/*.sh test/*/*.sh bootstrap/*.sh bootstrap/host/*.sh .githooks/*
       - yamllint --strict .
       - pwsh -NoLogo -NoProfile -File '{{.ROOT_DIR}}/.github/scripts/Invoke-PSScriptAnalyzer.ps1'
+      - task: common:check
+
+  common:check:
+    desc: 'Fail if a Feature''s copy of a src/common helper (dcf-persist.sh) differs from the canonical file. Run `task common:sync` to refresh the copies.'
+    silent: true
+    cmds:
+      - cmd: |
+          rc=0
+          for canon in src/common/*.sh; do
+            name="$(basename "$canon")"
+            [ "$name" = install.sh ] && continue
+            for copy in src/*/"$name"; do
+              [ "$copy" = "$canon" ] && continue
+              if ! cmp -s "$canon" "$copy"; then echo "stale copy: $copy differs from $canon (task common:sync)"; rc=1; fi
+            done
+          done
+          [ "$rc" -eq 0 ] && echo "common helper copies are up to date"
+          exit "$rc"
+
+  common:sync:
+    desc: 'Copy every src/common/*.sh helper over the copies the other Features carry (a Feature folder must be self-contained when published, so the helper is vendored rather than depended on).'
+    silent: true
+    cmds:
+      - cmd: |
+          for canon in src/common/*.sh; do
+            name="$(basename "$canon")"
+            [ "$name" = install.sh ] && continue
+            for copy in src/*/"$name"; do
+              [ "$copy" = "$canon" ] && continue
+              cp "$canon" "$copy" && echo "synced $copy"
+            done
+          done
 
   repo:setup:
     desc: 'Once per clone: activate the tracked .gitconfig (git config --local include.path ../.gitconfig), which turns on the repo hooks in .githooks/ (auto DCO sign-off) and the `git cs` alias. Touches only this clone''s .git/config, never your global config. Idempotent.'

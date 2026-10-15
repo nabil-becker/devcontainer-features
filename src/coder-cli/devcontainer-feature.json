@@ -1,8 +1,8 @@
 {
   "id": "coder-cli",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "name": "Coder CLI",
-  "description": "Installs the Coder CLI (https://coder.com) as a release binary at /usr/local/bin/coder, verified against the release's coder_<version>_checksums.txt. Pin version to your coderd server version to avoid 'version mismatch' warnings.",
+  "description": "Installs the Coder CLI (https://coder.com) as a release binary at /usr/local/bin/coder, verified against the release's coder_<version>_checksums.txt. Pin version to your coderd server version to avoid 'version mismatch' warnings. The login session lives in CODER_CONFIG_DIR at /var/lib/devcontainer-features/coder-cli, a named volume the Feature mounts so it survives rebuilds; the coder-cli-setup post-create hook hands the folder to the remote user.",
   "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/coder-cli",
   "licenseURL": "https://github.com/nabil-becker/devcontainer-features/blob/main/LICENSE",
   "options": {
@@ -17,8 +17,19 @@
       "description": "Coder release to install (e.g. '2.36.7', with or without a leading 'v'), or 'latest'. Match your Coder server's version."
     }
   },
+  "containerEnv": {
+    "CODER_CONFIG_DIR": "/var/lib/devcontainer-features/coder-cli"
+  },
+  "mounts": [
+    {
+      "source": "coder-cli-config-${devcontainerId}",
+      "target": "/var/lib/devcontainer-features/coder-cli",
+      "type": "volume"
+    }
+  ],
   "installsAfter": [
     "ghcr.io/nabil-becker/devcontainer-features/go-task",
     "ghcr.io/devcontainers/features/common-utils"
-  ]
+  ],
+  "postCreateCommand": "coder-cli-setup"
 }

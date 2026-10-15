@@ -1,0 +1,19 @@
+{
+  "id": "common",
+  "version": "1.0.0",
+  "name": "Common helpers (devcontainer-features)",
+  "description": "Shared helpers used by this collection's Features and available to a repo's own post-create scripts. Today one: dcf-persist, which makes a tool's state directory (a named volume or a bind mount) usable by the remote user and reports what backs it.",
+  "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/common",
+  "licenseURL": "https://github.com/nabil-becker/devcontainer-features/blob/main/LICENSE",
+  "options": {
+    "installTaskfile": {
+      "type": "boolean",
+      "default": true,
+      "description": "Also install this Feature's Taskfile into /usr/local/share/go-task/includes.d so its tasks appear under the <id>: namespace of a root Taskfile that includes /usr/local/share/go-task/features.yml (see the go-task Feature)."
+    }
+  },
+  "installsAfter": [
+    "ghcr.io/nabil-becker/devcontainer-features/go-task",
+    "ghcr.io/devcontainers/features/common-utils"
+  ]
+}

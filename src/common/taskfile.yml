@@ -1,0 +1,24 @@
+# Tasks contributed by the common Feature (namespace: common).
+version: '3'
+
+tasks:
+  version:
+    desc: 'Show which shared helpers are installed and where they come from (the header line of /usr/local/bin/dcf-persist).'
+    silent: true
+    cmds:
+      - |
+        bin=/usr/local/bin/dcf-persist
+        if [ -x "$bin" ]; then
+          echo "dcf-persist: $bin"
+          sed -n '2s/^# //p' "$bin"
+        else
+          echo 'dcf-persist: not installed'
+        fi
+
+  persist:
+    desc: 'Make DIR usable by the current user (create it, chown it with sudo when a mount arrived root-owned) and report what backs it: image, volume or bind. LABEL names it in the report (default "dir").'
+    requires:
+      vars:
+        - DIR
+    cmds:
+      - dcf-persist --label '{{.LABEL | default "dir"}}' '{{.DIR}}'
