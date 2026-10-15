@@ -19,9 +19,9 @@
 # What it does: (1) vendors bootstrap/devcontainer.yml, bootstrap/host/* and
 # the devcontainer-cli Feature's devcontainer-cli.sh into ./bootstrap/
 # (always refreshed - re-run to update); (2) writes Taskfile.yml,
-# .devcontainer/devcontainer.json, .devcontainer/env_mnt/.gitignore and
-# .devcontainer/.env.example only if they don't exist, and gitignores
-# .devcontainer/.env; (3) runs `task devcontainer:init` and `task devcontainer:up`.
+# .devcontainer/devcontainer.json and .devcontainer/.env.example only if they
+# don't exist, and gitignores .devcontainer/.env; (3) runs
+# `task devcontainer:init` and `task devcontainer:up`.
 set -euo pipefail
 
 ref='' path='' source='' docker_path='' no_up=''
@@ -86,9 +86,11 @@ bootstrap/host/DevcontainerCli.psm1 bootstrap/host/DevcontainerCli.psm1
 bootstrap/host/Invoke-DevcontainerCli.ps1 bootstrap/host/Invoke-DevcontainerCli.ps1
 bootstrap/host/Initialize-DevcontainerCli.ps1 bootstrap/host/Initialize-DevcontainerCli.ps1
 bootstrap/host/Reset-WslcStorage.ps1 bootstrap/host/Reset-WslcStorage.ps1
+bootstrap/host/Initialize-DevcontainerHomes.ps1 bootstrap/host/Initialize-DevcontainerHomes.ps1
+bootstrap/host/devcontainer-homes.sh bootstrap/host/devcontainer-homes.sh
 src/devcontainer-cli/devcontainer-cli.sh bootstrap/host/devcontainer-cli.sh
 EOF
-chmod +x "$path/bootstrap/host/devcontainer-cli.sh"
+chmod +x "$path/bootstrap/host/devcontainer-cli.sh" "$path/bootstrap/host/devcontainer-homes.sh"
 
 # 2. Templates, only where nothing exists yet.
 while read -r src dest; do
@@ -101,7 +103,6 @@ while read -r src dest; do
 done <<'EOF'
 bootstrap/Taskfile.yml Taskfile.yml
 bootstrap/devcontainer.json .devcontainer/devcontainer.json
-bootstrap/env_mnt.gitignore .devcontainer/env_mnt/.gitignore
 bootstrap/env.example .devcontainer/.env.example
 EOF
 
@@ -118,6 +119,7 @@ WARNING: Taskfile.yml already exists and does not include the devcontainer tasks
   includes:
     devcontainer:
       taskfile: ./bootstrap/devcontainer.yml
+      aliases: [dc]
     features:
       taskfile: /usr/local/share/go-task/features.yml
       optional: true

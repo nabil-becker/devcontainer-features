@@ -7,6 +7,7 @@
 #   includes:
 #     devcontainer:
 #       taskfile: ./bootstrap/devcontainer.yml
+#       aliases: [dc]      # task dc:up == task devcontainer:up
 # It cannot be a *remote* include: the tasks run the scripts next to this
 # file and Task leaves TASKFILE_DIR empty for remote Taskfiles. Re-run the
 # bootstrap to refresh the vendored copy.
@@ -20,17 +21,25 @@
 # _BASH_CLI below finds whichever exists. Same behaviour and settings on
 # both platforms.
 #
-# Settings - each is a Task var that falls back to the environment variable
-# of the same name, so a .env file (root Taskfile `dotenv:`) or a plain
-# exported variable configures them:
+# Settings - each is a Task var that falls back to the variable of the same
+# name from the root Taskfile's `dotenv:` files or the environment:
 #   DEVCONTAINER_DOCKER_PATH   docker-compatible CLI for --docker-path: a name
 #                              on PATH (docker, wslc, podman, nerdctl, finch)
 #                              or a full path. Unset = docker on PATH, else
 #                              wslc.exe on Windows.
 #   DEVCONTAINER_NODE_VERSION  portable Node.js version (default in the scripts).
 #   DEVCONTAINER_CLI_VERSION   @devcontainers/cli version (default: latest).
+#   DEVCONTAINER_HOMES         host folder for bind-mounted tool state
+#                              (homes task; default ~/.devcontainer-homes).
+#   HOST_SESSION               UUID of the Claude Code session that the claude
+#                              task resumes (HOST_SESSION_<DIR> per sub-folder).
 #   WORKSPACE_FOLDER           folder containing .devcontainer/ (default: the
 #                              root Taskfile's folder).
+# Precedence, as Task resolves template vars: a var on the command line
+# (`task devcontainer:up DEVCONTAINER_DOCKER_PATH=wslc`) beats the .env
+# files, which beat an exported environment variable. This file must not
+# declare a global `env:` for these names: Task would then ignore the .env
+# values for the whole project, including the root Taskfile's own tasks.
 version: '3'
 
 vars:
@@ -39,15 +48,17 @@ vars:
   DEVCONTAINER_NODE_VERSION: '{{.DEVCONTAINER_NODE_VERSION | default ""}}'
   DEVCONTAINER_CLI_VERSION: '{{.DEVCONTAINER_CLI_VERSION | default ""}}'
   _PS_SETTINGS: -DockerPath '{{.DEVCONTAINER_DOCKER_PATH}}' -NodeVersion '{{.DEVCONTAINER_NODE_VERSION}}' -CliVersion '{{.DEVCONTAINER_CLI_VERSION}}'
+  # Linux/macOS: the bash script reads the environment. The resolved values
+  # are prefixed to the command rather than set through `env:` (see above).
+  _SH_SETTINGS: >-
+    {{if .DEVCONTAINER_DOCKER_PATH}}DEVCONTAINER_DOCKER_PATH='{{.DEVCONTAINER_DOCKER_PATH}}' {{end}}{{if .DEVCONTAINER_NODE_VERSION}}DEVCONTAINER_NODE_VERSION='{{.DEVCONTAINER_NODE_VERSION}}' {{end}}{{if .DEVCONTAINER_CLI_VERSION}}DEVCONTAINER_CLI_VERSION='{{.DEVCONTAINER_CLI_VERSION}}' {{end}}
   _BASH_CLI:
     sh: 'f="{{.TASKFILE_DIR}}/host/devcontainer-cli.sh"; if [ -f "$f" ]; then echo "$f"; else echo "{{.TASKFILE_DIR}}/../src/devcontainer-cli/devcontainer-cli.sh"; fi'
-
-env:
-  # The bash flavour reads these from the environment; export the resolved
-  # values so .env / CLI vars reach it too.
-  DEVCONTAINER_DOCKER_PATH: '{{.DEVCONTAINER_DOCKER_PATH}}'
-  DEVCONTAINER_NODE_VERSION: '{{.DEVCONTAINER_NODE_VERSION}}'
-  DEVCONTAINER_CLI_VERSION: '{{.DEVCONTAINER_CLI_VERSION}}'
+  # "1" when Task itself runs inside a container (Docker or Podman marker),
+  # so tasks that mean "run this inside the devcontainer" can run the
+  # command directly instead of through `devcontainer exec`.
+  _IN_CONTAINER:
+    sh: 'if [ -e /.dockerenv ] || [ -e /run/.containerenv ]; then echo 1; else echo ""; fi'
 
 tasks:
   cli:
@@ -62,8 +73,21 @@ tasks:
     cmds:
       - cmd: pwsh -NoLogo -NoProfile -File '{{.TASKFILE_DIR}}/host/Invoke-DevcontainerCli.ps1' -WorkspaceFolder '{{.WORKSPACE_FOLDER}}' {{._PS_SETTINGS}} -Subcommand '{{.SUBCOMMAND}}' -CliArgsB64 '{{.ARGS | splitArgs | toJson | b64enc}}' {{if .CMD}}-CommandB64 '{{.CMD | b64enc}}'{{end}}
         platforms: [windows]
-      - cmd: bash '{{._BASH_CLI}}' run '{{.SUBCOMMAND}}' --workspace-folder '{{.WORKSPACE_FOLDER}}' {{if .CMD}}--cmd-b64 '{{.CMD | b64enc}}'{{end}} -- {{.ARGS}}
+      - cmd: '{{._SH_SETTINGS}} bash ''{{._BASH_CLI}}'' run ''{{.SUBCOMMAND}}'' --workspace-folder ''{{.WORKSPACE_FOLDER}}'' {{if .CMD}}--cmd-b64 ''{{.CMD | b64enc}}''{{end}} -- {{.ARGS}}'
         platforms: [linux, darwin]
+
+  run:
+    desc: 'Internal: run CMD inside the devcontainer - directly when Task already runs inside it, through `devcontainer exec` from the host. What claude and similar "inside" tasks use.'
+    internal: true
+    interactive: true
+    requires:
+      vars: [CMD]
+    cmds:
+      # Decided in the template, not with a per-command `if:` (Task 3.45
+      # ignores that key). The host branch re-enters Task so the exec task's
+      # platform dispatch applies; the namespace is taken from this task's
+      # own name, so the include may be mounted under any namespace.
+      - cmd: '{{if ._IN_CONTAINER}}{{.CMD}}{{else}}task {{regexReplaceAll ":[^:]+$" .TASK ""}}:exec CMD={{.CMD | shellQuote}}{{end}}'
 
   init:
     desc: 'Prepare the host side once: cache the portable Node.js + @devcontainers/cli (Windows: %LOCALAPPDATA%\devcontainer-features; Linux/macOS: ~/.cache/devcontainer-features, skipped when `devcontainer` is already on PATH) and report the container engine. Nothing is installed globally. FORCE=true reinstalls the cached CLI.'
@@ -72,7 +96,20 @@ tasks:
     cmds:
       - cmd: pwsh -NoLogo -NoProfile -File '{{.TASKFILE_DIR}}/host/Initialize-DevcontainerCli.ps1' {{._PS_SETTINGS}} {{if eq .FORCE "true"}}-Force{{end}}
         platforms: [windows]
-      - cmd: bash '{{._BASH_CLI}}' init {{if eq .FORCE "true"}}--force{{end}}
+      - cmd: '{{._SH_SETTINGS}} bash ''{{._BASH_CLI}}'' init {{if eq .FORCE "true"}}--force{{end}}'
+        platforms: [linux, darwin]
+
+  homes:
+    desc: 'Create the host-side folders that devcontainer.json bind-mounts for tool state (Claude Code config, gh/az logins): <DEVCONTAINER_HOMES or ~/.devcontainer-homes>/<NAME>/<dir> for each dir after --, so a start never fails on a missing mount source. Use as initializeCommand: task devcontainer:homes NAME=myrepo -- claude gh. HOST_GIT_DIR=<path> also checks a git dir kept outside the checkout exists.'
+    requires:
+      vars: [NAME]
+    vars:
+      DEVCONTAINER_HOMES: '{{.DEVCONTAINER_HOMES | default ""}}'
+      HOST_GIT_DIR: '{{.HOST_GIT_DIR | default ""}}'
+    cmds:
+      - cmd: pwsh -NoLogo -NoProfile -File '{{.TASKFILE_DIR}}/host/Initialize-DevcontainerHomes.ps1' -Name '{{.NAME}}' -Root '{{.DEVCONTAINER_HOMES}}' -GitDir '{{.HOST_GIT_DIR}}' -Dirs '{{.CLI_ARGS}}'
+        platforms: [windows]
+      - cmd: bash '{{.TASKFILE_DIR}}/host/devcontainer-homes.sh' --name '{{.NAME}}' {{if .DEVCONTAINER_HOMES}}--root '{{.DEVCONTAINER_HOMES}}' {{end}}{{if .HOST_GIT_DIR}}--git-dir '{{.HOST_GIT_DIR}}' {{end}}-- {{.CLI_ARGS}}
         platforms: [linux, darwin]
 
   up:
@@ -110,13 +147,36 @@ tasks:
           CMD: '{{.CMD}}'
 
   shell:
-    desc: 'Open an interactive login shell inside the running devcontainer.'
+    desc: 'Open an interactive bash login shell inside the running devcontainer.'
     interactive: true
     cmds:
       - task: cli
         vars:
           SUBCOMMAND: exec
           ARGS: 'bash -l'
+
+  pwsh:
+    desc: 'Open PowerShell inside the running devcontainer (needs the powershell Feature; shell opens bash).'
+    interactive: true
+    cmds:
+      - task: cli
+        vars:
+          SUBCOMMAND: exec
+          ARGS: 'pwsh -NoLogo'
+
+  claude:
+    desc: 'Start or resume the Claude Code host session inside the devcontainer (claude-host from the claude-code Feature): the session named by HOST_SESSION in .devcontainer/.env is resumed by UUID, or created the first time; unset, a plain new session. DIR=<sub-folder> starts there and reads HOST_SESSION_<DIR> instead (e.g. DIR=rooms/solis -> HOST_SESSION_SOLIS); SESSION=<uuid> overrides both. Extra arguments after --: task devcontainer:claude -- --model sonnet. Runs directly when already inside the container.'
+    interactive: true
+    vars:
+      DIR: '{{.DIR | default ""}}'
+      _SESSION_VAR: 'HOST_SESSION{{if .DIR}}_{{.DIR | base | upper | regexReplaceAll "[^A-Z0-9]" "_"}}{{end}}'
+      _SESSION_FROM_ENV:
+        sh: 'printf %s "${{"{"}}{{._SESSION_VAR}}:-${HOST_SESSION:-}}"'
+      SESSION: '{{.SESSION | default ._SESSION_FROM_ENV}}'
+    cmds:
+      - task: run
+        vars:
+          CMD: '{{if .DIR}}cd ''{{.DIR}}'' && {{end}}HOST_SESSION=''{{.SESSION}}'' claude-host {{.CLI_ARGS}}'
 
   config:
     desc: 'Print the fully resolved devcontainer configuration (devcontainer read-configuration --include-merged-configuration).'
