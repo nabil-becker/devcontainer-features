@@ -1,0 +1,130 @@
+"""verify.py: each guard on a repository that breaks exactly one rule."""
+from __future__ import annotations
+
+import helpers as h
+
+ADR_OK = ("# ADR-{n}: Title {n}\n\n| | |\n|---|---|\n| **Status** | proposed |\n| **Date** | 2026-10-01 |\n\n"
+          "## Context\n\nx\n\n## Decision\n\ny\n\n## Options considered\n\nz\n\n## Consequences\n\n- a\n\n## Change log\n\n| Date | Change |\n|---|---|\n")
+
+
+class Verify(h.RepoCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.v = h.load("verify")
+
+    def test_a_clean_repository_passes(self):
+        results, notes = self.v.run(self.root)
+        self.assertEqual({k: v for k, v in results.items() if v}, {})
+        self.assertEqual(notes, [])
+        done = h.run(["verify", "--quiet"], self.root, self.env)
+        self.assertEqual(done.returncode, 0, done.stdout)
+        self.assertEqual(done.stdout, "")
+        done = h.run(["verify"], self.root, self.env)
+        self.assertIn("ok   ledger_append_only", done.stdout)
+        self.assertIn("all guards passed", done.stdout)
+
+    def test_a_changed_ledger_line_on_the_base_is_refused(self):
+        path = self.root / "docs" / "ledger" / "2026-10.md"
+        text = path.read_text(encoding="utf-8").replace("### 2026-10-01 First thing", "### 2026-10-01 First thing, reworded")
+        h.write(path, text + h.entry("2026-10-03", "Third thing"))
+        findings = self.v.ledger_append_only(self.root)
+        self.assertEqual(len(findings), 1, findings)
+        self.assertTrue(findings[0].startswith("docs/ledger/2026-10.md:3: ledger line on main changed"), findings[0])
+        done = h.run(["verify", "--quiet"], self.root, self.env)
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("FAIL ledger_append_only", done.stdout)
+        self.assertNotIn("ok   ", done.stdout)
+
+    def test_appending_an_entry_is_fine_and_no_base_ref_is_a_note(self):
+        path = self.root / "docs" / "ledger" / "2026-10.md"
+        h.write(path, path.read_text(encoding="utf-8") + h.entry("2026-10-03", "Third thing"))
+        self.assertEqual(self.v.ledger_append_only(self.root), [])
+        notes = []
+        with h.devhost_env(self.root, DEVHOST_BASE_REF="no-such-branch"):
+            self.assertEqual(self.v.ledger_append_only(self.root, notes), [])
+        self.assertEqual(len(notes), 1)
+        self.assertIn("skipped", notes[0])
+
+    def test_ledger_shape(self):
+        folder = self.root / "docs" / "ledger"
+        h.write(folder / "2026-11.md", "# Ledger, 2026-11\n\n## Notes\n\n### 2026-11-01 Fine\n\n#### deeper is fine\n")
+        h.write(folder / "costs-2026-11-tester.md", "# Agent costs, 2026-11, tester\n")
+        h.write(folder / "costs-2026-11.md", "# Agent costs, 2026-11\n")
+        h.write(folder / "README.md", "# The ledger\n")
+        findings = self.v.ledger_shape(self.root)
+        self.assertEqual(findings, [
+            "docs/ledger/2026-11.md:3: headings are '### YYYY-MM-DD <title>' or '## Review YYYY-MM-DD' only",
+            "docs/ledger/costs-2026-11.md:1: the ledger directory holds YYYY-MM.md, costs-YYYY-MM-<engineer>.md and README.md only",
+        ])
+        h.write(folder / "2026-12.md", "# Ledger\n")
+        self.assertIn("docs/ledger/2026-12.md:1: must start with '# Ledger, 2026-12'", self.v.ledger_shape(self.root))
+
+    def test_secret_patterns_and_the_allow_list(self):
+        token = "ghp_" + "a" * 36
+        h.write(self.root / "config.md", f"token: {token}\n\nAccountKey={'B' * 64}==\n")
+        h.write(self.root / "untracked.md", f"{token}\n")
+        h.track(self.root)
+        (self.root / "untracked.md").unlink()
+        h.write(self.root / "untracked.md", f"{token}\n")  # back as an untracked file
+        h.git(self.root, "rm", "-q", "--cached", "untracked.md")
+        findings = self.v.secrets(self.root)
+        self.assertEqual(findings, ["config.md:1: looks like a GitHub token", "config.md:3: looks like a storage account key"])
+        self.assertNotIn(token, "\n".join(findings))
+        h.write(self.root / ".devhost" / "allowed-secrets.txt", f"# published values\n{token}\n")
+        h.track(self.root)
+        self.assertEqual(self.v.secrets(self.root), ["config.md:3: looks like a storage account key"])
+
+    def test_forbidden_words_and_redact_names_are_reported_by_number(self):
+        h.write(self.root / "notes.md", "Nothing here.\nThe Zorblat account, and Someone Special's desk.\n")
+        h.write(self.root / ".devhost" / "redact-names.txt", "Someone Special\n")
+        h.write(self.root / ".gitignore", ".devhost/redact-names.txt\n")
+        h.track(self.root)
+        with h.devhost_env(self.root, DEVHOST_FORBIDDEN_WORDS="acme;zorblat"):
+            findings = self.v.forbidden_words(self.root)
+        self.assertEqual(findings, ["notes.md:2: forbidden word #2", "notes.md:2: forbidden word #3"])
+        self.assertNotIn("zorblat", "\n".join(findings).lower())
+        with h.devhost_env(self.root):
+            self.assertEqual(self.v.forbidden_words(self.root), ["notes.md:2: forbidden word #1"], "the redact names alone")
+
+    def test_adr_shape_numbering_and_index(self):
+        folder = self.root / "docs" / "adr"
+        h.write(folder / "0000-template.md", "# ADR-NNNN: Title\n")
+        h.write(folder / "README.md", "# ADRs\n\n| ADR | Title | Status | Date |\n|---|---|---|---|\n| [0001](0001-one.md) | One | proposed | 2026-10-01 |\n")
+        h.write(folder / "0001-one.md", ADR_OK.format(n="0001"))
+        self.assertEqual(self.v.adrs(self.root), [])
+        h.write(folder / "0003-three.md", ADR_OK.format(n="0003").replace("| **Status** | proposed |", "| **Status** | maybe |").replace("## Consequences\n\n- a\n\n", ""))
+        findings = self.v.adrs(self.root)
+        self.assertIn("docs/adr:0: ADR numbers are not consecutive from 0001: [1, 3]", findings)
+        self.assertIn("docs/adr/0003-three.md:1: lacks the section '## Consequences'", findings)
+        self.assertIn("docs/adr/0003-three.md:1: the status must start with one of ['accepted', 'proposed', 'rejected', 'superseded']", findings)
+        self.assertIn("docs/adr/README.md:1: 0003-three.md is not in the index", findings)
+        h.write(folder / "0002-two.md", "# Two\n")
+        self.assertIn("docs/adr/0002-two.md:1: the title line must be '# ADR-0002: Title'", self.v.adrs(self.root))
+
+    def test_every_task_has_a_desc(self):
+        h.write(self.root / "Taskfile.yml", "\n".join([
+            "version: '3'", "", "includes:", "  devhost: x.yml", "", "tasks:", "  default:", "    cmds:", "      - task --list", "",
+            "  build:", "    desc: Build it", "    cmds:", "      - make", "", "  deploy:prod:", "    cmds:", "      - echo", "",
+            "  last:", "    silent: true", "", "other:", "  x: 1", ""]))
+        self.assertEqual(self.v.taskfile(self.root), ["Taskfile.yml:16: task 'deploy:prod' has no desc", "Taskfile.yml:20: task 'last' has no desc"])
+
+    def test_skills_have_frontmatter_naming_their_directory(self):
+        skills = self.root / ".claude" / "skills"
+        h.write(skills / "good" / "SKILL.md", "---\nname: good\ndescription: Does a thing. Use it when asked.\n---\n\n# Good\n")
+        h.write(skills / "renamed" / "SKILL.md", "---\nname: other\ndescription: x\n---\n")
+        h.write(skills / "silent" / "SKILL.md", "---\nname: silent\n---\n")
+        h.write(skills / "bare" / "SKILL.md", "# No frontmatter\n")
+        (skills / "empty").mkdir()
+        self.assertEqual(self.v.skills(self.root), [
+            ".claude/skills/bare/SKILL.md:1: no frontmatter",
+            ".claude/skills/empty/SKILL.md:1: missing",
+            ".claude/skills/renamed/SKILL.md:2: frontmatter name 'other' is not the directory name 'renamed'",
+            ".claude/skills/silent/SKILL.md:2: frontmatter needs a description saying what the skill does and when to use it",
+        ])
+
+    def test_the_scaffolded_repository_passes_every_guard(self):
+        init = h.load("init")
+        init.scaffold(self.root)
+        h.track(self.root)
+        results, _ = self.v.run(self.root)
+        self.assertEqual({k: v for k, v in results.items() if v}, {})

@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# devhost-run-job: the backs' runner (see /usr/local/share/devhost/bin/run-job.sh).
+exec bash "${DEVHOST_SHARE:-/usr/local/share/devhost}/bin/run-job.sh" "$@"

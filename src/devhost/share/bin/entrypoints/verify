@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# devhost-verify: runs the devhost's verify.py (installed under /usr/local/share/devhost).
+exec python3 /usr/local/share/devhost/python/verify.py "$@"

@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# The guards at commit time (devhost-verify): a refused commit is fixed, never bypassed.
+# Installed by devhost-init; activate with: git config core.hooksPath .githooks
+exec devhost-verify --quiet
