@@ -8,7 +8,7 @@ source dev-container-features-test-lib
 
 check "claude is on PATH" command -v claude
 check "native binary NOT installed" test ! -e /usr/local/bin/claude
-check "claude comes from the npm install" bash -c "command -v claude | grep -q node"
+check "claude comes from the npm install" bash -c "command -v claude | grep -qE 'nvm|node' && [ \"\$(command -v claude)\" != /usr/local/bin/claude ]"
 # shellcheck disable=SC2016  # expansion is meant to happen inside the inner bash
 check "claude runs as non-root" bash -c '[ "$(id -u)" -ne 0 ] && claude --version'
 check "claude-host on PATH" command -v claude-host
