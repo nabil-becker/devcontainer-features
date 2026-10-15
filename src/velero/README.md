@@ -34,10 +34,17 @@ A typical pairing:
   "ghcr.io/devcontainers/features/kubectl-helm-minikube:1": { "minikube": "none" },
   "ghcr.io/nabil-becker/devcontainer-features/velero:1": { "version": "1.18.4" }
 },
+"initializeCommand": ["task", "devcontainer:homes", "NAME=myrepo", "--", "kube"],
+"mounts": [
+  "source=${localEnv:USERPROFILE}${localEnv:HOME}/.devcontainer-homes/myrepo/kube,target=/var/lib/devcontainer-features/kube,type=bind"
+],
 "containerEnv": {
-  "KUBECONFIG": "${containerWorkspaceFolder}/.devcontainer/env_mnt/kube/config"
+  "KUBECONFIG": "/var/lib/devcontainer-features/kube/config"
 }
 ```
+
+The kubeconfig is cluster credentials, so it stays on the host disk outside
+the checkout (never inside a synced checkout) rather than in a volume.
 
 ## Verification
 

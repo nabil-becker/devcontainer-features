@@ -1,0 +1,25 @@
+# Tasks contributed by the az Feature (namespace: az).
+version: '3'
+
+tasks:
+  version:
+    desc: 'Show which az binary runs and the azure-cli version (az version; updates come from rebuilding).'
+    cmds:
+      - command -v az
+      - az version {{.CLI_ARGS}}
+
+  account:
+    desc: 'Show the signed-in account and the current subscription (az account show).'
+    cmds:
+      - az account show {{.CLI_ARGS}}
+
+  login:
+    desc: 'Log in to Azure with the device-code flow (az login --use-device-code); the tokens are kept in AZURE_CONFIG_DIR and survive rebuilds. Extra arguments after --, e.g. task az:login -- --tenant <id>.'
+    interactive: true
+    cmds:
+      - az login --use-device-code {{.CLI_ARGS}}
+
+  setup:
+    desc: 'Re-run the post-create setup: make AZURE_CONFIG_DIR usable by the current user, point az at the bicep on PATH, report the login state (idempotent; AZ_SETUP_BICEP_FROM_PATH overrides the Feature option).'
+    cmds:
+      - az-setup

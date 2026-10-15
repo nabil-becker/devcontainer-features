@@ -2,7 +2,8 @@
 # Installs the Argo CD CLI (https://argo-cd.readthedocs.io) from GitHub
 # releases, verified against the release's cli_checksums.txt. Feature options
 # arrive as upper-cased environment variables (see devcontainer-feature.json):
-# VERSION.
+# VERSION. Also puts the argocd-setup post-create hook and the dcf-persist
+# helper on PATH.
 set -euo pipefail
 
 VERSION="${VERSION:-latest}"
@@ -57,6 +58,14 @@ curl -fsSL -o "$tmp/cli_checksums.txt" "$base_url/cli_checksums.txt"
 install -m 0755 "$tmp/$asset" /usr/local/bin/argocd
 
 /usr/local/bin/argocd version --client --short
+
+# The post-create hook (argocd-setup) and the shared state-directory helper
+# it calls (verbatim copy of src/common/dcf-persist.sh; every Feature of
+# this collection installs the same file). ARGOCD_CONFIG_DIR's target is not
+# mounted at build time, so nothing here writes into it.
+feature_dir="$(cd "$(dirname "$0")" && pwd)"
+install -m 0755 "$feature_dir/argocd-setup.sh" /usr/local/bin/argocd-setup
+install -m 0755 "$feature_dir/dcf-persist.sh" /usr/local/bin/dcf-persist
 
 # ---------------------------------------------------- Feature Taskfile ----
 # Drop this Feature's taskfile.yml where the go-task Feature's registry picks

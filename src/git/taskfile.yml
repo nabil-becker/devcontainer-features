@@ -1,0 +1,26 @@
+# Tasks contributed by the git Feature (namespace: git).
+version: '3'
+
+tasks:
+  version:
+    desc: 'Show the git version and which binary runs it: the Feature''s wrapper at /usr/local/bin/git (and the real git it forwards to) or a plain git.'
+    silent: true
+    cmds:
+      - |
+        bin="$(command -v git)"
+        echo "git     : $(git --version)"
+        echo "binary  : $bin"
+        if grep -qs '^# devcontainer-features git wrapper' "$bin"; then
+          [ -f /usr/local/share/git-feature/options.env ] && . /usr/local/share/git-feature/options.env
+          echo "real git: ${GIT_WRAPPER_REAL_GIT:-${REALGIT:-unknown}}"
+        fi
+
+  setup:
+    desc: 'Re-run the post-create git setup for the repository in the current directory: safe.directory, core.hooksPath, the GIT_CONFIG_GLOBAL folder in the Feature''s named volume (idempotent; GIT_SETUP_SAFE_DIRECTORY / GIT_SETUP_HOOKS_PATH override the Feature options).'
+    cmds:
+      - git-setup
+
+  worktrees:
+    desc: 'List the linked worktrees of the repository in the current directory (git worktree list).'
+    cmds:
+      - git worktree list {{.CLI_ARGS}}

@@ -1,8 +1,8 @@
 {
   "id": "claude-code",
-  "version": "1.1.0",
+  "version": "1.3.0",
   "name": "Claude Code",
-  "description": "Installs Anthropic's Claude Code CLI (https://code.claude.com/docs) as its native, sha256-verified release binary at /usr/local/bin/claude - no Node.js required - and disables the in-app auto-updater so the pinned version is what runs. Persist login and sessions across rebuilds by pointing CLAUDE_CONFIG_DIR at a mounted folder (see the notes).",
+  "description": "Claude Code (https://code.claude.com/docs) as a member of this collection's ecosystem: installs the sha256-verified native release binary at /usr/local/bin/claude (no Node.js, version pinnable) unless a claude is already in the image - e.g. from the official ghcr.io/anthropics/devcontainer-features/claude-code, which is then augmented instead of replaced - and adds the claude-host launcher (resume one session by UUID via HOST_SESSION), a named volume mounted at CLAUDE_CONFIG_DIR (/var/lib/devcontainer-features/claude-code) so login and sessions survive rebuilds, a post-create hook that makes that directory usable by the remote user, and the Feature Taskfile. The in-app auto-updater is off; a rebuild updates.",
   "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/claude-code",
   "licenseURL": "https://github.com/nabil-becker/devcontainer-features/blob/main/LICENSE",
   "options": {
@@ -11,20 +11,45 @@
       "default": true,
       "description": "Also install this Feature's Taskfile into /usr/local/share/go-task/includes.d so its tasks appear under the <id>: namespace of a root Taskfile that includes /usr/local/share/go-task/features.yml (see the go-task Feature)."
     },
+    "install": {
+      "type": "string",
+      "proposals": [
+        "auto",
+        "native",
+        "none"
+      ],
+      "default": "auto",
+      "description": "How the claude binary gets there. 'auto': keep a claude already in the image (official Feature, base image) and only add the ecosystem pieces, else install the native binary. 'native': always install the verified native binary at /usr/local/bin/claude (wins over an npm install on PATH). 'none': never install the binary, only the pieces."
+    },
     "version": {
       "type": "string",
       "default": "stable",
-      "description": "Claude Code version to install (e.g. '2.1.286'), or a release channel: 'stable' or 'latest'."
+      "description": "Native binary version to install (e.g. '2.1.286'), or a release channel: 'stable' or 'latest'. Ignored when an existing claude is kept (install=auto) or install=none."
     }
   },
   "containerEnv": {
-    "DISABLE_AUTOUPDATER": "1"
+    "DISABLE_AUTOUPDATER": "1",
+    "CLAUDE_CONFIG_DIR": "/var/lib/devcontainer-features/claude-code"
   },
+  "mounts": [
+    {
+      "source": "claude-code-config-${devcontainerId}",
+      "target": "/var/lib/devcontainer-features/claude-code",
+      "type": "volume"
+    }
+  ],
+  "postCreateCommand": "claude-code-setup",
   "customizations": {
     "vscode": {
       "extensions": [
         "anthropic.claude-code"
       ]
     }
-  }
+  },
+  "installsAfter": [
+    "ghcr.io/nabil-becker/devcontainer-features/go-task",
+    "ghcr.io/devcontainers/features/common-utils",
+    "ghcr.io/devcontainers/features/node",
+    "ghcr.io/anthropics/devcontainer-features/claude-code"
+  ]
 }

@@ -9,6 +9,7 @@ dotenv: ['.env', '.devcontainer/.env']
 includes:
   devcontainer:
     taskfile: ./bootstrap/devcontainer.yml
+    aliases: [dc]   # task dc:up == task devcontainer:up
   # Tasks contributed by the Features installed in the devcontainer (dsc:*,
   # velero:*, ...). The file only exists inside the container; on the host it
   # is skipped. See the go-task Feature README.

@@ -30,8 +30,8 @@
       2. Writes a starter Taskfile.yml (includes the vendored tasks and the
          Feature-Taskfile registry, loads .env files),
          .devcontainer/devcontainer.json (go-task, devcontainer-cli,
-         docker-outside-of-docker, PowerShell), .devcontainer/env_mnt/.gitignore
-         and .devcontainer/.env.example - only if they don't exist - and
+         git, docker-outside-of-docker, PowerShell) and
+         .devcontainer/.env.example - only if they don't exist - and
          gitignores .devcontainer/.env.
       3. Runs `task devcontainer:init` (caches the portable Node.js +
          @devcontainers/cli, reports the engine) and then
@@ -128,6 +128,8 @@ $vendored = [ordered]@{
     'bootstrap/host/Invoke-DevcontainerCli.ps1'    = 'bootstrap/host/Invoke-DevcontainerCli.ps1'
     'bootstrap/host/Initialize-DevcontainerCli.ps1' = 'bootstrap/host/Initialize-DevcontainerCli.ps1'
     'bootstrap/host/Reset-WslcStorage.ps1'         = 'bootstrap/host/Reset-WslcStorage.ps1'
+    'bootstrap/host/Initialize-DevcontainerHomes.ps1' = 'bootstrap/host/Initialize-DevcontainerHomes.ps1'
+    'bootstrap/host/devcontainer-homes.sh'         = 'bootstrap/host/devcontainer-homes.sh'
     'src/devcontainer-cli/devcontainer-cli.sh'     = 'bootstrap/host/devcontainer-cli.sh'
 }
 foreach ($entry in $vendored.GetEnumerator()) {
@@ -139,7 +141,6 @@ foreach ($entry in $vendored.GetEnumerator()) {
 $templates = [ordered]@{
     'bootstrap/Taskfile.yml'      = 'Taskfile.yml'
     'bootstrap/devcontainer.json' = '.devcontainer/devcontainer.json'
-    'bootstrap/env_mnt.gitignore' = '.devcontainer/env_mnt/.gitignore'
     'bootstrap/env.example'       = '.devcontainer/.env.example'
 }
 foreach ($entry in $templates.GetEnumerator()) {
@@ -168,6 +169,7 @@ Taskfile.yml already exists and does not include the devcontainer tasks. Add:
   includes:
     devcontainer:
       taskfile: ./bootstrap/devcontainer.yml
+      aliases: [dc]
     features:
       taskfile: /usr/local/share/go-task/features.yml
       optional: true
