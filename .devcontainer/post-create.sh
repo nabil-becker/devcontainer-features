@@ -3,9 +3,10 @@
 set -euo pipefail
 
 repo=$(cd "$(dirname "$0")/.." && pwd)
-mkdir -p "$repo/.devcontainer/env_mnt/gh" "$repo/.devcontainer/env_mnt/git"
 
 # The checkout is bind-mounted with a foreign owner; git refuses it otherwise.
+# (The git Feature's post-create hook does this once it is enabled in
+# devcontainer.json; until then, by hand.)
 git config --global --add safe.directory "$repo"
 
 # PSScriptAnalyzer for `task lint` (same as the Lint workflow).

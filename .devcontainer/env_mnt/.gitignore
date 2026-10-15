@@ -1,3 +1,0 @@
-# Persistent devcontainer tool state (gh login, git identity) - never commit.
-*
-!.gitignore

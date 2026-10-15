@@ -14,14 +14,16 @@
     },
     "ghcr.io/devcontainers-extra/features/shellcheck:1": {},
     "ghcr.io/devcontainers-extra/features/yamllint:2": {},
-    // The collection's own published Features: the task runner, and the
-    // devcontainer CLI that runs the Feature tests.
+    // The collection's own published Features: the task runner, the
+    // devcontainer CLI that runs the Feature tests, git augmented for the
+    // container, and Claude Code with the claude-host launcher.
     "ghcr.io/nabil-becker/devcontainer-features/go-task:1": {},
-    "ghcr.io/nabil-becker/devcontainer-features/devcontainer-cli:1": {}
-  },
-  "containerEnv": {
-    "GH_CONFIG_DIR": "${containerWorkspaceFolder}/.devcontainer/env_mnt/gh",
-    "GIT_CONFIG_GLOBAL": "${containerWorkspaceFolder}/.devcontainer/env_mnt/git/gitconfig"
+    "ghcr.io/nabil-becker/devcontainer-features/devcontainer-cli:1": {},
+    // Enable once the git Feature has been released (unpublished Features
+    // cannot be pulled; see README "To try an unpublished change").
+    // "ghcr.io/nabil-becker/devcontainer-features/git:1": {},
+    // "ghcr.io/nabil-becker/devcontainer-features/gh:1": {},
+    "ghcr.io/nabil-becker/devcontainer-features/claude-code:1": {}
   },
   "postCreateCommand": "bash .devcontainer/post-create.sh",
   "remoteUser": "vscode",
