@@ -1,29 +1,48 @@
 {
   "name": "devcontainer-features",
   "image": "mcr.microsoft.com/devcontainers/base:debian",
-  // Everything `task lint`, `task test` and `task docs` need, so Features can
-  // be developed and tested without installing anything on the host.
+  // The devhost of this collection: everything `task lint`, `task test` and
+  // `task docs` need, plus the collection's own Features so the host
+  // session (Claude Code) works here the way every consuming repo does.
   "features": {
     "ghcr.io/devcontainers/features/powershell:1": {},
     // docker-in-docker rather than -outside-of-: `devcontainer features test`
     // bind-mounts paths from inside this container into the test containers,
     // which only a daemon sharing this filesystem can resolve. moby:false
-    // because the base image is Debian 13 (no moby packages).
+    // because the base image is Debian 13 (no moby packages). On wslc (no
+    // --privileged) the daemon does not start; the post-create report says so.
     "ghcr.io/devcontainers/features/docker-in-docker:2": {
       "moby": false
     },
     "ghcr.io/devcontainers-extra/features/shellcheck:1": {},
     "ghcr.io/devcontainers-extra/features/yamllint:2": {},
-    // The collection's own published Features: the task runner, the
-    // devcontainer CLI that runs the Feature tests, git augmented for the
-    // container, and Claude Code with the claude-host launcher.
-    "ghcr.io/nabil-becker/devcontainer-features/go-task:1": {},
-    "ghcr.io/nabil-becker/devcontainer-features/devcontainer-cli:1": {},
-    // Enable once the git Feature has been released (unpublished Features
-    // cannot be pulled; see README "To try an unpublished change").
-    // "ghcr.io/nabil-becker/devcontainer-features/git:1": {},
-    // "ghcr.io/nabil-becker/devcontainer-features/gh:1": {},
-    "ghcr.io/nabil-becker/devcontainer-features/claude-code:1": {}
+    // The collection's own Features by local path: `task features:stage`
+    // copies src/<id> into .devcontainer/features/ (gitignored) before every
+    // start (initializeCommand), so unreleased changes are what runs here.
+    "./features/common": {},
+    "./features/go-task": {},
+    "./features/devcontainer-cli": {},
+    "./features/git": {
+      "hooksPath": ".githooks"
+    },
+    "./features/gh": {},
+    "./features/claude-code": {}
+  },
+  // Host side, before every start: stage the Features, and check the git dir
+  // that the checkout's .git pointer file names (kept outside OneDrive).
+  "initializeCommand": {
+    "features": ["task", "features:stage"],
+    "git-dir": ["task", "devcontainer:homes", "NAME=devcontainer-features", "HOST_GIT_DIR=${localEnv:USERPROFILE}/.git-dirs/nabil-becker/devcontainer-features"]
+  },
+  // The checkout's .git is a pointer file holding a Windows path, so the real
+  // git dir is bind-mounted and git is told where it is; the git Feature's
+  // wrapper keeps that scoped to this checkout.
+  "mounts": [
+    "source=${localEnv:USERPROFILE}/.git-dirs/nabil-becker/devcontainer-features,target=/git/devcontainer-features.git,type=bind"
+  ],
+  "containerEnv": {
+    "GIT_DIR": "/git/devcontainer-features.git",
+    "GIT_WORK_TREE": "${containerWorkspaceFolder}"
   },
   "postCreateCommand": "bash .devcontainer/post-create.sh",
   "remoteUser": "vscode",
@@ -33,7 +52,10 @@
         "ms-vscode.powershell",
         "redhat.vscode-yaml",
         "timonwong.shellcheck"
-      ]
+      ],
+      "settings": {
+        "files.eol": "\n"
+      }
     }
   }
 }
