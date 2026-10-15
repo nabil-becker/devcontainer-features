@@ -26,5 +26,6 @@ stays. Ids are `TD-nn`, numbered in creation order, never reused.
 - [ ] **TD-09 Re-add git to gh's installsAfter after the release** (host). Removed because an unpublished Feature in `installsAfter` fails the build; gh-setup is self-sufficient meanwhile. Added 2026-10-15.
 - [ ] **TD-10 Feature tests on the workstation** (host). `task test` needs a Docker daemon; on `wslc` the devhost's docker-in-docker does not start. Either Docker Desktop for the test runs or a `wslc`-based runner for `devcontainer features test`. Added 2026-10-15.
 - [ ] **TD-11 Bootstrap template host-disk override as a documented second template** (host). The starter writes the volume default; a repo on a synced checkout that wants host-disk state copies the mounts by hand. Decide whether `bootstrap.ps1` should offer it. Added 2026-10-15.
+- [ ] **TD-12 dsc install does not depend on the GitHub API** (host). The asset digest comes from the unauthenticated Releases API, whose hourly limit the CI matrix exhausts (HTTP 403, the one flaky job of 2026-10-15). GITHUB_TOKEN from the workflow does not reach a Feature build. Read the digest from the release page instead, or pin per version. Added 2026-10-15.
 
 ## Decisions for the Operator
