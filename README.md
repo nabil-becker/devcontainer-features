@@ -53,7 +53,9 @@ gap to close here (see [Contributing from a consuming repo](#contributing-from-a
   Nothing to configure. A repo that wants that state on the host disk
   (survives container-engine resets, follows the machine) bind-mounts the
   same target, its mount wins, and `task devcontainer:homes` as
-  `initializeCommand` guarantees the host folder exists. Caches and
+  `initializeCommand` guarantees the host folder exists. Examples spell the
+  host path with `${localEnv:USERPROFILE}` (Windows); on Linux/macOS use
+  `${localEnv:HOME}`. Never concatenate the two: both can be set on Windows. Caches and
   worktrees stay out of the checkout too (`PYTHONPYCACHEPREFIX`, a volume
   over `.claude/worktrees`), or a synced checkout carries every build
   artefact.

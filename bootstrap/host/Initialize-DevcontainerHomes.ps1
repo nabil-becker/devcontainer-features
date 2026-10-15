@@ -9,7 +9,7 @@
       "initializeCommand": "task devcontainer:homes NAME=myrepo -- claude gh"
 
     with matching mounts such as
-      source=${localEnv:USERPROFILE}${localEnv:HOME}/.devcontainer-homes/myrepo/claude,target=/home/vscode/.claude,type=bind
+      source=${localEnv:USERPROFILE}/.devcontainer-homes/myrepo/claude,target=/home/vscode/.claude,type=bind
 
     Why the host disk rather than a named volume: volumes belong to the
     container engine's storage and vanish when it is reset or swapped

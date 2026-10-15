@@ -66,7 +66,7 @@ which mangles quotes and `%VARS%`):
 ```json
 "initializeCommand": ["task", "devcontainer:homes", "NAME=myrepo", "--", "claude"],
 "mounts": [
-  "source=${localEnv:USERPROFILE}${localEnv:HOME}/.devcontainer-homes/myrepo/claude,target=/var/lib/devcontainer-features/claude-code,type=bind"
+  "source=${localEnv:USERPROFILE}/.devcontainer-homes/myrepo/claude,target=/var/lib/devcontainer-features/claude-code,type=bind"
 ]
 ```
 

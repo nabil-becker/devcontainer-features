@@ -28,7 +28,7 @@ before the first start:
 
 ```json
 "initializeCommand": ["task", "devcontainer:homes", "NAME=myrepo", "--", "coder-cli"],
-"mounts": ["source=${localEnv:USERPROFILE}${localEnv:HOME}/.devcontainer-homes/myrepo/coder-cli,target=/var/lib/devcontainer-features/coder-cli,type=bind"]
+"mounts": ["source=${localEnv:USERPROFILE}/.devcontainer-homes/myrepo/coder-cli,target=/var/lib/devcontainer-features/coder-cli,type=bind"]
 ```
 
 A repo's own `containerEnv` wins over the Feature's, which is how it points

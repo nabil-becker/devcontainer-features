@@ -1,3 +1,7 @@
 # Task's remote-include cache and checksums
 .task/
 *.ignore
+
+# This repo's own devcontainer references the Features by local path; staged
+# copies of src/<id> by `task features:stage` (initializeCommand).
+.devcontainer/features/

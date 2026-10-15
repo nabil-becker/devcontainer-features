@@ -60,7 +60,7 @@ through `cmd /c` on Windows):
 ```json
 "initializeCommand": ["task", "devcontainer:homes", "NAME=myrepo", "--", "gh"],
 "mounts": [
-  "source=${localEnv:USERPROFILE}${localEnv:HOME}/.devcontainer-homes/myrepo/gh,target=/var/lib/devcontainer-features/gh,type=bind"
+  "source=${localEnv:USERPROFILE}/.devcontainer-homes/myrepo/gh,target=/var/lib/devcontainer-features/gh,type=bind"
 ]
 ```
 

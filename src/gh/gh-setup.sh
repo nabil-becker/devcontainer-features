@@ -36,8 +36,10 @@ elif ! command -v git >/dev/null 2>&1; then
 else
   # git creates the global config file on first write but not its folder
   # (the git Feature's volume, or wherever the repo points the variable).
+  # The folder may be another Feature's volume (git's) that its own hook has
+  # not handed to this user yet, so make it usable here as well.
   if [ -n "${GIT_CONFIG_GLOBAL:-}" ]; then
-    mkdir -p "$(dirname "$GIT_CONFIG_GLOBAL")" 2>/dev/null || echo "gh: could not create $(dirname "$GIT_CONFIG_GLOBAL")" >&2
+    dcf-persist "$(dirname "$GIT_CONFIG_GLOBAL")" >/dev/null 2>&1 || true
   fi
   if [ "$(git config --global --get-all "$key" 2>/dev/null || true)" = "$want" ]; then
     echo "gh: git credential helper for https://github.com: gh auth git-credential (kept)"

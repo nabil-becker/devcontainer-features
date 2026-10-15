@@ -48,7 +48,7 @@ order and the last source for a target wins:
 
 ```json
 "mounts": [
-  "source=${localEnv:USERPROFILE}${localEnv:HOME}/.devcontainer-homes/myrepo/<id>,target=/var/lib/devcontainer-features/<id>,type=bind"
+  "source=${localEnv:USERPROFILE}/.devcontainer-homes/myrepo/<id>,target=/var/lib/devcontainer-features/<id>,type=bind"
 ]
 ```
 

@@ -87,7 +87,11 @@ test/<id>/
 - `installsAfter` lists `ghcr.io/nabil-becker/devcontainer-features/go-task`
   and `ghcr.io/devcontainers/features/common-utils`, plus anything the tool
   genuinely needs ordered before it, and for an augmentation the official
-  Feature it augments. Use `dependsOn` only for hard requirements.
+  Feature it augments. Use `dependsOn` only for hard requirements. Both may
+  only name Features that are already published: the CLI resolves every
+  entry against the registry, and an unpublished one fails the build (so a
+  hook that needs another Feature's work done first, such as gh writing into
+  git's global config, makes itself sufficient instead of relying on order).
 - A Feature that must do something per container (make a mounted folder
   usable, mark a repo safe) declares `"postCreateCommand": "<id>-setup"`
   and installs that script on PATH; the hook runs as the remote user from

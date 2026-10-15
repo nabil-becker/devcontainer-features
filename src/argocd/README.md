@@ -44,7 +44,7 @@ before the first start:
 
 ```json
 "initializeCommand": ["task", "devcontainer:homes", "NAME=myrepo", "--", "argocd"],
-"mounts": ["source=${localEnv:USERPROFILE}${localEnv:HOME}/.devcontainer-homes/myrepo/argocd,target=/var/lib/devcontainer-features/argocd,type=bind"]
+"mounts": ["source=${localEnv:USERPROFILE}/.devcontainer-homes/myrepo/argocd,target=/var/lib/devcontainer-features/argocd,type=bind"]
 ```
 
 A repo's own `containerEnv` wins over the Feature's, which is how it points
