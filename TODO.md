@@ -18,6 +18,9 @@ stays. Ids are short descriptive slugs (two to four kebab-case words naming the 
 - [x] **devhost-claude-login Sign in to Claude Code inside the devhost once** (the Operator). The backs run `claude -p` headless and need the login in the claude-code volume; the first `task devcontainer:claude` does it. (was TD-04) Added 2026-10-15. Done 2026-10-16.
 - [x] **first-back-runs First real back runs and the first ledger entries** (host). After devhost-claude-login, work one unit in the devhost and check the scribe's entry, the secretary's items and the cost report; file friction. (was TD-05) Added 2026-10-15. Done 2026-10-16.
 - [ ] **bot-git-identity Agent git identity through the git Feature** (host). The devhost sets the bot identity (`devhost agent <devhost-agent@noreply.invalid>`) through containerEnv `GIT_AUTHOR_*`/`GIT_COMMITTER_*`, offered as a git Feature option, so agent commits pass DCO without `-c` overrides; the shared git dir config (its repo-local `user.email` is the Operator's) stays untouched, as decided 2026-10-16. (was TD-14) Added 2026-10-16.
+- [ ] **bard-first-piece Bard's first journal piece** (host). Trial implementation: a con writes the story of today from the real records, in voice, exactly as the back would. The host's reading of the results decides whether to build the back. King Arthur theme trial (PROCESS.md). Added 2026-10-16.
+- [ ] **lexicon-arthurian-layer Add Arthurian layer to lexicon** (host). Add the ten Arthurian theme names as synonyms to the lexicon in a separate section, keeping no definition changes. Plain names stay in charge everywhere the machinery reads them. Added 2026-10-16.
+- [ ] **proposal-accepted-records Mark King Arthur proposal accepted** (host). Commit the records marking the King Arthur theme proposal as accepted. The librarian will likely file it as an ADR on its own. Added 2026-10-16.
 
 ## Next
 
@@ -56,6 +59,6 @@ stays. Ids are short descriptive slugs (two to four kebab-case words naming the 
 ## Decisions for the Operator
 
 - [x] **gh-token-pr-access Allow gh token to create pull requests** (the Operator). The gh token can push to `features/*` branches but cannot create pull requests (HTTP 403, "Resource not accessible by personal access token"). Either grant the token `pull-request: write` access, or keep PR creation a manual step in the GitHub UI. Open the PR at https://github.com/nabil-becker/devcontainer-features/pull/new/features/2026-10-16. Added 2026-10-16. Done 2026-10-16.
-- [ ] **king-arthur-theme-direction Pursue King Arthur theme** (the Operator). After draft is written, decide whether to rename the devhost ecosystem roles to Arthurian theme or keep it as a conceptual layer. Added 2026-10-16.
+- [x] **king-arthur-theme-direction Pursue King Arthur theme** (the Operator). After draft is written, decide whether to rename the devhost ecosystem roles to Arthurian theme or keep it as a conceptual layer. Added 2026-10-16. Done 2026-10-16.
 - [ ] **journalist-back-adoption Adopt journalist back** (the Operator). After draft is written, decide whether to implement a back that narrates the story of each iteration. Added 2026-10-16.
 - [ ] **tester-skipped-notice Emit skipped notice for tester** (the Operator). When the tester reports skipped (no Docker daemon), should it emit a single quiet notice on first skip, then stay quiet? The notice tells the engineer that a previous red is unresolved. Dropping it means setting `JOB_STATUS=changed` to `nothing` in the skip branch. Added 2026-10-16.
