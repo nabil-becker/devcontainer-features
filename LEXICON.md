@@ -93,6 +93,11 @@ The domain words of the project itself are not here; they live with the project'
   which on a subscription measures use, not a charge.
 - **ADR**: an architecture decision record in `docs/adr/`, for a decision whose reasoning does
   not fit in a line.
+- **Ontology**: the canonical data model of the way of working: what kinds of thing exist (by
+  plain base id), and how they relate (briefs, writes, keeps, checks, decides). The lexicon words,
+  the themes and the C4 views must agree with it; it is not the instances, which the ledger holds.
+- **C4 view**: a diagram of the system at one zoom level (Context, Container), written in Mermaid
+  and named by ontology ids.
 
 ## Mechanisms
 
