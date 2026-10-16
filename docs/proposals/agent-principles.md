@@ -73,6 +73,13 @@ The product comes first. The devhost serves the Features.
 - **Why:** the Features documentation drifted behind devhost tooling ("Audited Features documentation": 9 of 16 lacked a Taskfile section). The Operator then reordered the backlog to put the Features first ("Backlog reorganized for product-first focus").
 - **Enforced by:** the backlog order and the review. Not yet by a guard.
 
+### AP-14 script-agent-ladder
+Choose between a script and an agent by asking two questions in order. Can the rule be written down? Then it is a script, with a test that can fail. If not, can the result be checked mechanically? Then an agent does it and a script guard checks it. If neither, an agent proposes and the Operator decides (AP-1). The first question is "does this need to be deterministic?"; the second is whether the rule can be written.
+- **Use an agent to build the script, not to be the script.** A con pays once to write a generator; every run after is free and the same. The docs site is built this way: a tested generator, and only the publish call, which needs the Artifact tool, is left to an agent.
+- **Jobs climb the ladder.** Every guard undo and every ledger correction marks a rule that could be written down; the ledger review turns it into a check. Example: the secretary ticked two draft proposals done (2026-10-16); "an item whose proposal still says draft is not done" is a rule a guard can hold.
+- **Why:** a script costs nothing per run and can be shown to fail (AP-4); an agent costs per run and varies. The backs cost $11.41 in 207 runs this month; the cost report and the guards, being scripts, cost nothing (the Operator, 2026-10-16).
+- **Enforced by:** the brief, which asks both questions before a job goes to a con or a back, and the ledger review, which asks of each friction group whether it can now be a rule. Not by a guard.
+
 ## Gaps
 
 Followed but not enforced, and what would enforce each:
@@ -82,6 +89,7 @@ Followed but not enforced, and what would enforce each:
 - **AP-7:** refuse `Corrects: none` from 2026-10-17.
 - **AP-10:** a spend cap the runner enforces.
 - **AP-12:** a raw `git -c` and `docker` lint in agent briefs.
+- **AP-14:** a brief field "why not a script", which the host checks.
 - **AP-13:** a review question: "which Feature did this serve?"
 
 ## Adoption

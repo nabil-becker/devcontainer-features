@@ -105,6 +105,16 @@ The domain words of the project itself are not here; they live with the project'
 - **White paper**: the account of one iteration, written once when the Operator calls it done, in
   plain words, function over form, every fact traceable to the ledger, ADRs, reviews and cost
   reports. Written by the journalist.
+- **Iteration package**: what an iteration hands to the next, cumulative: every earlier white
+  paper kept unchanged, plus the newest set of artifacts (a bootstrap prompt, context, whatever the
+  iteration finds foundational), which each iteration merges into and replaces, so packages never
+  nest. It carries the foundations of the Agentic Delivery OS, not the tooling, and says what to
+  ingest and why, not how to transform it. In the life theme (ADR-0007) it is the **seed**, a label only:
+  plain names stay in every id, path and sentence, as in ADR-0004
+  (`docs/proposals/iteration-package.md`).
+- **Docs site**: the one self-contained HTML page `devhost-site` builds from the docs and records,
+  a homepage that leads with what needs the Operator. Publishing it is a separate skill, so the
+  host (Claude artifacts today) can change without touching the page (ADR-0006).
 - **C4 view**: a diagram of the system at one zoom level (Context, Container), written in Mermaid
   and named by ontology ids.
 
@@ -152,3 +162,24 @@ iterations and stays in plain words (decided 2026-10-16).
 | night shift | the vigil |
 | `devhost-verify` and the guards | the castle watch |
 | journalist back | the bard (a name only; its journal is written in plain words) |
+
+## The life layer
+
+A second voice over the plain words, for the whole series of projects, shared by every project
+and sitting above each repository's own theme (the Arthurian layer here), not replacing it
+(decided 2026-10-16, ADR-0007, `docs/proposals/iteration-package.md`). Labels and story only:
+the plain word stays in every id, path, command, field name and guard, and nothing committed is
+renamed. Each project is a tree growing in its own ground.
+
+| Plain word | In the layer |
+|---|---|
+| iteration | generation |
+| project | tree |
+| project context | ground |
+| iteration package | seed |
+| white paper | fruit |
+| a learning that changed the foundation | adaptation |
+| a change that proved a one-off | shed trait |
+| the series of iterations | lineage |
+| iterations 1 and 2 (before any package existed) | first life, before seeds |
+| this repository | the first seed-bearing tree |

@@ -9,3 +9,4 @@ Drafts the Operator decides on. A proposal is never in force until the Operator 
 | [Personalization](personalization.md) | open |
 | [Feature principles](feature-principles.md) | draft, for the Operator (2026-10-16) |
 | [Agent principles](agent-principles.md) | draft, for the Operator (2026-10-16) |
+| [Iteration package](iteration-package.md) | open (2026-10-16): the flow and rule are agreed (papers carry over; the foundation is merged, never nested; it holds what the iteration finds foundational, not the OS tooling); no true-up: this repository exports the first package, and its paper records what came over |

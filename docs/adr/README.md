@@ -54,3 +54,5 @@ numbering and a row below.
 | [0003](0003-backs-only-add-so-change-stakes-become-amend-items.md) | Backs only add, so a stake that asks for a change becomes an amend item | accepted | 2026-10-16 |
 | [0004](0004-the-arthurian-theme-is-a-layer-not-a-rename.md) | The Arthurian theme is a layer over the plain words, not a rename | accepted | 2026-10-16 |
 | [0005](0005-the-ontology-is-the-canonical-model-and-a-guard-keeps-the-rest-in-line.md) | The ontology is the canonical model, and a guard keeps the rest in line | accepted | 2026-10-16 |
+| [0006](0006-the-docs-site-is-built-by-a-script-and-hosting-is-a-swappable-skill.md) | The docs site is built by a script, and hosting is a swappable skill | accepted | 2026-10-16 |
+| [0007](0007-the-life-theme-is-a-shared-layer-above-each-projects-own.md) | The life theme is a shared layer above each project's own theme | accepted | 2026-10-16 |
