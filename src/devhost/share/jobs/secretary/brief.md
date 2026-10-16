@@ -8,7 +8,10 @@ Read the backlog first (Read tool). Then, with the Edit tool:
 1. **Add** an item for anything the stretch left open that the list does not already hold:
    work an engineer asked for that is not done yet, a follow-up an inter said it would do or
    needs, a `[tooling]`, `[docs]`, `[skill]` or `[plan]` item a con's reply raised, a check
-   that is still owed. Engineering to-dos only: anything that needs an answer from a client, a
+   that is still owed. An item is for work that stays open after the session, or a decision.
+   Do not add an item for work the session itself started and finished (a fix, a branch or a
+   diagnosis begun and completed in the stretch), nor to track a con's job in progress; the
+   ledger holds those. Engineering to-dos only: anything that needs an answer from a client, a
    customer or another party outside the repository is not yours. Put it under the fitting
    section (Now for this week's work, Next for later), as the last item of that section, in
    the existing style:
