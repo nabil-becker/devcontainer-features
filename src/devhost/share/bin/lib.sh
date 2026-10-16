@@ -69,13 +69,13 @@ hk_night_shift_dir() { hk_abs "$1" "${DEVHOST_NIGHT_SHIFT_DIR:-docs/night-shift}
 hk_jobs_dir() { printf '%s\n' "${DEVHOST_JOBS_DIR:-$DEVHOST_SHARE/jobs}"; }
 
 # hk_engineer <root>: whose machine this is, for the metrics line, the cost report's file
-# name and the entries: DEVHOST_ENGINEER, else the git user name, as a slug; "unknown"
-# when neither is set.
+# name and the entries: DEVHOST_ENGINEER as a slug, else "operator". Never the git identity:
+# the handle is committed (ledger entries, the cost report's file name), and a git name may
+# be a person's name.
 hk_engineer() {
   local n="${DEVHOST_ENGINEER:-}"
-  [ -n "$n" ] || n="$(git -C "$1" config user.name 2>/dev/null || true)"
   n="$(printf '%s' "$n" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//')"
-  printf '%s\n' "${n:-unknown}"
+  printf '%s\n' "${n:-operator}"
 }
 
 # hk_guard <kind> [job]: sets HK_GUARD to the command (as an array) that runs the guard of

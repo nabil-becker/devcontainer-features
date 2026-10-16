@@ -130,9 +130,19 @@ def allowed_secrets(root: Path) -> set[str]:
         return set()
 
 
+ENV_TEMPLATE = re.compile(r"^\.env\.(example|sample|template|dist)$")
+
+
+def env_files(root: Path) -> list[str]:
+    """Tracked `.env` and `.env.*` files (templates `.env.example` and the like are fine)."""
+    return [f"{rel(root, p)}: a tracked env file; ignore it, keep a .env.example instead"
+            for p in tracked_files(root)
+            if (p.name == ".env" or p.name.startswith(".env.")) and not ENV_TEMPLATE.match(p.name)]
+
+
 def secrets(root: Path) -> list[str]:
     allowed = allowed_secrets(root)
-    findings = []
+    findings = env_files(root)
     for path in text_files(root):
         if path.name == "allowed-secrets.txt":
             continue

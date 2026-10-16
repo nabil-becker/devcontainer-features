@@ -74,6 +74,16 @@ class Verify(h.RepoCase):
         h.track(self.root)
         self.assertEqual(self.v.secrets(self.root), ["config.md:3: looks like a storage account key"])
 
+    def test_a_tracked_env_file_is_refused_but_templates_are_fine(self):
+        h.write(self.root / ".env", "NOTHING=here\n")
+        h.write(self.root / "sub" / ".env.local", "NOTHING=here\n")
+        h.write(self.root / ".env.example", "NOTHING=\n")
+        h.track(self.root)
+        findings = self.v.secrets(self.root)
+        self.assertEqual(sorted(findings), [
+            ".env: a tracked env file; ignore it, keep a .env.example instead",
+            "sub/.env.local: a tracked env file; ignore it, keep a .env.example instead"])
+
     def test_forbidden_words_and_redact_names_are_reported_by_number(self):
         h.write(self.root / "notes.md", "Nothing here.\nThe Zorblat account, and Someone Special's desk.\n")
         h.write(self.root / ".devhost" / "redact-names.txt", "Someone Special\n")

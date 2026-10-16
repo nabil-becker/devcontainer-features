@@ -8,7 +8,8 @@ job runner uses, so a repository can keep its records elsewhere without changing
 - `DEVHOST_STATE`: where the jobs keep their state (`/var/lib/devcontainer-features/devhost`).
 - `DEVHOST_LEDGER_DIR`, `DEVHOST_BACKLOG`, `DEVHOST_LEXICON`, `DEVHOST_ADR_DIR`,
   `DEVHOST_NIGHT_SHIFT_DIR`: the records, relative to the root unless absolute.
-- `DEVHOST_ENGINEER`: whose machine this is; else the git user name as a slug; else `unknown`.
+- `DEVHOST_ENGINEER`: whose machine this is, as a slug; else `operator`. Never the git identity: the handle
+  is committed (entries, the cost report's file name) and a git name may be a person's name.
 - `DEVHOST_FORBIDDEN_WORDS`: words (separated by `;`) that may appear nowhere in the repository.
 - `DEVHOST_REDACT_FILE` (`.devhost/redact-names.txt`, ignored by git): names replaced, whole
   word, by `DEVHOST_REDACT_WITH` (`the Operator`) in everything a job writes, and refused by
@@ -104,10 +105,7 @@ def slug(text: str) -> str:
 
 
 def engineer(root: Path) -> str:
-    name = os.environ.get("DEVHOST_ENGINEER", "").strip()
-    if not name:
-        name = (git(root, "config", "user.name") or "").strip()
-    return slug(name) or "unknown"
+    return slug(os.environ.get("DEVHOST_ENGINEER", "")) or "operator"
 
 
 def _words(text: str) -> list[str]:
