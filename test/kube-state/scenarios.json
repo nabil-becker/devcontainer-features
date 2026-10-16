@@ -6,6 +6,7 @@
         "helm": "none",
         "minikube": "none"
       },
+      "go-task": {},
       "kube-state": {}
     },
     "remoteUser": "vscode"
