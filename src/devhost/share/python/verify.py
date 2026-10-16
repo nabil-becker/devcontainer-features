@@ -20,6 +20,8 @@ word itself), and needs only git and python3:
   `# ADR-NNNN: `, carry the fixed sections and a known status word, and are in the index.
 - `taskfile`: every task in `Taskfile.yml` has a `desc` (`default` excepted).
 - `skills`: every `.claude/skills/<dir>/SKILL.md` has frontmatter `name: <dir>` and a description.
+- `hook_modes`: every tracked file in the configured hooks path (`core.hooksPath`) has index mode
+  100755; a 100644 hook never runs on Linux (`core.fileMode=false` on Windows hides the change).
 """
 from __future__ import annotations
 
@@ -262,7 +264,22 @@ def skills(root: Path) -> list[str]:
     return findings
 
 
-GUARDS = (ledger_append_only, ledger_shape, secrets, forbidden_words, adrs, taskfile, skills)
+def hook_modes(root: Path) -> list[str]:
+    hooks = (git(root, "config", "core.hooksPath") or "").strip()
+    if not hooks:
+        return []
+    listing = git(root, "ls-files", "-s", "--", hooks) or ""
+    findings = []
+    for line in listing.splitlines():
+        meta, _, path = line.partition("\t")
+        mode = meta.split()[0]
+        if mode != "100755":
+            findings.append(f"{path}:1: hook is mode {mode} in the index, so it never runs on Linux; "
+                            f"fix: git update-index --chmod=+x {path} && chmod +x {path}")
+    return findings
+
+
+GUARDS = (ledger_append_only, ledger_shape, secrets, forbidden_words, adrs, taskfile, skills, hook_modes)
 
 
 def run(root: Path) -> tuple[dict[str, list[str]], list[str]]:

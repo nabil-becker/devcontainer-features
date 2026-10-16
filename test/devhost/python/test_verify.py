@@ -159,6 +159,26 @@ class Verify(h.RepoCase):
             ".claude/skills/silent/SKILL.md:2: frontmatter needs a description saying what the skill does and when to use it",
         ])
 
+    def test_a_non_executable_hook_is_refused(self):
+        h.write(self.root / ".githooks" / "pre-commit", "#!/bin/sh\nexit 0\n")
+        h.git(self.root, "config", "core.hooksPath", ".githooks")
+        h.git(self.root, "add", ".githooks/pre-commit")
+        self.assertEqual(self.v.hook_modes(self.root), [
+            ".githooks/pre-commit:1: hook is mode 100644 in the index, so it never runs on Linux; "
+            "fix: git update-index --chmod=+x .githooks/pre-commit && chmod +x .githooks/pre-commit"])
+
+    def test_an_executable_hook_passes(self):
+        h.write(self.root / ".githooks" / "pre-commit", "#!/bin/sh\nexit 0\n")
+        h.git(self.root, "config", "core.hooksPath", ".githooks")
+        h.git(self.root, "add", "--chmod=+x", ".githooks/pre-commit")
+        self.assertEqual(self.v.hook_modes(self.root), [])
+
+    def test_no_hooks_path_or_an_untracked_one_passes(self):
+        self.assertEqual(self.v.hook_modes(self.root), [])
+        h.git(self.root, "config", "core.hooksPath", ".githooks")
+        h.write(self.root / ".githooks" / "pre-commit", "x\n")
+        self.assertEqual(self.v.hook_modes(self.root), [])
+
     def test_the_scaffolded_repository_passes_every_guard(self):
         init = h.load("init")
         init.scaffold(self.root)

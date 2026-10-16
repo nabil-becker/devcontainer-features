@@ -67,6 +67,10 @@ The runner reads the hook's JSON on stdin (`session_id`, `transcript_path`, `cwd
 
 All four: one `claude -p --model <model> --settings '{"disableAllHooks": true}' --no-session-persistence --output-format json` run under a 540 s timeout (none for the tester), the stretch condensed by `devhost-condense` (the engineer's words, the inter's visible replies, which tools ran with their paths or commands, cons' hand-backs; never thinking or tool output; the latest 40 000 characters), the offset advanced only when the run ended `changed` or `nothing`, one metrics line per run in `runs.jsonl` (time, job, mode, agent type, session, engineer, model, stretch size, stakes, status, guard undos, duration, cost, tokens). Sub-agents of the kinds in `DEVHOST_JOB_SKIP_AGENTS` (read-only lookups) are not jobs.
 
+## Commit-time guards
+
+`devhost-verify` runs the guards listed in the docstring of `share/python/verify.py` (ledger append-only and shape, secrets, forbidden words, ADR shape, Taskfile descriptions, skill frontmatter, hook modes). `hook_modes` refuses any tracked file in `core.hooksPath` whose index mode is not 100755, naming the file and the fix (`git update-index --chmod=+x <file>` plus `chmod +x`); no hooks path, or an untracked one, passes quietly.
+
 ## State
 
 `DEVHOST_STATE` (`/var/lib/devcontainer-features/devhost`, the named volume `devhost-state-${devcontainerId}`) holds `<job>/offsets/<session id>` (how far each back has read each transcript), `<job>/lock`, `<job>/job.log`, `<job>/pending-<session id>` and `since-<session id>` (the scribe), `tester/code_hash` and `last_result`, and `runs.jsonl`. Nothing of it belongs in the checkout, so a synced checkout never carries it and the ledger diff is only the entries. The post-create hook (`devhost-setup`, also `task devhost:setup`) creates the directory and hands it to the remote user through `dcf-persist`, and reports what backs it; for the host disk, bind-mount a host folder on the same target as the other Features of this collection do. `task devhost:log` tails every `job.log`; `task devhost:jobs:state` lists sessions read, pending items, held locks and the tester's last verdict.
