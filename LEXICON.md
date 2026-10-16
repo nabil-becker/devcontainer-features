@@ -123,7 +123,8 @@ The domain words of the project itself are not here; they live with the project'
 
 A voice over the plain words, not a rename (accepted 2026-10-16, `docs/proposals/king-arthur-theme.md`).
 The plain word stays in every id, path, command, field name and guard; the layer is for what a
-person reads: the bard's journal first, other prose only after a trial.
+person reads in chat. No committed output speaks in it: the journal is a record of the project's
+iterations and stays in plain words (decided 2026-10-16).
 
 | Plain word | In the layer |
 |---|---|
@@ -136,4 +137,4 @@ person reads: the bard's journal first, other prose only after a trial.
 | ledger review | the Round Table: the record read together, the King still decides |
 | night shift | the vigil |
 | `devhost-verify` and the guards | the castle watch |
-| journalist back | the bard (the scribe keeps the record; the bard tells the story) |
+| journalist back | the bard (a name only; its journal is written in plain words) |
