@@ -77,7 +77,17 @@ mkdir -p "$state/offsets" 2>/dev/null || { echo "devhost-run-job: cannot write $
 log() { printf '%s %s %s\n' "$(date -u +%FT%TZ)" "$SID" "$*" >>"$state/job.log"; }
 
 exec 9>"$state/lock"
-flock -n 9 || exit 0                          # a run of this job is busy; the next turn catches up
+# A con's SubagentStop fires once and its stretch is never offered again by a later event
+# of the same con, so a run lost to the lock would lose its entry for good: wait for the
+# lock, bounded (DEVHOST_LOCK_WAIT, 600 s, longer than the 540 s a back run may take, and a hook that
+# waits blocks nothing, it is async). A Stop (host turn) does not wait: its offset has not
+# moved, so the next turn reads the same stretch again, and waiting runs would pile up behind
+# a slow one. Every skipped run says so in the job log.
+if [ "$EVENT" = "SubagentStop" ]; then
+  flock -w "${DEVHOST_LOCK_WAIT:-600}" 9 || { log "skipped: lock busy, $EVENT $SID"; exit 0; }
+else
+  flock -n 9 || { log "skipped: lock busy, $EVENT $SID"; exit 0; }
+fi
 
 offset="$(cat "$state/offsets/$SID" 2>/dev/null || echo 0)"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
@@ -111,7 +121,7 @@ job_claude() {
 # stdin. Backs run it on everything they write.
 redact() { DEVHOST_ROOT="$ROOT" python3 "$BIN/redact.py" "$@"; }
 
-JOB_STATUS=error; JOB_NOTICE=""; JOB_PENDING=""; JOB_UNDONE=0
+JOB_STATUS=error; JOB_NOTICE=""; JOB_PENDING=""; JOB_UNDONE=0; JOB_ADVANCE=0
 started="$(date +%s.%N)"
 job_run "$TMP/stretch" "$TMP"
 log "status=$JOB_STATUS model=$MODEL size=$size notice=$JOB_NOTICE${JOB_PENDING:+ pending=$JOB_PENDING}"
@@ -155,9 +165,12 @@ case "$JOB_STATUS" in
   nothing)
     echo "$new_offset" >"$state/offsets/$SID"; exit 0 ;;
   pending)
+    # A job that undid its own run and set JOB_ADVANCE marks the stretch handled, so the same
+    # stretch is not retried every turn; the notice still says what was undone.
+    [ "$JOB_ADVANCE" = 1 ] && echo "$new_offset" >"$state/offsets/$SID"
     python3 -c 'import json,sys; print(json.dumps({"hookSpecificOutput": {"hookEventName": sys.argv[3],
-      "additionalContext": "Back " + sys.argv[1] + " (quiet notice): still pending, not yet done: " + sys.argv[2]}}))' \
-      "$JOB_NAME" "${JOB_PENDING:-$JOB_NOTICE}" "$event"
+      "additionalContext": "Back " + sys.argv[1] + " (quiet notice): " + sys.argv[2]}}))' \
+      "$JOB_NAME" "$( [ "$JOB_ADVANCE" = 1 ] && echo "$JOB_NOTICE (the stretch is marked read, the request is not retried)" || echo "still pending, not yet done: ${JOB_PENDING:-$JOB_NOTICE}" )" "$event"
     exit 0 ;;
   *) exit 0 ;;
 esac

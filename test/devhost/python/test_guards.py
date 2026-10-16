@@ -24,13 +24,36 @@ class BacklogGuard(h.RepoCase):
     def test_a_reorder_a_reword_and_a_removal_are_refused(self):
         reordered = BACKLOG[:4] + [BACKLOG[5], BACKLOG[4]] + BACKLOG[6:]
         # first-item is found after second-item; second-item is then the line that cannot follow it, so it is reported
-        self.assertEqual(self.g.backlog_guard(BACKLOG, reordered), "changed or lost: " + BACKLOG[5])
+        self.assertTrue(self.g.backlog_guard(BACKLOG, reordered).endswith("changed or lost: " + BACKLOG[5]))
         reworded = BACKLOG[:5] + ["- [ ] **second-item Two reworded** (host). Why. Added 2026-10-01."] + BACKLOG[6:]
-        self.assertEqual(self.g.backlog_guard(BACKLOG, reworded), "changed or lost: " + BACKLOG[5])
+        self.assertTrue(self.g.backlog_guard(BACKLOG, reworded).endswith("changed or lost: " + BACKLOG[5]))
         removed = BACKLOG[:5] + BACKLOG[6:]
         self.assertIsNotNone(self.g.backlog_guard(BACKLOG, removed))
         heading_suffixed = BACKLOG[:2] + ["## Now and then"] + BACKLOG[3:]
         self.assertIsNotNone(self.g.backlog_guard(BACKLOG, heading_suffixed), "a heading may not grow a suffix")
+
+    def test_the_finding_names_the_line_and_the_rule(self):
+        reworded = BACKLOG[:5] + ["- [ ] **second-item Two reworded** (host). Why. Added 2026-10-01."] + BACKLOG[6:]
+        finding = self.g.backlog_guard(BACKLOG, reworded)
+        self.assertIn("rule: an existing line may only be ticked", finding)
+        self.assertIn("**second-item Two**", finding)
+
+    def test_the_cli_prints_the_finding_then_a_capped_diff(self):
+        before, after = self.base / "b.md", self.base / "a.md"
+        h.write(before, "\n".join(BACKLOG) + "\n")
+        reworded = BACKLOG[:5] + ["- [ ] **second-item Two reworded** (host). Why. Added 2026-10-01."] + BACKLOG[6:]
+        h.write(after, "\n".join(reworded) + "\n")
+        done = h.run(["guards", "backlog", str(before), str(after)], self.root, self.env)
+        self.assertEqual(done.returncode, 1)
+        first, _, diff = done.stdout.partition("\n")
+        self.assertIn("rule:", first)
+        self.assertIn("-- [ ] **second-item Two** (host)", diff)
+        self.assertIn("+- [ ] **second-item Two reworded**", diff)
+
+    def test_the_diff_is_capped(self):
+        diff = self.g.rejected_diff(["a"], ["b" * 5000], cap=1500)
+        self.assertLess(len(diff), 1700)
+        self.assertIn("[diff clipped", diff)
 
     def test_the_cli_exits_one_on_a_change(self):
         before, after = self.base / "before.md", self.base / "after.md"
@@ -38,7 +61,7 @@ class BacklogGuard(h.RepoCase):
         h.write(after, "\n".join(BACKLOG[:5] + BACKLOG[6:]) + "\n")
         done = h.run(["guards", "backlog", str(before), str(after)], self.root, self.env)
         self.assertEqual(done.returncode, 1)
-        self.assertTrue(done.stdout.startswith("changed or lost: - [ ] **second-item"))
+        self.assertTrue("changed or lost: - [ ] **second-item" in done.stdout)
         h.write(after, "\n".join(BACKLOG) + "\n")
         self.assertEqual(h.run(["guards", "backlog", str(before), str(after)], self.root, self.env).returncode, 0)
         self.assertEqual(h.run(["guards", "nonsense", "a", "b"], self.root, self.env).returncode, 2)

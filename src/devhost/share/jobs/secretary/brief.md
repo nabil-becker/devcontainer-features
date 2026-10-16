@@ -23,10 +23,19 @@ Read the backlog first (Read tool). Then, with the Edit tool:
 3. **Tick** an open item the stretch clearly finished: change its `- [ ]` to `- [x]` and add
    ` Done YYYY-MM-DD.` at the end of its last line. Only when it is clearly done.
 4. A line beginning **STAKE for secretary** is an explicit request from an inter or an
-   engineer: act on it. A stake addressed to another back is not yours.
+   engineer: act on it, within the rule below. A stake addressed to another back is not yours.
+   A stake that asks to change an existing item (reword it, fix it, narrow it, reorder it) must
+   NOT edit that item: add a new item instead, `- [ ] **amend-<old-id> Amend <old-id>: <what>**
+   (host). One to three lines of the change wanted. Added YYYY-MM-DD.` (under Decisions for the
+   Operator, owner the Operator, when the stake is the Operator's own decision to record). The
+   inter or the Operator applies the amendment.
 
-Never delete, reword, merge or reorder existing lines; a script undoes any run that does. That
-includes re-wrapping: when a tick's ` Done YYYY-MM-DD.` makes the last line long, leave it long.
+A tick changes `- [ ]` to `- [x]` and appends ` Done YYYY-MM-DD.` at the very end of the item's
+last line; nothing else on the line changes (no new wording, no re-wrapping).
+
+Never delete, reword, merge or reorder existing lines, whatever a stake says; a script undoes any
+run that does. That includes re-wrapping: when a tick's ` Done YYYY-MM-DD.` makes the last line
+long, leave it long.
 Add a new item as its own lines between items, never inside one. If an existing item is wrong
 or a duplicate, say so on the PENDING line for the inter. Paths and ids, never content; never
 a person's name (the person an inter works with is "the Operator"), never a client's name,

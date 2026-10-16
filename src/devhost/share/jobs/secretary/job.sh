@@ -27,8 +27,12 @@ job_run() {
       log "no backlog guard installed (share/python/guards.py); edit undone"
       JOB_STATUS=pending; JOB_NOTICE="the backlog guard is not installed, so the secretary's edit was undone"
     else
-      log "edit deleted, reworded or reordered lines; undone ($(head -c 200 "$tmp/guard"))"
-      JOB_STATUS=pending; JOB_NOTICE="a ${todo#"$ROOT"/} edit that changed existing lines was undone"
+      # The guard prints the finding (the line and the rule) first, then the rejected diff.
+      log "edit changed existing lines; undone: $(head -n1 "$tmp/guard" | head -c 400)"
+      sed -n '2,$p' "$tmp/guard" | head -c 1600 | sed 's/^/    | /' >>"$state/job.log"
+      # Handled: an undone stake is not retried every turn; the notice says it was undone.
+      JOB_STATUS=pending; JOB_ADVANCE=1
+      JOB_NOTICE="a ${todo#"$ROOT"/} edit was undone ($(head -n1 "$tmp/guard" | head -c 300)). To change an existing item, add an amend-<id> item instead"
     fi
     return
   fi

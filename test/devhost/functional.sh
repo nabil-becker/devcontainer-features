@@ -22,6 +22,7 @@ devhost_functional() {
 n=$(ls "$FAKE_DIR"/prompt-*.txt 2>/dev/null | wc -l)
 printf '%s\n' "$@" > "$FAKE_DIR/args-$n.txt"
 cat > "$FAKE_DIR/prompt-$n.txt"
+[ -f "$FAKE_DIR/edit.sh" ] && bash "$FAKE_DIR/edit.sh"
 python3 -c 'import json,os; print(json.dumps({"result": open(os.environ["FAKE_DIR"] + "/answer").read(), "total_cost_usd": 0.0012, "num_turns": 2, "usage": {"input_tokens": 100, "output_tokens": 50, "cache_read_input_tokens": 10, "cache_creation_input_tokens": 5}}))'
 STUB
   chmod 0755 "$tmp/bin/claude"
@@ -61,6 +62,14 @@ PY
     local job="$1" sid="$2"; shift 2
     local payload
     payload="$(printf '{"session_id": "%s", "transcript_path": "%s", "cwd": "%s", "hook_event_name": "Stop"}' "$sid" "$tmp/s1.jsonl" "$root")"
+    (cd "$root" && env -u DEVHOST_ROOT -u CLAUDE_PROJECT_DIR -u DEVHOST_JOB_CHILD \
+      PATH="$tmp/bin:$PATH" FAKE_DIR="$tmp" DEVHOST_STATE="$state" DEVHOST_CONTAINER_MARKERS="$marker" \
+      DEVHOST_ENGINEER=tester DEVHOST_JOB_QUIET_SECS=0 "$@" devhost-run-job "$job" <<<"$payload")
+  }
+  run_sub() { # <job> <agent id> [VAR=value ...] -> a SubagentStop run of the same fake transcript
+    local job="$1" aid="$2"; shift 2
+    local payload
+    payload="$(printf '{"session_id": "host", "transcript_path": "%s", "cwd": "%s", "hook_event_name": "SubagentStop", "agent_id": "%s", "agent_transcript_path": "%s", "agent_type": "general-purpose"}' "$tmp/s1.jsonl" "$root" "$aid" "$tmp/s1.jsonl")"
     (cd "$root" && env -u DEVHOST_ROOT -u CLAUDE_PROJECT_DIR -u DEVHOST_JOB_CHILD \
       PATH="$tmp/bin:$PATH" FAKE_DIR="$tmp" DEVHOST_STATE="$state" DEVHOST_CONTAINER_MARKERS="$marker" \
       DEVHOST_ENGINEER=tester DEVHOST_JOB_QUIET_SECS=0 "$@" devhost-run-job "$job" <<<"$payload")
@@ -113,6 +122,39 @@ PY
   out="$(run_job tester t3 TESTER_CMD="echo '5 passed'")"
   check "tester is quiet without a code change" test -z "$out"
   check "tester never called claude" test "$(calls)" = 1
+
+  # 6. The lock. A busy lock never drops a run silently: a Stop run (non-blocking) logs the
+  #    skip; a SubagentStop run waits for the lock and then does its job.
+  before_calls="$(calls)"
+  ( flock "$state/scribe/lock" sleep 4 ) &
+  sleep 0.5
+  out="$(run_job scribe s9)"
+  check "a Stop run under a busy lock skips and says so in the job log" bash -c "[ '$(calls)' = '$before_calls' ] && grep -q 'skipped: lock busy, Stop s9' '$state/scribe/job.log'"
+  out="$(run_sub scribe a1 DEVHOST_LOCK_WAIT=20)"
+  check "a SubagentStop run waits for the lock and runs" bash -c "[ '$(calls)' = '$((before_calls + 1))' ] && ! grep -q 'skipped: lock busy, SubagentStop' '$state/scribe/job.log'"
+  ( flock "$state/scribe/lock" sleep 4 ) &
+  sleep 0.5
+  out="$(run_sub scribe a2 DEVHOST_LOCK_WAIT=1)"
+  check "a SubagentStop run past its wait logs the skip" grep -q 'skipped: lock busy, SubagentStop a2' "$state/scribe/job.log"
+  wait
+
+  # 7. The secretary's edit is refused by the backlog guard (an existing line reworded): the
+  #    file is restored, the diff and the rule reach the job log, the notice says it was
+  #    undone, and the stretch is marked read, so the next turn does not retry it.
+  before_calls="$(calls)"
+  cat > "$tmp/edit.sh" <<'EDIT'
+sed -i 's/First/First reworded/' TODO.md
+EDIT
+  cp "$root/TODO.md" "$tmp/todo.orig"
+  run_job secretary sec1 >"$tmp/secretary.out"
+  check "the secretary called claude" test "$(calls)" = "$((before_calls + 1))"
+  check "the refused edit is undone" cmp -s "$tmp/todo.orig" "$root/TODO.md"
+  check "the job log carries the rule and the rejected diff" bash -c "grep -q 'edit changed existing lines; undone: rule: an existing line may only be ticked' '$state/secretary/job.log' && grep -q '^    | +- \[ \] \*\*first-item First reworded' '$state/secretary/job.log'"
+  check "the notice says it was undone and names the rule" bash -c "grep -q 'edit was undone' '$tmp/secretary.out' && grep -q 'first-item' '$tmp/secretary.out' && grep -q 'rule: an existing line' '$tmp/secretary.out'"
+  check "the undone stretch is marked read" test -s "$state/secretary/offsets/sec1"
+  out="$(run_job secretary sec1)"
+  check "the same stretch is not retried" bash -c "[ '$(calls)' = '$((before_calls + 1))' ] && [ -z '$out' ]"
+  rm -f "$tmp/edit.sh"
 
   rm -rf "$tmp"
 }

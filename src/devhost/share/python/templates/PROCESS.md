@@ -36,6 +36,7 @@ The words are defined in [LEXICON.md](LEXICON.md). What is open is in [TODO.md](
   mechanism, a draft. Each brief names the job, what is out of bounds, the model (sized by blast
   radius) and the isolation (a worktree when the job changes shared tooling); each con replies
   once in the hand-off shape (Outcome, Outputs, Friction, For the repository, Decisions needed),
+  its Friction including what it worked around (a command retried another way), not only what blocked it,
   and its job gets its own ledger entry.
 - **Backs** never talk to anyone. After each inter turn and each con's job they read what was
   done and keep one record each: the **scribe** the ledger, the **secretary** `TODO.md`, the
