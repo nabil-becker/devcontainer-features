@@ -10,12 +10,21 @@ The `Microsoft.DSC/PowerShell` adapter and the
 
 ## Verification
 
-DSC releases do not ship a checksums file. GitHub computes a sha256 digest
-for every uploaded release asset and returns it from the Releases API; the
-Feature reads that digest for the exact tarball it downloads and verifies
-against it. The unauthenticated API allows 60 requests per hour per IP; in
-busy CI set `GITHUB_TOKEN` in the build environment, or pin the digest
-yourself:
+DSC releases do not ship a checksums file, but GitHub records a sha256 digest
+for every release asset. The Feature never calls the GitHub API (its
+unauthenticated limit of 60 requests per hour per IP is exhausted by CI
+matrices, and a Feature build receives no `GITHUB_TOKEN`). The tarball is
+verified against the first digest found in this order:
+
+1. the `sha256` option;
+2. `digests.txt` in the Feature, which pins the linux tarballs of known
+   versions (no network lookup at all);
+3. the digest shown on the release page
+   (`github.com/PowerShell/DSC/releases/expanded_assets/v<version>`), for
+   versions not pinned.
+
+If none yields a digest the install fails; it never installs unverified.
+Pin the digest yourself to skip step 3:
 
 ```json
 "ghcr.io/nabil-becker/devcontainer-features/dsc:1": {
@@ -25,3 +34,13 @@ yourself:
 ```
 
 (`sha256` is per platform: that example is the x86_64 tarball.)
+
+To add a version to `digests.txt` (maintainers; check the digests against the
+release page, then bump the Feature `version`):
+
+```bash
+v=3.4.0; for a in x86_64 aarch64; do n=DSC-$v-$a-linux.tar.gz
+  d=$(curl -fsSL https://github.com/PowerShell/DSC/releases/expanded_assets/v$v |
+    grep -oE "digest for ${n//./\\.}\"[^>]*value=\"sha256:[0-9a-f]{64}" | grep -oE '[0-9a-f]{64}$')
+  echo "$d  $n"; done
+```
