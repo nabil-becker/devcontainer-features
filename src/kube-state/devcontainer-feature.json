@@ -1,0 +1,36 @@
+{
+  "id": "kube-state",
+  "version": "1.0.0",
+  "name": "Kubernetes client config (kube-state)",
+  "description": "Owns the kubeconfig for the Kubernetes tools in the image (kubectl, velero, kustomize, argocd, ...): sets KUBECONFIG=/var/lib/devcontainer-features/kube-state/config and mounts a named volume on /var/lib/devcontainer-features/kube-state, so a kubeconfig imported once survives rebuilds and no repo hand-mounts ~/.kube. Installs no kubectl itself (add ghcr.io/devcontainers/features/kubectl-helm-minikube before it if you want one). Adds a post-create hook (kube-state-setup) that makes the directory usable by the remote user, keeps the kubeconfig private to it, and reports whether a kubeconfig and a current context are present. Plus the Feature Taskfile.",
+  "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/kube-state",
+  "licenseURL": "https://github.com/nabil-becker/devcontainer-features/blob/main/LICENSE",
+  "options": {
+    "installTaskfile": {
+      "type": "boolean",
+      "default": true,
+      "description": "Also install this Feature's Taskfile into /usr/local/share/go-task/includes.d so its tasks appear under the <id>: namespace of a root Taskfile that includes /usr/local/share/go-task/features.yml (see the go-task Feature)."
+    },
+    "restrictPermissions": {
+      "type": "boolean",
+      "default": true,
+      "description": "At post-create, chmod the kubeconfig file to 0600 when it exists (kubectl and helm warn about a group- or world-readable one; it holds credentials). Override per container with KUBE_STATE_SETUP_RESTRICT_PERMISSIONS in containerEnv."
+    }
+  },
+  "containerEnv": {
+    "KUBECONFIG": "/var/lib/devcontainer-features/kube-state/config"
+  },
+  "mounts": [
+    {
+      "source": "kube-state-config-${devcontainerId}",
+      "target": "/var/lib/devcontainer-features/kube-state",
+      "type": "volume"
+    }
+  ],
+  "postCreateCommand": "kube-state-setup",
+  "installsAfter": [
+    "ghcr.io/nabil-becker/devcontainer-features/go-task",
+    "ghcr.io/devcontainers/features/common-utils",
+    "ghcr.io/devcontainers/features/kubectl-helm-minikube"
+  ]
+}
