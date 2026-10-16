@@ -78,7 +78,7 @@ tasks:
   lint:
     desc: 'shellcheck every shell script, yamllint every YAML file (.yamllint), PSScriptAnalyzer every PowerShell file, and the vendored copies of src/common/*.sh identical to the canonical ones (same checks as CI; the tools must be installed - this repo''s devcontainer has them).'
     cmds:
-      - shellcheck -x src/*/*.sh src/*/share/bin/*.sh src/*/share/jobs/*/*.sh test/*/*.sh bootstrap/*.sh bootstrap/host/*.sh .githooks/*
+      - shellcheck -x src/*/*.sh src/*/share/bin/*.sh src/*/share/jobs/*/*.sh test/*/*.sh bootstrap/*.sh .githooks/*
       - yamllint --strict .
       - pwsh -NoLogo -NoProfile -File '{{.ROOT_DIR}}/.github/scripts/Invoke-PSScriptAnalyzer.ps1'
       - task: common:check
@@ -90,15 +90,6 @@ tasks:
       - cmd: python -m unittest discover -s test/devhost/python -q
         platforms: [windows]
       - cmd: python3 -m unittest discover -s test/devhost/python -q
-        platforms: [linux, darwin]
-
-  features:stage:
-    desc: 'Copy every src/<id> Feature into .devcontainer/features/<id> (gitignored), so this repo''s own devcontainer references the unpublished Features by local path. The devcontainer runs it as initializeCommand before every start.'
-    silent: true
-    cmds:
-      - cmd: pwsh -NoLogo -NoProfile -Command 'Remove-Item -Recurse -Force .devcontainer/features -ErrorAction SilentlyContinue; New-Item -ItemType Directory -Force .devcontainer/features | Out-Null; Get-ChildItem src -Directory | ForEach-Object { Copy-Item -Recurse $_.FullName (Join-Path .devcontainer/features $_.Name) }; "staged $((Get-ChildItem src -Directory).Count) Features into .devcontainer/features"'
-        platforms: [windows]
-      - cmd: rm -rf .devcontainer/features && mkdir -p .devcontainer/features && for d in src/*/; do cp -r "$d" ".devcontainer/features/$(basename "$d")"; done && echo "staged $(ls src | wc -l | tr -d ' ') Features into .devcontainer/features"
         platforms: [linux, darwin]
 
   common:check:

@@ -10,7 +10,13 @@ installing Node.js, and a one-line bootstrap that wires both into any repo.
 | --- | --- |
 | [`go-task`](src/go-task) | [Task](https://taskfile.dev) (`task`), sha256-verified from GitHub releases, with bash/zsh completions. |
 | [`devcontainer-cli`](src/devcontainer-cli) | `@devcontainers/cli` as `devcontainer`, on a private Node.js under `/opt/devcontainer-cli` that is never put on PATH. |
-| [`claude-code`](src/claude-code) | [Claude Code](https://code.claude.com/docs) as its native release binary (no Node.js), auto-updater off, version pinnable. |
+| [`claude-code`](src/claude-code) | [Claude Code](https://code.claude.com/docs): the native release binary (no Node.js, version pinnable) unless a `claude` is already there (the official Anthropic Feature), plus the `claude-host` launcher and its state (`CLAUDE_CONFIG_DIR`) in a volume it owns. |
+| [`git`](src/git) | git augmented for the container: a worktree-aware wrapper that scopes `GIT_DIR` to the checkout, `safe.directory` and `core.hooksPath` at post-create, the global config in a volume it owns. |
+| [`gh`](src/gh) | [GitHub CLI](https://cli.github.com) from GitHub releases, checksum-verified, unless the official Feature installed it; its login (`GH_CONFIG_DIR`) in a volume it owns, git's GitHub credentials taken from it. |
+| [`az`](src/az) | Augments the official `azure-cli` Feature: its login (`AZURE_CONFIG_DIR`) in a volume it owns, `az bicep` using the Bicep on PATH. |
+| [`kube-state`](src/kube-state) | Owns the kubeconfig (`KUBECONFIG`) the Kubernetes tools share, in a volume it owns, so velero, kustomize, argocd and kubectl stop needing a hand-mounted `~/.kube`; installs no binary. |
+| [`devhost`](src/devhost) | The way of working as a Feature: one host Claude Code session per repo, backs that keep the ledger, backlog and docs from Claude Code hooks, the session briefing, cost report, ADR tool, verify guards, and `devhost-init` to scaffold a repo. |
+| [`common`](src/common) | The shared helper behind every Feature's post-create hook (`dcf-persist`: make a state directory usable and say what backs it), for a repo's own scripts too. |
 | [`coder-cli`](src/coder-cli) | [Coder](https://coder.com) CLI from GitHub releases, verified against the release checksums. |
 | [`openbao`](src/openbao) | [OpenBao](https://openbao.org) CLI (`bao`), verified against the release checksums. |
 | [`velero`](src/velero) | [Velero](https://velero.io) CLI, verified against the release `CHECKSUM`. |
@@ -19,8 +25,31 @@ installing Node.js, and a one-line bootstrap that wires both into any repo.
 | [`argocd`](src/argocd) | [Argo CD](https://argo-cd.readthedocs.io) CLI, verified against the release `cli_checksums.txt`. |
 | [`dsc`](src/dsc) | [Microsoft DSC v3](https://github.com/PowerShell/DSC) in `/opt/dsc`, verified against the GitHub-published asset digest (or a pinned `sha256`). |
 
-Every Feature takes a `version` option (`latest` or a pinned release) and
-verifies what it downloads before installing it.
+Every Feature that installs a tool takes a `version` option (`latest` or a
+pinned release) and verifies what it downloads before installing it.
+
+## How the pieces fit
+
+The collection is an ecosystem, not a bag of installers: every repo that uses
+it gets the same shape, and anything a repo has to script around is a gap to
+close here.
+
+- **Task is the API.** Inside the container, every Feature contributes
+  `<id>:*` tasks through the go-task registry. Documents and skills name
+  tasks, never the scripts behind them.
+- **Augment, don't duplicate.** When an official Feature exists for a tool
+  (Anthropic's `claude-code`, `devcontainers/features/git`), this collection's
+  Feature of the same id orders itself after it (`installsAfter`) and adds
+  what the ecosystem needs around it: a launcher, a post-create hook, a
+  Taskfile. It installs the tool itself only when nothing else did, and then
+  verified and pinnable. Wrappers are opt-in and generic (no repo paths).
+- **Each Feature owns its state.** A Feature that has state (logins,
+  transcripts, tool config) declares the variable that points at it and a
+  named volume on `/var/lib/devcontainer-features/<id>`, like the official
+  docker-in-docker Feature does, and its post-create hook makes the directory
+  usable by the remote user (`dcf-persist`, from `common`). Nothing to
+  configure. A repo that wants that state on the host disk bind-mounts the
+  same target; its mount wins.
 
 ### Feature Taskfiles
 
@@ -47,6 +76,7 @@ Add a Feature and rebuild: its tasks appear. Remove it: they disappear.
 "features": {
   "ghcr.io/nabil-becker/devcontainer-features/go-task:1": {},
   "ghcr.io/nabil-becker/devcontainer-features/devcontainer-cli:1": {},
+  "ghcr.io/nabil-becker/devcontainer-features/git:1": { "hooksPath": ".githooks" },
   "ghcr.io/nabil-becker/devcontainer-features/claude-code:1": {},
   "ghcr.io/nabil-becker/devcontainer-features/kustomize:1": { "version": "5.8.3" }
 }
