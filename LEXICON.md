@@ -72,6 +72,12 @@ The domain words of the project itself are not here; they live with the project'
   Checked against the measured costs at each review.
 - **Trial**: running a new mechanism once on real (or, for tooling, synthetic) work before the
   process describes it.
+- **Agentic Delivery OS**: the product the Operator is building: a set of tools that lets one
+  person, technical or not, bootstrap a devhost. It is the foundation of a pyramid, and each
+  iteration helps define that foundation (`docs/iterations.md`).
+- **Iteration**: one project in which the way of working is tried and learned from: client
+  engagement first, then DSNP, then this repository. The Operator decides when an iteration is
+  done.
 
 ## Records
 
@@ -96,6 +102,9 @@ The domain words of the project itself are not here; they live with the project'
 - **Ontology**: the canonical data model of the way of working: what kinds of thing exist (by
   plain base id), and how they relate (briefs, writes, keeps, checks, decides). The lexicon words,
   the themes and the C4 views must agree with it; it is not the instances, which the ledger holds.
+- **White paper**: the account of one iteration, written once when the Operator calls it done, in
+  plain words, function over form, every fact traceable to the ledger, ADRs, reviews and cost
+  reports. Written by the journalist.
 - **C4 view**: a diagram of the system at one zoom level (Context, Container), written in Mermaid
   and named by ontology ids.
 
