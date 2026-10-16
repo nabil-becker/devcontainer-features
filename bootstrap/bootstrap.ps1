@@ -147,10 +147,16 @@ foreach ($entry in $templates.GetEnumerator()) {
     $dest = Join-Path $Path $entry.Value
     if (Test-Path $dest) {
         Write-Host "  kept      $($entry.Value) (exists)"
+        if ($entry.Value -eq '.devcontainer/devcontainer.json') {
+            Write-Host "             (see the host-disk override block for Feature state on the host disk)"
+        }
         continue
     }
     Get-SourceFile -RelativePath $entry.Key -Destination $dest
     Write-Host "  wrote     $($entry.Value)"
+    if ($entry.Value -eq '.devcontainer/devcontainer.json') {
+        Write-Host "             (see the host-disk override block for Feature state on the host disk)"
+    }
 }
 
 $gitignore = Join-Path $Path '.gitignore'
