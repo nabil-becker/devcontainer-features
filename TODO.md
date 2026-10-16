@@ -43,6 +43,7 @@ stays. Ids are short descriptive slugs (two to four kebab-case words naming the 
 - [x] **diagnose-backs-failures Diagnose backs' failures** (host). Scribe dropped friction on 3 ledger entries; secretary has had edits undone ~4 times. Find cause from briefs, guard output and transcripts; propose fix backed by evidence. Research only. Started 2026-10-16. Done 2026-10-16.
 - [ ] **fix-ledger-guard-base-ref Fix ledger guard base-ref lookup in devhost** (host). The ledger's append-only guard never runs in the devhost; it skips with "no base ref" even where origin/main exists. A con is fixing it on its own branch with a test. It becomes a follow-up Features PR after PR #11 merges. Added 2026-10-16.
 - [ ] **fix-backs-pipeline-bugs Fix backs' pipeline bugs** (host). Three bugs found: scribe's hand-offs clipped at 3000 chars before it sees them (friction lost); jobs dropped silently if con finishes while scribe is busy; secretary stakes ask for rewording (backs cannot do it). Fixes proposed: keep full hand-off or pull Friction/For repo/Decisions to front; make dropped jobs queue; log rejected edits. Added 2026-10-16.
+- [ ] **safe-shutdown-backs-pause Pause backs' hooks during safe shutdown** (host). The backs run after every turn, so the last turn always leaves one more ledger entry behind. Before draining back queues during safe-shutdown, pause the backs' hooks (for example with a `shutdown.started` marker that the hooks check before running). This ensures the final ledger entry is committed properly. Discovered 2026-10-16.
 
 ## Decisions for the Operator
 
