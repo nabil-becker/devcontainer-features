@@ -7,7 +7,7 @@
 #   - /usr/local/bin/git-setup, the per-container setup (safe.directory,
 #     core.hooksPath) that this Feature's postCreateCommand hook runs.
 # Feature options arrive as upper-cased environment variables (see
-# devcontainer-feature.json): WORKTREEAWARE, SAFEDIRECTORY, HOOKSPATH.
+# devcontainer-feature.json): WORKTREEAWARE, SAFEDIRECTORY, HOOKSPATH, COMMITNAME, COMMITEMAIL.
 #
 # State: devcontainer-feature.json points GIT_CONFIG_GLOBAL at
 # /var/lib/devcontainer-features/git/gitconfig and mounts a named volume on
@@ -21,6 +21,8 @@ WORKTREEAWARE="${WORKTREEAWARE:-true}"
 # hence "-" rather than ":-".
 SAFEDIRECTORY="${SAFEDIRECTORY-workspace}"
 HOOKSPATH="${HOOKSPATH-}"
+COMMITNAME="${COMMITNAME-}"
+COMMITEMAIL="${COMMITEMAIL-}"
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "git: install.sh must run as root (the devcontainer Feature lifecycle does this)." >&2
@@ -47,8 +49,15 @@ mkdir -p "$share"
 
 install -m 0755 "$feature_dir/git-setup.sh" /usr/local/bin/git-setup
 
+# The commit identity is applied by the wrapper, so it keeps the wrapper in
+# place even with worktreeAware=false (the wrapper then only exports it).
+if [ -n "$COMMITEMAIL" ] && [ -z "$COMMITNAME" ]; then COMMITNAME="$COMMITEMAIL"; fi
+identity="$share/identity.env"
+want_wrapper=false
+if [ "$WORKTREEAWARE" = "true" ] || [ -n "$COMMITEMAIL" ]; then want_wrapper=true; fi
+
 real_git=""
-if [ "$WORKTREEAWARE" = "true" ]; then
+if [ "$want_wrapper" = "true" ]; then
   # A git already at /usr/local/bin that is not our wrapper (built from source
   # by ghcr.io/devcontainers/features/git) is moved aside so the wrapper can
   # take its place and still forward to it; otherwise the real git is the
@@ -80,6 +89,20 @@ else
   if [ -x "$aside/git" ]; then
     mv "$aside/git" "$wrapper"
   fi
+fi
+
+# Commit identity for the wrapper: single-quoted shell assignments (sourced by
+# a POSIX sh), present only when commitEmail is set.
+if [ -n "$COMMITEMAIL" ]; then
+  sq() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
+  {
+    echo "# Written by the git Feature's install.sh (commitName, commitEmail); sourced by the wrapper."
+    printf 'DCF_COMMIT_NAME=%s\n' "$(sq "$COMMITNAME")"
+    printf 'DCF_COMMIT_EMAIL=%s\n' "$(sq "$COMMITEMAIL")"
+  } > "$identity"
+  chmod 0644 "$identity"
+else
+  rm -f "$identity"
 fi
 
 # The options, as defaults for git-setup (the hook and `task git:setup` must

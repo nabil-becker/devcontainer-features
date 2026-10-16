@@ -9,6 +9,22 @@
 # the main checkout: everywhere else git behaves as if they were not set.
 # @REAL_GIT@ is baked in by install.sh.
 real="${GIT_WRAPPER_REAL_GIT:-@REAL_GIT@}"
+
+# Commit identity (commitName / commitEmail options): install.sh writes the
+# two values to a file. Environment variables beat every config level, so a
+# repository-local user.email cannot override them, and `commit -s` signs off
+# with the committer identity. Each variable the caller already set wins.
+idfile="${GIT_WRAPPER_IDENTITY_FILE:-/usr/local/share/git-feature/identity.env}"
+if [ -r "$idfile" ]; then
+  # shellcheck disable=SC1090  # written by install.sh
+  . "$idfile"
+  if [ -n "${DCF_COMMIT_EMAIL:-}" ]; then
+    : "${GIT_AUTHOR_NAME:=$DCF_COMMIT_NAME}" "${GIT_AUTHOR_EMAIL:=$DCF_COMMIT_EMAIL}"
+    : "${GIT_COMMITTER_NAME:=$DCF_COMMIT_NAME}" "${GIT_COMMITTER_EMAIL:=$DCF_COMMIT_EMAIL}"
+    export GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
+  fi
+fi
+
 [ -n "${GIT_DIR:-}" ] || exec "$real" "$@"
 
 # The directory that counts is the one git will run in: $PWD, moved by each
