@@ -3,7 +3,7 @@
 
 Usage: devhost-redact [file ...]   files are fixed in place; with no files, stdin -> stdout.
 
-Two lists, one reader (common.py), so the backs and a repository's own check agree:
+Two lists, one reader (python/devhost_common.py), so the backs and a repository's own check agree:
 - the names in DEVHOST_REDACT_FILE (`.devhost/redact-names.txt` at the root, ignored by git,
   one per line) become DEVHOST_REDACT_WITH ("the Operator"; a possessive stays one), matched
   as whole words, case-insensitively;
@@ -16,8 +16,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import redact, repo_root  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "python"))
+from devhost_common import redact_text as redact, repo_root  # noqa: E402
 
 
 def main(argv: list[str]) -> int:

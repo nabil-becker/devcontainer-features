@@ -127,13 +127,20 @@ def redact_names(root: Path) -> list[str]:
         return []
 
 
-def redact(text: str, names: list[str], replacement: str | None = None) -> str:
-    """Replace each name, as a whole word and case-insensitively, keeping a possessive."""
+def redact(text: str, names: list[str], replacement: str | None = None, whole_word: bool = True) -> str:
+    """Replace each name, case-insensitively, keeping a possessive; whole words unless told not to."""
     replacement = replacement or redact_with()
-    for name in sorted(names, key=len, reverse=True):
-        text = re.sub(r"\b" + re.escape(name) + r"(?:'s|’s)\b", replacement + "'s", text, flags=re.I)
-        text = re.sub(r"\b" + re.escape(name) + r"\b", replacement, text, flags=re.I)
+    edge = r"\b" if whole_word else ""
+    for name in sorted(names, key=len, reverse=True):  # longest first: "Ann Lee" before "Ann"
+        text = re.sub(edge + re.escape(name) + r"(?:'s|’s)" + edge, replacement + "'s", text, flags=re.I)
+        text = re.sub(edge + re.escape(name) + edge, replacement, text, flags=re.I)
     return text
+
+
+def redact_text(text: str, root: Path) -> str:
+    """Both rules of the name guard: the redact names as whole words, the forbidden words anywhere."""
+    text = redact(text, redact_names(root))
+    return redact(text, forbidden_words(root), whole_word=False)
 
 
 def base_ref(root: Path) -> str | None:
