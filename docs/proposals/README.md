@@ -5,5 +5,5 @@ Drafts the Operator decides on. A proposal is never in force until the Operator 
 | Proposal | Status |
 |---|---|
 | [King Arthur theme](king-arthur-theme.md) | accepted 2026-10-16: a layer, ten names in LEXICON.md, used in conversation only; no committed output speaks in it |
-| [Journalist back](journalist-back.md) | accepted 2026-10-16, in plain words (not in the Arthurian voice); first piece hand-run, the back to be built |
+| [Journalist back](journalist-back.md) | accepted 2026-10-16: it writes the iteration's white paper (docs/iterations.md), in plain words, when the Operator calls the iteration; the hand-run journal piece was a trial |
 | [Personalization](personalization.md) | open |

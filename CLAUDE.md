@@ -9,6 +9,9 @@ in [CONTRIBUTING.md](CONTRIBUTING.md); read both before changing a Feature.
 
 @.devhost/CLAUDE.devhost.md
 
+The Features are the product; the devhost here is also the third iteration of the Agentic
+Delivery OS, whose learnings become a white paper: [docs/iterations.md](docs/iterations.md).
+
 ## This repository in the way of working
 
 - **Sessions run in the devhost.** `.devcontainer/` is this collection's own

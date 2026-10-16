@@ -1,7 +1,8 @@
 # Proposal: a journalist back
 
-Status: draft, for the Operator to decide. Nothing here is built; no back, hook or guard is
-added by this file. Figures are from `runs.jsonl` (117 runs, 2026-10-16) and the month's cost report.
+Status: accepted 2026-10-16 with a changed purpose: the back writes the iteration's white paper
+(docs/iterations.md), in plain words, when the Operator calls the iteration, not a journal piece
+per ledger review. What follows is the original draft; its sources, guard and cost still apply.
 
 ## 1. Its job, and how it differs
 
