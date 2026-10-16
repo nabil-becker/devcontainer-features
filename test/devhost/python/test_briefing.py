@@ -36,7 +36,7 @@ class Briefing(h.RepoCase):
         self.assertIn("Agent spend", text)
         self.assertIn("backs $0.02 in 1 runs, 1 undone by guards", text)
         self.assertIn("Details: devhost-report.", text)
-        self.assertNotIn("Nabil", text)
+        self.assertNotIn(h.PERSON, text)  # seeded as the repo's git user.name by h.make_repo
         report = self.root / "docs" / "ledger" / f"costs-{self.b.month()}-tester.md"
         self.assertTrue(report.exists(), "the briefing rewrites the month's cost report")
 
@@ -82,7 +82,7 @@ class Report(h.RepoCase):
         self.assertIn("| Explore | claude-haiku-5 | 1 | 1 |", text)
         self.assertIn("| scribe | claude-haiku-5 | 1 | 0 | 1 | 0 | 0 |", text)
         self.assertIn("decision for the Operator", text)
-        self.assertNotIn("Nabil", text)
+        self.assertNotIn(h.PERSON, text)  # seeded as the repo's git user.name by h.make_repo
         self.assertEqual(self.report.render(self.root, "2026-11").count("| $"), 0, "another month has no rows")
 
     def test_summary_and_the_cli_write_the_file(self):
