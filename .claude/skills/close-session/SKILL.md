@@ -37,7 +37,7 @@ engineer's machine, can pick up from the repository alone. This is the order to 
    credentials, no identifiers, no real data, no name from the redact list.
 
 5. **Commit on a topic branch.** Never on the base branch directly. Conventional Commit messages
-   naming the backlog ids; the agent's co-author trailer when the agent wrote the commit. Commit
+   naming the backlog ids; the agent's co-author trailer when the agent wrote the commit, at its `@noreply.invalid` address (ADR 0002). Commit
    and push only when the user asked for it. If they did not, stop here and report what is ready.
 
 6. **Open the pull request** when asked, with the template filled in and the checks stated as run.

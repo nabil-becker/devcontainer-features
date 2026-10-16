@@ -53,7 +53,14 @@ The domain words of the project itself are not here; they live with the project'
   the ledger entry's Decisions and, when it is work, in the backlog.
 - **Unit of work**: one thing an engineer asked for that got done or settled: a slice, a document
   change, a question answered, a decision taken; and every con's job. One ledger entry each.
-- **Backlog item**: an engineering item that needs no external answer, an `ID` in `TODO.md`.
+- **Backlog item**: an engineering item that needs no external answer, named by its backlog id in `TODO.md`.
+- **Backlog id**: the short descriptive kebab-case slug (two to four words, for example
+  `release-collection`) that names a backlog item; unique in `TODO.md`, never reused, never
+  renamed once written, and cited the same way in commits and ledger entries. It replaces the
+  earlier `TD-nn` numbers, which survive only as `(was TD-nn)` on converted items.
+- **Amend item**: a backlog item with the id `amend-<id>`, added by the secretary when a stake asks
+  to change an existing item; it names the item and the change, and a person makes the change by
+  hand, since backs never reword (ADR-0003).
 - **Decision for the Operator**: an engineering choice only the Operator can make, listed under
   "Decisions for the Operator" in `TODO.md` with a recommendation.
 - **Brief**: what an inter gives a con: the job, the scope and what is out of bounds, the model,

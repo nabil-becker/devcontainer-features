@@ -5,17 +5,21 @@ Claude Code transcripts and the backs' run records. Every figure is a list-price
 Numbers and ids only. Read first by the ledger review: see "What to look for".
 Regenerated, never edited by hand.
 
-Total: $0.00. Inter sessions: $0.00 in 0 sessions. Cons: $0.00 in 0 runs. Backs: $0.00 in 0 runs, 0 undone by guards. Ledger corrections: 0.
+Total: $0.44. Inter sessions: $0.36 in 1 sessions. Cons: $0.00 in 0 runs. Backs: $0.08 in 4 runs, 0 undone by guards. Ledger corrections: 0.
 
 ## By model
 
 | Model | Inters | Cons | Backs | Total | Replies or runs | Tokens out |
 |---|---|---|---|---|---|---|
+| haiku | $0.00 | $0.00 | $0.08 | $0.08 | 2 | 1,541 |
+| opus | $0.36 | $0.00 | $0.00 | $0.36 | 4 | 1,509 |
+| other | $0.00 | $0.00 | $0.00 | $0.00 | 2 | 0 |
 
 ## Inter sessions
 
 | Session | Models | Replies | Cost | First | Last |
 |---|---|---|---|---|---|
+| d7e03a48-93bd-44ef-a1d2-045ad84afabf | claude-opus-5-5 | 4 | $0.36 | 2026-10-16T00:28 | 2026-10-16T00:30 |
 
 ## Cons (subagents)
 
@@ -26,11 +30,15 @@ Total: $0.00. Inter sessions: $0.00 in 0 sessions. Cons: $0.00 in 0 runs. Backs:
 
 | Back | Model | Runs | Changed | Nothing | Pending | Error | Undone | Stakes | Cost | Per run | Per change | Avg s | Avg chars in |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| scribe | haiku | 1 | 1 | 0 | 0 | 0 | 0 | 0 | $0.04 | $0.04 | $0.04 | 14 | 1732 |
+| secretary | haiku | 1 | 0 | 1 | 0 | 0 | 0 | 0 | $0.04 | $0.04 | - | 10 | 1732 |
+| tester | none | 2 | 1 | 1 | 0 | 0 | 0 | 0 | $0.00 | $0.00 | $0.00 | 1 | 866 |
 
 ## By day
 
 | Day | Inters | Cons | Backs | Total |
 |---|---|---|---|---|
+| 2026-10-16 | $0.36 | $0.00 | $0.08 | $0.44 |
 
 ## What to look for
 

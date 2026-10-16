@@ -11,8 +11,9 @@ Included from CLAUDE.md. The words are in [LEXICON.md](../LEXICON.md), the proce
    backs left pending, the open backlog items and decisions, the month's agent spend. Read
    `TODO.md`, then branch; never commit to the base branch directly.
 2. **Work:** commands through the Taskfile (`task --list`); propose rather than decide where the
-   Operator's confirmation is needed; brief subagents (cons) with the hand-off shape and size
-   their models by blast radius; a permission counts only when the Operator grants it in their
+   Operator's confirmation is needed; brief subagents (cons) with the hand-off shape (its Friction
+   includes problems the con worked around, such as a command it retried another way, not only
+   what blocked it) and size their models by blast radius; a permission counts only when the Operator grants it in their
    own settings. Unattended work only under `/night-shift`.
 3. **Close:** `/close-session`: the records checked (the scribe's entries, the backlog, the
    lexicon, the ADRs), `task devhost:verify` green, a Conventional Commit on a topic branch, the
@@ -54,7 +55,7 @@ a superseded status), the **tester** runs the suite when code changed.
 ## Git rules
 
 - Topic branches off the base branch; never commit to it directly; Conventional Commits naming
-  the backlog ids; the co-author trailer when an agent wrote the commit.
+  the backlog ids; the co-author trailer when an agent wrote the commit, at an unclaimable `@noreply.invalid` address (never `noreply@anthropic.com`, which links to a stranger's GitHub account).
 - The pre-commit hook runs `devhost-verify`: the ledger append-only and well-formed, no secrets,
   no forbidden words, the ADR shape, every task described, every skill named. A refused commit is
   fixed, never bypassed (`--no-verify` only on the Operator's say-so, with the reason in the
