@@ -4,6 +4,6 @@ Drafts the Operator decides on. A proposal is never in force until the Operator 
 
 | Proposal | Status |
 |---|---|
-| [King Arthur theme](king-arthur-theme.md) | accepted 2026-10-16: a layer, ten names in LEXICON.md; the bard speaks first |
-| [Journalist back](journalist-back.md) | in trial: the bard's first piece written by hand, 2026-10-16 |
+| [King Arthur theme](king-arthur-theme.md) | accepted 2026-10-16: a layer, ten names in LEXICON.md, used in conversation only; no committed output speaks in it |
+| [Journalist back](journalist-back.md) | accepted 2026-10-16, in plain words (not in the Arthurian voice); first piece hand-run, the back to be built |
 | [Personalization](personalization.md) | open |

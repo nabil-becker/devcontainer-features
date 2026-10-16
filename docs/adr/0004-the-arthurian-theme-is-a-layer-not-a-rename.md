@@ -23,14 +23,15 @@ changes nothing the machinery reads.
 The theme is a layer. `LEXICON.md` holds a separate section, "The Arthurian layer", with ten
 names as synonyms; no existing definition changes. The plain word stays in every id, path,
 command, field name, guard, ledger entry and skill name. Committed text still says "the
-Operator". The voice is trialled with one back first: the bard (the journalist back), whose
-output is read by people rather than by the machinery, so it speaks first. The scribe's entries
-are machine-read and stay as they are. Other prose adopts the voice only after the trial, and
-the voice never enters a machine-read part (entry field names, `Corrects:`, ids).
+Operator". No committed output speaks in the voice: the journalist back ("the bard" is only
+its name in the layer) writes the story of the project's iterations, which is a record the
+iterations are judged by, so it stays in plain words; the scribe's entries are machine-read and
+stay as they are. The voice lives in the lexicon section and in conversation, and never enters
+a machine-read part (entry field names, `Corrects:`, ids).
 
 ## Options considered
 
-### Option 1: a layer, with the bard first (chosen)
+### Option 1: a layer (chosen)
 
 It gives the theme where a person reads it, costs a few prose files, leaves both consumers and
 the ledger's history valid, and is reversible by deleting the voice.
@@ -53,8 +54,8 @@ are machine-read by the guards and cost parsers, so a voice there risks breaking
   or grep for changes.
 - Two vocabularies live side by side; the plain one is the authority wherever the machinery
   reads it.
-- The bard's first journal piece is the trial; building the bard back depends on the Operator's
-  reading of it.
+- The journalist back writes in plain words; the first hand-run piece, written in voice, is
+  rewritten plainly when the back is built. 
 - Consumers take the layer in a release as new template text only, if they adopt it at all; that
   is still open.
 - A full rename stays possible later, but only as a new decision, probably a new repository
@@ -65,3 +66,4 @@ are machine-read by the guards and cost parsers, so a voice there risks breaking
 | Date | Change |
 |---|---|
 | 2026-10-16 | First draft. |
+| 2026-10-16 | The Operator: the journal is part of the project's iterations, so it stays in plain words; no back speaks in the voice. |

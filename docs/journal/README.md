@@ -1,3 +1,3 @@
-# The bard's journal
+# The journal
 
-One piece per iteration, told in the Arthurian voice over the plain records: the bard (the journalist back, trialled here by hand) selects and connects what the Chronicle (the ledger), the night-shift report and the cost report already hold, so a person can follow how the way of working changes. Add-only: a piece is never edited, a later one corrects it; every fact, number and name is the ledger's, and the plain name of each thing stands beside its first mention. Pieces: [2026-10-16](2026-10-16.md).
+One piece per iteration, in plain words: the journalist back (trialled here by hand) selects and connects what the ledger, the night-shift report and the cost report already hold, so a person can follow how the way of working changes. Add-only: a piece is never edited, a later one corrects it; every fact, number and name is the ledger's, and things go by their plain names (LEXICON.md). The first piece was written in the Arthurian voice as a trial and is replaced by a plain one when the back is built (it was never published). Pieces: [2026-10-16](2026-10-16.md).
