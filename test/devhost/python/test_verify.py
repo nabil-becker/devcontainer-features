@@ -43,7 +43,34 @@ class Verify(h.RepoCase):
         with h.devhost_env(self.root, DEVHOST_BASE_REF="no-such-branch"):
             self.assertEqual(self.v.ledger_append_only(self.root, notes), [])
         self.assertEqual(len(notes), 1)
-        self.assertIn("skipped", notes[0])
+        self.assertIn("NOT RUN", notes[0])
+
+    def test_the_append_only_guard_runs_when_the_base_ref_exists(self):
+        notes = []
+        self.assertEqual(self.v.ledger_append_only(self.root, notes), [])
+        self.assertEqual(notes, [])
+        done = h.run(["verify"], self.root, self.env)
+        self.assertIn("ok   ledger_append_only", done.stdout)
+        self.assertNotIn("SKIP", done.stderr)
+        self.assertNotIn("NOT RUN", done.stdout + done.stderr)
+
+    def test_a_skipped_guard_is_loud_even_when_quiet(self):
+        env = dict(self.env, DEVHOST_BASE_REF="no-such-branch")
+        for args in (["verify"], ["verify", "--quiet"]):
+            done = h.run(args, self.root, env)
+            self.assertEqual(done.returncode, 0, done.stdout)
+            self.assertIn("WARNING ledger append-only guard NOT RUN", done.stderr)
+            self.assertNotIn("ok   ledger_append_only", done.stdout)
+        self.assertIn("SKIP ledger_append_only", h.run(["verify"], self.root, env).stderr)
+
+    def test_the_task_runs_in_the_directory_it_was_called_from(self):
+        """The root cause: an included Taskfile's tasks run in the include's folder, outside the repository."""
+        import re
+        from pathlib import Path
+        text = (Path(h.__file__).resolve().parents[3] / "src" / "devhost" / "taskfile.yml").read_text(encoding="utf-8")
+        for name in ("setup", "briefing", "report", "costs", "adr", "verify", "init"):
+            block = re.search(rf"^  {name}:\n(.*?)(?=^  \w|\Z)", text, re.S | re.M).group(1)
+            self.assertIn("dir: '{{.USER_WORKING_DIR}}'", block, name)
 
     def test_ledger_shape(self):
         folder = self.root / "docs" / "ledger"
