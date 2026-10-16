@@ -54,7 +54,7 @@ a superseded status), the **tester** runs the suite when code changed.
 ## Git rules
 
 - Topic branches off the base branch; never commit to it directly; Conventional Commits naming
-  the backlog ids; the co-author trailer when an agent wrote the commit.
+  the backlog ids; the co-author trailer when an agent wrote the commit, at an unclaimable `@noreply.invalid` address (never `noreply@anthropic.com`, which links to a stranger's GitHub account).
 - The pre-commit hook runs `devhost-verify`: the ledger append-only and well-formed, no secrets,
   no forbidden words, the ADR shape, every task described, every skill named. A refused commit is
   fixed, never bypassed (`--no-verify` only on the Operator's say-so, with the reason in the
