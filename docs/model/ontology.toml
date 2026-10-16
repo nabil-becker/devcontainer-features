@@ -581,3 +581,28 @@ object = "feature-state"
 subject = "engineer"
 predicate = "uses"
 object = "devcontainer"
+
+[ontology]
+type = "record"
+term = "Ontology"
+summary = "The canonical data model: what kinds of thing exist, by base id, and how they relate; docs/model/ontology.toml."
+
+[c4-view]
+type = "record"
+term = "C4 view"
+summary = "A Mermaid diagram of the system at one zoom level (Context, Container), named by ontology ids; docs/model/c4-*.md."
+
+[[relation]]
+subject = "librarian"
+predicate = "keeps"
+object = "ontology"
+
+[[relation]]
+subject = "librarian"
+predicate = "keeps"
+object = "c4-view"
+
+[[relation]]
+subject = "guards"
+predicate = "checks"
+object = "ontology"
