@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import helpers as h
 
-BACKLOG = ["# To do", "", "## Now", "", "- [ ] **TD-01 One** (host). Why. Added 2026-10-01.",
-           "- [ ] **TD-02 Two** (host). Why. Added 2026-10-01.", "", "## Decisions for the Operator", ""]
+BACKLOG = ["# To do", "", "## Now", "", "- [ ] **first-item One** (host). Why. Added 2026-10-01.",
+           "- [ ] **second-item Two** (host). Why. Added 2026-10-01.", "", "## Decisions for the Operator", ""]
 ADR = ["# ADR-0001: One", "", "| | |", "|---|---|", "| **Status** | proposed |", "| **Date** | 2026-10-01 |", "",
        "## Context", "", "x", "", "## Decision", "", "y", ""]
 INDEX = ["# ADRs", "", "| ADR | Title | Status | Date |", "|---|---|---|---|",
@@ -17,15 +17,15 @@ class BacklogGuard(h.RepoCase):
         self.g = h.load("guards")
 
     def test_a_tick_and_new_lines_are_fine(self):
-        after = BACKLOG[:4] + ["- [x] **TD-01 One** (host). Why. Added 2026-10-01. Done 2026-10-02."] + BACKLOG[5:6] + [
-            "- [ ] **TD-03 Three** (host). Why. Added 2026-10-02."] + BACKLOG[6:] + ["- [ ] **TD-04 Pick** (the Operator). A or B. Added 2026-10-02."]
+        after = BACKLOG[:4] + ["- [x] **first-item One** (host). Why. Added 2026-10-01. Done 2026-10-02."] + BACKLOG[5:6] + [
+            "- [ ] **third-item Three** (host). Why. Added 2026-10-02."] + BACKLOG[6:] + ["- [ ] **fourth-item Pick** (the Operator). A or B. Added 2026-10-02."]
         self.assertIsNone(self.g.backlog_guard(BACKLOG, after))
 
     def test_a_reorder_a_reword_and_a_removal_are_refused(self):
         reordered = BACKLOG[:4] + [BACKLOG[5], BACKLOG[4]] + BACKLOG[6:]
-        # TD-01 is found after TD-02; TD-02 is then the line that cannot follow it, so it is reported
+        # first-item is found after second-item; second-item is then the line that cannot follow it, so it is reported
         self.assertEqual(self.g.backlog_guard(BACKLOG, reordered), "changed or lost: " + BACKLOG[5])
-        reworded = BACKLOG[:5] + ["- [ ] **TD-02 Two reworded** (host). Why. Added 2026-10-01."] + BACKLOG[6:]
+        reworded = BACKLOG[:5] + ["- [ ] **second-item Two reworded** (host). Why. Added 2026-10-01."] + BACKLOG[6:]
         self.assertEqual(self.g.backlog_guard(BACKLOG, reworded), "changed or lost: " + BACKLOG[5])
         removed = BACKLOG[:5] + BACKLOG[6:]
         self.assertIsNotNone(self.g.backlog_guard(BACKLOG, removed))
@@ -38,7 +38,7 @@ class BacklogGuard(h.RepoCase):
         h.write(after, "\n".join(BACKLOG[:5] + BACKLOG[6:]) + "\n")
         done = h.run(["guards", "backlog", str(before), str(after)], self.root, self.env)
         self.assertEqual(done.returncode, 1)
-        self.assertTrue(done.stdout.startswith("changed or lost: - [ ] **TD-02"))
+        self.assertTrue(done.stdout.startswith("changed or lost: - [ ] **second-item"))
         h.write(after, "\n".join(BACKLOG) + "\n")
         self.assertEqual(h.run(["guards", "backlog", str(before), str(after)], self.root, self.env).returncode, 0)
         self.assertEqual(h.run(["guards", "nonsense", "a", "b"], self.root, self.env).returncode, 2)

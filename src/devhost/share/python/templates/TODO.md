@@ -8,11 +8,11 @@ remove items by hand, normally at a ledger review.
 
 An item reads `- [ ] **ID Title** (owner). What and why. Added YYYY-MM-DD.`; the owner is host
 (a session can do it), the Operator, or engineers; a ticked item ends `Done YYYY-MM-DD.` and
-stays. Ids are `TD-nn`, numbered in creation order, never reused.
+stays. Ids are short descriptive slugs (two to four kebab-case words naming the item), unique in the file, never reused, never renamed.
 
 ## Now
 
-- [ ] **TD-01 Read the way of working** (the Operator). Read LEXICON.md and PROCESS.md, include `.devhost/CLAUDE.devhost.md` from CLAUDE.md, and strike what does not fit this repository. Added {{DATE}}.
+- [ ] **read-way-of-working Read the way of working** (the Operator). Read LEXICON.md and PROCESS.md, include `.devhost/CLAUDE.devhost.md` from CLAUDE.md, and strike what does not fit this repository. Added {{DATE}}.
 
 ## Next
 

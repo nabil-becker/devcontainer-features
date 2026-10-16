@@ -11,7 +11,7 @@ devhost_functional() {
   root="$tmp/repo"; state="$tmp/state"; marker="$tmp/marker"
   mkdir -p "$root/.claude" "$root/docs/ledger" "$root/.devhost" "$tmp/bin"
   echo '{}' > "$root/.claude/settings.json"
-  printf '# To do\n\n## Now\n\n- [ ] **TD-01 First** (host). Added 2026-10-14.\n\n## Next\n\n## Decisions for the Operator\n' > "$root/TODO.md"
+  printf '# To do\n\n## Now\n\n- [ ] **first-item First** (host). Added 2026-10-14.\n\n## Next\n\n## Decisions for the Operator\n' > "$root/TODO.md"
   printf '# Lexicon\n\n## Records\n\n- **Entry**: one ledger record.\n' > "$root/LEXICON.md"
   printf '# names to redact, one per line\nZebulonica\n' > "$root/.devhost/redact-names.txt"
   touch "$marker"

@@ -16,12 +16,12 @@ class Briefing(h.RepoCase):
         ledger = self.root / "docs" / "ledger" / "2026-10.md"
         h.write(ledger, ledger.read_text(encoding="utf-8") + "## Review 2026-10-03\n\nreviewed.\n\n" + "".join(
             h.entry(f"2026-10-{d:02d}", f"Thing {d}", "[docs] missing" if d % 2 else "none") for d in range(4, 9)))
-        h.write(self.root / "TODO.md", "# To do\n\n## Now\n\n- [ ] **TD-01 A** (host). x. Added 2026-10-01.\n- [x] **TD-02 B** (host). x. Done.\n"
-                "- [ ] **TD-03 C** (host). x.\n\n## Decisions for the Operator\n\n- [ ] **TD-04 D** (the Operator). x.\n")
+        h.write(self.root / "TODO.md", "# To do\n\n## Now\n\n- [ ] **first-item A** (host). x. Added 2026-10-01.\n- [x] **second-item B** (host). x. Done.\n"
+                "- [ ] **third-item C** (host). x.\n\n## Decisions for the Operator\n\n- [ ] **fourth-item D** (the Operator). x.\n")
         h.write(self.root / "docs" / "night-shift" / "2026-10-07.md", "# Night shift 2026-10-07\n\nPlan: 1\nResult: Done 1\n")
         h.write(self.root / "docs" / "night-shift" / "2026-10-06.md", "# Night shift 2026-10-06\n\nPlan: 1\nReviewed by the Operator 2026-10-07.\n")
         state = self.base / "state"
-        h.write(state / "secretary" / "pending-1.txt", "TD numbering clashed")
+        h.write(state / "secretary" / "pending-1.txt", "id clash")
         h.write(state / "scribe" / "job.log", "ts=1 status=changed notice=ok\nts=2 status=pending notice=the entry needs a title\n")
         h.write(state / "runs.jsonl", json.dumps({"ts": "2026-10-05T01:00:00Z", "job": "scribe", "model": "claude-haiku-5",
                                                   "status": "changed", "cost_usd": 0.02, "undone": 1, "output_tokens": 50}) + "\n"
@@ -30,7 +30,7 @@ class Briefing(h.RepoCase):
         self.assertIn("Ledger (docs/ledger/): 5 entries since the last review (2026-10-03), 2 with friction.", text)
         self.assertIn("Review due: run /ledger-review", text)
         self.assertIn("The scribe left something pending: the entry needs a title.", text)
-        self.assertIn("The secretary left something pending: TD numbering clashed.", text)
+        self.assertIn("The secretary left something pending: id clash.", text)
         self.assertIn("TODO.md: 2 open items, 1 decisions for the Operator.", text)
         self.assertIn("Night-shift report not yet reviewed: 2026-10-07 (say 'morning report').", text)
         self.assertIn("Agent spend", text)

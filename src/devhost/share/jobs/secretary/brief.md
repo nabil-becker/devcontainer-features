@@ -12,8 +12,9 @@ Read the backlog first (Read tool). Then, with the Edit tool:
    customer or another party outside the repository is not yours. Put it under the fitting
    section (Now for this week's work, Next for later), as the last item of that section, in
    the existing style:
-   `- [ ] **TD-nn Short title** (owner). One to three lines of what and why. Added YYYY-MM-DD.`
-   TD-nn is the next number after the highest TD number in the file. The owner is host (a
+   `- [ ] **slug Short title** (owner). One to three lines of what and why. Added YYYY-MM-DD.`
+   slug is a two-to-four-word kebab-case id naming the item (`release-collection`), unique in
+   the file, never reused, and never renamed once written. The owner is host (a
    session can do it), the Operator, or engineers.
 2. **Add a decision** under "Decisions for the Operator" when the stretch put a question to
    the Operator that is not answered yet, with the recommendation if one was given, in the
