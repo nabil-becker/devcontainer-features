@@ -7,5 +7,23 @@
       }
     },
     "remoteUser": "vscode"
+  },
+  "augment_official": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "ghcr.io/devcontainers/features/node:1": {},
+      "ghcr.io/anthropics/devcontainer-features/claude-code:1": {},
+      "claude-code": {}
+    },
+    "remoteUser": "vscode"
+  },
+  "install_none": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "claude-code": {
+        "install": "none"
+      }
+    },
+    "remoteUser": "vscode"
   }
 }

@@ -1,0 +1,17 @@
+{
+  "non_root": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "common": {}
+    },
+    "remoteUser": "vscode"
+  },
+  "no_taskfile": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "common": {
+        "installTaskfile": false
+      }
+    }
+  }
+}

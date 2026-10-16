@@ -1,0 +1,41 @@
+# Tasks contributed by the kube-state Feature (namespace: kube-state).
+version: '3'
+
+tasks:
+  version:
+    desc: 'Show which kubectl runs and its client version (kubectl version --client; needs a kubectl in the image, e.g. from the kubectl-helm-minikube Feature).'
+    cmds:
+      - command -v kubectl
+      - kubectl version --client {{.CLI_ARGS}}
+
+  contexts:
+    desc: 'List the contexts in the kubeconfig (kubectl config get-contexts); the current one is starred.'
+    cmds:
+      - kubectl config get-contexts {{.CLI_ARGS}}
+
+  use:
+    desc: 'Switch the current context, kept in KUBECONFIG across rebuilds: task kube-state:use CONTEXT=<name>.'
+    requires:
+      vars: [CONTEXT]
+    cmds:
+      - kubectl config use-context {{.CONTEXT}}
+
+  import:
+    desc: 'Merge a kubeconfig file (task kube-state:import FILE=<path>, e.g. one copied into the workspace) into the one KUBECONFIG points at, flattened so it holds no path references, written 0600. Needs kubectl.'
+    requires:
+      vars: [FILE]
+    cmds:
+      - |
+        set -e
+        target="${KUBECONFIG%%:*}"
+        mkdir -p "$(dirname "$target")"
+        tmp="$(mktemp)"
+        trap 'rm -f "$tmp"' EXIT
+        KUBECONFIG="$target:{{.FILE}}" kubectl config view --flatten --raw > "$tmp"
+        install -m 0600 "$tmp" "$target"
+        echo "kube-state: merged {{.FILE}} into $target"
+
+  setup:
+    desc: 'Re-run the post-create setup: make the KUBECONFIG folder usable by the current user, keep the kubeconfig 0600, report whether a kubeconfig is present (idempotent; KUBE_STATE_SETUP_RESTRICT_PERMISSIONS overrides the Feature option).'
+    cmds:
+      - kube-state-setup

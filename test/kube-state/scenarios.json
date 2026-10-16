@@ -1,0 +1,32 @@
+{
+  "with_kubectl": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "ghcr.io/devcontainers/features/kubectl-helm-minikube:1": {
+        "helm": "none",
+        "minikube": "none"
+      },
+      "go-task": {},
+      "kube-state": {}
+    },
+    "remoteUser": "vscode"
+  },
+  "unrestricted": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "kube-state": {
+        "restrictPermissions": false
+      }
+    },
+    "remoteUser": "vscode"
+  },
+  "no_taskfile": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "kube-state": {
+        "installTaskfile": false
+      }
+    },
+    "remoteUser": "vscode"
+  }
+}

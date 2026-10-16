@@ -1,0 +1,21 @@
+{
+  "no_wrapper": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "git": {
+        "worktreeAware": false
+      }
+    },
+    "remoteUser": "vscode"
+  },
+  "hooks_and_safe_all": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "git": {
+        "hooksPath": ".githooks",
+        "safeDirectory": "*"
+      }
+    },
+    "remoteUser": "vscode"
+  }
+}

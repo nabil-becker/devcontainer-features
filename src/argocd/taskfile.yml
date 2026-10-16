@@ -1,6 +1,7 @@
 # Tasks contributed by the argocd Feature (namespace: argocd). Log in once
 # with `task argocd:login SERVER=...`; the session lives under
-# ARGOCD_CONFIG_DIR (persist it across rebuilds, see the Feature README).
+# ARGOCD_CONFIG_DIR, which the Feature points into its named volume so it
+# survives rebuilds (see the Feature README).
 version: '3'
 
 tasks:
@@ -8,6 +9,11 @@ tasks:
     desc: 'Show the client (and server, when logged in) Argo CD versions.'
     cmds:
       - argocd version --short || argocd version --client --short
+
+  setup:
+    desc: 'Re-run the post-create setup: make ARGOCD_CONFIG_DIR (the Feature''s named volume, or a repo''s bind mount over it) belong to you and report what backs it and whether a login is present (idempotent).'
+    cmds:
+      - argocd-setup
 
   login:
     desc: 'Log in to SERVER=<host[:port]>. Extra flags (e.g. --sso, --grpc-web) after --.'

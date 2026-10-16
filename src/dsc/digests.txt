@@ -1,0 +1,7 @@
+# sha256 of DSC release tarballs, "<digest>  <asset name>", one per line.
+# install.sh checks this file first, so a pinned version needs no network
+# lookup for its digest. Add a version with the one-liner in NOTES.md.
+cf17d1a130b65332ec65380ee9368133101d13d8f40c1a501038920b1e9cd748  DSC-3.3.0-x86_64-linux.tar.gz
+5863f9221488e0e25bf07482d9fa7e708e392290642310f3dc0e477e305aab6a  DSC-3.3.0-aarch64-linux.tar.gz
+2a62ec5ead4e9f224444148f3206de2bac7fd962b624f501dfe7f7b2482beace  DSC-3.1.3-x86_64-linux.tar.gz
+f54e94a212084345fb98888c59bb46247b5a385066212c188965497eb746c88a  DSC-3.1.3-aarch64-linux.tar.gz

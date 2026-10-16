@@ -1,0 +1,46 @@
+{
+  "id": "git",
+  "version": "1.0.0",
+  "name": "git (devcontainer wrapper and setup)",
+  "description": "Augments whichever git the image already has (base image, common-utils or ghcr.io/devcontainers/features/git) for devcontainers whose checkout keeps its git dir outside the workspace and reaches it through GIT_DIR and GIT_WORK_TREE in containerEnv: a /usr/local/bin/git wrapper drops those two variables inside linked worktrees (Claude Code's .claude/worktrees/<name>) and nested repositories, so they are not sent to the main checkout, and a postCreateCommand hook (git-setup) does the per-container setup every repo otherwise scripts by hand - safe.directory and core.hooksPath - in a global git config (GIT_CONFIG_GLOBAL at /var/lib/devcontainer-features/git/gitconfig) kept in a named volume so identity and credential helper survive rebuilds.",
+  "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/git",
+  "licenseURL": "https://github.com/nabil-becker/devcontainer-features/blob/main/LICENSE",
+  "options": {
+    "installTaskfile": {
+      "type": "boolean",
+      "default": true,
+      "description": "Also install this Feature's Taskfile into /usr/local/share/go-task/includes.d so its tasks appear under the <id>: namespace of a root Taskfile that includes /usr/local/share/go-task/features.yml (see the go-task Feature)."
+    },
+    "worktreeAware": {
+      "type": "boolean",
+      "default": true,
+      "description": "Install the /usr/local/bin/git wrapper that unsets GIT_DIR and GIT_WORK_TREE when git runs inside a linked worktree or a nested repository (any directory whose nearest .git is not GIT_WORK_TREE). With false, no wrapper is installed and a previously installed one is removed."
+    },
+    "safeDirectory": {
+      "type": "string",
+      "default": "workspace",
+      "description": "What git-setup marks as safe.directory in the global git config at post-create: 'workspace' = the workspace folder and GIT_DIR (when set); '*' = every directory; empty = do nothing. Override per container with GIT_SETUP_SAFE_DIRECTORY in containerEnv."
+    },
+    "hooksPath": {
+      "type": "string",
+      "default": "",
+      "description": "When set, git-setup runs `git config core.hooksPath <value>` in the workspace repository at post-create (e.g. '.githooks'); empty leaves core.hooksPath alone. Override per container with GIT_SETUP_HOOKS_PATH in containerEnv."
+    }
+  },
+  "containerEnv": {
+    "GIT_CONFIG_GLOBAL": "/var/lib/devcontainer-features/git/gitconfig"
+  },
+  "mounts": [
+    {
+      "source": "git-config-${devcontainerId}",
+      "target": "/var/lib/devcontainer-features/git",
+      "type": "volume"
+    }
+  ],
+  "installsAfter": [
+    "ghcr.io/nabil-becker/devcontainer-features/go-task",
+    "ghcr.io/devcontainers/features/common-utils",
+    "ghcr.io/devcontainers/features/git"
+  ],
+  "postCreateCommand": "git-setup"
+}

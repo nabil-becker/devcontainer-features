@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# devhost-costs: runs the devhost's session_cost.py (installed under /usr/local/share/devhost).
+exec python3 /usr/local/share/devhost/python/session_cost.py "$@"

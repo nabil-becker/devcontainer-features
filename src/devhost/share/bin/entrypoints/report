@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# devhost-report: runs the devhost's report.py (installed under /usr/local/share/devhost).
+exec python3 /usr/local/share/devhost/python/report.py "$@"

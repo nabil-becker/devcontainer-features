@@ -4,9 +4,10 @@
 # devcontainer-feature.json): VERSION, SHA256.
 #
 # DSC releases ship no checksums file, but GitHub records a sha256 digest for
-# every release asset and exposes it through the Releases API. The tarball
-# is verified against that digest, or against the SHA256 option when set
-# (which also avoids the API call entirely).
+# every release asset. The tarball is verified against, in order: the SHA256
+# option, digests.txt (pinned in this Feature), then the digest shown on the
+# release page. The Releases API (api.github.com) is never called: its
+# unauthenticated rate limit broke CI and a Feature build gets no token.
 set -euo pipefail
 
 VERSION="${VERSION:-latest}"
@@ -22,7 +23,6 @@ fi
 missing=()
 command -v curl >/dev/null 2>&1 || missing+=(curl ca-certificates)
 command -v tar >/dev/null 2>&1 || missing+=(tar)
-if [ -z "$SHA256" ] && ! command -v jq >/dev/null 2>&1; then missing+=(jq); fi
 if [ "${#missing[@]}" -gt 0 ]; then
   if command -v apt-get >/dev/null 2>&1; then
     apt-get update -qq
@@ -57,14 +57,19 @@ fi
 asset="DSC-${VERSION}-${arch}-linux.tar.gz"
 base_url="https://github.com/$repo/releases/download/v${VERSION}"
 
+here="$(cd "$(dirname "$0")" && pwd)"
 if [ -z "$SHA256" ]; then
-  auth=()
-  if [ -n "${GITHUB_TOKEN:-}" ]; then auth=(-H "Authorization: Bearer ${GITHUB_TOKEN}"); fi
-  SHA256="$(curl -fsSL "${auth[@]}" -H 'Accept: application/vnd.github+json' \
-    "https://api.github.com/repos/$repo/releases/tags/v${VERSION}" |
-    jq -r --arg n "$asset" '.assets[] | select(.name == $n) | .digest // empty' | sed 's/^sha256://')"
+  # 1. Digests pinned in this Feature: no network, nothing to rate-limit.
+  SHA256="$(awk -v n="$asset" '$2 == n { print $1; exit }' "$here/digests.txt" 2>/dev/null || true)"
+fi
+if [ -z "$SHA256" ]; then
+  # 2. The release page's asset list (github.com, not api.github.com): it
+  #    shows the sha256 GitHub records for each asset, and the unauthenticated
+  #    API's hourly limit does not apply to it.
+  page="$(curl -fsSL --retry 3 --retry-delay 2 "https://github.com/$repo/releases/expanded_assets/v${VERSION}" || true)"
+  SHA256="$(printf '%s' "$page" | grep -oE "digest for ${asset//./\\.}\"[^>]*value=\"sha256:[0-9a-fA-F]{64}" | grep -oE '[0-9a-fA-F]{64}$' | head -n1 || true)"
   if [ -z "$SHA256" ]; then
-    echo "dsc: GitHub did not return a digest for $asset (rate limited, or asset missing). Set the sha256 option explicitly." >&2
+    echo "dsc: no digest for $asset in digests.txt or on the release page. Set the sha256 option explicitly." >&2
     exit 1
   fi
 fi
@@ -98,6 +103,6 @@ ln -sf "$prefix/dsc" /usr/local/bin/dsc
 if [ "${INSTALLTASKFILE:-true}" = "true" ]; then
   includes_d=/usr/local/share/go-task/includes.d
   mkdir -p "$includes_d"
-  install -m 0644 "$(cd "$(dirname "$0")" && pwd)/taskfile.yml" "$includes_d/dsc.yml"
+  install -m 0644 "$here/taskfile.yml" "$includes_d/dsc.yml"
   if command -v task-features-registry >/dev/null 2>&1; then task-features-registry; fi
 fi

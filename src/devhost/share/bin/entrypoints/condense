@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# devhost-condense: the transcript condenser (see /usr/local/share/devhost/bin/condense.py).
+exec python3 "${DEVHOST_SHARE:-/usr/local/share/devhost}/bin/condense.py" "$@"

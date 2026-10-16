@@ -16,7 +16,25 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: "shellcheck"
-        run: shellcheck -x src/*/*.sh test/*/*.sh bootstrap/*.sh .githooks/*
+        run: shellcheck -x src/*/*.sh src/*/share/bin/*.sh src/*/share/jobs/*/*.sh test/*/*.sh bootstrap/*.sh .githooks/*
+
+      # Feature folders must be self-contained when published, so the
+      # src/common helpers are vendored into the Features that use them.
+      - name: "Vendored copies of src/common helpers are identical"
+        run: |
+          rc=0
+          for canon in src/common/*.sh; do
+            name="$(basename "$canon")"
+            [ "$name" = install.sh ] && continue
+            for copy in src/*/"$name"; do
+              [ "$copy" = "$canon" ] && continue
+              cmp -s "$canon" "$copy" || { echo "::error::$copy differs from $canon - run task common:sync"; rc=1; }
+            done
+          done
+          exit "$rc"
+
+      - name: "devhost Python unit tests"
+        run: python3 -m unittest discover -s test/devhost/python -q
 
       - name: "yamllint"
         run: |

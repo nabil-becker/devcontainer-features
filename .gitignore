@@ -1,2 +1,11 @@
 # Task's remote-include cache and checksums
 .task/
+*.ignore
+
+# Python bytecode from the devhost unit tests
+__pycache__/
+
+# Local environment files (secrets); a .env.example stays trackable.
+.env
+.env.*
+!.env.example

@@ -24,11 +24,14 @@ tasks:
       - task --list
 
   test:
-    desc: 'Run `devcontainer features test` for one Feature (FEATURE=go-task) or all of them. IMAGE overrides the base image for the auto-generated test; SCENARIOS=false skips scenarios.json. Linux/macOS only (the CLI shells out to chmod/bash on the host) - run it inside this repo''s devcontainer (docker-in-docker) or let CI do it.'
+    desc: 'Run `devcontainer features test` for one Feature (FEATURE=go-task) or all of them. IMAGE overrides the base image for the auto-generated test; SCENARIOS=false skips scenarios.json. Needs a Docker daemon (CI, or Docker Desktop on the workstation). Linux/macOS only (the CLI shells out to chmod/bash on the host).'
     platforms: [linux, darwin]
     vars:
       FEATURE: '{{.FEATURE | default ""}}'
       SCENARIOS: '{{.SCENARIOS | default "true"}}'
+    preconditions:
+      - sh: docker info >/dev/null 2>&1
+        msg: 'no Docker daemon here; Feature tests run in CI on every PR, or locally with Docker Desktop on the workstation'
     cmds:
       - task: devcontainer:cli
         vars:
@@ -36,8 +39,11 @@ tasks:
           ARGS: 'test -p "{{.ROOT_DIR}}" -i {{.TEST_IMAGE}} --skip-duplicated{{if .FEATURE}} -f {{.FEATURE}}{{end}}{{if ne .SCENARIOS "true"}} --skip-scenarios{{end}} {{.CLI_ARGS}}'
 
   test:global:
-    desc: 'Run only test/_global scenarios (Features combined). Linux/macOS only, like test.'
+    desc: 'Run only test/_global scenarios (Features combined). Needs a Docker daemon (CI, or Docker Desktop on the workstation). Linux/macOS only, like test.'
     platforms: [linux, darwin]
+    preconditions:
+      - sh: docker info >/dev/null 2>&1
+        msg: 'no Docker daemon here; Feature tests run in CI on every PR, or locally with Docker Desktop on the workstation'
     cmds:
       - task: devcontainer:cli
         vars:
@@ -70,11 +76,52 @@ tasks:
           echo "generated READMEs are up to date"
 
   lint:
-    desc: 'shellcheck every shell script, yamllint every YAML file (.yamllint), PSScriptAnalyzer every PowerShell file (same checks as CI; the tools must be installed - this repo''s devcontainer has them).'
+    desc: 'shellcheck every shell script, yamllint every YAML file (.yamllint), PSScriptAnalyzer every PowerShell file, and the vendored copies of src/common/*.sh identical to the canonical ones (same checks as CI; the tools must be installed - this repo''s devcontainer has them).'
     cmds:
-      - shellcheck -x src/*/*.sh test/*/*.sh bootstrap/*.sh .githooks/*
+      - shellcheck -x src/*/*.sh src/*/share/bin/*.sh src/*/share/jobs/*/*.sh test/*/*.sh bootstrap/*.sh .githooks/*
       - yamllint --strict .
       - pwsh -NoLogo -NoProfile -File '{{.ROOT_DIR}}/.github/scripts/Invoke-PSScriptAnalyzer.ps1'
+      - task: common:check
+      - task: test:devhost
+
+  test:devhost:
+    desc: 'Unit tests of the devhost Feature''s Python tooling (session cost, guards, verify, adr, init, briefing), stdlib only, against temp repos; runs on any host with python3 and git, so it is part of lint.'
+    cmds:
+      - cmd: python -m unittest discover -s test/devhost/python -q
+        platforms: [windows]
+      - cmd: python3 -m unittest discover -s test/devhost/python -q
+        platforms: [linux, darwin]
+
+  common:check:
+    desc: 'Fail if a Feature''s copy of a src/common helper (dcf-persist.sh) differs from the canonical file. Run `task common:sync` to refresh the copies.'
+    silent: true
+    cmds:
+      - cmd: |
+          rc=0
+          for canon in src/common/*.sh; do
+            name="$(basename "$canon")"
+            [ "$name" = install.sh ] && continue
+            for copy in src/*/"$name"; do
+              [ "$copy" = "$canon" ] && continue
+              if ! cmp -s "$canon" "$copy"; then echo "stale copy: $copy differs from $canon (task common:sync)"; rc=1; fi
+            done
+          done
+          [ "$rc" -eq 0 ] && echo "common helper copies are up to date"
+          exit "$rc"
+
+  common:sync:
+    desc: 'Copy every src/common/*.sh helper over the copies the other Features carry (a Feature folder must be self-contained when published, so the helper is vendored rather than depended on).'
+    silent: true
+    cmds:
+      - cmd: |
+          for canon in src/common/*.sh; do
+            name="$(basename "$canon")"
+            [ "$name" = install.sh ] && continue
+            for copy in src/*/"$name"; do
+              [ "$copy" = "$canon" ] && continue
+              cp "$canon" "$copy" && echo "synced $copy"
+            done
+          done
 
   repo:setup:
     desc: 'Once per clone: activate the tracked .gitconfig (git config --local include.path ../.gitconfig), which turns on the repo hooks in .githooks/ (auto DCO sign-off) and the `git cs` alias. Touches only this clone''s .git/config, never your global config. Idempotent.'

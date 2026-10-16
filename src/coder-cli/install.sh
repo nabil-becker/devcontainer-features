@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Installs the Coder CLI (https://coder.com) from GitHub releases, verified
 # against the release's checksums file. Feature options arrive as upper-cased
-# environment variables (see devcontainer-feature.json): VERSION.
+# environment variables (see devcontainer-feature.json): VERSION. Also puts
+# the coder-cli-setup post-create hook and the dcf-persist helper on PATH.
 #
 # Why not `curl https://coder.com/install.sh | sh`: that script picks the
 # install method and version for you and performs no checksum verification.
@@ -65,6 +66,14 @@ tar -xzf "$tmp/$asset" -C "$tmp/x"
 install -m 0755 "$tmp/x/coder" /usr/local/bin/coder
 
 /usr/local/bin/coder version
+
+# The post-create hook (coder-cli-setup) and the shared state-directory
+# helper it calls (verbatim copy of src/common/dcf-persist.sh; every Feature
+# of this collection installs the same file). CODER_CONFIG_DIR's target is
+# not mounted at build time, so nothing here writes into it.
+feature_dir="$(cd "$(dirname "$0")" && pwd)"
+install -m 0755 "$feature_dir/coder-cli-setup.sh" /usr/local/bin/coder-cli-setup
+install -m 0755 "$feature_dir/dcf-persist.sh" /usr/local/bin/dcf-persist
 
 # ---------------------------------------------------- Feature Taskfile ----
 # Drop this Feature's taskfile.yml where the go-task Feature's registry picks

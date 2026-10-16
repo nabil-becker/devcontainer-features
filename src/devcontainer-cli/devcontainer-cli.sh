@@ -193,12 +193,17 @@ mode_run() {
       [ -n "$workspace" ] || die 'run: --workspace-folder is required for this subcommand'
       args+=(--workspace-folder "$(cd "$workspace" && pwd)") ;;
   esac
+  # Only the subcommands that drive an engine take --docker-path;
+  # `features ...`, `templates ...` and `outdated` reject it.
   local engine
-  engine="$(resolve_docker_path)"
-  if [ -n "$engine" ]; then
-    echo "Container engine: $engine" >&2
-    args+=(--docker-path "$engine")
-  fi
+  case "$subcommand" in
+    up | set-up | build | run-user-commands | read-configuration | upgrade | exec)
+      engine="$(resolve_docker_path)"
+      if [ -n "$engine" ]; then
+        echo "Container engine: $engine" >&2
+        args+=(--docker-path "$engine")
+      fi ;;
+  esac
   if [ -n "$cmd_b64" ]; then
     [ "$subcommand" = exec ] || die '--cmd-b64 is only meaningful with exec'
     args+=(bash -lc "$(printf '%s' "$cmd_b64" | base64 -d)")

@@ -1,8 +1,8 @@
 {
   "id": "argocd",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "name": "Argo CD CLI",
-  "description": "Installs the Argo CD CLI (https://argo-cd.readthedocs.io) as a release binary at /usr/local/bin/argocd, verified against the release's cli_checksums.txt. Pin version to your Argo CD server version.",
+  "description": "Installs the Argo CD CLI (https://argo-cd.readthedocs.io) as a release binary at /usr/local/bin/argocd, verified against the release's cli_checksums.txt. Pin version to your Argo CD server version. The login session lives in ARGOCD_CONFIG_DIR at /var/lib/devcontainer-features/argocd, a named volume the Feature mounts so it survives rebuilds; the argocd-setup post-create hook hands the folder to the remote user.",
   "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/argocd",
   "licenseURL": "https://github.com/nabil-becker/devcontainer-features/blob/main/LICENSE",
   "options": {
@@ -17,8 +17,19 @@
       "description": "Argo CD release to install (e.g. '3.5.4', with or without a leading 'v'), or 'latest'. Match your Argo CD server's version."
     }
   },
+  "containerEnv": {
+    "ARGOCD_CONFIG_DIR": "/var/lib/devcontainer-features/argocd"
+  },
+  "mounts": [
+    {
+      "source": "argocd-config-${devcontainerId}",
+      "target": "/var/lib/devcontainer-features/argocd",
+      "type": "volume"
+    }
+  ],
   "installsAfter": [
     "ghcr.io/nabil-becker/devcontainer-features/go-task",
     "ghcr.io/devcontainers/features/common-utils"
-  ]
+  ],
+  "postCreateCommand": "argocd-setup"
 }
