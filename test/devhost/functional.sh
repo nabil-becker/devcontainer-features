@@ -123,6 +123,22 @@ PY
   check "tester is quiet without a code change" test -z "$out"
   check "tester never called claude" test "$(calls)" = 1
 
+  # 5b. A suite the environment cannot run is skipped: one quiet notice, never red, a red kept.
+  echo 'x = 3' > "$root/src/a.py"
+  out="$(run_job tester t4 TESTER_CMD="echo 'task: Failed to run task \"test\": task: precondition not met'; exit 201")"
+  check "tester skips on precondition output with a quiet notice, not red" bash -c "printf '%s' '$out' | grep -q 'tests skipped' && ! printf '%s' '$out' | grep -q 'tests red' && [ \"\$(cat '$state/tester/last_result')\" = skipped ]"
+  echo 'x = 4' > "$root/src/a.py"
+  out="$(run_job tester t5 TESTER_CMD="echo 'no Docker daemon here'; exit 201")"
+  check "tester stays silent on a second skip" test -z "$out"
+  echo 'x = 5' > "$root/src/a.py"
+  out="$(run_job tester t6 TESTER_CMD="echo '1 failed'; exit 1")"
+  check "tester real failure after a skip is red" bash -c "printf '%s' '$out' | grep -q 'tests red'"
+  echo 'x = 6' > "$root/src/a.py"
+  run_job tester t7 TESTER_CMD="echo 'precondition not met'; exit 201" >/dev/null
+  echo 'x = 7' > "$root/src/a.py"
+  out="$(run_job tester t8 TESTER_CMD="echo '5 passed'")"
+  check "tester skip keeps a red: green after it is a recovery" bash -c "printf '%s' '$out' | grep -q 'tests green again'"
+
   # 6. The lock. A busy lock never drops a run silently: a Stop run (non-blocking) logs the
   #    skip; a SubagentStop run waits for the lock and then does its job.
   before_calls="$(calls)"
