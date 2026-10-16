@@ -204,3 +204,117 @@ class Verify(h.RepoCase):
         h.track(self.root)
         results, _ = self.v.run(self.root)
         self.assertEqual({k: v for k, v in results.items() if v}, {})
+
+
+ONTOLOGY = """types = ["role", "record"]
+predicates = ["keeps"]
+
+[host]
+type = "role"
+term = "Host"
+summary = "The main session."
+
+[ledger]
+type = "record"
+term = "Ledger"
+summary = "What agents did."
+
+[[relation]]
+subject = "host"
+predicate = "keeps"
+object = "ledger"
+"""
+LEXICON = "# Lexicon\n\n- **Host** (the main session): x.\n  - **Ledger**: y.\n"
+DIAGRAM = ("# View\n\n```mermaid\nflowchart LR\n  subgraph host[\"Host\"]\n    ledger[\"Ledger\"]\n  end\n"
+           "  external-github[\"GitHub\"]\n  host -->|keeps| ledger\n  ledger -.-> external-github\n```\n")
+
+
+class Model(h.RepoCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.v = h.load("verify")
+        self.model = self.root / "docs" / "model"
+        h.write(self.root / "LEXICON.md", LEXICON)
+        h.write(self.model / "ontology.toml", ONTOLOGY)
+        h.write(self.model / "themes" / "a.toml", 'host = "Merlin"\nledger = "the Chronicle"\n')
+        h.write(self.model / "c4.md", DIAGRAM)
+
+    def ontology(self, old: str, new: str) -> None:
+        h.write(self.model / "ontology.toml", ONTOLOGY.replace(old, new))
+
+    def test_a_consistent_model_passes_and_no_model_is_skipped(self):
+        self.assertEqual(self.v.model(self.root), [])
+        (self.model / "ontology.toml").unlink()
+        self.assertEqual(self.v.model(self.root), [], "no ontology.toml: quietly fine, whatever else is in docs/model")
+
+    def test_invalid_toml_is_refused(self):
+        self.ontology('type = "role"', 'type = role')
+        findings = self.v.model(self.root)
+        self.assertEqual(len(findings), 1, findings)
+        self.assertTrue(findings[0].startswith("docs/model/ontology.toml:5: not valid TOML"), findings[0])
+
+    def test_a_non_kebab_id_is_refused(self):
+        h.write(self.model / "ontology.toml", ONTOLOGY.replace("[ledger]", "[Ledger_X]"))
+        findings = [f for f in self.v.model(self.root) if "kebab" in f]
+        self.assertEqual(findings, ["docs/model/ontology.toml:9: id 'Ledger_X' is not kebab-case; fix: rename it to lowercase words joined by dashes"])
+
+    def test_a_duplicate_id_is_refused(self):
+        h.write(self.model / "ontology.toml", ONTOLOGY + '\n[host]\ntype = "role"\n')
+        findings = self.v.model(self.root)
+        self.assertEqual(len(findings), 1, findings)
+        self.assertIn("not valid TOML", findings[0])
+
+    def test_an_unknown_type_is_refused(self):
+        self.ontology('type = "record"', 'type = "thing"')
+        findings = [f for f in self.v.model(self.root) if "type" in f]
+        self.assertEqual(len(findings), 1, findings)
+        self.assertTrue(findings[0].startswith("docs/model/ontology.toml:9: id 'ledger' has type 'thing'"), findings[0])
+
+    def test_a_missing_term_or_summary_is_refused(self):
+        self.ontology('summary = "The main session."\n', "")
+        findings = self.v.model(self.root)
+        self.assertEqual(findings, ["docs/model/ontology.toml:4: id 'host' has no summary; fix: add summary = \"...\""])
+
+    def test_a_relation_with_an_unknown_end_or_predicate_is_refused(self):
+        self.ontology('object = "ledger"', 'object = "ledgr"')
+        findings = self.v.model(self.root)
+        self.assertEqual(len(findings), 1, findings)
+        self.assertTrue(findings[0].startswith("docs/model/ontology.toml:14: relation object 'ledgr' is not an id; fix:"), findings[0])
+        self.ontology('subject = "host"', 'subject = "nobody"')
+        self.assertTrue(any("relation subject 'nobody' is not an id" in f for f in self.v.model(self.root)))
+        h.write(self.model / "ontology.toml", ONTOLOGY.replace('predicate = "keeps"', 'predicate = "eats"'))
+        findings = [f for f in self.v.model(self.root) if "predicate" in f]
+        self.assertEqual(len(findings), 1, findings)
+        self.assertIn("predicate 'eats' is not in `predicates`", findings[0])
+
+    def test_a_theme_key_that_is_not_an_id_is_refused(self):
+        h.write(self.model / "themes" / "a.toml", 'host = "Merlin"\nknight = "x"\n')
+        findings = self.v.model(self.root)
+        self.assertEqual(len(findings), 1, findings)
+        self.assertTrue(findings[0].startswith("docs/model/themes/a.toml:2: theme key 'knight' is not an ontology id; fix:"), findings[0])
+
+    def test_a_lexicon_term_without_an_id_is_refused(self):
+        h.write(self.root / "LEXICON.md", LEXICON + "- **Stake**: z.\n")
+        findings = [f for f in self.v.model(self.root) if "Stake" in f]
+        self.assertEqual(len(findings), 1, findings)
+        self.assertTrue(findings[0].startswith("LEXICON.md:5: term 'Stake' has no ontology id; fix:"), findings[0])
+
+    def test_an_ontology_term_missing_from_or_unlike_the_lexicon_is_refused(self):
+        self.ontology('term = "Ledger"', 'term = "Chronicle"')
+        findings = self.v.model(self.root)
+        self.assertTrue(any(f.startswith("docs/model/ontology.toml:9: term 'Chronicle' of 'ledger' is not a bold term of LEXICON.md") for f in findings), findings)
+        self.assertTrue(any("LEXICON.md:4: term 'Ledger' has no ontology id" in f for f in findings), findings)
+
+    def test_a_diagram_node_that_is_not_an_id_is_refused(self):
+        h.write(self.model / "c4.md", DIAGRAM.replace("host -->|keeps| ledger", "host -->|keeps| knight"))
+        findings = [f for f in self.v.model(self.root) if "c4.md" in f]
+        self.assertEqual(len(findings), 1, findings)
+        self.assertTrue(any(f.startswith("docs/model/c4.md:9: node id 'knight' is not an ontology id; fix:") for f in findings), findings)
+
+    def test_the_guard_runs_in_verify(self):
+        results, _ = self.v.run(self.root)
+        self.assertEqual(results["model"], [])
+        h.write(self.model / "c4.md", DIAGRAM.replace("host -->|keeps| ledger", "host -->|keeps| knight"))
+        done = h.run(["verify", "--quiet"], self.root, self.env)
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("FAIL model", done.stdout)

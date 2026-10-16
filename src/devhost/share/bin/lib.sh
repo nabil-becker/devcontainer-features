@@ -62,6 +62,7 @@ hk_ledger_dir() { hk_abs "$1" "${DEVHOST_LEDGER_DIR:-docs/ledger}"; }
 hk_backlog() { hk_abs "$1" "${DEVHOST_BACKLOG:-TODO.md}"; }
 hk_lexicon() { hk_abs "$1" "${DEVHOST_LEXICON:-LEXICON.md}"; }
 hk_adr_dir() { hk_abs "$1" "${DEVHOST_ADR_DIR:-docs/adr}"; }
+hk_model_dir() { hk_abs "$1" "${DEVHOST_MODEL_DIR:-docs/model}"; }
 hk_night_shift_dir() { hk_abs "$1" "${DEVHOST_NIGHT_SHIFT_DIR:-docs/night-shift}"; }
 
 # hk_jobs_dir: where `devhost-run-job <job>` finds jobs/<job>/job.sh; a repository may

@@ -70,6 +70,10 @@ def adr_dir(root: Path) -> Path:
     return _path(root, "DEVHOST_ADR_DIR", "docs/adr")
 
 
+def model_dir(root: Path) -> Path:
+    return _path(root, "DEVHOST_MODEL_DIR", "docs/model")
+
+
 def night_shift_dir(root: Path) -> Path:
     return _path(root, "DEVHOST_NIGHT_SHIFT_DIR", "docs/night-shift")
 

@@ -2,7 +2,7 @@
 """The backs' guards: a job may only add to what it keeps; anything else is undone.
 
 Usage: guards.py backlog <before> <after>       the secretary's guard on the backlog file
-       guards.py docs <snapshot dir> <root>     the librarian's guard on the lexicon and the ADRs
+       guards.py docs <snapshot dir> <root>     the librarian's guard on the lexicon, the ADRs and the model
 
 Importable too: `backlog_guard(before_lines, after_lines)` and `docs_guard(snapshot, root)`
 return the first finding as a string, or None when the run kept the rules.
@@ -12,12 +12,14 @@ unchanged or ticked (`- [ ]` -> `- [x]`, text kept, a suffix allowed); a suffix 
 line is allowed, never on a heading or a blank line.
 
 The docs guard: the snapshot holds the lexicon as `<its basename>` and the ADR directory's
-`*.md` as `adr/`, as they were before the run. Every line of the old lexicon is still there,
+`*.md` as `adr/` and the model directory's files as `model/` (same relative paths), as they were before the run. Every line of the old lexicon is still there,
 unchanged and in order (new lines anywhere); every existing ADR keeps every line except its
 `| **Status** |` row, which may change (an ADR is superseded by setting that line only); the ADR
 index (`README.md`) keeps every line except an index row of an existing ADR (`| [NNNN](...) |`),
-whose status column may change; new rows and new files may be added. New ADR files are not this
-guard's business: `devhost-verify` checks their shape.
+whose status column may change; new rows and new files may be added. Every line of an old model file
+(`docs/model/`: the ontology, the themes, the views) is still there, unchanged and in order (new
+lines and new files anywhere). New ADR files and model content are not this guard's business:
+`devhost-verify` checks their shape and agreement.
 
 The CLI exits 1 and prints the finding (backlog: then the rejected diff), so the job can restore the snapshot and log it.
 """
@@ -29,7 +31,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from devhost_common import adr_dir, lexicon_path, rel  # noqa: E402
+from devhost_common import adr_dir, lexicon_path, model_dir, rel  # noqa: E402
 
 STATUS_ROW = re.compile(r"^\| \*\*Status\*\* \|")
 INDEX_ROW = re.compile(r"^\| \[(\d{4})\]")
@@ -95,6 +97,14 @@ def docs_guard(snapshot: Path, root: Path) -> str | None:
             return f"{rel(root, now)}: removed"
         rule = index_change if adr.name == "README.md" else status_change
         lost = lost_line(lines(adr), lines(now), rule)
+        if lost is not None:
+            return f"{rel(root, now)}: changed or lost: {lost.strip()[:160]}"
+    models = model_dir(root)
+    for old_model in sorted(p for p in (snapshot / "model").rglob("*") if p.is_file()) if (snapshot / "model").is_dir() else []:
+        now = models / old_model.relative_to(snapshot / "model")
+        if not now.exists():
+            return f"{rel(root, now)}: removed"
+        lost = lost_line(lines(old_model), lines(now))
         if lost is not None:
             return f"{rel(root, now)}: changed or lost: {lost.strip()[:160]}"
     return None

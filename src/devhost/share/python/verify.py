@@ -24,16 +24,23 @@ word itself), and needs only git and python3:
 - `skills`: every `.claude/skills/<dir>/SKILL.md` has frontmatter `name: <dir>` and a description.
 - `hook_modes`: every tracked file in the configured hooks path (`core.hooksPath`) has index mode
   100755; a 100644 hook never runs on Linux (`core.fileMode=false` on Windows hides the change).
+- `model`: quiet without `docs/model/ontology.toml`; with it, the TOML, ids, types, relations, theme
+  keys, the lexicon's bold terms against the ids' `term`s and the Mermaid node ids of
+  `docs/model/*.md` are checked (needs Python 3.11 for tomllib).
 """
 from __future__ import annotations
 
 import re
 import sys
+try:
+    import tomllib
+except ImportError:  # Python before 3.11
+    tomllib = None
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from devhost_common import (COST_REPORT, MONTHLY, adr_dir, base_ref, forbidden_words as _forbidden,  # noqa: E402
-                            git, ledger_dir, read_text, redact_file, redact_names, rel, repo_root,
+                            git, ledger_dir, lexicon_path, model_dir, read_text, redact_file, redact_names, rel, repo_root,
                             tracked_files)
 
 TEXT_SUFFIXES = {
@@ -299,7 +306,121 @@ def hook_modes(root: Path) -> list[str]:
     return findings
 
 
-GUARDS = (ledger_append_only, ledger_shape, secrets, forbidden_words, adrs, taskfile, skills, hook_modes)
+# The ontology (docs/model)
+
+KEBAB = re.compile(r"^[a-z][a-z0-9]*(-[a-z0-9]+)*$")
+RESERVED_KEYS = {"types", "predicates", "relation"}
+LEXICON_TERM = re.compile(r"^\s*- \*\*([^*]+)\*\*")
+MERMAID_SKIP = ("flowchart", "graph", "end", "direction", "classDef", "class ", "style ", "linkStyle", "%%", "click ")
+ARROWS = re.compile(r"[-=.]*[-=.]>|-{3,}|={3,}|&|;")
+BRACKETED = re.compile(r'"[^"]*"|\(\([^)]*\)\)|\[[^\]]*\]|\([^)]*\)|\{[^}]*\}|\|[^|]*\|')
+
+
+def _line_of(text: str, pattern: str, nth: int = 0) -> int:
+    found = [n for n, line in enumerate(text.splitlines(), 1) if re.match(pattern, line)]
+    return found[nth] if nth < len(found) else 1
+
+
+def _toml(path: Path, where: str, findings: list[str]) -> tuple[dict, str] | None:
+    text = read_text(path)
+    try:
+        return tomllib.loads(text), text
+    except tomllib.TOMLDecodeError as error:
+        at = re.search(r"line (\d+)", str(error))
+        findings.append(f"{where}:{at.group(1) if at else 1}: not valid TOML ({error}); fix the syntax")
+        return None
+
+
+def mermaid_ids(text: str) -> list[tuple[int, str]]:
+    """The node ids of every Mermaid block of a markdown text, with their line numbers."""
+    found, inside = [], False
+    for number, line in enumerate(text.splitlines(), 1):
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            inside = stripped.startswith("```mermaid") and not inside
+            continue
+        if not inside or not stripped or stripped.startswith(MERMAID_SKIP):
+            continue
+        if stripped.startswith("subgraph"):
+            stripped = stripped[len("subgraph"):]
+        for token in ARROWS.sub(" ", BRACKETED.sub(" ", stripped)).split():
+            found.append((number, token))
+    return found
+
+
+def model(root: Path) -> list[str]:
+    folder = model_dir(root)
+    path = folder / "ontology.toml"
+    if not path.is_file():
+        return []
+    where = rel(root, path)
+    if tomllib is None:
+        return [f"{where}:1: the model guard needs Python 3.11 or later (tomllib)"]
+    findings: list[str] = []
+    parsed = _toml(path, where, findings)
+    if parsed is None:
+        return findings
+    data, text = parsed
+    ids = {k: v for k, v in data.items() if k not in RESERVED_KEYS}
+    types, predicates = data.get("types", []), data.get("predicates", [])
+    if not types:
+        findings.append(f"{where}:1: no closed `types` array; fix: add types = [\"role\", ...] before the first table")
+    if not predicates:
+        findings.append(f"{where}:1: no closed `predicates` array; fix: add predicates = [\"keeps\", ...] before the first table")
+    for key, body in ids.items():
+        at = _line_of(text, rf"^\[{re.escape(key)}\]")
+        if not isinstance(body, dict):
+            findings.append(f"{where}:1: '{key}' is not an id table; fix: write it as [{key}] with type, term and summary")
+            continue
+        if not KEBAB.match(key):
+            findings.append(f"{where}:{at}: id '{key}' is not kebab-case; fix: rename it to lowercase words joined by dashes")
+        if body.get("type") not in types:
+            findings.append(f"{where}:{at}: id '{key}' has type {body.get('type')!r}, not one of {types}; fix: use one of them or extend `types`")
+        for field in ("term", "summary"):
+            if not isinstance(body.get(field), str) or not body[field].strip():
+                findings.append(f"{where}:{at}: id '{key}' has no {field}; fix: add {field} = \"...\"")
+    for index, relation in enumerate(data.get("relation", [])):
+        at = _line_of(text, r"^\[\[relation\]\]", index)
+        for field in ("subject", "object"):
+            if relation.get(field) not in ids:
+                findings.append(f"{where}:{at}: relation {field} {relation.get(field)!r} is not an id; fix: use an id of this file or add one")
+        if relation.get("predicate") not in predicates:
+            findings.append(f"{where}:{at}: relation predicate {relation.get('predicate')!r} is not in `predicates`; fix: use one of {predicates}")
+    for theme in sorted((folder / "themes").glob("*.toml")):
+        label = rel(root, theme)
+        parsed = _toml(theme, label, findings)
+        if parsed is None:
+            continue
+        for key in parsed[0]:
+            if key not in ids:
+                at = _line_of(parsed[1], "^" + re.escape(key) + r"\s*=")
+                findings.append(f"{label}:{at}: theme key '{key}' is not an ontology id; fix: use an id of {where}")
+    lexicon = lexicon_path(root)
+    if lexicon.is_file():
+        lex_where, lex_text = rel(root, lexicon), read_text(lexicon)
+        lex_terms = {}
+        for number, line in enumerate(lex_text.splitlines(), 1):
+            m = LEXICON_TERM.match(line)
+            if m:
+                lex_terms.setdefault(m.group(1), number)
+        known = {body.get("term") for body in ids.values() if isinstance(body, dict)}
+        for term, number in lex_terms.items():
+            if term not in known:
+                findings.append(f"{lex_where}:{number}: term '{term}' has no ontology id; fix: add a kebab-case table to {where} with term = \"{term}\"")
+        for key, body in ids.items():
+            if isinstance(body, dict) and isinstance(body.get("term"), str) and body["term"] not in lex_terms:
+                at = _line_of(text, rf"^\[{re.escape(key)}\]")
+                findings.append(f"{where}:{at}: term '{body['term']}' of '{key}' is not a bold term of {lex_where}; "
+                                f"fix: make it match the lexicon or add the term there")
+    for doc in sorted(folder.glob("*.md")):
+        for number, node in mermaid_ids(read_text(doc)):
+            if node not in ids and not node.startswith("external-"):
+                findings.append(f"{rel(root, doc)}:{number}: node id '{node}' is not an ontology id; "
+                                f"fix: use an id of {where}, or prefix it external- if it is outside the model")
+    return findings
+
+
+GUARDS = (ledger_append_only, ledger_shape, secrets, forbidden_words, adrs, taskfile, skills, hook_modes, model)
 
 
 def run(root: Path) -> tuple[dict[str, list[str]], list[str]]:
