@@ -56,3 +56,4 @@ numbering and a row below.
 | [0005](0005-the-ontology-is-the-canonical-model-and-a-guard-keeps-the-rest-in-line.md) | The ontology is the canonical model, and a guard keeps the rest in line | accepted | 2026-10-16 |
 | [0006](0006-the-docs-site-is-built-by-a-script-and-hosting-is-a-swappable-skill.md) | The docs site is built by a script, and hosting is a swappable skill | accepted | 2026-10-16 |
 | [0007](0007-the-life-theme-is-a-shared-layer-above-each-projects-own.md) | The life theme is a shared layer above each project's own theme | accepted | 2026-10-16 |
+| [0008](0008-the-iteration-package-carries-papers-forward-and-merges-the-foundation.md) | The iteration package carries papers forward, merges the foundation, and its papers are honest accounts | accepted | 2026-10-16 |

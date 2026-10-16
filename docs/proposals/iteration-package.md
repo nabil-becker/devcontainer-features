@@ -1,6 +1,6 @@
 # Proposal: the iteration package
 
-Status: open, for the Operator to shape (2026-10-16). The flow and its rule are agreed, and there is no true-up. The contents are not a fixed list. This repository will export the first package, but is not ready yet.
+Status: accepted by the Operator (2026-10-16). The flow, its rule, the honest-accounts rules, the life theme and the no-true-up account are agreed, and so are the location and format proposed under Open. What is foundational is decided when the Operator calls the iteration. This repository will export the first package, but is not ready yet.
 
 Each iteration of the Agentic Delivery OS (`docs/iterations.md`) ends by exporting a package, and the next project starts from it. In the life theme (ADR-0007) the package is the seed.
 
@@ -87,6 +87,6 @@ The earlier iterations are not reconstructed (the Operator, 2026-10-16). The ser
 ## Open
 
 - What this repository will consider foundational when it exports: decided when the Operator calls the iteration.
-- Where a received package lives (proposed: `docs/iterations/package/`).
-- **Format, proposed:** Markdown, which people and agents both read without tools, with a short front matter per file (iteration, date, sources). The docs site renders it for people. The journey's raw material is released with V1 of the Agentic Delivery OS, so it must stay readable outside any tool.
+- Where a received package lives: `docs/iterations/package/` (accepted with the proposal).
+- **Format (accepted with the proposal):** Markdown, which people and agents both read without tools, with a short front matter per file (iteration, date, sources). The docs site renders it for people. The journey's raw material is released with V1 of the Agentic Delivery OS, so it must stay readable outside any tool.
 - Whether the journalist back stays a back or becomes just the skill.
