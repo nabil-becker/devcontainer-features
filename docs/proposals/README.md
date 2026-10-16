@@ -5,3 +5,4 @@ Drafts the Operator decides on. A proposal is never in force until the Operator 
 | Proposal | Status |
 |---|---|
 | [King Arthur theme](king-arthur-theme.md) | open |
+| [Journalist back](journalist-back.md) | open |
