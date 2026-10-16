@@ -118,3 +118,22 @@ The domain words of the project itself are not here; they live with the project'
 - **The guards** (`devhost-verify`): the commit-time checks the pre-commit hook runs: the ledger
   append-only and well-formed, no secrets, no forbidden words, the ADR shape, every task
   described, every skill named.
+
+## The Arthurian layer
+
+A voice over the plain words, not a rename (accepted 2026-10-16, `docs/proposals/king-arthur-theme.md`).
+The plain word stays in every id, path, command, field name and guard; the layer is for what a
+person reads: the bard's journal first, other prose only after a trial.
+
+| Plain word | In the layer |
+|---|---|
+| the Operator | the King (committed text still says "the Operator") |
+| host | Merlin: counsels and briefs, never rules |
+| con | a knight on one quest, returning with one report |
+| backs | the household, who never meet the King |
+| ledger | the Chronicle |
+| backlog (`TODO.md`) | the Quest board |
+| ledger review | the Round Table: the record read together, the King still decides |
+| night shift | the vigil |
+| `devhost-verify` and the guards | the castle watch |
+| journalist back | the bard (the scribe keeps the record; the bard tells the story) |

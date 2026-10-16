@@ -1,6 +1,6 @@
 # Proposal: a King Arthur theme for the way of working
 
-Status: draft, for the Operator to decide. Nothing here is in force; no name in the repository has changed.
+Status: accepted 2026-10-16 as option A, a layer, trimmed to ten names (LEXICON.md, "The Arthurian layer"); the trial starts with the bard rather than the scribe, whose entries are machine-read. No name in the repository has changed.
 
 The office generation was themed as an office; this devhost generation has its own words (LEXICON.md). The next generation is themed on King Arthur. This page maps the words, costs two ways of adopting it, and recommends one.
 
