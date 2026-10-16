@@ -14,6 +14,8 @@ reach anyone who references them. The rules below keep that safe.
 1. Fork, branch from `main`, and run `task repo:setup` once in the clone
    (see "Sign your work" below). Opening the repo in its devcontainer
    (`.devcontainer/`) gives you every tool the checks need.
+   Its `.devcontainer/devcontainer-lock.json` is committed; refresh it with
+   `devcontainer upgrade` when a registry Feature there is bumped.
 2. Make the change; run `task docs` (if the JSON or notes changed),
    `task lint` and, on Linux/macOS or inside the devcontainer,
    `task test FEATURE=<id>`.
@@ -193,13 +195,18 @@ with, and why it exists if a similar Feature is published elsewhere.
 - PowerShell: PowerShell 7, `PSScriptAnalyzer`-clean, comment-based help.
 - Host-side tooling ships in two flavours that must stay in step:
   `bootstrap/host/*.ps*1` + `bootstrap/bootstrap.ps1` (Windows, primary)
-  and `src/devcontainer-cli/devcontainer-cli.sh` + `bootstrap/bootstrap.sh`
-  (Linux/macOS). That bash script is also the `devcontainer-cli` Feature's
+  and `src/devcontainer-cli/devcontainer-cli.sh`,
+  `bootstrap/host/devcontainer-homes.sh` + `bootstrap/bootstrap.sh`
+  (Linux/macOS). The devcontainer-cli bash script is also that Feature's
   installer (`install` mode), so it is the single source of the bash logic;
   the bootstrap vendors it into consuming repos as
   `bootstrap/host/devcontainer-cli.sh`. A behaviour or setting added to one
   flavour goes into the other in the same PR, with the same `DEVCONTAINER_*`
-  variable name.
+  variable name, and into the vendored lists of both bootstrap scripts.
+- `bootstrap/devcontainer.yml` never declares a global `env:` and never
+  uses a per-command `if:`: Task 3.45 lets the first swallow `.env` values
+  for the whole project and ignores the second. Branch in the template
+  (`{{if ._IN_CONTAINER}}...{{else}}...{{end}}`) instead.
 - Keep comments to the *why*; the code says the *what*.
 
 ## Sign your work (DCO)
