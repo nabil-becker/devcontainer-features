@@ -8,6 +8,8 @@
 
 ## Checklist
 
+New Feature? Follow "Adding a Feature" in [CONTRIBUTING.md](../CONTRIBUTING.md#adding-a-feature) first (CI matrices, `test/_global`, README row).
+
 - [ ] Every commit is signed off (`Signed-off-by:`, DCO) - automatic after `task repo:setup`
 - [ ] `version` bumped in `src/<id>/devcontainer-feature.json` (semver)
 - [ ] Downloads remain checksum-verified; nothing unverified is piped into a shell

@@ -30,26 +30,50 @@ pinned release) and verifies what it downloads before installing it.
 
 ## How the pieces fit
 
-The collection is an ecosystem, not a bag of installers: every repo that uses
-it gets the same shape, and anything a repo has to script around is a gap to
-close here.
+The collection is an ecosystem, not a bag of installers. Every repo that
+uses it gets the same shape, and anything a repo has to script around is a
+gap to close here (see [Contributing from a consuming repo](#contributing-from-a-consuming-repo)).
 
-- **Task is the API.** Inside the container, every Feature contributes
-  `<id>:*` tasks through the go-task registry. Documents and skills name
-  tasks, never the scripts behind them.
+- **Task is the API, on both sides of the container wall.** On the host,
+  `task devcontainer:*` (vendored include, alias `dc:`) builds, starts, enters
+  and talks to the container; inside, every Feature contributes `<id>:*`
+  tasks through the go-task registry. Documents and skills name tasks, never
+  the scripts behind them.
 - **Augment, don't duplicate.** When an official Feature exists for a tool
   (Anthropic's `claude-code`, `devcontainers/features/git`), this collection's
   Feature of the same id orders itself after it (`installsAfter`) and adds
   what the ecosystem needs around it: a launcher, a post-create hook, a
   Taskfile. It installs the tool itself only when nothing else did, and then
   verified and pinnable. Wrappers are opt-in and generic (no repo paths).
-- **Each Feature owns its state.** A Feature that has state (logins,
-  transcripts, tool config) declares the variable that points at it and a
-  named volume on `/var/lib/devcontainer-features/<id>`, like the official
-  docker-in-docker Feature does, and its post-create hook makes the directory
-  usable by the remote user (`dcf-persist`, from `common`). Nothing to
-  configure. A repo that wants that state on the host disk bind-mounts the
-  same target; its mount wins.
+- **The checkout is the only thing on disk; each Feature owns its state.**
+  Everything that is not the repo is either persistent somewhere a Feature
+  manages, or ephemeral inside the container. A Feature that has state
+  (logins, transcripts, tool config) declares the variable that points at it
+  and a named volume on `/var/lib/devcontainer-features/<id>`, like the
+  official docker-in-docker Feature does, and its post-create hook makes the
+  directory usable by the remote user (`dcf-persist`, from `common`).
+  Nothing to configure. A repo that wants that state on the host disk
+  (survives container-engine resets, follows the machine) bind-mounts the
+  same target, its mount wins, and `task devcontainer:homes` as
+  `initializeCommand` guarantees the host folder exists. Examples spell the
+  host path with `${localEnv:USERPROFILE}` (Windows); on Linux/macOS use
+  `${localEnv:HOME}`. Never concatenate the two: both can be set on Windows. Caches and
+  worktrees stay out of the checkout too (`PYTHONPYCACHEPREFIX`, a volume
+  over `.claude/worktrees`), or a synced checkout carries every build
+  artefact.
+- **One session per role, found by UUID.** `claude-host` resumes the session
+  in `HOST_SESSION` (from `.devcontainer/.env`) wherever it runs;
+  `task devcontainer:claude` does it from the host, `task claude-code:host`
+  inside, `DIR=<sub-folder>` for a session per sub-folder.
+- **Settings are plain variables, three ways.** Command-line var, then the
+  `.env` files, then the exported environment, with the same names in the
+  tasks, the PowerShell scripts and their bash twins.
+- **Windows only bootstraps and launches; the work happens inside.** The
+  host needs PowerShell 7, Task and a Docker-compatible engine (`docker` or
+  `wslc`), nothing else: Node.js and the devcontainer CLI are cached per
+  user, and every tool a project needs is a Feature. Sessions, tests and
+  builds run in the container. Linux/macOS get a bash twin of every
+  host-side script.
 
 ### Feature Taskfiles
 
@@ -110,34 +134,38 @@ curl -fsSL https://raw.githubusercontent.com/nabil-becker/devcontainer-features/
 [`bootstrap/bootstrap.ps1`](bootstrap/bootstrap.ps1) / [`bootstrap/bootstrap.sh`](bootstrap/bootstrap.sh):
 
 1. vendor `bootstrap/devcontainer.yml`, `bootstrap/host/*` (the PowerShell
-   flavour) and the `devcontainer-cli` Feature's `devcontainer-cli.sh` (the
-   bash flavour) into the repo's `bootstrap/` folder - always refreshed, so
-   re-running is the update path;
-2. write `Taskfile.yml`, `.devcontainer/devcontainer.json` (go-task,
-   devcontainer-cli, docker-outside-of-docker, PowerShell),
-   `.devcontainer/env_mnt/.gitignore` and `.devcontainer/.env.example` from
-   [`bootstrap/`](bootstrap) - only if they do not exist yet - and gitignore
-   `.devcontainer/.env`;
+   flavour and the bash twins) and the `devcontainer-cli` Feature's
+   `devcontainer-cli.sh` into the repo's `bootstrap/` folder - always
+   refreshed, so re-running is the update path;
+2. write `Taskfile.yml` (includes the vendored tasks under `devcontainer:`
+   with the alias `dc:`), `.devcontainer/devcontainer.json` (go-task,
+   devcontainer-cli, git, docker-outside-of-docker, PowerShell) and
+   `.devcontainer/.env.example` from [`bootstrap/`](bootstrap) - only if
+   they do not exist yet - and gitignore `.devcontainer/.env`;
 3. run `task devcontainer:init` (caches the portable Node.js + CLI, reports
    the engine) and `task devcontainer:up`.
 
 That breaks the circular dependency: the repo never needs a checkout of this
 one, and from then on every devcontainer operation goes through
-`task devcontainer:*`.
+`task devcontainer:*` (or `task dc:*`).
 
-### Settings: CLI, environment, or `.env`
+### Settings: CLI, `.env`, or environment
 
-Every setting of the bootstrap and of the tasks can be given three ways, in
-this precedence: explicit parameter / flag, environment variable, `.env`
-file (`./.env` or `./.devcontainer/.env`, loaded by the bootstrap scripts and
-by Task's `dotenv:` in the generated Taskfile). That is how a piped
-`irm | iex` or `curl | bash` run is configured:
+Every setting of the bootstrap and of the tasks can be given three ways. The
+bootstrap scripts resolve explicit parameter, then environment variable, then
+`.env` file (`./.env` or `./.devcontainer/.env`). The tasks resolve as Task
+does: a var on the command line (`task dc:up DEVCONTAINER_DOCKER_PATH=docker`),
+then the `.env` files (loaded by `dotenv:` in the generated Taskfile), then
+the exported environment. That is how a piped `irm | iex` or `curl | bash`
+run is configured:
 
 | Setting | Env var | Parameter |
 | --- | --- | --- |
 | Docker-compatible CLI for `--docker-path` (`docker`, `wslc`, `podman`, `nerdctl`, `finch`, or a path). Unset: `docker` on PATH, else `wslc.exe` on Windows. | `DEVCONTAINER_DOCKER_PATH` | `-DockerPath` / `--docker-path` |
 | Portable Node.js version | `DEVCONTAINER_NODE_VERSION` | - |
 | `@devcontainers/cli` version (default `latest`) | `DEVCONTAINER_CLI_VERSION` | - |
+| Root of the host-side tool-state folders (`devcontainer:homes`; default `~/.devcontainer-homes`) | `DEVCONTAINER_HOMES` | - |
+| UUID of the Claude Code session `devcontainer:claude` resumes (`HOST_SESSION_<DIR>` per sub-folder) | `HOST_SESSION` | `SESSION=` var |
 | Git ref to vendor from (default `main`) | `DEVCONTAINER_BOOTSTRAP_REF` | `-Ref` / `--ref` |
 | Source URL base or local checkout | `DEVCONTAINER_BOOTSTRAP_SOURCE` | `-Source` / `--source` |
 | Repo root (default cwd) | `DEVCONTAINER_BOOTSTRAP_PATH` | `-Path` / `--path` |
@@ -151,31 +179,55 @@ $env:DEVCONTAINER_DOCKER_PATH = 'wslc'; irm https://raw.githubusercontent.com/na
 
 See [`bootstrap/env.example`](bootstrap/env.example) for a commented `.env`.
 
+### Feature state: volumes or host disk
+
+Each Feature stores its persistent state (logins, config, transcripts) in a named volume by default. To keep a Feature's state on the host disk instead (survives container-engine resets, stays outside a synced checkout), uncomment and configure the host-disk block in `.devcontainer/devcontainer.json`: it binds the same target path on both the host and inside the container, and the repo's mount wins over the Feature's volume.
+
 ## Host-side devcontainer CLI (`bootstrap/devcontainer.yml`)
 
 | Task | Does |
 | --- | --- |
 | `devcontainer:init` | Cache portable Node.js + `@devcontainers/cli`, report engine. `FORCE=true` reinstalls the CLI. |
+| `devcontainer:homes NAME=<slug> -- <dir>...` | Create `~/.devcontainer-homes/<slug>/<dir>` on the host, for a repo that bind-mounts a Feature's state target to the host disk instead of the Feature's volume; meant as `initializeCommand` (array form: `["task", "devcontainer:homes", "NAME=myrepo", "--", "claude-code"]`). `HOST_GIT_DIR=<path>` also checks a git dir kept outside the checkout. |
 | `devcontainer:up` / `rebuild` / `build` | `devcontainer up` (extra flags after `--`), from-scratch rebuild, image build only. |
-| `devcontainer:exec CMD='...'` / `shell` | Run a command (base64-safe) or an interactive bash in the container. |
+| `devcontainer:exec CMD='...'` / `shell` / `pwsh` | Run a command (base64-safe), an interactive bash, or PowerShell in the container. |
+| `devcontainer:claude [DIR=<sub-folder>] [SESSION=<uuid>] [-- <claude args>]` | Start or resume the Claude Code host session inside (needs the `claude-code` Feature): `HOST_SESSION` from `.devcontainer/.env`, `HOST_SESSION_<DIR>` for a sub-folder. Runs directly when already inside the container. |
 | `devcontainer:config` | Resolved configuration. |
 | `devcontainer:<anything>` | Passthrough to that CLI subcommand, args after `--`. |
 | `devcontainer:reset-storage` | wslc.exe only: reset WSL Containers' storage after a read-only BuildKit error. |
 
-Each task dispatches per platform (Task's per-command `platforms`):
+All of them also answer to `dc:` (the include's alias in the generated
+Taskfile). Each task dispatches per platform (Task's per-command
+`platforms`):
 
 - **Windows** runs `bootstrap/host/Invoke-DevcontainerCli.ps1`: a pinned
   portable Node.js is downloaded once (sha256-verified) into
   `%LOCALAPPDATA%\devcontainer-features\devcontainer-node`, the CLI is
   npm-installed next to it, nothing lands on PATH. Needs PowerShell 7.
+  `homes` runs `Initialize-DevcontainerHomes.ps1`.
 - **Linux/macOS** run `devcontainer-cli.sh`, the very script that installs
   the `devcontainer-cli` Feature (vendored as `bootstrap/host/devcontainer-cli.sh`):
   `devcontainer` on PATH if present, else the same portable Node.js trick
-  under `~/.cache/devcontainer-features`. Needs bash and curl.
+  under `~/.cache/devcontainer-features`. Needs bash and curl. `homes` runs
+  `devcontainer-homes.sh`.
 
-Both honour the `DEVCONTAINER_*` settings above. The include must be a
-*local* include - the tasks run the scripts next to the Taskfile, which
-remote includes cannot reach.
+Both honour the settings above. The include must be a *local* include - the
+tasks run the scripts next to the Taskfile, which remote includes cannot
+reach. It declares no global `env:` on purpose: with Task 3.45 an `env:` key
+in an include claims the name and the `.env` value is discarded for the
+whole project (the bug the first consuming repos worked around with a
+`dc:*` passthrough; that workaround is no longer needed).
+
+### Contributing from a consuming repo
+
+A repo that needs something its devcontainer does not provide asks here
+first: an [issue](https://github.com/nabil-becker/devcontainer-features/issues)
+for a missing Feature, option, task or host script, then a pull request
+following [CONTRIBUTING.md](CONTRIBUTING.md). A local wrapper in the
+consuming repo is a stopgap that names the upstream issue it waits on, and
+goes away when the next release ships the functionality. Two things are
+not accepted upstream and stay local: anything that embeds the repo's own
+paths or names, and anything only one repo has ever wanted.
 
 ## Developing
 

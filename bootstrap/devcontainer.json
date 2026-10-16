@@ -13,15 +13,25 @@
     "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {},
     "ghcr.io/nabil-becker/devcontainer-features/go-task:1": {},
     "ghcr.io/nabil-becker/devcontainer-features/devcontainer-cli:1": {},
+    // Every Feature of the collection owns its persistent state (logins,
+    // config, transcripts) in a named volume it mounts itself and makes
+    // usable at post-create; nothing to configure. git: worktree-aware
+    // wrapper when GIT_DIR is set, safe.directory and core.hooksPath.
+    "ghcr.io/nabil-becker/devcontainer-features/git:1": {},
+    // "ghcr.io/nabil-becker/devcontainer-features/gh:1": {},
     // "ghcr.io/nabil-becker/devcontainer-features/claude-code:1": {},
     "ghcr.io/devcontainers/features/powershell:1": {}
   },
-  // Tool state that must survive rebuilds goes under .devcontainer/env_mnt
-  // (gitignored) - e.g. "CLAUDE_CONFIG_DIR": "${containerWorkspaceFolder}/.devcontainer/env_mnt/claude"
-  "containerEnv": {
-    "GH_CONFIG_DIR": "${containerWorkspaceFolder}/.devcontainer/env_mnt/gh",
-    "GIT_CONFIG_GLOBAL": "${containerWorkspaceFolder}/.devcontainer/env_mnt/git/gitconfig"
-  },
-  "postCreateCommand": "mkdir -p .devcontainer/env_mnt/gh .devcontainer/env_mnt/git && git config --global --add safe.directory '*'",
+  // To keep a Feature's state on the host disk instead of its volume
+  // (survives container-engine resets, stays outside a synced checkout),
+  // bind-mount the same target; the repo's mount wins over the Feature's.
+  // The folder must exist before the start, hence the initializeCommand
+  // (array form: a string goes through cmd /c on Windows, which mangles
+  // quotes and %VARS%):
+  //   "initializeCommand": ["task", "devcontainer:homes", "NAME=myrepo", "--", "claude-code", "gh"],
+  //   "mounts": [
+  //     "source=${localEnv:USERPROFILE}/.devcontainer-homes/myrepo/claude-code,target=/var/lib/devcontainer-features/claude-code,type=bind",
+  //     "source=${localEnv:USERPROFILE}/.devcontainer-homes/myrepo/gh,target=/var/lib/devcontainer-features/gh,type=bind"
+  //   ],
   "remoteUser": "vscode"
 }
