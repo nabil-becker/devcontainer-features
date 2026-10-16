@@ -34,6 +34,42 @@ def clip(text, n=CLIP):
     return text if len(text) <= n else text[:n] + " [...]"
 
 
+HAND_HEAD = re.compile(r"^[#*_\s>-]*(Outcome|Outputs?|Friction|For the repository|Decisions needed)\b", re.I | re.M)
+KEEP = ("friction", "for the repository", "decisions needed")
+HANDOFF_WHOLE = 3000       # a hand-off this short is kept as it is
+HANDOFF_REST = 8000        # the rest of a longer one, after its key sections
+
+
+def handoff(text):
+    """A hand-off, with Friction, For the repository and Decisions needed never cut.
+
+    Hand-offs put a long Outputs section first, so a plain clip loses exactly the sections the
+    ledger is for. Over HANDOFF_WHOLE chars those three sections come first, in full, then
+    the rest, clipped at HANDOFF_REST with a "[clipped N chars]" marker.
+    """
+    text = text.strip()
+    if len(text) <= HANDOFF_WHOLE:
+        return text
+    marks = list(HAND_HEAD.finditer(text))
+    if not marks:
+        return clip_marked(text, HANDOFF_REST)
+    pieces = [text[:marks[0].start()]]
+    keep, rest = [], [pieces[0]]
+    for i, m in enumerate(marks):
+        end = marks[i + 1].start() if i + 1 < len(marks) else len(text)
+        (keep if m.group(1).lower() in KEEP else rest).append(text[m.start():end])
+    rest = "".join(rest).strip()
+    if not keep:
+        return clip_marked(text, HANDOFF_REST)
+    out = "\n".join(k.strip() for k in keep)
+    return out + "\n[rest of the hand-off, key sections above]\n" + clip_marked(rest, HANDOFF_REST)
+
+
+def clip_marked(text, n):
+    text = text.strip()
+    return text if len(text) <= n else text[:n] + f" [clipped {len(text) - n} chars]"
+
+
 def blocks(content):
     if isinstance(content, str):
         return [{"type": "text", "text": content}]
@@ -44,7 +80,7 @@ def tool_line(block, answerer):
     name = block.get("name", "?")
     inp = block.get("input") or {}
     if name == "SubagentHandback":
-        return f"{answerer} FINAL REPLY: " + clip(str(inp.get("message", "")), 3000)
+        return f"{answerer} FINAL REPLY: " + handoff(str(inp.get("message", "")))
     for key in ("description", "file_path", "command", "skill", "prompt"):
         if key in inp and isinstance(inp[key], str):
             return f"[tool {name}: {clip(inp[key], 200)}]"
@@ -78,7 +114,7 @@ def main():
             hb = re.sub(r"\n\s+", "\n", hb).strip()
             if hb not in seen:
                 seen.add(hb)
-                out.append("CON REPLY: " + clip(hb, 2500))
+                out.append("CON REPLY: " + handoff(hb))
 
     for raw in data.splitlines():
         try:

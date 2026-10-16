@@ -19,6 +19,8 @@ Augments whichever git the image already has (base image, common-utils or ghcr.i
 | worktreeAware | Install the /usr/local/bin/git wrapper that unsets GIT_DIR and GIT_WORK_TREE when git runs inside a linked worktree or a nested repository (any directory whose nearest .git is not GIT_WORK_TREE). With false, no wrapper is installed and a previously installed one is removed. | boolean | true |
 | safeDirectory | What git-setup marks as safe.directory in the global git config at post-create: 'workspace' = the workspace folder and GIT_DIR (when set); '*' = every directory; empty = do nothing. Override per container with GIT_SETUP_SAFE_DIRECTORY in containerEnv. | string | workspace |
 | hooksPath | When set, git-setup runs `git config core.hooksPath <value>` in the workspace repository at post-create (e.g. '.githooks'); empty leaves core.hooksPath alone. Override per container with GIT_SETUP_HOOKS_PATH in containerEnv. | string | - |
+| commitName | Commit identity name for agents and bots. When commitEmail is set, the git wrapper exports GIT_AUTHOR_NAME and GIT_COMMITTER_NAME with this value (default: the email) for every git invocation that has not set them, so no repository-local or global user.name decides who commits. Empty with commitEmail empty = feature off. | string | - |
+| commitEmail | Commit identity email (e.g. 'bot@noreply.invalid'). When set, the git wrapper exports GIT_AUTHOR_EMAIL and GIT_COMMITTER_EMAIL with this value for every git invocation that has not set them: environment variables beat every config level, including a repository-local user.email in a shared git dir, and `git commit -s` signs off with it. Installs the wrapper even with worktreeAware=false. Empty = identity left alone. | string | - |
 
 ## Why a wrapper
 
@@ -49,6 +51,26 @@ the subcommand, then unsets both variables when:
 Everywhere else git runs unchanged, and without `GIT_DIR` the wrapper only
 `exec`s the real git. `GIT_WRAPPER_REAL_GIT` overrides the baked-in path to
 the real git.
+
+## Commit identity for agents
+
+With `commitEmail` (and `commitName`) set, the wrapper exports
+`GIT_AUTHOR_NAME/EMAIL` and `GIT_COMMITTER_NAME/EMAIL` for every git it runs,
+each only when the caller has not set it. Environment variables beat every
+config level, so a repository-local `user.email` (for example the Operator's
+address in a git dir shared with the host checkout) cannot leak into an
+agent's commit, `git commit -s` signs off with the same identity, and nothing
+has to touch the shared config or pass `-c` overrides. `install.sh` writes the
+values to `/usr/local/share/git-feature/identity.env`, which the wrapper
+sources (one file read per call). The wrapper is installed for this even with
+`worktreeAware: false`. Empty (the default) leaves identity alone.
+
+Why not the alternatives: `containerEnv` in a consumer's `devcontainer.json`
+works but cannot be driven by a Feature option, so each repo would repeat four
+variables; `profile.d` reaches only login shells, missing headless agents,
+hooks and `docker exec` without a shell. The wrapper is on `PATH` for every
+process. A caller that sets the variables itself (a human exporting their own
+identity) keeps them.
 
 ## What post-create does
 

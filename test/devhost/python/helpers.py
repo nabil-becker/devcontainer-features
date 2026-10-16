@@ -20,6 +20,8 @@ if str(PYTHON_DIR) not in sys.path:
     sys.path.insert(0, str(PYTHON_DIR))
 
 LEDGER_MONTH = "2026-10"
+# A made-up person, seeded where a real name would come from (the git identity); no output may carry it.
+PERSON = "Guinevere Pendragon"
 ENV_VARS = ("DEVHOST_ROOT", "DEVHOST_STATE", "DEVHOST_LEDGER_DIR", "DEVHOST_BACKLOG", "DEVHOST_LEXICON",
             "DEVHOST_ADR_DIR", "DEVHOST_NIGHT_SHIFT_DIR", "DEVHOST_ENGINEER", "DEVHOST_REDACT_FILE",
             "DEVHOST_REDACT_WITH", "DEVHOST_FORBIDDEN_WORDS", "DEVHOST_BASE_REF", "CLAUDE_CONFIG_DIR",
@@ -82,7 +84,7 @@ def make_repo(base: Path) -> Path:
     root = (base / "repo").resolve()
     root.mkdir()
     git(root, "init", "-q", "-b", "main")
-    git(root, "config", "user.name", "Test Engineer")
+    git(root, "config", "user.name", PERSON)
     git(root, "config", "user.email", "test@example.invalid")
     git(root, "config", "core.autocrlf", "false")
     git(root, "config", "commit.gpgsign", "false")

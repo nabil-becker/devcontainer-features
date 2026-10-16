@@ -10,6 +10,13 @@ JOB_NAME=librarian
 # a longer stretch and ten minutes between runs; a stake for it always wakes it.
 JOB_MIN_CHARS=8000
 JOB_QUIET_SECS=600
+# A con's stretch (SubagentStop) needs more than the 1500 default. First review, 31 runs:
+# session stretches of 8847 to 10517 chars changed something, but 'nothing' runs spanned
+# 8859 to 19552, so size cannot tell sessions apart and 8000 stays. For cons the one
+# 'changed' run was 8426 chars; 13 of the 17 'nothing' runs (and 2 'pending') were 5995 to
+# 8250. 8000 skips most of those with a margin below the one changed run (8426), since a
+# skipped con stretch is never offered again. Re-check after the next review.
+JOB_MIN_CHARS_SUB=8000
 
 job_run() {
   local stretch="$1" tmp="$2" status summary changed lexicon adr_dir guard

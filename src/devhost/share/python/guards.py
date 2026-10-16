@@ -19,10 +19,11 @@ index (`README.md`) keeps every line except an index row of an existing ADR (`| 
 whose status column may change; new rows and new files may be added. New ADR files are not this
 guard's business: `devhost-verify` checks their shape.
 
-The CLI exits 1 and prints the finding, so the job can restore the snapshot and log it.
+The CLI exits 1 and prints the finding (backlog: then the rejected diff), so the job can restore the snapshot and log it.
 """
 from __future__ import annotations
 
+import difflib
 import re
 import sys
 from pathlib import Path
@@ -54,7 +55,16 @@ def same_or_ticked(old: str, new: str) -> bool:
 
 def backlog_guard(before: list[str], after: list[str]) -> str | None:
     lost = lost_line(before, after, same_or_ticked)
-    return None if lost is None else f"changed or lost: {lost.strip()[:160]}"
+    if lost is None:
+        return None
+    return (f"rule: an existing line may only be ticked ([ ] to [x], ' Done <date>.' appended), "
+            f"never reworded, removed or reordered; changed or lost: {lost.strip()[:160]}")
+
+
+def rejected_diff(before: list[str], after: list[str], cap: int = 1500) -> str:
+    """The unified diff of a refused run, capped, for the job log."""
+    text = "\n".join(difflib.unified_diff(before, after, "before", "after", lineterm="", n=0))
+    return text if len(text) <= cap else text[:cap] + f"\n[diff clipped, {len(text) - cap} chars more]"
 
 
 def status_change(old: str, new: str) -> bool:
@@ -95,7 +105,12 @@ def main(argv: list[str]) -> int:
         print(__doc__)
         return 2
     if argv[0] == "backlog":
-        finding = backlog_guard(lines(Path(argv[1])), lines(Path(argv[2])))
+        before, after = lines(Path(argv[1])), lines(Path(argv[2]))
+        finding = backlog_guard(before, after)
+        if finding:
+            print(finding)
+            print(rejected_diff(before, after))
+            return 1
     else:
         finding = docs_guard(Path(argv[1]), Path(argv[2]))
     if finding:

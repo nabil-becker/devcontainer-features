@@ -25,6 +25,8 @@ class Init(h.RepoCase):
         with tempfile.TemporaryDirectory() as tmp:
             fresh = Path(tmp).resolve() / "fresh-repo"
             fresh.mkdir()
+            h.git(fresh, "init", "-q")
+            h.git(fresh, "config", "user.name", h.PERSON)  # the git identity, the channel a name could come through
             with h.devhost_env(fresh) as env:
                 done = h.run(["init"], fresh, env)
             self.assertEqual(done.returncode, 0, done.stderr)
@@ -48,9 +50,9 @@ class Init(h.RepoCase):
                              ["devhost-run-job scribe", "devhost-run-job librarian"])
             self.assertIn("Bash(task *)", settings["permissions"]["allow"])
             self.assertEqual(settings["permissions"]["deny"], ["Read(./.env)", "Read(./.env.*)"])
-            # no person's name anywhere in what was written
+            # the git identity's name is nowhere in what was written
             for target in EXPECTED:
-                self.assertNotIn("Nabil", (fresh / target).read_text(encoding="utf-8"), target)
+                self.assertNotIn(h.PERSON, (fresh / target).read_text(encoding="utf-8"), target)
 
     def test_a_second_run_keeps_everything(self):
         self.init.scaffold(self.root)

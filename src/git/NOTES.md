@@ -28,6 +28,26 @@ Everywhere else git runs unchanged, and without `GIT_DIR` the wrapper only
 `exec`s the real git. `GIT_WRAPPER_REAL_GIT` overrides the baked-in path to
 the real git.
 
+## Commit identity for agents
+
+With `commitEmail` (and `commitName`) set, the wrapper exports
+`GIT_AUTHOR_NAME/EMAIL` and `GIT_COMMITTER_NAME/EMAIL` for every git it runs,
+each only when the caller has not set it. Environment variables beat every
+config level, so a repository-local `user.email` (for example the Operator's
+address in a git dir shared with the host checkout) cannot leak into an
+agent's commit, `git commit -s` signs off with the same identity, and nothing
+has to touch the shared config or pass `-c` overrides. `install.sh` writes the
+values to `/usr/local/share/git-feature/identity.env`, which the wrapper
+sources (one file read per call). The wrapper is installed for this even with
+`worktreeAware: false`. Empty (the default) leaves identity alone.
+
+Why not the alternatives: `containerEnv` in a consumer's `devcontainer.json`
+works but cannot be driven by a Feature option, so each repo would repeat four
+variables; `profile.d` reaches only login shells, missing headless agents,
+hooks and `docker exec` without a shell. The wrapper is on `PATH` for every
+process. A caller that sets the variables itself (a human exporting their own
+identity) keeps them.
+
 ## What post-create does
 
 The Feature's `postCreateCommand` hook runs `git-setup` as the remote user
