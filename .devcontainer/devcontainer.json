@@ -43,7 +43,10 @@
   ],
   "containerEnv": {
     "GIT_DIR": "/git/devcontainer-features.git",
-    "GIT_WORK_TREE": "${containerWorkspaceFolder}"
+    "GIT_WORK_TREE": "${containerWorkspaceFolder}",
+    // The handle on ledger entries and the cost report (committed, so never a
+    // name): set DEVHOST_ENGINEER on the workstation to tell engineers apart.
+    "DEVHOST_ENGINEER": "${localEnv:DEVHOST_ENGINEER:operator}"
   },
   "postCreateCommand": "bash .devcontainer/post-create.sh",
   "remoteUser": "vscode",
