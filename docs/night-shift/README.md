@@ -12,7 +12,7 @@ Result: Done <n> · Skipped <n> · Undone <n> · Cost about $<x> of $<cap> · En
 
 ## Items
 
-### 1. TD-nn <title>: planned | done | skipped | undone
+### 1. <slug> <title>: planned | done | skipped | undone
 - Done means: <the done-check agreed at closing up>
 - What changed: <in the Operator's terms: what is different now, not how>
 - Check: <how the done-check was met>
