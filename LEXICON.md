@@ -7,6 +7,21 @@ with the reason, never deleted).
 
 The domain words of the project itself are not here; they live with the project's own documents.
 
+## The product
+
+- **Feature**: a Dev Container Feature in `src/<id>`: the deliverable of this repository, installed
+  by a devcontainer.
+- **Consuming repo**: a repository whose devcontainer pulls these Features; the office and DSNP are
+  two.
+- **Devcontainer**: a consuming repo's `.devcontainer/`: the container definition that lists the
+  Features it uses.
+- **Feature registry**: where released Features are published and pulled from: GHCR, listed on
+  containers.dev.
+- **Release**: the manual workflow on `main` that publishes the Features to the registry.
+- **Feature Taskfile**: the Taskfile a Feature ships for its tool, registered at build time.
+- **Feature state**: what a Feature keeps outside the checkout: a named volume under
+  `/var/lib/devcontainer-features/<id>` or host disk.
+
 ## People and agents
 
 - **The Operator**: the person who owns the repository. Brings notes, asks for work, reviews,
@@ -30,6 +45,7 @@ The domain words of the project itself are not here; they live with the project'
   - **Librarian**: the back for this lexicon and the ADRs.
   - **Tester**: the back with no model: runs the suite after a turn that changed code and
     speaks only when it is red, or green again.
+  - **Journalist**: the back for the journal; accepted, not yet built.
 - **Con** (consult agent): an agent briefed by the host for one job, a Claude Code subagent, with
   its scope, model and isolation set for that job; it replies once, in the hand-off shape, and
   its job gets its own ledger entry. Not a standing role.
@@ -81,6 +97,11 @@ The domain words of the project itself are not here; they live with the project'
 
 ## Records
 
+- **Backlog** (`TODO.md`): the engineering items and the decisions for the Operator; kept by the
+  secretary.
+- **Lexicon** (`LEXICON.md`): this file, the words of the way of working; kept by the librarian.
+- **Journal**: the record of the project's iterations in `docs/journal/`, in plain words, add-only.
+- **Night-shift report**: the morning report of a night shift, in `docs/night-shift/`.
 - **Ledger**: the append-only record of what agents did, in monthly files under `docs/ledger/`.
 - **Entry**: one ledger record, one per unit of work: asked, came out, friction, learned,
   decisions, for the repository, decisions needed, measures. A wrong entry is corrected by a new
@@ -146,22 +167,10 @@ The domain words of the project itself are not here; they live with the project'
 ## The Arthurian layer
 
 A voice over the plain words, not a rename (accepted 2026-10-16, `docs/proposals/king-arthur-theme.md`).
-The plain word stays in every id, path, command, field name and guard; the layer is for what a
-person reads in chat. No committed output speaks in it: the journal is a record of the project's
-iterations and stays in plain words (decided 2026-10-16).
-
-| Plain word | In the layer |
-|---|---|
-| the Operator | the King (committed text still says "the Operator") |
-| host | Merlin: counsels and briefs, never rules |
-| con | a knight on one quest, returning with one report |
-| backs | the household, who never meet the King |
-| ledger | the Chronicle |
-| backlog (`TODO.md`) | the Quest board |
-| ledger review | the Round Table: the record read together, the King still decides |
-| night shift | the vigil |
-| `devhost-verify` and the guards | the castle watch |
-| journalist back | the bard (a name only; its journal is written in plain words) |
+Themes are label files under `docs/model/themes/`, keyed by the ontology ids of
+`docs/model/ontology.toml`; they change no process, and no committed output speaks in them
+(ADR 0004). The plain word stays in every id, path, command, field name and guard.
+The journal is a record of the project's iterations and stays in plain words (decided 2026-10-16).
 
 ## The life layer
 
