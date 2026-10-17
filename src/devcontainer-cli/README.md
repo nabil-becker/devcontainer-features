@@ -19,30 +19,163 @@ Installs @devcontainers/cli as /usr/local/bin/devcontainer, backed by a private,
 | version | @devcontainers/cli npm version to install (e.g. '0.89.0'), or 'latest'. | string | latest |
 | nodeVersion | Node.js release used privately by the CLI. Downloaded from nodejs.org and verified against its SHASUMS256.txt. | string | 24.21.0 |
 
-## Why a private Node.js?
+## What it installs
 
-`@devcontainers/cli` is an npm package, so it needs Node.js. Installing Node
-system-wide would put it on every user's PATH and collide with whatever Node
-toolchain the project itself pins. Instead the Feature unpacks a pinned,
-checksum-verified nodejs.org build under `/opt/devcontainer-cli/node` and
-installs the CLI next to it; only the `/usr/local/bin/devcontainer` wrapper
-knows about it. `node` is deliberately *not* on PATH afterwards.
+The `@devcontainers/cli` npm package, run on a private Node.js build, so
+`devcontainer up`, `build`, `exec` and `features test` work inside a
+container with no system-wide Node.js. `install.sh` runs
+`devcontainer-cli.sh install`, which:
 
-## Which Docker Feature to pair it with
+1. Downloads `node-v<nodeVersion>-linux-<arch>.tar.gz` and `SHASUMS256.txt`
+   from `https://nodejs.org/dist/v<nodeVersion>/`, checks the tarball's
+   SHA-256 against that file, and unpacks it to `/opt/devcontainer-cli/node`.
+2. Runs `npm install -g --prefix /opt/devcontainer-cli @devcontainers/cli`
+   (with `@<version>` unless `version` is `latest`), using that Node.
+3. Writes a two-line wrapper at `/usr/local/bin/devcontainer` that runs the
+   CLI with the private `node`, then runs `devcontainer --version` so the
+   version is in the build log.
+
+`node` and `npm` are deliberately not on PATH afterwards. Only the
+`devcontainer` wrapper knows about them, so the Feature cannot collide with
+the Node.js toolchain your project pins. It installs no Docker engine
+(see Composition). The directory `/opt/devcontainer-cli` is removed and
+rebuilt on every install, and npm's cache goes to a temporary directory that
+is deleted, so it does not stay in the image layer.
+
+What is verified, and what is not:
+
+- The private Node.js is verified: a missing line in `SHASUMS256.txt` or a
+  mismatch fails the build.
+- The CLI itself is NOT checked against a checksum. It comes from
+  `npm install -g` and is protected only by npm's own integrity metadata for
+  the package and its dependencies. This Feature adds no checksum, no
+  signature check and no lockfile for it. The root README's "verifies what it
+  downloads" does not cover this part.
+
+`curl`, `ca-certificates` and `tar` are installed with `apt-get` only when
+missing. The install must run as root.
+
+## Options
+
+- `version` (default `latest`): the `@devcontainers/cli` npm version, for
+  example `0.89.0`; no leading `v`. `latest` is whatever npm calls latest at
+  image build time (not the `releases/latest` redirect the other installers
+  use), so two builds a month apart can differ. Pin it when you want `devcontainer
+  features test` or `up` to behave the same in CI and on every laptop, or
+  when a new CLI release breaks something.
+- `nodeVersion` (default `24.21.0`): the Node.js release the CLI runs on, as
+  `x.y.z` without `v`. Change it only when a pinned CLI version needs a newer
+  or older Node than the default (the CLI states its Node range), or when
+  nodejs.org no longer serves the default. It does not change the Node.js
+  your project uses; that one is separate.
+- `installTaskfile` (default `true`): set it to `false` when you do not use
+  the go-task registry and do not want
+  `/usr/local/share/go-task/includes.d/devcontainer-cli.yml` in the image.
+
+There is no run-time override; both versions are fixed at build.
+
+## State
+
+No state: installs binaries only. No volume, no `containerEnv`, no
+post-create hook.
+
+## Minimal `devcontainer.json`
+
+```json
+"features": {
+  "ghcr.io/devcontainers/features/docker-in-docker:2": {},
+  "ghcr.io/nabil-becker/devcontainer-features/devcontainer-cli:1": {
+    "version": "0.89.0"
+  }
+}
+```
+
+Drop `version` to follow npm's latest at each image build.
+
+## Verify it works
+
+```bash
+devcontainer --version     # prints the CLI version, for example 0.89.0
+task devcontainer-cli:version
+```
+
+The build log ends the install with the same `devcontainer --version`
+line. `command -v node` finds nothing, on purpose. There is no post-create
+line: nothing runs after the build.
+
+## Composition
+
+- `installsAfter` orders it behind this collection's `go-task` Feature (so
+  the Taskfile registry exists and is refreshed), the official
+  `common-utils`, and the two official Docker Features
+  (`docker-in-docker`, `docker-outside-of-docker`) so a Docker engine is in
+  place before it when you use one.
+- It needs a Docker daemon for anything that builds or runs containers
+  (`up`, `build`, `features test`); `read-configuration` and `--version`
+  do not. It does not install one. Pair it with one of the official
+  Features:
 
 | Host | Use | Why |
 | --- | --- | --- |
-| Windows / macOS (Docker Desktop) | `docker-in-docker` | `devcontainer features test` and nested `devcontainer up` bind-mount paths from *inside* this container; only a daemon that shares its filesystem can resolve them. |
-| Linux (same paths on host and container) | `docker-outside-of-docker` | Lighter, shares the host's image cache; works as long as the workspace is mounted at the same absolute path. |
+| Windows / macOS (Docker Desktop) | `docker-in-docker` | `features test` and nested `devcontainer up` bind-mount paths from inside this container; only a daemon that shares its filesystem can resolve them. |
+| Linux (same paths on host and container) | `docker-outside-of-docker` | Lighter, shares the host's image cache; works while the workspace is mounted at the same absolute path. |
+
+- It augments no official Feature and replaces none. It is independent of
+  `kube-state`, `git` and the other Features here.
+
+## Tasks
+
+With `installTaskfile` on, and a root Taskfile that includes the go-task
+registry, these appear under `devcontainer-cli:`:
+
+- `devcontainer-cli:version`: show the installed CLI version.
+- `devcontainer-cli:config`: print the resolved and merged configuration of
+  `WORKSPACE` (default `.`) with `devcontainer read-configuration`.
+- `devcontainer-cli:features:test`: run `devcontainer features test` for the
+  Features repository at `PROJECT` (default `.`); extra flags go after `--`
+  (for example `-f <id>`). Needs a Docker daemon.
+
+These are for using the CLI inside the container. To drive a devcontainer
+from a host, use the `devcontainer:*` tasks (next section).
+
+## Limits and troubleshooting
+
+- Linux only in the container. The architectures are `x86_64`/`amd64`,
+  `aarch64`/`arm64` and `armv7l`; any other `uname -m` fails with
+  `unsupported architecture`.
+- `... not found in SHASUMS256.txt` or `SHA-256 mismatch`: the `nodeVersion`
+  does not exist for your architecture, or the download was corrupted. Fix the
+  version or retry. The Node.js is never unpacked unchecked.
+- A failing `npm install` (no network, or a `version` that npm does not
+  have) fails the build. Check the version with `npm view @devcontainers/cli
+  versions` on a machine that has npm.
+- `features test` and nested `up` fail with a Docker error when no daemon
+  is reachable; add `docker-in-docker` (or `docker-outside-of-docker` on
+  Linux). With `docker-outside-of-docker`, a workspace mounted at a different
+  path on the host than inside the container cannot be resolved.
+- The CLI's own dependencies are resolved by npm at build time and are not
+  locked here, so supply-chain trust in them is npm's, not this Feature's.
 
 ## Host-side counterpart
 
 The same `devcontainer-cli.sh` that installs this Feature also has `init`
 and `run` modes for a Linux/macOS host, where it caches a portable Node.js
 under `~/.cache/devcontainer-features` (or just uses a `devcontainer` already
-on PATH). Together with the PowerShell flavour for Windows it backs the
-`task devcontainer:*` tasks that `bootstrap/bootstrap.ps1` / `bootstrap.sh`
-vendor into a repo; nothing is installed globally on any host.
+on PATH when the version is `latest`). Together with the PowerShell flavour
+for Windows it backs the `task devcontainer:*` tasks that
+`bootstrap/bootstrap.ps1` / `bootstrap.sh` vendor into a repo; nothing is
+installed globally on any host. Its host settings are
+`DEVCONTAINER_DOCKER_PATH`, `DEVCONTAINER_NODE_VERSION` and
+`DEVCONTAINER_CLI_VERSION`.
+
+## Why this one exists
+
+The Dev Container CLI is published by the Dev Containers project as an npm
+package, and its documented install is `npm install -g @devcontainers/cli`,
+which needs a Node.js on PATH. This repository knows of no published Dev
+Container Feature that installs it, so there is none to compare. This Feature
+exists so that a container can run the CLI without a system-wide Node.js, and
+so the same script serves the container and the host-side tasks.
 
 
 ---
