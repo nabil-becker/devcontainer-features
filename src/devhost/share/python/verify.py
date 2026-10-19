@@ -20,6 +20,8 @@ word itself), and needs only git and python3:
   `# ADR-NNNN: `, carry the fixed sections and a known status word, and are in the index.
 - `taskfile`: every task in `Taskfile.yml` has a `desc` (`default` excepted).
 - `skills`: every `.claude/skills/<dir>/SKILL.md` has frontmatter `name: <dir>` and a description.
+- `hook_modes`: every tracked file in the configured hooks path (`core.hooksPath`) has index mode
+  100755; a 100644 hook never runs on Linux (`core.fileMode=false` on Windows hides the change).
 """
 from __future__ import annotations
 
@@ -63,12 +65,15 @@ def text_files(root: Path) -> list[Path]:
 
 # The ledger
 
+SKIPPED_NOTE = ("ledger append-only guard NOT RUN: no base ref resolved (DEVHOST_BASE_REF, origin/main, main, "
+                "origin/develop, develop); this is not a full pass")
+
 
 def ledger_append_only(root: Path, notes: list[str] | None = None) -> list[str]:
     base = base_ref(root)
     if base is None:
         if notes is not None:
-            notes.append("ledger append-only guard skipped: no base ref (DEVHOST_BASE_REF, origin/main, main, origin/develop, develop)")
+            notes.append(SKIPPED_NOTE)
         return []
     folder = ledger_dir(root)
     names = {p.name for p in folder.glob("*.md") if MONTHLY.match(p.name)} if folder.is_dir() else set()
@@ -259,7 +264,22 @@ def skills(root: Path) -> list[str]:
     return findings
 
 
-GUARDS = (ledger_append_only, ledger_shape, secrets, forbidden_words, adrs, taskfile, skills)
+def hook_modes(root: Path) -> list[str]:
+    hooks = (git(root, "config", "core.hooksPath") or "").strip()
+    if not hooks:
+        return []
+    listing = git(root, "ls-files", "-s", "--", hooks) or ""
+    findings = []
+    for line in listing.splitlines():
+        meta, _, path = line.partition("\t")
+        mode = meta.split()[0]
+        if mode != "100755":
+            findings.append(f"{path}:1: hook is mode {mode} in the index, so it never runs on Linux; "
+                            f"fix: git update-index --chmod=+x {path} && chmod +x {path}")
+    return findings
+
+
+GUARDS = (ledger_append_only, ledger_shape, secrets, forbidden_words, adrs, taskfile, skills, hook_modes)
 
 
 def run(root: Path) -> tuple[dict[str, list[str]], list[str]]:
@@ -281,16 +301,20 @@ def main(argv: list[str]) -> int:
             print(f"FAIL {name}")
             for finding in findings:
                 print(f"  {finding}")
+        elif SKIPPED_NOTE in notes and name == "ledger_append_only":
+            print(f"SKIP {name}", file=sys.stderr)
         elif not quiet:
             print(f"ok   {name}")
-    if not quiet:
-        for note in notes:
+    for note in notes:
+        if note == SKIPPED_NOTE:  # --quiet hides passes, never a guard that did not run
+            print(f"WARNING {note}", file=sys.stderr)
+        elif not quiet:
             print(f"note {note}")
     if failed:
         print(f"devhost-verify: {failed} finding(s)")
         return 1
     if not quiet:
-        print("devhost-verify: all guards passed")
+        print("devhost-verify: all guards passed" + (" (except the skipped guard above)" if SKIPPED_NOTE in notes else ""))
     return 0
 
 

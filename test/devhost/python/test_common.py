@@ -33,5 +33,14 @@ class OneCommon(h.RepoCase):
         self.assertEqual(done.stdout, "the Operator's the OperatorCorp")
 
 
+class LibrarianThresholds(h.RepoCase):
+    def test_librarian_waits_for_more_from_a_con_than_the_default(self):
+        text = (BIN_DIR.parent / "jobs" / "librarian" / "job.sh").read_text(encoding="utf-8")
+        sub = re.search(r"^JOB_MIN_CHARS_SUB=(\d+)", text, re.M)
+        self.assertIsNotNone(sub, "the librarian sets JOB_MIN_CHARS_SUB")
+        self.assertGreater(int(sub.group(1)), 1500)
+        self.assertIn("JOB_MIN_CHARS_SUB", (BIN_DIR / "run-job.sh").read_text(encoding="utf-8"))
+
+
 if __name__ == "__main__":
     unittest.main()

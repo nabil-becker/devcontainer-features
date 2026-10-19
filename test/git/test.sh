@@ -63,4 +63,9 @@ check "main checkout config untouched (no core.worktree)" bash -c "! git -C '$tm
 # git dir either (git obeys GIT_WORK_TREE when the wrapper keeps it).
 check "git init at the checkout root leaves the shared config alone" bash -c "cd '$tmp/main' && git init -q >/dev/null 2>&1; ! git config --local --get core.worktree && [ \"\$(git rev-parse HEAD)\" = '$head_before' ]"
 
+# Default (commitName/commitEmail unset): identity is left alone.
+check "no identity file by default" bash -c '[ ! -e /usr/local/share/git-feature/identity.env ]'
+# shellcheck disable=SC2016  # expansion is meant to happen inside the inner bash
+check "default commit keeps the repository's own identity" bash -c 'unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GIT_DIR GIT_WORK_TREE; d="$(mktemp -d)" && cd "$d" && git init -q && git config user.name Local && git config user.email local@example.com && git commit -q --allow-empty -m x && [ "$(git log -1 --format="%an <%ae> %cn <%ce>")" = "Local <local@example.com> Local <local@example.com>" ]'
+
 reportResults

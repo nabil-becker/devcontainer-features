@@ -15,4 +15,4 @@ Then entries, oldest first, appended below; a review is a "## Review YYYY-MM-DD"
 - **For the repository:** <what should change in the shared tooling, documents or skills, tagged; or "none">
 - **Decisions needed:** <what only the Operator can decide, as ids where there are any; or "none">
 - **Measures:** <leave exactly "MEASURES": the job fills in the cost, the tokens and the models>
-- **Corrects:** <only on a correcting entry: the date and title of the entry it corrects>
+- **Corrects:** <only when this entry replaces a wrong earlier entry: its date and title; otherwise omit the whole line, never "none"; a rename or change of plan is a new entry, not a correction>
