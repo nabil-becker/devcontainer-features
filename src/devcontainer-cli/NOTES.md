@@ -28,8 +28,8 @@ What is verified, and what is not:
 - The CLI itself is NOT checked against a checksum. It comes from
   `npm install -g` and is protected only by npm's own integrity metadata for
   the package and its dependencies. This Feature adds no checksum, no
-  signature check and no lockfile for it. The root README's "verifies what it
-  downloads" does not cover this part.
+  signature check and no lockfile for it. The root README names this as
+  the one exception to "verifies what it downloads".
 
 `curl`, `ca-certificates` and `tar` are installed with `apt-get` only when
 missing. The install must run as root.
