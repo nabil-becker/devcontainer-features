@@ -205,10 +205,14 @@ function Invoke-DevcontainerCli {
         $cliArgs = @('-y', '@devcontainers/cli') + $cliArgs
     }
 
-    $engine = Resolve-DockerPath -DockerPath $DockerPath
-    if ($engine) {
-        Write-Host "Container engine: $engine"
-        $cliArgs += @('--docker-path', $engine)
+    # Only the subcommands that drive an engine take --docker-path;
+    # `features ...`, `templates ...` and `outdated` reject it.
+    if ($Subcommand -in 'up', 'set-up', 'build', 'run-user-commands', 'read-configuration', 'upgrade', 'exec') {
+        $engine = Resolve-DockerPath -DockerPath $DockerPath
+        if ($engine) {
+            Write-Host "Container engine: $engine"
+            $cliArgs += @('--docker-path', $engine)
+        }
     }
 
     if ($CommandB64) {
