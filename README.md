@@ -14,7 +14,7 @@ installing Node.js, and a one-line bootstrap that wires both into any repo.
 | [`git`](src/git) | git augmented for the container: a worktree-aware wrapper that scopes `GIT_DIR` to the checkout, `safe.directory` and `core.hooksPath` at post-create, the global config in a volume it owns. |
 | [`gh`](src/gh) | [GitHub CLI](https://cli.github.com) from GitHub releases, checksum-verified, unless the official Feature installed it; its login (`GH_CONFIG_DIR`) in a volume it owns, git's GitHub credentials taken from it. |
 | [`az`](src/az) | Augments the official `azure-cli` Feature: its login (`AZURE_CONFIG_DIR`) in a volume it owns, `az bicep` using the Bicep on PATH. |
-| [`kube-state`](src/kube-state) | Owns the kubeconfig (`KUBECONFIG`) the Kubernetes tools share, in a volume it owns, so velero, kustomize, argocd and kubectl stop needing a hand-mounted `~/.kube`; installs no binary. |
+| [`kube-state`](src/kube-state) | Owns the kubeconfig (`KUBECONFIG`) the Kubernetes tools share, in a volume it owns, so velero and kubectl stop needing a hand-mounted `~/.kube`; installs no binary. |
 | [`devhost`](src/devhost) | The way of working as a Feature: one host Claude Code session per repo, backs that keep the ledger, backlog and docs from Claude Code hooks, the session briefing, cost report, ADR tool, verify guards, and `devhost-init` to scaffold a repo. |
 | [`common`](src/common) | The shared helper behind every Feature's post-create hook (`dcf-persist`: make a state directory usable and say what backs it), for a repo's own scripts too. |
 | [`coder-cli`](src/coder-cli) | [Coder](https://coder.com) CLI from GitHub releases, verified against the release checksums. |
@@ -26,7 +26,9 @@ installing Node.js, and a one-line bootstrap that wires both into any repo.
 | [`dsc`](src/dsc) | [Microsoft DSC v3](https://github.com/PowerShell/DSC) in `/opt/dsc`, verified against the GitHub-published asset digest (or a pinned `sha256`). |
 
 Every Feature that installs a tool takes a `version` option (`latest` or a
-pinned release) and verifies what it downloads before installing it.
+pinned release) and verifies what it downloads before installing it, with one
+exception: `devcontainer-cli` verifies its private Node.js but not the npm
+package of the CLI itself (see its notes).
 
 ## How the pieces fit
 
