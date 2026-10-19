@@ -52,7 +52,7 @@ All four: one `claude -p --model <model> --settings '{"disableAllHooks": true}' 
 
 ## Commit-time guards
 
-`devhost-verify` runs the guards listed in the docstring of `share/python/verify.py` (ledger append-only and shape, secrets, forbidden words, ADR shape, Taskfile descriptions, skill frontmatter, hook modes). `hook_modes` refuses any tracked file in `core.hooksPath` whose index mode is not 100755, naming the file and the fix (`git update-index --chmod=+x <file>` plus `chmod +x`); no hooks path, or an untracked one, passes quietly.
+`devhost-verify` runs the guards listed in the docstring of `share/python/verify.py` (ledger append-only and shape, secrets, forbidden words, ADR shape, Taskfile descriptions, skill frontmatter, hook modes). `hook_modes` refuses any tracked file in `core.hooksPath` whose index mode is not 100755, naming the file and the fix (`git update-index --chmod=+x <file>` plus `chmod +x`); no hooks path, or an untracked one, passes quietly. `forbidden_words` skips the files listed in `.devhost/name-exceptions.txt` (tracked, one repository-relative path per line, `#` comments): the Operator's approved exceptions, such as a published paper that carries its byline; paths only, never a name.
 
 ## State
 

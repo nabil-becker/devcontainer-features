@@ -16,6 +16,8 @@ word itself), and needs only git and python3:
   `.devhost/allowed-secrets.txt` (one value per line) lists the published or throwaway values.
 - `forbidden_words`: none of `DEVHOST_FORBIDDEN_WORDS` and none of the redact names
   (`DEVHOST_REDACT_FILE`) appears in a tracked text file; reported as `forbidden word #N`.
+  `.devhost/name-exceptions.txt` (one path per line) lists the files the Operator has approved
+  to carry them, such as a published paper with its byline.
 - `adrs`: `NNNN-title.md` records are numbered consecutively from 0001, titled
   `# ADR-NNNN: `, carry the fixed sections and a known status word, and are in the index.
 - `taskfile`: every task in `Taskfile.yml` has a `desc` (`default` excepted).
@@ -160,13 +162,24 @@ def secrets(root: Path) -> list[str]:
     return findings
 
 
+def name_exceptions(root: Path) -> set[str]:
+    path = root / ".devhost" / "name-exceptions.txt"
+    try:
+        return {w.strip() for w in read_text(path).splitlines() if w.strip() and not w.startswith("#")}
+    except OSError:
+        return set()
+
+
 def forbidden_words(root: Path) -> list[str]:
     words = [w.lower() for w in _forbidden(root) + redact_names(root) if w]
     if not words:
         return []
+    approved = name_exceptions(root)
     findings = []
     for path in text_files(root):
         where = rel(root, path)
+        if where in approved:
+            continue
         for number, line in enumerate(read_text(path).splitlines(), 1):
             low = line.lower()
             for index, word in enumerate(words, 1):
