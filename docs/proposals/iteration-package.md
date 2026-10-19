@@ -52,6 +52,17 @@ Life is the theme of the whole series, shared by every project, not by one repos
 
 That is the frictions and learnings in another dress: organic growth, measured.
 
+The theme as a picture, from the first seed to a trait that falls away:
+
+```mermaid
+flowchart LR
+  S1["Seed<br/>(iteration package)"] --> T1["Tree<br/>(project)"]
+  T1 --> F["Fruit<br/>(white paper)"]
+  T1 -->|"adapts to its ground"| AD["Adaptation<br/>(a learning that<br/>changed the foundation)"]
+  T1 -->|"next seed lands in a swamp"| S2["Next seed"]
+  AD -.->|"in time, a one-off"| SH["Shed trait<br/>(reverted)"]
+```
+
 The theme is a label layer, as ADR 0004 sets for themes. The analogy shapes the story, the sentences stay plain words, and the machinery keeps its plain names. It sits above a repository's own conversation theme, such as this repository's Arthurian one, and does not replace it.
 
 | Plain name | Life label |
@@ -79,14 +90,51 @@ The earlier iterations are not reconstructed (the Operator, 2026-10-16). The ser
 - **This repository exports the first package:** the first foundation, the first seed. Its white paper names the concepts that came over from iterations 1 and 2, so the lineage is recorded once, in the paper, not in rebuilt payloads.
 - The other projects are only aligned on the story. They produce nothing for it.
 
+The lineage as it happened, with the life label beside each plain name:
+
+```mermaid
+flowchart LR
+  I1["Iteration 1<br/>client engagement<br/>(first life, before seeds)"]
+  A["Article<br/>From Seed to Tree"]
+  I2["Iteration 2<br/>DSNP<br/>(first life, before seeds)"]
+  I3["Iteration 3<br/>this repository<br/>(the first seed-bearing tree)"]
+  P1["First package<br/>the first seed"]
+  I1 -->|produced| A
+  A -->|"read by DSNP, no package"| I2
+  I1 -.->|"read directly"| I3
+  I2 -.->|"read directly"| I3
+  I3 -->|exports| P1
+```
+
+The dotted lines are the porting by reading the two repositories; no record shows the article was read here.
+
 ## How it is built (AP-14)
 
 - **Assembling the package is a script.** It copies the papers received and adds the new paper and foundation. The rule can be written down, so it is a script with tests.
 - **Deciding what is foundational, writing the paper and refining the foundation is agent work,** done in conversation with the Operator, through a skill. Perhaps the skill is enough, with no separate journalist back.
+
+Who does what: the script does the rule-based copying, the agent and the Operator do the judging and writing together.
+
+```mermaid
+flowchart LR
+  subgraph S["Script, with tests"]
+    S1["Copy the papers received"]
+    S2["Add the new paper<br/>and foundation"]
+    S1 --> S2
+  end
+  subgraph C["Agent with the Operator, through a skill"]
+    C1["Decide what is<br/>foundational"]
+    C2["Write the paper"]
+    C3["Refine the foundation"]
+    C1 --> C2 --> C3
+  end
+  C3 -->|"paper and foundation"| S2
+  S2 --> OUT["Package N+1"]
+```
 
 ## Open
 
 - What this repository will consider foundational when it exports: decided when the Operator calls the iteration.
 - Where a received package lives: `docs/iterations/package/` (accepted with the proposal).
 - **Format (accepted with the proposal):** Markdown, which people and agents both read without tools, with a short front matter per file (iteration, date, sources). The docs site renders it for people. The journey's raw material is released with V1 of the Agentic Delivery OS, so it must stay readable outside any tool.
-- Whether the journalist back stays a back or becomes just the skill.
+- The journalist is a skill, not a back (the Operator, 2026-10-17); it ships with the package and its instructions.

@@ -6,6 +6,40 @@ These principles say how agents work in this repository. Until now they lived in
 
 They differ from the Feature principles (`docs/proposals/feature-principles.md`), which cover what every Feature guarantees. These cover how the work gets done. Each one came from evidence, cited below. None is invented ahead of a failure.
 
+## The principles at a glance
+
+Fourteen principles, grouped by the question each one answers. The arrows are the order a piece of work meets them.
+
+```mermaid
+flowchart LR
+  subgraph who["Who decides"]
+    ap1["AP-1 operator-decides"]
+    ap13["AP-13 product-first"]
+  end
+  subgraph split["How work is split"]
+    ap2["AP-2 host-judges-cons-do"]
+    ap14["AP-14 script-agent-ladder"]
+    ap5["AP-5 size-by-blast-radius"]
+    ap12["AP-12 tasks-are-the-api"]
+  end
+  subgraph check["How work is checked"]
+    ap3["AP-3 report-is-not-evidence"]
+    ap4["AP-4 a-check-must-be-able-to-fail"]
+  end
+  subgraph record["How it is recorded"]
+    ap6["AP-6 every-unit-leaves-data"]
+    ap7["AP-7 append-only-corrections"]
+    ap8["AP-8 backs-only-add"]
+    ap9["AP-9 plain-words-themes-as-labels"]
+  end
+  subgraph bound["What never happens"]
+    ap10["AP-10 nothing-leaves-unattended"]
+    ap11["AP-11 identities-are-unclaimable"]
+  end
+  who --> split --> check --> record
+  bound -.->|"holds throughout"| split
+```
+
 ## The principles
 
 ### AP-1 operator-decides
@@ -75,12 +109,52 @@ The product comes first. The devhost serves the Features.
 
 ### AP-14 script-agent-ladder
 Choose between a script and an agent by asking two questions in order. Can the rule be written down? Then it is a script, with a test that can fail. If not, can the result be checked mechanically? Then an agent does it and a script guard checks it. If neither, an agent proposes and the Operator decides (AP-1). The first question is "does this need to be deterministic?"; the second is whether the rule can be written.
+```mermaid
+flowchart TB
+  job["A job"] --> q1{"Can the rule be<br/>written down?"}
+  q1 -->|yes| script["A script, with a test that can fail<br/>(costs nothing per run)"]
+  q1 -->|no| q2{"Can the result be<br/>checked mechanically?"}
+  q2 -->|yes| guarded["An agent does it,<br/>a script guard checks it"]
+  q2 -->|no| decide["An agent proposes,<br/>the Operator decides (AP-1)"]
+  guarded -.->|"a guard undo or a correction<br/>shows a rule: the job climbs"| script
+  decide -.->|"the review finds the rule"| guarded
+```
+
 - **Use an agent to build the script, not to be the script.** A con pays once to write a generator; every run after is free and the same. The docs site is built this way: a tested generator, and only the publish call, which needs the Artifact tool, is left to an agent.
 - **Jobs climb the ladder.** Every guard undo and every ledger correction marks a rule that could be written down; the ledger review turns it into a check. Example: the secretary ticked two draft proposals done (2026-10-16); "an item whose proposal still says draft is not done" is a rule a guard can hold.
 - **Why:** a script costs nothing per run and can be shown to fail (AP-4); an agent costs per run and varies. The backs cost $11.41 in 207 runs this month; the cost report and the guards, being scripts, cost nothing (the Operator, 2026-10-16).
 - **Enforced by:** the brief, which asks both questions before a job goes to a con or a back, and the ledger review, which asks of each friction group whether it can now be a rule. Not by a guard.
 
 ## Gaps
+
+How each principle is held today. A guard refuses by itself; a brief or a skill holds only if it is followed; habit holds only while someone remembers.
+
+```mermaid
+flowchart LR
+  subgraph guard["By a guard"]
+    g6["AP-6 ledger shape"]
+    g7["AP-7 append-only ledger"]
+    g8["AP-8 the back guard"]
+  end
+  subgraph part["Partly by a guard"]
+    p4["AP-4 hook modes only"]
+    p9["AP-9 ontology guard, not merged yet"]
+    p11["AP-11 identity set, trailers by reading"]
+    p12["AP-12 every task has a desc"]
+  end
+  subgraph brief["By a brief, a skill or settings"]
+    b2["AP-2"]
+    b3["AP-3"]
+    b5["AP-5"]
+    b10["AP-10 night-shift rules"]
+    b14["AP-14"]
+  end
+  subgraph habit["By habit"]
+    h1["AP-1"]
+    h13["AP-13"]
+  end
+  habit -->|"the review moves them"| brief -->|"a guard"| part --> guard
+```
 
 Followed but not enforced, and what would enforce each:
 - **AP-3:** a mechanical hand-off check, for example the host's verify recipe run on every con's branch before a merge.

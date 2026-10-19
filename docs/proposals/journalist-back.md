@@ -1,6 +1,8 @@
 # Proposal: a journalist back
 
-Status: accepted 2026-10-16 with a changed purpose: the back writes the iteration's white paper
+Status: decided 2026-10-17 by the Operator: the journalist is a skill, not a back. It is part of
+the iteration package and its instructions, and writes the white paper in conversation with the
+Operator when the iteration is called. Earlier, accepted 2026-10-16 with a changed purpose: the back writes the iteration's white paper
 (docs/iterations.md), in plain words, when the Operator calls the iteration, not a journal piece
 per ledger review. What follows is the original draft; its sources, guard and cost still apply.
 
@@ -20,6 +22,23 @@ It adds no fact the records lack. It selects, orders and connects them (cause to
 result), and says plainly when a change did not pay off. It decides nothing and proposes nothing
 new: "what is next" is only what `TODO.md` and the review already say.
 
+Where the journalist sits among the records: the others each keep or use one record; it only reads them and tells the story.
+
+```mermaid
+flowchart LR
+  subgraph keep[Existing records]
+    SC["Scribe<br/>what was done, at what cost"]
+    RV["Ledger review<br/>what keeps going wrong, one action per group"]
+    BR["Briefing<br/>where things stand now"]
+  end
+  SC --> RV
+  SC -.->|reads| J
+  RV -.->|reads| J
+  TD["TODO.md"] -.->|reads| J
+  J["Journalist<br/>what was tried, what it cost,<br/>what changed, what is next<br/>adds no fact, decides nothing"] --> OUT(["The Operator reads it"])
+  BR -.->|"session at start"| S2([Session])
+```
+
 ## 2. Trigger options
 
 | Trigger | Pros | Cons |
@@ -33,6 +52,19 @@ new: "what is next" is only what `TODO.md` and the review already say.
 and asks what changed; the journalist reports that stop. The review skill's last step runs
 `task devhost:journal` (no hook change needed to try it; a hook is a later decision). A
 night-shift morning piece is a cheap second trigger later: same job, different input.
+
+The four triggers weighed, and the one chosen with the one kept for later.
+
+```mermaid
+flowchart LR
+  Q{"Which trigger?"}
+  Q --> A["Each ledger review<br/>input pre-digested, about 5 entries,<br/>rhythm exists<br/>con: uneven calendar spacing"]
+  Q --> B["Each /close-session<br/>con: many small pieces,<br/>no backs on a workstation"]
+  Q --> C["Daily<br/>con: needs a scheduler,<br/>quiet day yields filler"]
+  Q --> D["Each night-shift morning<br/>con: only nights"]
+  A ==>|"recommended"| R(["Chosen: task devhost:journal<br/>at the review's last step"])
+  D -.->|"cheap second trigger later"| R
+```
 
 ## 3. Input, output, guard
 

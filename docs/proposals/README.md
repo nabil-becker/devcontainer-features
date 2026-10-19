@@ -5,7 +5,7 @@ Drafts the Operator decides on. A proposal is never in force until the Operator 
 | Proposal | Status |
 |---|---|
 | [King Arthur theme](king-arthur-theme.md) | accepted 2026-10-16: a layer, ten names in LEXICON.md, used in conversation only; no committed output speaks in it |
-| [Journalist back](journalist-back.md) | accepted 2026-10-16: it writes the iteration's white paper (docs/iterations.md), in plain words, when the Operator calls the iteration; the hand-run journal piece was a trial |
+| [Journalist back](journalist-back.md) | decided 2026-10-17: a skill, not a back, part of the iteration package; earlier, accepted 2026-10-16: it writes the iteration's white paper (docs/iterations.md), in plain words, when the Operator calls the iteration; the hand-run journal piece was a trial |
 | [Personalization](personalization.md) | open |
 | [Feature principles](feature-principles.md) | draft, for the Operator (2026-10-16) |
 | [Agent principles](agent-principles.md) | draft, for the Operator (2026-10-16) |

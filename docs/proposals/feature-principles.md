@@ -6,6 +6,34 @@ These are the non-functional requirements every Feature in this collection meets
 
 They are checked, not aspirational. Each rule names how it is checked and whether that can be automated. "Today" counts the 16 Features, from a read of the repo.
 
+## The principles at a glance
+
+Ten principles, grouped by the question each one answers.
+
+```mermaid
+flowchart LR
+  subgraph state["What it keeps"]
+    fp1["FP-1 owns-its-state"]
+  end
+  subgraph built["How it is built"]
+    fp2["FP-2 registered-taskfile"]
+    fp3["FP-3 verified-and-pinned"]
+    fp4["FP-4 augments-not-replaces"]
+    fp5["FP-5 idempotent-and-user-neutral"]
+  end
+  subgraph used["How it is used"]
+    fp6["FP-6 one-way-to-configure"]
+    fp7["FP-7 agent-ready"]
+  end
+  subgraph told["How it is explained"]
+    fp8["FP-8 documented-to-the-standard"]
+    fp9["FP-9 says-why-it-exists"]
+  end
+  subgraph proved["How it is proven"]
+    fp10["FP-10 tested-on-base-images"]
+  end
+```
+
 ## The principles
 
 ### FP-1 owns-its-state
@@ -87,6 +115,52 @@ A Feature MUST have `test.sh`, a `pinned_version` scenario if it installs a bina
 - **Source:** CONTRIBUTING "Tests"; `.github/workflows/test.yaml`.
 - **Checked by:** test, CI. Automatable.
 - **Today:** 16 of 16 have a test folder. The matrix runs debian, ubuntu and the Microsoft base image. The global lists are manual (CONTRIBUTING step 9).
+
+Where each principle is checked, from each "Checked by" line: how far the check can be automated.
+
+```mermaid
+flowchart LR
+  subgraph full["Fully automatable"]
+    c2["FP-2 lint"]
+    c10["FP-10 test, CI"]
+  end
+  subgraph partly["Partly automatable"]
+    c1["FP-1 lint (partly), test, review"]
+    c3["FP-3 review, plus a pinned_version test"]
+    c5["FP-5 test: the twice-run test does not exist"]
+    c6["FP-6 review; a naming lint is possible"]
+    c7["FP-7 lint for desc and interactive"]
+    c8["FP-8 docs standard; lint for headings and task names"]
+    c9["FP-9 review; a heading check is automatable"]
+  end
+  subgraph review["Mostly review"]
+    c4["FP-4 review"]
+  end
+```
+
+How the "Today" counts read: where a count shows a gap, where a rule holds, and where the number is only an estimate.
+
+```mermaid
+flowchart LR
+  subgraph gap["Counted, with a named gap"]
+    t1["FP-1: 8 of 8 state-owning<br/>gap: openbao has no volume"]
+    t2["FP-2: 15 of 16 lead with version<br/>gap: go-task has none"]
+    t3["FP-3: 10 of 11 verify fully<br/>gap: devcontainer-cli, git apt fallback"]
+    t8["FP-8: none meets all 10"]
+    t9["FP-9: about 10 of 16"]
+  end
+  subgraph holds["Counted, holds"]
+    t10["FP-10: 16 of 16 have a test folder<br/>global lists are manual"]
+  end
+  subgraph est["Estimate, not checked line by line"]
+    t4["FP-4: 4 of 4 augmentations"]
+    t5["FP-5: non-root check in 11 of 16"]
+    t6["FP-6: about 14 of 16"]
+  end
+  subgraph newrule["New rule"]
+    t7["FP-7: interactive used in 8 Features;<br/>machine-readable output not written yet"]
+  end
+```
 
 ## Open question: MCP
 
