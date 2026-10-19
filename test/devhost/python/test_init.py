@@ -11,7 +11,7 @@ import helpers as h
 EXPECTED = [
     "LEXICON.md", "PROCESS.md", "TODO.md", "docs/ledger/README.md", "docs/adr/0000-template.md", "docs/adr/README.md",
     "docs/night-shift/README.md", ".claude/skills/close-session/SKILL.md", ".claude/skills/ledger-review/SKILL.md",
-    ".claude/skills/night-shift/SKILL.md", ".claude/skills/new-adr/SKILL.md", ".devhost/.gitignore",
+    ".claude/skills/journalist/SKILL.md", ".claude/skills/night-shift/SKILL.md", ".claude/skills/new-adr/SKILL.md", ".devhost/.gitignore",
     ".devhost/CLAUDE.devhost.md", ".claude/settings.json", ".githooks/pre-commit", ".gitignore",
 ]
 
