@@ -88,6 +88,12 @@ tasks:
     cmds:
       - devhost-verify
 
+  package:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Assemble the iteration package (the seed) into a fresh folder: the papers received unchanged, the new paper, the foundation files of the manifest, and PACKAGE.md with every file''s sha256. Arguments after --, e.g. task devhost:package -- --iteration 3 --paper docs/iterations/papers/iteration-3.md; refuses (exit 2) a missing manifest entry, a non-empty output folder or a changed paper.'
+    cmds:
+      - devhost-package {{.CLI_ARGS}}
+
   init:
     dir: '{{.USER_WORKING_DIR}}'
     desc: 'Scaffold the devhost way of working in the repository in the current directory: the hooks in .claude/settings.json, the ledger folder, the backlog, the lexicon and the ADR folder (existing files are kept). Arguments after --.'

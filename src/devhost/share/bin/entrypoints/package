@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# devhost-package: runs the devhost's package.py (installed under /usr/local/share/devhost).
+exec python3 /usr/local/share/devhost/python/package.py "$@"
