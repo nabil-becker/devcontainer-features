@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 
 import helpers as h
 
@@ -47,6 +48,26 @@ class Briefing(h.RepoCase):
         self.assertNotIn("pending", text)
         self.assertFalse(list((self.root / "docs" / "ledger").glob("costs-*")))
 
+    def _versions(self, installed, source):
+        share = self.base / "share"
+        if installed is not None:
+            h.write(share / "VERSION", installed + "\n")
+        os.environ["DEVHOST_SHARE"] = str(share)
+        self.addCleanup(os.environ.pop, "DEVHOST_SHARE", None)
+        if source is not None:
+            h.write(self.root / "src" / "devhost" / "devcontainer-feature.json", json.dumps({"id": "devhost", "version": source}))
+        return self.b.briefing(self.root, refresh=False)
+
+    def test_a_stale_install_is_warned_about_numerically(self):
+        text = self._versions("1.2.3", "1.10.0")
+        self.assertIn("devhost 1.2.3 is installed, src has 1.10.0: rebuild for the fixes to take effect", text)
+
+    def test_equal_older_or_missing_versions_stay_silent(self):
+        for installed, source in (("1.2.3", "1.2.3"), ("1.10.0", "1.9.0"), (None, "1.2.3"), ("1.2.3", None), ("junk", "1.2.3")):
+            with self.subTest(installed=installed, source=source):
+                self.assertNotIn("rebuild", self._versions(installed, source))
+                self.assertNotIn("is installed", self.b.briefing(self.root, refresh=False))
+
     def test_the_hook_json(self):
         done = h.run(["briefing", "--json", "--no-refresh"], self.root, self.env)
         self.assertEqual(done.returncode, 0, done.stderr)
@@ -59,6 +80,13 @@ class Briefing(h.RepoCase):
 
 
 class Report(h.RepoCase):
+    def test_corrects_none_is_not_a_correction(self):
+        ledger = self.root / "docs" / "ledger" / "2026-10.md"
+        h.write(ledger, ledger.read_text(encoding="utf-8") + "\n### 2026-10-09 A\n- **Corrects:** none\n"
+                "\n### 2026-10-10 B\n- **Corrects:** None.\n\n### 2026-10-11 C\n- **Corrects:** NONE  \n"
+                "\n### 2026-10-12 D\n- **Corrects:** 2026-10-09 A\n")
+        self.assertEqual(self.report.corrections(self.root, "2026-10"), 1)
+
     def setUp(self) -> None:
         super().setUp()
         self.report = h.load("report")

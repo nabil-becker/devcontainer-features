@@ -37,6 +37,8 @@ The hooks a repository puts in `.claude/settings.json` (`task devhost:init` writ
 }
 ```
 
+The briefing (`devhost-briefing`) also warns, in one line, when the repository has `src/devhost/devcontainer-feature.json` whose `version` is newer than the installed devhost (`$DEVHOST_SHARE/VERSION`, default `/usr/local/share/devhost/VERSION`; versions compared numerically): the backs run the installed devhost, so a fix in `src/devhost` is not live until the container is rebuilt. It says nothing when the versions are equal, when either is missing, or in a repository without `src/devhost`. The cost report (`devhost-report`, and the briefing's spend line) counts as ledger corrections only the `- **Corrects:**` lines that name an entry; `Corrects: none` is not one.
+
 The runner reads the hook's JSON on stdin (`session_id`, `transcript_path`, `cwd`, `hook_event_name`, and for `SubagentStop` `agent_id`, `agent_transcript_path`, `agent_type`), and prints the quiet notice as `{"hookSpecificOutput": {"hookEventName": ..., "additionalContext": "Back <job> (quiet notice, do not relay unless asked or wrong): ..."}}` only when the back changed something. It exits 0 always: on a workstation (no container marker), inside a back's own `claude` run (`DEVHOST_JOB_CHILD`), when the job's lock is held, when too little is new, or when the job file is missing, it does nothing and says nothing. Sessions on a workstation where the Feature is absent get "command not found" from the hook; wrap the command as `command -v devhost-run-job >/dev/null && devhost-run-job scribe || true` if sessions run there too.
 
 ## The backs
@@ -69,6 +71,7 @@ Every script reads the same variables; a repository overrides them in `container
 | `DEVHOST_LEXICON` | `LEXICON.md` | The way-of-working words (librarian) |
 | `DEVHOST_ADR_DIR` | `docs/adr` | Architecture decision records, with `0000-template.md` and an index `README.md` (librarian) |
 | `DEVHOST_NIGHT_SHIFT_DIR` | `docs/night-shift` | Night-shift reports (the briefing and report tools) |
+| `DEVHOST_SHARE` | `/usr/local/share/devhost` | The installed devhost (its `VERSION` file is what the briefing compares with `src/devhost`) |
 | `DEVHOST_JOBS_DIR` | `/usr/local/share/devhost/jobs` | Where `devhost-run-job <job>` finds `<job>/job.sh`; a repository's own set, same layout |
 | `DEVHOST_JOB_CHILD` | unset | Set to `1` by the runner for the back's own `claude` and for the test suite, so nothing they start can start a back |
 | `DEVHOST_CONTAINER_MARKERS` | `/.dockerenv /run/.containerenv` | Files whose presence means "inside a container"; the backs act only then |
