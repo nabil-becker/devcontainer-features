@@ -53,6 +53,8 @@ class Package(h.RepoCase):
         done = self.run_cli()
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertIn("wrote 15 files", done.stdout)
+        self.assertIn("(`drop-a-seed`, `ledger-review`, `plant-a-seed`, `restart-devhost`, `shutdown-devhost`): "
+                      "`plant-a-seed` imports the seed", (self.out / "PACKAGE.md").read_text(encoding="utf-8"))
         rows = self.rows()
         self.assertEqual(rows["papers/iteration-3.md"][1], "paper")
         self.assertEqual(rows["foundation/LEXICON.md"][1], "derived")

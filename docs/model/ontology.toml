@@ -278,7 +278,7 @@ summary = "A Dev Container Feature in `src/<id>`: the deliverable of this reposi
 [consuming-repo]
 type = "product"
 term = "Consuming repo"
-summary = "A repository whose devcontainer pulls these Features; the office and DSNP are two."
+summary = "A repository whose devcontainer pulls these Features; the office and software project 1 are two."
 
 [devcontainer]
 type = "product"

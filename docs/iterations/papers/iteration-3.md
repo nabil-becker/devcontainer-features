@@ -2,10 +2,10 @@
 
 The white paper of iteration 3 of the Agentic Delivery OS
 
-- **Status:** Draft, sections 1-15 of 15
+- **Status:** Final, reviewed section by section by the Operator (closing interview 3, rounds 4 to 6)
 - **Date:** 2026-10-20
 - **Repository:** `devcontainer-features` (this repository)
-- **Outline:** `docs/iterations/papers/iteration-3-outline.md`, approved by the Operator [interview q22]
+- **Outline:** `docs/iterations/iteration-3-outline.md`, approved by the Operator [interview q22]
 
 A note on how to read this paper. It is an honest account in the sense of ADR 0008: what went
 wrong is told with what went right, every fact carries its source in square brackets, a guess is
@@ -2006,7 +2006,7 @@ against a primary one (section 12).
   this paper) and `docs/ledger/costs-2026-10-unknown.md`.
 - **ADRs:** `docs/adr/0001` to `0016`, and `docs/principles/agents.md`.
 - **Night-shift reports:** `docs/night-shift/2026-10-16.md` and `2026-10-17.md`.
-- **The interview:** `docs/iterations/interview-3.md`, rounds 1 to 5; the outline `docs/iterations/papers/iteration-3-outline.md`.
+- **The interview:** `docs/iterations/interview-3.md`, rounds 1 to 6; the outline `docs/iterations/iteration-3-outline.md`.
 - **The seed's files:** `docs/iterations/seed/README.md`, `docs/iterations/foundation.txt`,
   `docs/iterations/starter/`, `.claude/skills/plant-a-seed/`, `.claude/skills/drop-a-seed/` and
   `src/devhost/share/python/package.py`.

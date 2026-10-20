@@ -11,7 +11,7 @@ The domain words of the project itself are not here; they live with the project'
 
 - **Feature**: a Dev Container Feature in `src/<id>`: the deliverable of this repository, installed
   by a devcontainer.
-- **Consuming repo**: a repository whose devcontainer pulls these Features; the office and DSNP are
+- **Consuming repo**: a repository whose devcontainer pulls these Features; the office and software project 1 are
   two.
 - **Devcontainer**: a consuming repo's `.devcontainer/`: the container definition that lists the
   Features it uses.
@@ -101,8 +101,8 @@ The domain words of the project itself are not here; they live with the project'
   iteration helps define that foundation (`docs/iterations.md`).
 - **Way of working** (WoW): how work gets done here: the roles, the records, the loop that improves
   them and the rules of thumb, as `PROCESS.md` describes them. Approved by the Operator 2026-10-17.
-- **Iteration**: one project in which the way of working is tried and learned from: client
-  engagement first, then DSNP, then this repository. The Operator decides when an iteration is
+- **Iteration**: one project in which the way of working is tried and learned from: the
+  office first, then software project 1, then this repository. The Operator decides when an iteration is
   done.
 
 ## Records
@@ -200,7 +200,8 @@ The domain words of the project itself are not here; they live with the project'
   back, model, size, outcome, guard undos, duration, cost, tokens.
 - **The guards** (`devhost-verify`): the commit-time checks the pre-commit hook runs: the ledger
   append-only and well-formed, no secrets, no forbidden words, the ADR shape, every task
-  described, every skill named.
+  described, every skill named, and the model: every lexicon term has an id in the ontology
+  (ADR 0005, devhost 1.7.0).
 - **Agent principles**: the five generic principles (P1 to P5) of the way of working: separate
   personalization from process, continuous improvement, the agent knows its place, claims need
   evidence, right-size the work. Generic by design: each Operator sets them up

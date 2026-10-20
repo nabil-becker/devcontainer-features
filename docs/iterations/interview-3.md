@@ -140,7 +140,7 @@ What each answered:
   project 1".
 - **21.** The paper keeps the ledger review and says its cadence is still to be refined; a backlog
   item rethinks it (per week or per finished piece of work instead of every five entries).
-- **22.** The outline (`docs/iterations/papers/iteration-3-outline.md`) is approved as proposed.
+- **22.** The outline (`docs/iterations/iteration-3-outline.md`) is approved as proposed.
 - **23.** An untracked file blocks a shutdown in `devhost-shutdown-check`; it is not only a note.
 - **24.** `devhost-package`'s default skill list includes `shutdown-devhost` and `restart-devhost`.
 
@@ -185,3 +185,37 @@ What it answered:
 - **34.** The paper follows the Operator on cost recovery (it may still be fetched), not the ledger
   entry that says it is lost.
 - **35.** Sections 6 to 9 stand as drafted.
+
+## Round 6, 2026-10-20: review of sections 10 to 15, the release, a ledger correction
+
+The Operator's answers, word for word:
+
+> 36 - yes
+> 37 - yes
+> 38 - Yes
+> 39 - yes
+
+What each answered:
+
+- **36.** Sections 10 to 15 stand; sections 11 and 14 keep naming the host's own failed claims
+  alongside the backs'.
+- **37.** The release workflow runs again right after the seed's pull request is merged, so the
+  starter's `:1` versions pick up devhost 1.7.1, git 1.2.0 and devcontainer-cli 1.2.0.
+- **38.** A correcting ledger entry replaces the release entry that said five Features were
+  published (the run published 15 and skipped go-task).
+- **39.** The night-shift skill reaches a new project through `devhost-init`, not the seed's skills
+  folder: tooling, not foundation.
+
+## Round 7, 2026-10-20: paper 1's byline in the seed, the project names in the foundation
+
+The Operator's answers, word for word:
+
+> 40 - yes
+> 41 - Yes
+
+What each answered:
+
+- **40.** The seed's two copies of paper 1 (`docs/iterations/export/papers/01-from-seed-to-tree.html`
+  and `.md`) join the approved name exceptions (ADR 0010): the same paper, byte for byte.
+- **41.** The lexicon and the ontology call the projects "the office" and "software project 1";
+  ADR 0008 keeps its decision text and gains the new names in brackets, with a change-log line.

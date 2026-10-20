@@ -214,6 +214,7 @@ def _display(root: Path, path: Path) -> str:
 
 def index_text(iteration: str, date: str, files: list[tuple[str, str, str]], received: str) -> str:
     rows = "\n".join(f"| `{name}` | {digest} | {kind} |" for name, digest, kind in files)
+    skills = ", ".join(f"`{s}`" for s in sorted({name.split("/")[1] for name, _, _ in files if name.startswith("skills/")}))
     return "\n".join([
         front_matter(iteration, date, [received]).decode("utf-8").rstrip("\n"),
         "",
@@ -222,7 +223,7 @@ def index_text(iteration: str, date: str, files: list[tuple[str, str, str]], rec
         f"Exported {date}. Papers carry over unchanged; the foundation is the newest, merged, never nested.",
         "",
         "This is a seed. Start at `README.md`; `starter/` is what the new place begins with, `skills/` holds the skills "
-        "that import (`plant-a-seed`) and export (`drop-a-seed`) it.",
+        f"({skills}): `plant-a-seed` imports the seed, `drop-a-seed` exports the next one.",
         "",
         "**Keep this folder in the repository. It is the source of the next export and must not be deleted.**",
         "",

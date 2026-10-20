@@ -5,3 +5,6 @@ docs/iterations/papers/01-from-seed-to-tree.html
 docs/iterations/papers/01-from-seed-to-tree.md
 # 2026-10-20: the copyright holder must be named (redact list restored).
 LICENSE
+# 2026-10-20: the seed's copies of the first white paper, the same files byte for byte (closing interview 3, question 40).
+docs/iterations/export/papers/01-from-seed-to-tree.html
+docs/iterations/export/papers/01-from-seed-to-tree.md
