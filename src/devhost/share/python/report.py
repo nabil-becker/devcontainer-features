@@ -12,6 +12,12 @@ each job run appends to `$DEVHOST_STATE/runs.jsonl` (one JSON object per line: `
 `<ledger dir>/costs-YYYY-MM-<engineer>.md`, committed with the ledger: numbers, models, session
 and agent ids only, never content. With --summary it prints one line for the briefing instead.
 Every figure is a list-price estimate, not a charge. The ledger review reads this report first.
+
+Transcripts and run records live in volumes a rebuild can empty, so the report is built from a
+store committed beside it, `costs-YYYY-MM-<engineer>.jsonl`: one line per priced reply or back
+run (ids and numbers), merged with what this machine has, so regenerating never loses a month's
+history. A `baseline` line carries figures whose records were lost before the store existed:
+its tables add to the report's, and local records up to its `until` are already in it.
 """
 from __future__ import annotations
 
@@ -23,6 +29,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import session_cost as sc  # noqa: E402
 from devhost_common import engineer, ledger_dir, month as this_month, rel, repo_root, state_dir, write_text  # noqa: E402
+
+RUN_FIELDS = ("ts", "job", "model", "status", "undone", "stakes", "duration_s", "stretch_chars", "cost_usd", "output_tokens")
 
 
 def back_runs(month: str) -> list[dict]:
@@ -57,20 +65,155 @@ def m(x: float | None) -> str:
     return "-" if x is None else f"${x:.2f}"
 
 
+def reply_key(r: sc.Reply) -> tuple:
+    return (r.sid, r.agent_id, r.model, r.ts)
+
+
+def run_key(r: dict) -> tuple:
+    return (str(r.get("ts", "")), str(r.get("job", "")))
+
+
+def store_path(root: Path, month: str) -> Path:
+    return ledger_dir(root) / f"costs-{month}-{engineer(root)}.jsonl"
+
+
+def read_store(root: Path, month: str) -> tuple[dict | None, list[sc.Reply], list[dict]]:
+    baseline, replies, runs = None, [], []
+    try:
+        lines = store_path(root, month).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return baseline, replies, runs
+    for line in lines:
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(rec, dict):
+            continue
+        if isinstance(rec.get("baseline"), dict):
+            baseline = rec["baseline"]
+        elif isinstance(rec.get("reply"), dict):
+            replies.append(sc.Reply(**rec["reply"]))
+        elif isinstance(rec.get("run"), dict):
+            runs.append(rec["run"])
+    return baseline, replies, runs
+
+
 def collect(root: Path, month: str):
-    replies = [r for s in sc.all_sessions(root) for r in sc.session_replies(s) if r.ts.startswith(month)]
-    return replies, back_runs(month)
+    """The month's records: the store's, plus this machine's that are newer than the baseline
+    and not stored yet. Returns (baseline, replies, runs)."""
+    baseline, replies, runs = read_store(root, month)
+    until = str((baseline or {}).get("until", ""))
+    seen_replies, seen_runs = {reply_key(r) for r in replies}, {run_key(r) for r in runs}
+    for r in (r for s in sc.all_sessions(root) for r in sc.session_replies(s)):
+        if r.ts.startswith(month) and r.ts > until and reply_key(r) not in seen_replies:
+            seen_replies.add(reply_key(r))
+            replies.append(r)
+    for r in back_runs(month):
+        if str(r.get("ts", "")) > until and run_key(r) not in seen_runs:
+            seen_runs.add(run_key(r))
+            runs.append({k: r[k] for k in RUN_FIELDS if k in r})
+    replies.sort(key=lambda r: r.ts)
+    runs.sort(key=lambda r: str(r.get("ts", "")))
+    return baseline, replies, runs
+
+
+def run_model(r: dict) -> str:
+    return str(r.get("model") or "none")
+
+
+def aggregate(replies: list[sc.Reply], runs: list[dict]) -> dict:
+    """Every table of the report as additive numbers, so a baseline adds to it row by row."""
+    agg: dict = {"sessions": {}, "cons": {}, "backs": {}, "models": {}, "days": {}}
+
+    def model_row(fam: str) -> dict:
+        return agg["models"].setdefault(fam, {"inters": 0.0, "cons": 0.0, "backs": 0.0, "n": 0, "out": 0})
+
+    def day_row(day: str) -> dict:
+        return agg["days"].setdefault(day, {"inters": 0.0, "cons": 0.0, "backs": 0.0})
+
+    for r in replies:
+        kind = "inters" if r.kind == "inter" else "cons"
+        row = model_row(sc.family(r.model))
+        row[kind] += r.cost
+        row["n"] += 1
+        row["out"] += r.usage.get("output_tokens", 0)
+        day_row(r.ts[:10])[kind] += r.cost
+        if r.kind == "inter":
+            s = agg["sessions"].setdefault(r.sid, {"models": [], "replies": 0, "cost": 0.0, "first": r.ts, "last": r.ts})
+            s["models"] = sorted(set(s["models"]) | {r.model})
+            s["replies"] += 1
+            s["cost"] += r.cost
+            s["first"], s["last"] = min(s["first"], r.ts), max(s["last"], r.ts)
+        else:
+            c = agg["cons"].setdefault(f"{r.agent_type}|{r.model}", {"ids": [], "runs": 0, "replies": 0, "cost": 0.0})
+            c["ids"] = sorted(set(c["ids"]) | {r.agent_id})
+            c["replies"] += 1
+            c["cost"] += r.cost
+    for r in runs:
+        cost = r.get("cost_usd", 0) or 0
+        row = model_row(sc.family(run_model(r)))
+        row["backs"] += cost
+        row["n"] += 1
+        row["out"] += r.get("output_tokens", 0) or 0
+        day_row(str(r.get("ts", ""))[:10])["backs"] += cost
+        b = agg["backs"].setdefault(str(r.get("job") or "unknown"), {
+            "models": [], "runs": 0, "changed": 0, "nothing": 0, "pending": 0, "error": 0,
+            "undone": 0, "stakes": 0, "cost": 0.0, "duration_s": 0.0, "stretch_chars": 0})
+        b["models"] = sorted(set(b["models"]) | {run_model(r)})
+        b["runs"] += 1
+        if r.get("status") in ("changed", "nothing", "pending", "error"):
+            b[r["status"]] += 1
+        for k in ("undone", "stakes", "duration_s", "stretch_chars"):
+            b[k] += r.get(k, 0) or 0
+        b["cost"] += cost
+    return agg
+
+
+def add(agg: dict, tables: dict | None) -> dict:
+    """agg plus a baseline's tables: numbers add, lists unite, first and last widen."""
+    for table, rows in (tables or {}).items():
+        if table not in agg or not isinstance(rows, dict):
+            continue
+        for key, row in rows.items():
+            mine = agg[table].setdefault(key, {})
+            for k, v in row.items():
+                if isinstance(v, list):
+                    mine[k] = sorted(set(mine.get(k, [])) | set(v))
+                elif k in ("first", "last"):
+                    have = mine.get(k) or v
+                    mine[k] = min(have, v) if k == "first" else max(have, v)
+                elif isinstance(v, (int, float)):
+                    mine[k] = mine.get(k, 0) + v
+    return agg
+
+
+def con_runs(c: dict) -> int:
+    return len(c.get("ids", [])) + c.get("runs", 0)  # a baseline counts runs it has no ids for
+
+
+def tables(root: Path, month: str) -> dict:
+    baseline, replies, runs = collect(root, month)
+    return add(aggregate(replies, runs), (baseline or {}).get("tables"))
+
+
+def totals(agg: dict) -> dict:
+    return {
+        "inters": sum(s.get("cost", 0) for s in agg["sessions"].values()),
+        "sessions": len(agg["sessions"]),
+        "cons": sum(c.get("cost", 0) for c in agg["cons"].values()),
+        "con_runs": sum(con_runs(c) for c in agg["cons"].values()),
+        "backs": sum(b.get("cost", 0) for b in agg["backs"].values()),
+        "back_runs": sum(b.get("runs", 0) for b in agg["backs"].values()),
+        "undone": sum(b.get("undone", 0) for b in agg["backs"].values()),
+    }
 
 
 def summary(root: Path, month: str) -> str:
-    replies, runs = collect(root, month)
-    inters = sum(r.cost for r in replies if r.kind == "inter")
-    cons = sum(r.cost for r in replies if r.kind == "con")
-    backs = sum(r.get("cost_usd", 0) or 0 for r in runs)
-    undone = sum(r.get("undone", 0) or 0 for r in runs)
+    t = totals(tables(root, month))
     return (f"Agent spend {month} to date on this machine ({engineer(root)}), list-price estimate: "
-            f"{m(inters + cons + backs)} (inters {m(inters)}, cons {m(cons)}, "
-            f"backs {m(backs)} in {len(runs)} runs, {undone} undone by guards; "
+            f"{m(t['inters'] + t['cons'] + t['backs'])} (inters {m(t['inters'])}, cons {m(t['cons'])}, "
+            f"backs {m(t['backs'])} in {t['back_runs']} runs, {t['undone']} undone by guards; "
             f"{corrections(root, month)} ledger corrections).")
 
 
@@ -78,28 +221,20 @@ def report_path(root: Path, month: str) -> Path:
     return ledger_dir(root) / f"costs-{month}-{engineer(root)}.md"
 
 
-def render(root: Path, month: str) -> str:
-    replies, runs = collect(root, month)
-    who = engineer(root)
-    inters = [r for r in replies if r.kind == "inter"]
-    cons = [r for r in replies if r.kind == "con"]
-    back_cost = sum(r.get("cost_usd", 0) or 0 for r in runs)
-    total = sum(r.cost for r in replies) + back_cost
-
-    def run_model(r: dict) -> str:
-        return str(r.get("model") or "none")
-
+def render_tables(root: Path, month: str, agg: dict) -> str:
+    t = totals(agg)
     lines = [
-        f"# Agent costs, {month}, {who}",
+        f"# Agent costs, {month}, {engineer(root)}",
         "",
         "Generated by `devhost-report` (and at every session start by the briefing) from this machine's",
-        f"Claude Code transcripts and the backs' run records. Every figure is a {sc.PRICE_NOTE}.",
+        f"Claude Code transcripts and the backs' run records, kept in `{store_path(root, month).name}`",
+        f"so a rebuild loses nothing. Every figure is a {sc.PRICE_NOTE}.",
         "Numbers and ids only. Read first by the ledger review: see \"What to look for\".",
         "Regenerated, never edited by hand.",
         "",
-        f"Total: {m(total)}. Inter sessions: {m(sum(r.cost for r in inters))} in {len({r.sid for r in inters})} sessions. "
-        f"Cons: {m(sum(r.cost for r in cons))} in {len({r.agent_id for r in cons})} runs. "
-        f"Backs: {m(back_cost)} in {len(runs)} runs, {sum(r.get('undone', 0) or 0 for r in runs)} undone by guards. "
+        f"Total: {m(t['inters'] + t['cons'] + t['backs'])}. Inter sessions: {m(t['inters'])} in {t['sessions']} sessions. "
+        f"Cons: {m(t['cons'])} in {t['con_runs']} runs. "
+        f"Backs: {m(t['backs'])} in {t['back_runs']} runs, {t['undone']} undone by guards. "
         f"Ledger corrections: {corrections(root, month)}.",
         "",
         "## By model",
@@ -107,41 +242,33 @@ def render(root: Path, month: str) -> str:
         "| Model | Inters | Cons | Backs | Total | Replies or runs | Tokens out |",
         "|---|---|---|---|---|---|---|",
     ]
-    fams = sorted({sc.family(r.model) for r in replies} | {sc.family(run_model(r)) for r in runs})
-    for f in fams:
-        i = sum(r.cost for r in inters if sc.family(r.model) == f)
-        c = sum(r.cost for r in cons if sc.family(r.model) == f)
-        b = sum(r.get("cost_usd", 0) or 0 for r in runs if sc.family(run_model(r)) == f)
-        n = sum(1 for r in replies if sc.family(r.model) == f) + sum(1 for r in runs if sc.family(run_model(r)) == f)
-        out = sum(r.usage.get("output_tokens", 0) for r in replies if sc.family(r.model) == f) + sum(
-            r.get("output_tokens", 0) or 0 for r in runs if sc.family(run_model(r)) == f)
-        lines.append(f"| {f} | {m(i)} | {m(c)} | {m(b)} | {m(i + c + b)} | {n} | {out:,} |")
+    for f, r in sorted(agg["models"].items()):
+        i, c, b = r.get("inters", 0), r.get("cons", 0), r.get("backs", 0)
+        lines.append(f"| {f} | {m(i)} | {m(c)} | {m(b)} | {m(i + c + b)} | {r.get('n', 0)} | {r.get('out', 0):,} |")
     lines += ["", "## Inter sessions", "", "| Session | Models | Replies | Cost | First | Last |", "|---|---|---|---|---|---|"]
-    for sid, t in sorted(sc.tally(inters, lambda r: r.sid).items(), key=lambda kv: kv[1].first):
-        models = ", ".join(sorted({r.model for r in inters if r.sid == sid}))
-        lines.append(f"| {sid} | {models} | {t.replies} | {m(t.cost)} | {t.first[:16]} | {t.last[:16]} |")
+    for sid, s in sorted(agg["sessions"].items(), key=lambda kv: kv[1].get("first", "")):
+        lines.append(f"| {sid} | {', '.join(s.get('models', []))} | {s.get('replies', 0)} | {m(s.get('cost', 0))} | "
+                     f"{s.get('first', '')[:16]} | {s.get('last', '')[:16]} |")
     lines += ["", "## Cons (subagents)", "",
               "| Agent type | Model | Runs | Replies | Cost | Per run |", "|---|---|---|---|---|---|"]
-    for (atype, model), t in sorted(sc.tally(cons, lambda r: (r.agent_type, r.model)).items()):
-        n = len({r.agent_id for r in cons if (r.agent_type, r.model) == (atype, model)})
-        lines.append(f"| {atype} | {model} | {n} | {t.replies} | {m(t.cost)} | {m(t.cost / n if n else None)} |")
+    for key, c in sorted(agg["cons"].items()):
+        atype, _, model = key.partition("|")
+        n = con_runs(c)
+        lines.append(f"| {atype} | {model} | {n} | {c.get('replies', 0)} | {m(c.get('cost', 0))} | "
+                     f"{m(c.get('cost', 0) / n if n else None)} |")
     lines += ["", "## Backs", "",
               "| Back | Model | Runs | Changed | Nothing | Pending | Error | Undone | Stakes | Cost | Per run | Per change | Avg s | Avg chars in |",
               "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
-    for job in sorted({str(r.get("job") or "unknown") for r in runs}):
-        g = [r for r in runs if str(r.get("job") or "unknown") == job]
-        st = {k: sum(1 for r in g if r.get("status") == k) for k in ("changed", "nothing", "pending", "error")}
-        cost = sum(r.get("cost_usd", 0) or 0 for r in g)
+    for job, b in sorted(agg["backs"].items()):
+        n, changed, cost = b.get("runs", 0), b.get("changed", 0), b.get("cost", 0)
         lines.append(
-            f"| {job} | {', '.join(sorted({run_model(r) for r in g}))} | {len(g)} | {st['changed']} | {st['nothing']} | "
-            f"{st['pending']} | {st['error']} | {sum(r.get('undone', 0) or 0 for r in g)} | {sum(r.get('stakes', 0) or 0 for r in g)} | "
-            f"{m(cost)} | {m(cost / len(g))} | {m(cost / st['changed'] if st['changed'] else None)} | "
-            f"{sum(r.get('duration_s', 0) or 0 for r in g) / len(g):.0f} | {sum(r.get('stretch_chars', 0) or 0 for r in g) / len(g):.0f} |")
+            f"| {job} | {', '.join(b.get('models', []))} | {n} | {changed} | {b.get('nothing', 0)} | "
+            f"{b.get('pending', 0)} | {b.get('error', 0)} | {b.get('undone', 0)} | {b.get('stakes', 0)} | "
+            f"{m(cost)} | {m(cost / n if n else None)} | {m(cost / changed if changed else None)} | "
+            f"{b.get('duration_s', 0) / n if n else 0:.0f} | {b.get('stretch_chars', 0) / n if n else 0:.0f} |")
     lines += ["", "## By day", "", "| Day | Inters | Cons | Backs | Total |", "|---|---|---|---|---|"]
-    for day in sorted({r.ts[:10] for r in replies} | {str(r.get("ts", ""))[:10] for r in runs}):
-        i = sum(r.cost for r in inters if r.ts.startswith(day))
-        c = sum(r.cost for r in cons if r.ts.startswith(day))
-        b = sum(r.get("cost_usd", 0) or 0 for r in runs if str(r.get("ts", "")).startswith(day))
+    for day, d in sorted(agg["days"].items()):
+        i, c, b = d.get("inters", 0), d.get("cons", 0), d.get("backs", 0)
         lines.append(f"| {day} | {m(i)} | {m(c)} | {m(b)} | {m(i + c + b)} |")
     lines += [
         "",
@@ -169,6 +296,10 @@ def render(root: Path, month: str) -> str:
     return "\n".join(lines)
 
 
+def render(root: Path, month: str) -> str:
+    return render_tables(root, month, tables(root, month))
+
+
 def job_log(n: int) -> str:
     out = []
     for log in sorted(state_dir().glob("*/job.log")):
@@ -178,8 +309,15 @@ def job_log(n: int) -> str:
 
 
 def write_report(root: Path, month: str) -> Path:
+    """Stores this machine's new records, then writes the report from the store."""
+    baseline, replies, runs = collect(root, month)
+    lines = [json.dumps({"baseline": baseline}, sort_keys=True)] if baseline else []
+    lines += [json.dumps({"reply": vars(r)}, sort_keys=True) for r in replies]
+    lines += [json.dumps({"run": r}, sort_keys=True) for r in runs]
+    if lines:
+        write_text(store_path(root, month), "\n".join(lines) + "\n")
     out = report_path(root, month)
-    write_text(out, render(root, month))
+    write_text(out, render_tables(root, month, add(aggregate(replies, runs), (baseline or {}).get("tables"))))
     return out
 
 
