@@ -60,6 +60,20 @@ class Shutdown(h.RepoCase):
         h.git(self.root, "checkout", "-q", "--detach")
         self.assertIn("detached HEAD", self.sd.pushed(self.root)[0])
 
+    def test_unfinished_branch_is_a_finding_and_a_merged_one_a_note(self):
+        h.git(self.root, "branch", "-q", "-m", "work", "feature/x/1")
+        h.git(self.root, "push", "-q", "-u", "origin", "feature/x/1")
+        self.commit()
+        h.git(self.root, "push", "-q", "origin", "feature/x/1")
+        h.git(self.root, "branch", "-q", "fix/y/1", "main")
+        h.fake_gh(self.base, {})
+        findings, notes = self.sd.run(self.root)
+        self.assertEqual(findings, ["branch feature/x/1 has commits that add to main and no pull request (unfinished work)"])
+        h.fake_gh(self.base, {"feature/x/1": ["OPEN"], "fix/y/1": ["MERGED"]})
+        findings, notes = self.sd.run(self.root)
+        self.assertEqual(findings, [])
+        self.assertEqual(notes, ["branch fix/y/1: its pull request merged and it still exists (task devhost:branches PRUNE=1)"])
+
     def test_stash_is_a_note_not_a_failure(self):
         h.write(self.root / "docs" / "ledger" / "README.md", "edit\n")
         h.git(self.root, "add", "-A")

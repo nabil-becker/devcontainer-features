@@ -20,6 +20,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import branches  # noqa: E402
 import report  # noqa: E402
 from devhost_common import (DECISIONS_HEADING, REVIEWED_MARKER, backlog_path, ledger_dir, month,  # noqa: E402
                             night_shift_dir, rel, repo_root, state_dir)
@@ -85,6 +86,15 @@ def night_shift_status(root: Path) -> list[str]:
     return [f"Night-shift report not yet reviewed: {', '.join(waiting)} (say 'morning report')."] if waiting else []
 
 
+def branch_status(root: Path) -> list[str]:
+    """One line when branches carry unfinished work, merged ones were left behind or a name breaks the rule."""
+    try:
+        line = branches.summary(branches.leftovers(root))
+    except Exception:  # no gh, no network, no git: the briefing never fails a session start
+        return []
+    return [line] if line else []
+
+
 def _version(text: str) -> tuple[int, ...] | None:
     m = re.match(r"^\s*v?(\d+(?:\.\d+)*)", text)
     return tuple(int(x) for x in m.group(1).split(".")) if m else None
@@ -106,7 +116,7 @@ def stale_install(root: Path) -> list[str]:
 
 def briefing(root: Path, refresh: bool = True) -> str:
     this_month = month()
-    lines = ledger_status(root) + stale_install(root) + pending(root) + backlog_status(root) + night_shift_status(root)
+    lines = ledger_status(root) + stale_install(root) + pending(root) + backlog_status(root) + branch_status(root) + night_shift_status(root)
     try:
         if refresh:
             report.write_report(root, this_month)

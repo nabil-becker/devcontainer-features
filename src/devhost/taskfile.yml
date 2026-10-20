@@ -61,6 +61,20 @@ tasks:
     cmds:
       - devhost-briefing
 
+  branch:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Start work on a backlog item: create <type>/<id>/<n> (type feature, fix, docs or chore; n the next free workstream number) from origin/main and switch to it; arguments after --, e.g. task devhost:branch -- branch-work-ids [type]. Refuses an id that is not in TODO.md.'
+    cmds:
+      - devhost-branches new {{.CLI_ARGS}}
+
+  branches:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'List every local and remote branch with its backlog item, its pull request state and what it still adds to main; PRUNE=1 deletes (locally, on the remote, and its worktree) only branches whose pull request merged and that add nothing.'
+    vars:
+      PRUNE: '{{.PRUNE | default ""}}'
+    cmds:
+      - devhost-branches {{if .PRUNE}}--prune{{end}}
+
   report:
     dir: '{{.USER_WORKING_DIR}}'
     desc: 'Write the monthly cost report for MONTH (YYYY-MM, default the current month) from the transcripts and the backs'' metrics lines.'

@@ -9,6 +9,7 @@ backlog, the ledger directory's contents and the ADRs stay as they are. Special 
 - `.claude/settings.json`: written when absent (the hooks for the briefing and the jobs, and
   the permissions); when present, the block to merge by hand is printed instead.
 - `.githooks/pre-commit`: written only when `.githooks/` is absent (`exec devhost-verify --quiet`).
+- `.githooks/pre-push`: written when the file is absent (the branch rule, `devhost-branches --check-push`).
 - `.gitignore`: the line `.devhost/redact-names.txt` is appended when missing.
 - `.devhost/CLAUDE.devhost.md` is a section for the repository's CLAUDE.md to include with a
   line `@.devhost/CLAUDE.devhost.md`; CLAUDE.md itself is never written.
@@ -55,6 +56,7 @@ FILES = {
 RECORDS = {"TODO.md", "docs/adr/0000-template.md", "docs/adr/README.md"}
 SETTINGS = ("claude/settings.json", ".claude/settings.json")
 PRE_COMMIT = ("githooks/pre-commit", ".githooks/pre-commit")
+PRE_PUSH = ("githooks/pre-push", ".githooks/pre-push")
 GITIGNORE_LINES = (".devhost/redact-names.txt",)
 
 
@@ -100,6 +102,18 @@ def pre_commit(root: Path, out: list[str]) -> None:
     out.append(f"  wrote     {target} (run: git config core.hooksPath .githooks)")
 
 
+def pre_push(root: Path, out: list[str]) -> None:
+    template, target = PRE_PUSH
+    dest = root / target
+    if dest.exists():
+        out.append(f"  kept      {target} (exists)")
+        return
+    write_text(dest, read_text(TEMPLATES / template))
+    if os.name != "nt":
+        dest.chmod(dest.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    out.append(f"  wrote     {target} (needs core.hooksPath .githooks)")
+
+
 def settings(root: Path, out: list[str], extra: list[str]) -> None:
     template, target = SETTINGS
     dest = root / target
@@ -119,6 +133,7 @@ def scaffold(root: Path, force: bool = False) -> tuple[list[str], list[str]]:
         put(root, template, target, force, out)
     settings(root, out, extra)
     pre_commit(root, out)
+    pre_push(root, out)
     gitignore(root, out)
     claude_md = root / "CLAUDE.md"
     include = "@.devhost/CLAUDE.devhost.md"

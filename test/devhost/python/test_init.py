@@ -16,7 +16,7 @@ EXPECTED = [
     ".claude/skills/night-shift/SKILL.md", ".claude/skills/new-adr/SKILL.md", ".claude/skills/publish-site/SKILL.md",
     ".claude/skills/shutdown-devhost/SKILL.md", ".claude/skills/restart-devhost/SKILL.md",
     ".devhost/.gitignore",
-    ".devhost/CLAUDE.devhost.md", ".claude/settings.json", ".githooks/pre-commit", ".gitignore",
+    ".devhost/CLAUDE.devhost.md", ".claude/settings.json", ".githooks/pre-commit", ".githooks/pre-push", ".gitignore",
 ]
 
 

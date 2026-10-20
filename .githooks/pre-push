@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# The branch rule before every push: <type>/<backlog-id>/<n> with the id in TODO.md, and no push
+# to a branch whose pull request merged. Deleting a remote branch is always allowed. Only inside
+# the devhost (the devhost Feature installs devhost-branches); a workstation push is not blocked.
+if command -v devhost-branches >/dev/null 2>&1; then
+  exec devhost-branches --check-push "$@"
+fi
+exit 0

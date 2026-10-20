@@ -25,7 +25,7 @@ PERSON = "Guinevere Pendragon"
 ENV_VARS = ("DEVHOST_ROOT", "DEVHOST_STATE", "DEVHOST_LEDGER_DIR", "DEVHOST_BACKLOG", "DEVHOST_LEXICON",
             "DEVHOST_ADR_DIR", "DEVHOST_MODEL_DIR", "DEVHOST_NIGHT_SHIFT_DIR", "DEVHOST_ENGINEER", "DEVHOST_REDACT_FILE",
             "DEVHOST_REDACT_WITH", "DEVHOST_FORBIDDEN_WORDS", "DEVHOST_BASE_REF", "CLAUDE_CONFIG_DIR",
-            "CLAUDE_PROJECT_DIR", "DEVHOST_SHARE")
+            "CLAUDE_PROJECT_DIR", "DEVHOST_SHARE", "DEVHOST_GH")
 
 
 def load(name: str):
@@ -97,6 +97,20 @@ def make_repo(base: Path) -> Path:
     return root
 
 
+def fake_gh(base: Path, data: dict) -> None:
+    """Point DEVHOST_GH at a `gh` that answers `pr list` from `data` (branch -> states); call inside devhost_env."""
+    import stat
+    (base / "gh.json").write_text(json.dumps(data), encoding="utf-8")
+    script = base / "fake-gh"
+    script.write_text(
+        f"#!{sys.executable}\nimport json, os, sys\ndata = json.load(open({str(base / 'gh.json')!r}))\n"
+        "args = sys.argv[1:]\nif '--head' in args:\n    name = args[args.index('--head') + 1]\n"
+        "    print(json.dumps([{'number': 1, 'state': s} for s in data.get(name, [])]))\n"
+        "else:\n    print(json.dumps([{'headRefName': n, 'state': s} for n, v in data.items() for s in v]))\n", encoding="utf-8")
+    script.chmod(script.stat().st_mode | stat.S_IXUSR)
+    os.environ["DEVHOST_GH"] = str(script)
+
+
 def track(root: Path) -> None:
     git(root, "add", "-A")
 
@@ -111,6 +125,7 @@ def devhost_env(root: Path, **extra: str):
     os.environ["DEVHOST_STATE"] = str(root.parent / "state")
     os.environ["CLAUDE_CONFIG_DIR"] = str(root.parent / "claude")
     os.environ["DEVHOST_ENGINEER"] = "tester"
+    os.environ["DEVHOST_GH"] = "devhost-test-no-gh"  # never the real gh (network); tests that need one set it
     for k, v in extra.items():
         os.environ[k] = v
     try:
