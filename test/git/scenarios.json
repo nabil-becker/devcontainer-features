@@ -27,5 +27,16 @@
       }
     },
     "remoteUser": "vscode"
+  },
+  "commit_identity_agents_only": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "git": {
+        "commitName": "devhost agent",
+        "commitEmail": "devhost-agent@noreply.invalid",
+        "commitWhenEnv": "CLAUDECODE"
+      }
+    },
+    "remoteUser": "vscode"
   }
 }

@@ -7,7 +7,7 @@
 #   - /usr/local/bin/git-setup, the per-container setup (safe.directory,
 #     core.hooksPath) that this Feature's postCreateCommand hook runs.
 # Feature options arrive as upper-cased environment variables (see
-# devcontainer-feature.json): WORKTREEAWARE, SAFEDIRECTORY, HOOKSPATH, COMMITNAME, COMMITEMAIL.
+# devcontainer-feature.json): WORKTREEAWARE, SAFEDIRECTORY, HOOKSPATH, COMMITNAME, COMMITEMAIL, COMMITWHENENV.
 #
 # State: devcontainer-feature.json points GIT_CONFIG_GLOBAL at
 # /var/lib/devcontainer-features/git/gitconfig and mounts a named volume on
@@ -23,6 +23,7 @@ SAFEDIRECTORY="${SAFEDIRECTORY-workspace}"
 HOOKSPATH="${HOOKSPATH-}"
 COMMITNAME="${COMMITNAME-}"
 COMMITEMAIL="${COMMITEMAIL-}"
+COMMITWHENENV="${COMMITWHENENV-}"
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "git: install.sh must run as root (the devcontainer Feature lifecycle does this)." >&2
@@ -52,6 +53,13 @@ install -m 0755 "$feature_dir/git-setup.sh" /usr/local/bin/git-setup
 # The commit identity is applied by the wrapper, so it keeps the wrapper in
 # place even with worktreeAware=false (the wrapper then only exports it).
 if [ -n "$COMMITEMAIL" ] && [ -z "$COMMITNAME" ]; then COMMITNAME="$COMMITEMAIL"; fi
+case "$COMMITWHENENV" in
+  "" | [A-Za-z_]*) ;;
+  *) echo "git: commitWhenEnv must be an environment variable name: $COMMITWHENENV" >&2; exit 1 ;;
+esac
+case "$COMMITWHENENV" in
+  *[!A-Za-z0-9_]*) echo "git: commitWhenEnv must be an environment variable name: $COMMITWHENENV" >&2; exit 1 ;;
+esac
 identity="$share/identity.env"
 want_wrapper=false
 if [ "$WORKTREEAWARE" = "true" ] || [ -n "$COMMITEMAIL" ]; then want_wrapper=true; fi
@@ -92,13 +100,15 @@ else
 fi
 
 # Commit identity for the wrapper: single-quoted shell assignments (sourced by
-# a POSIX sh), present only when commitEmail is set.
+# a POSIX sh), present only when commitEmail is set; commitWhenEnv is a
+# variable name, checked above, so the wrapper can read it with eval.
 if [ -n "$COMMITEMAIL" ]; then
   sq() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
   {
     echo "# Written by the git Feature's install.sh (commitName, commitEmail); sourced by the wrapper."
     printf 'DCF_COMMIT_NAME=%s\n' "$(sq "$COMMITNAME")"
     printf 'DCF_COMMIT_EMAIL=%s\n' "$(sq "$COMMITEMAIL")"
+    printf 'DCF_COMMIT_WHEN_ENV=%s\n' "$(sq "$COMMITWHENENV")"
   } > "$identity"
   chmod 0644 "$identity"
 else

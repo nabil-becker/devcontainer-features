@@ -13,12 +13,18 @@ real="${GIT_WRAPPER_REAL_GIT:-@REAL_GIT@}"
 # Commit identity (commitName / commitEmail options): install.sh writes the
 # two values to a file. Environment variables beat every config level, so a
 # repository-local user.email cannot override them, and `commit -s` signs off
-# with the committer identity. Each variable the caller already set wins.
+# with the committer identity. Each variable the caller already set wins. With
+# commitWhenEnv (DCF_COMMIT_WHEN_ENV, a variable name) the identity applies
+# only when that variable is set and non-empty: agents, not a person's shell.
 idfile="${GIT_WRAPPER_IDENTITY_FILE:-/usr/local/share/git-feature/identity.env}"
 if [ -r "$idfile" ]; then
   # shellcheck disable=SC1090  # written by install.sh
   . "$idfile"
-  if [ -n "${DCF_COMMIT_EMAIL:-}" ]; then
+  dcf_agent=1
+  if [ -n "${DCF_COMMIT_WHEN_ENV:-}" ]; then
+    eval "[ -n \"\${$DCF_COMMIT_WHEN_ENV:-}\" ]" || dcf_agent=
+  fi
+  if [ -n "${DCF_COMMIT_EMAIL:-}" ] && [ -n "$dcf_agent" ]; then
     : "${GIT_AUTHOR_NAME:=$DCF_COMMIT_NAME}" "${GIT_AUTHOR_EMAIL:=$DCF_COMMIT_EMAIL}"
     : "${GIT_COMMITTER_NAME:=$DCF_COMMIT_NAME}" "${GIT_COMMITTER_EMAIL:=$DCF_COMMIT_EMAIL}"
     export GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
