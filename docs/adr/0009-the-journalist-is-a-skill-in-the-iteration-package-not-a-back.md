@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | accepted |
+| **Status** | superseded by [ADR 0014](0014-the-seed-is-exported-and-imported-by-two-skills-and-the-journalist-is-folded-into-the-export.md) |
 | **Date** | 2026-10-17 |
 | **Deciders** | the Operator; proposed by the host |
 
@@ -60,3 +60,4 @@ judgement calls, and the product is a read by the Operator, not a record.
 | Date | Change |
 |---|---|
 | 2026-10-17 | First draft; accepted by the Operator in the session. |
+| 2026-10-20 | Superseded by ADR 0014: the journalist is a brief inside `drop-a-seed`, not a skill (the Operator, closing interview 3, question 13). |

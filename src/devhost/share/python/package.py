@@ -21,14 +21,15 @@ Options (paths are relative to the repository root unless absolute):
                     (default docs/iterations/starter)
     --skills LIST   comma-separated skill names whose folders .claude/skills/<name>/ are copied
                     whole and untouched to skills/<name>/
-                    (default plant-a-seed,drop-a-seed,ledger-review)
+                    (default plant-a-seed,drop-a-seed,ledger-review,shutdown-devhost,restart-devhost)
     --out DIR       where the package is written; must be missing or empty
                     (default docs/iterations/export)
     --date D        YYYY-MM-DD (default today)
 
 The package is a seed: a plain folder holding `README.md` (the entry point an agent is pointed
 at), `starter/` (what the next place begins with), `skills/` (`plant-a-seed`, which imports it,
-`drop-a-seed`, which exports the next one, and `ledger-review`), `papers/` (every paper received,
+`drop-a-seed`, which exports the next one, `ledger-review`, and `shutdown-devhost` with
+`restart-devhost`), `papers/` (every paper received,
 byte for byte, the papers kept here, the new paper), `foundation/<repository path>` (the
 manifest's files) and `PACKAGE.md`: iteration, date,
 every file with its sha256 and kind (paper, original, derived, foundation), and the instruction
@@ -58,7 +59,7 @@ ROW = re.compile(r"^\|\s*`([^`]+)`\s*\|\s*([0-9a-f]{64})\s*\|\s*(\w+)\s*\|\s*$")
 DEFAULTS = {"received": "docs/iterations/package", "papers": "docs/iterations/papers",
             "foundation": "docs/iterations/foundation.txt", "readme": "docs/iterations/seed/README.md",
             "starter": "docs/iterations/starter",
-            "skills": "plant-a-seed,drop-a-seed,ledger-review", "out": "docs/iterations/export"}
+            "skills": "plant-a-seed,drop-a-seed,ledger-review,shutdown-devhost,restart-devhost", "out": "docs/iterations/export"}
 
 
 class Refused(Exception):

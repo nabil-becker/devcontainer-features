@@ -37,8 +37,8 @@ setup one-pager, the dashboard) and `skills/` (`plant-a-seed`, `drop-a-seed`, `l
 
 The journalist is no longer a skill of its own. Its instructions become `drop-a-seed/journalist.md`,
 a reference file that `drop-a-seed` hands to a writing subagent, which keeps the long ledger read
-out of the main session. The honest-account rules of ADR-0008 still bind the paper. This refines
-ADR-0009 and does not supersede it: the journalist remains a skill-side function and not a back.
+out of the main session. The honest-account rules of ADR-0008 still bind the paper. This supersedes
+ADR-0009 (the Operator, 2026-10-20): the journalist is a brief, not a skill, and still not a back.
 
 ## Options considered
 
@@ -76,3 +76,4 @@ be improved with use, and a skill can be reviewed and carried forward like any o
 | Date | Change |
 |---|---|
 | 2026-10-20 | First draft; accepted by the Operator in the session. |
+| 2026-10-20 | Supersedes ADR 0009 instead of refining it (the Operator, closing interview 3, question 13). |

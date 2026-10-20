@@ -57,10 +57,11 @@ numbering and a row below.
 | [0006](0006-the-docs-site-is-built-by-a-script-and-hosting-is-a-swappable-skill.md) | The docs site is built by a script, and hosting is a swappable skill | accepted | 2026-10-16 |
 | [0007](0007-the-life-theme-is-a-shared-layer-above-each-projects-own.md) | The life theme is a shared layer above each project's own theme | accepted | 2026-10-16 |
 | [0008](0008-the-iteration-package-carries-papers-forward-and-merges-the-foundation.md) | The iteration package carries papers forward, merges the foundation, and its papers are honest accounts | accepted | 2026-10-16 |
-| [0009](0009-the-journalist-is-a-skill-in-the-iteration-package-not-a-back.md) | The journalist is a skill in the iteration package, not a back | accepted | 2026-10-17 |
+| [0009](0009-the-journalist-is-a-skill-in-the-iteration-package-not-a-back.md) | The journalist is a skill in the iteration package, not a back | superseded by 0014 | 2026-10-17 |
 | [0010](0010-a-paper-carrying-names-is-committed-under-an-approved-exception.md) | A paper that carries names is committed unchanged under an approved exception | accepted | 2026-10-19 |
 | [0011](0011-the-feature-and-agent-principles-are-binding.md) | The agent principles and the Feature requirements are binding | accepted | 2026-10-19 |
 | [0012](0012-agent-git-identity-through-the-git-feature-wrapper.md) | Agent git identity is set by the git Feature's wrapper | accepted | 2026-10-19 |
 | [0013](0013-the-agent-principles-are-trimmed-to-five-generic-ones.md) | The agent principles are trimmed to five generic ones | accepted | 2026-10-20 |
 | [0014](0014-the-seed-is-exported-and-imported-by-two-skills-and-the-journalist-is-folded-into-the-export.md) | The seed is exported and imported by two skills, and the journalist is folded into the export | accepted | 2026-10-20 |
 | [0015](0015-shutdown-is-a-check-script-a-skill-and-a-host-stop-task-because-the-spec-has-no-stop-hook.md) | Shutdown is a check script, a skill and a host stop task, because the spec has no stop hook | accepted | 2026-10-20 |
+| [0016](0016-the-bot-identity-applies-only-to-git-run-by-an-agent.md) | The bot identity applies only to git run by an agent | accepted | 2026-10-20 |
