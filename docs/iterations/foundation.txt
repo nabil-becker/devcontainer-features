@@ -1,0 +1,20 @@
+# The foundation: what the Operator named as carried from one iteration to the next.
+# One repository-relative path per line; `!path` marks a file copied untouched.
+# The tooling is not foundation (the OS is not the package).
+#
+# docs/principles/* exist only on another, unmerged branch; the two lines below are expected to
+# be missing here until it is merged, and devhost-package refuses until then.
+docs/principles/agents.md
+docs/principles/non-functional-requirements.md
+LEXICON.md
+PROCESS.md
+# the ontology
+docs/model/ontology.toml
+# ADRs 0003 to 0009 (0009 also exists only on unmerged branches, like the principles)
+docs/adr/0003-backs-only-add-so-change-stakes-become-amend-items.md
+docs/adr/0004-the-arthurian-theme-is-a-layer-not-a-rename.md
+docs/adr/0005-the-ontology-is-the-canonical-model-and-a-guard-keeps-the-rest-in-line.md
+docs/adr/0006-the-docs-site-is-built-by-a-script-and-hosting-is-a-swappable-skill.md
+docs/adr/0007-the-life-theme-is-a-shared-layer-above-each-projects-own.md
+docs/adr/0008-the-iteration-package-carries-papers-forward-and-merges-the-foundation.md
+docs/adr/0009-the-journalist-is-a-skill-in-the-iteration-package-not-a-back.md

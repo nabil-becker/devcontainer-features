@@ -26,6 +26,14 @@ class Package(h.RepoCase):
                 "# the foundation\nLEXICON.md\n\ndocs/model/ontology.toml\ndocs/model/figure.png\n"
                 "!docs/marked.md\ndocs/front.md\n")
         h.write(self.root / "docs" / "iterations" / "papers" / "iteration-3.md", "# Iteration 3\n\nThe story.\n")
+        h.write(self.root / "docs" / "iterations" / "seed" / "README.md", "# The seed\r\nPoint an agent here.\r\n")
+        (self.root / "docs" / "iterations" / "starter").mkdir(parents=True)
+        (self.root / "docs" / "iterations" / "starter" / "devcontainer.json").write_bytes(b'{"a": 1}\r\n')
+        (self.root / "docs" / "iterations" / "starter" / "pic.png").write_bytes(PNG)
+        for name in ("plant-a-seed", "drop-a-seed", "ledger-review"):
+            skill = self.root / ".claude" / "skills" / name
+            h.write(skill / "SKILL.md", f"---\nname: {name}\n---\nBody.\r\n")
+        (self.root / ".claude" / "skills" / "drop-a-seed" / "journalist.md").write_bytes(PNG)
 
     def run_cli(self, *extra: str):
         args = ["package", "--iteration", "3", "--date", "2026-10-19", "--out", "out",
@@ -44,7 +52,7 @@ class Package(h.RepoCase):
     def test_the_first_package_from_nothing_received(self):
         done = self.run_cli()
         self.assertEqual(done.returncode, 0, done.stderr)
-        self.assertIn("wrote 6 files", done.stdout)
+        self.assertIn("wrote 13 files", done.stdout)
         rows = self.rows()
         self.assertEqual(rows["papers/iteration-3.md"][1], "paper")
         self.assertEqual(rows["foundation/LEXICON.md"][1], "derived")
@@ -143,6 +151,53 @@ class Package(h.RepoCase):
         done = h.run(["package", "--iteration", "3", "--out", "out", "--paper", "nope.md"], self.root, self.env)
         self.assertEqual(done.returncode, 2)
         self.assertIn("nope.md is missing", done.stderr)
+
+    def test_the_seed_readme_is_copied_untouched_to_the_root(self):
+        self.assertEqual(self.run_cli().returncode, 0)
+        self.assertEqual((self.out / "README.md").read_bytes(), b"# The seed\r\nPoint an agent here.\r\n")
+        self.assertEqual(self.rows()["README.md"][1], "original")
+        self.assertEqual(self.rows()["README.md"][0], sha((self.out / "README.md").read_bytes()))
+
+    def test_a_missing_seed_readme_is_refused(self):
+        done = self.run_cli("--readme", "docs/iterations/seed/none.md")
+        self.assertEqual(done.returncode, 2)
+        self.assertIn("none.md", done.stderr)
+        self.assertFalse(self.out.exists())
+
+    def test_the_starter_is_copied_untouched(self):
+        self.assertEqual(self.run_cli().returncode, 0)
+        self.assertEqual((self.out / "starter/devcontainer.json").read_bytes(), b'{"a": 1}\r\n')
+        self.assertEqual((self.out / "starter/pic.png").read_bytes(), PNG)
+        rows = self.rows()
+        self.assertEqual(rows["starter/devcontainer.json"][1], "original")
+        self.assertEqual(rows["starter/pic.png"][0], sha(PNG))
+
+    def test_a_missing_starter_is_refused(self):
+        done = self.run_cli("--starter", "docs/iterations/nostarter")
+        self.assertEqual(done.returncode, 2)
+        self.assertIn("nostarter", done.stderr)
+        self.assertFalse(self.out.exists())
+
+    def test_the_skills_are_copied_whole_and_untouched(self):
+        self.assertEqual(self.run_cli().returncode, 0)
+        for name in ("plant-a-seed", "drop-a-seed", "ledger-review"):
+            self.assertEqual((self.out / "skills" / name / "SKILL.md").read_bytes(),
+                             f"---\nname: {name}\n---\nBody.\r\n".encode())
+        self.assertEqual((self.out / "skills/drop-a-seed/journalist.md").read_bytes(), PNG)
+        rows = self.rows()
+        self.assertEqual(rows["skills/drop-a-seed/journalist.md"], (sha(PNG), "original"))
+        self.assertEqual(rows["skills/ledger-review/SKILL.md"][1], "original")
+
+    def test_the_skills_list_can_be_changed(self):
+        self.assertEqual(self.run_cli("--skills", "ledger-review").returncode, 0)
+        self.assertFalse((self.out / "skills/plant-a-seed").exists())
+        self.assertTrue((self.out / "skills/ledger-review/SKILL.md").is_file())
+
+    def test_a_missing_skill_is_refused(self):
+        done = self.run_cli("--skills", "plant-a-seed,nope")
+        self.assertEqual(done.returncode, 2)
+        self.assertIn("nope", done.stderr)
+        self.assertFalse(self.out.exists())
 
     def test_usage(self):
         self.assertEqual(h.run(["package"], self.root, self.env).returncode, 2)

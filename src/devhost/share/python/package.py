@@ -15,19 +15,30 @@ Options (paths are relative to the repository root unless absolute):
     --foundation F  manifest of the foundation files: one repository-relative path per line,
                     `#` comments; a line `!path` marks an original, copied untouched
                     (default docs/iterations/foundation.txt)
+    --readme FILE   the seed's README, copied untouched to the package root as README.md
+                    (default docs/iterations/seed/README.md)
+    --starter DIR   the starter folder, copied untouched to starter/
+                    (default docs/iterations/starter)
+    --skills LIST   comma-separated skill names whose folders .claude/skills/<name>/ are copied
+                    whole and untouched to skills/<name>/
+                    (default plant-a-seed,drop-a-seed,ledger-review)
     --out DIR       where the package is written; must be missing or empty
                     (default docs/iterations/export)
     --date D        YYYY-MM-DD (default today)
 
-The package holds `papers/` (every paper received, byte for byte, the papers kept here, the new
-paper), `foundation/<repository path>` (the manifest's files) and `PACKAGE.md`: iteration, date,
+The package is a seed: a plain folder holding `README.md` (the entry point an agent is pointed
+at), `starter/` (what the next place begins with), `skills/` (`plant-a-seed`, which imports it,
+`drop-a-seed`, which exports the next one, and `ledger-review`), `papers/` (every paper received,
+byte for byte, the papers kept here, the new paper), `foundation/<repository path>` (the
+manifest's files) and `PACKAGE.md`: iteration, date,
 every file with its sha256 and kind (paper, original, derived, foundation), and the instruction
 that the folder is the source of the next export and must not be deleted. A Markdown file the
 script writes gets front matter (iteration, date, sources) only where it has none; a file it
 only copies stays as it was: papers received and originals (non-Markdown, or marked `!`) are
 never touched, a Markdown foundation file that gains front matter is `derived`.
 
-Refuses, exit 2, writing nothing: a manifest or listed file that is missing, an output folder that
+Refuses, exit 2, writing nothing: a missing README, starter folder or skill folder, a manifest or
+listed file that is missing, an output folder that
 is not empty, a received package without a `PACKAGE.md`, a received paper that is missing or whose
 sha256 differs from its index, two different files for one paper name.
 """
@@ -45,7 +56,9 @@ from devhost_common import repo_root, today  # noqa: E402
 INDEX = "PACKAGE.md"
 ROW = re.compile(r"^\|\s*`([^`]+)`\s*\|\s*([0-9a-f]{64})\s*\|\s*(\w+)\s*\|\s*$")
 DEFAULTS = {"received": "docs/iterations/package", "papers": "docs/iterations/papers",
-            "foundation": "docs/iterations/foundation.txt", "out": "docs/iterations/export"}
+            "foundation": "docs/iterations/foundation.txt", "readme": "docs/iterations/seed/README.md",
+            "starter": "docs/iterations/starter",
+            "skills": "plant-a-seed,drop-a-seed,ledger-review", "out": "docs/iterations/export"}
 
 
 class Refused(Exception):
@@ -123,13 +136,23 @@ def received_papers(folder: Path) -> list[tuple[str, bytes]]:
 
 
 def assemble(root: Path, iteration: str, paper: Path, received: Path, papers_dir: Path, manifest: Path,
-             out: Path, date: str) -> list[tuple[str, str, str]]:
+             out: Path, date: str, readme: Path, starter: Path, skills: list[str]) -> list[tuple[str, str, str]]:
     """Check everything, then write the package; returns (path, sha256, kind) per file."""
     if out.exists() and (not out.is_dir() or any(out.iterdir())):
         raise Refused(f"the output folder {out} is not empty: the package is written into a fresh folder")
     if not paper.is_file():
         raise Refused(f"the new paper {paper} is missing")
     foundation = parse_manifest(root, manifest)
+    if not readme.is_file():
+        raise Refused(f"the seed README {readme} is missing")
+    if not starter.is_dir():
+        raise Refused(f"the starter folder {starter} is missing")
+    skill_files: list[tuple[str, Path]] = []
+    for name in skills:
+        folder = root / ".claude" / "skills" / name
+        if not folder.is_dir():
+            raise Refused(f"the skill {name} is missing: there is no folder {folder}")
+        skill_files += [(f"skills/{name}/{p.relative_to(folder).as_posix()}", p) for p in sorted(folder.rglob("*")) if p.is_file()]
     plan: dict[str, tuple[bytes, str]] = {}  # package path -> (bytes, kind)
 
     def put_paper(name: str, data: bytes) -> None:
@@ -161,6 +184,12 @@ def assemble(root: Path, iteration: str, paper: Path, received: Path, papers_dir
             kind = "original"
         plan[f"foundation/{name}"] = (data, kind)
 
+    plan["README.md"] = (readme.read_bytes(), "original")
+    for path in sorted(p for p in starter.rglob("*") if p.is_file()):
+        plan[f"starter/{path.relative_to(starter).as_posix()}"] = (path.read_bytes(), "original")
+    for key, path in skill_files:
+        plan[key] = (path.read_bytes(), "original")
+
     out.mkdir(parents=True, exist_ok=True)
     files: list[tuple[str, str, str]] = []
     for key in sorted(plan):
@@ -191,9 +220,12 @@ def index_text(iteration: str, date: str, files: list[tuple[str, str, str]], rec
         "",
         f"Exported {date}. Papers carry over unchanged; the foundation is the newest, merged, never nested.",
         "",
+        "This is a seed. Start at `README.md`; `starter/` is what the new place begins with, `skills/` holds the skills "
+        "that import (`plant-a-seed`) and export (`drop-a-seed`) it.",
+        "",
         "**Keep this folder in the repository. It is the source of the next export and must not be deleted.**",
         "",
-        "Kinds: `paper` (carried or new, untouched except front matter on the new one), `original` (copied untouched), "
+        "Kinds: `paper` (carried or new, untouched except front matter on the new one), `original` (copied untouched: the README, the starter, the skills), "
         "`derived` (a Markdown file that gained front matter), `foundation` (copied as it was).",
         "",
         "| File | sha256 | Kind |",
@@ -218,7 +250,8 @@ def main(argv: list[str]) -> int:
     try:
         files = assemble(root, args.iteration, resolve(root, args.paper), resolve(root, args.received),
                          resolve(root, args.papers), resolve(root, args.foundation), resolve(root, args.out),
-                         args.date or today())
+                         args.date or today(), resolve(root, args.readme), resolve(root, args.starter),
+                         [n.strip() for n in args.skills.split(",") if n.strip()])
     except Refused as exc:
         print(f"devhost-package: {exc}", file=sys.stderr)
         return 2
