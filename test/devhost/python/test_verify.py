@@ -123,6 +123,16 @@ class Verify(h.RepoCase):
         with h.devhost_env(self.root):
             self.assertEqual(self.v.forbidden_words(self.root), ["notes.md:2: forbidden word #1"], "the redact names alone")
 
+    def test_a_file_the_operator_approved_may_carry_names(self):
+        h.write(self.root / "paper.md", "By Someone Special.\n")
+        h.write(self.root / "notes.md", "Someone Special again.\n")
+        h.write(self.root / ".devhost" / "redact-names.txt", "Someone Special\n")
+        h.write(self.root / ".devhost" / "name-exceptions.txt", "# the paper, with its byline\npaper.md\n")
+        h.write(self.root / ".gitignore", ".devhost/redact-names.txt\n")
+        h.track(self.root)
+        with h.devhost_env(self.root):
+            self.assertEqual(self.v.forbidden_words(self.root), ["notes.md:1: forbidden word #1"])
+
     def test_adr_shape_numbering_and_index(self):
         folder = self.root / "docs" / "adr"
         h.write(folder / "0000-template.md", "# ADR-NNNN: Title\n")

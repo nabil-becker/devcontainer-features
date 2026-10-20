@@ -42,11 +42,15 @@ def back_runs(month: str) -> list[dict]:
     return runs
 
 
+NO_CORRECTION = re.compile(r"^\s*none[\s.,;:!]*$", re.I)  # `Corrects: none` says the entry corrects nothing
+
+
 def corrections(root: Path, month: str) -> int:
     path = ledger_dir(root) / f"{month}.md"
     if not path.exists():
         return 0
-    return len(re.findall(r"^- \*\*Corrects:\*\*", path.read_text(encoding="utf-8", errors="replace"), re.M))
+    text = path.read_text(encoding="utf-8", errors="replace")
+    return sum(1 for v in re.findall(r"^- \*\*Corrects:\*\*(.*)$", text, re.M) if not NO_CORRECTION.match(v))
 
 
 def m(x: float | None) -> str:

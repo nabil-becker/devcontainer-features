@@ -5,7 +5,8 @@ Usage: briefing.py [--json] [--no-refresh]
 
 Says, in a few sentences: the ledger entries since the last review and whether a review is due
 (five or more), what the backs left pending, how many backlog items and decisions for the
-Operator are open, any night-shift report not yet reviewed, and the month-to-date agent spend
+Operator are open, a warning when src/devhost is newer than the installed devhost
+(`$DEVHOST_SHARE/VERSION`), any night-shift report not yet reviewed, and the month-to-date agent spend
 on this machine. Refreshes this month's cost report (`costs-YYYY-MM-<engineer>.md` in the ledger
 directory) on the way, unless --no-refresh. The SessionStart hook prints it as --json, for the
 inter's context and a one-line message; the entrypoint prints the text when stdin is a terminal.
@@ -13,6 +14,7 @@ inter's context and a one-line message; the entrypoint prints the text when stdi
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -26,6 +28,7 @@ ENTRY = re.compile(r"^### (\d{4}-\d{2}-\d{2})", re.M)
 REVIEW = re.compile(r"^## Review (\S+)", re.M)
 FRICTION = re.compile(r"^- \*\*Friction:\*\*\s*(.*)$", re.M)
 REVIEW_DUE_AT = 5
+DEFAULT_SHARE = "/usr/local/share/devhost"  # where install.sh puts the share/ tree and its VERSION file
 
 
 def ledger_status(root: Path) -> list[str]:
@@ -82,9 +85,28 @@ def night_shift_status(root: Path) -> list[str]:
     return [f"Night-shift report not yet reviewed: {', '.join(waiting)} (say 'morning report')."] if waiting else []
 
 
+def _version(text: str) -> tuple[int, ...] | None:
+    m = re.match(r"^\s*v?(\d+(?:\.\d+)*)", text)
+    return tuple(int(x) for x in m.group(1).split(".")) if m else None
+
+
+def stale_install(root: Path) -> list[str]:
+    """One line when src/devhost is newer than the installed devhost (the backs run the installed one)."""
+    share = Path(os.environ.get("DEVHOST_SHARE", "").strip() or DEFAULT_SHARE)
+    try:
+        installed = (share / "VERSION").read_text(encoding="utf-8").strip()
+        source = str(json.loads((root / "src" / "devhost" / "devcontainer-feature.json").read_text(encoding="utf-8"))["version"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return []
+    have, want = _version(installed), _version(source)
+    if have is None or want is None or want <= have:
+        return []
+    return [f"devhost {installed} is installed, src has {source}: rebuild for the fixes to take effect."]
+
+
 def briefing(root: Path, refresh: bool = True) -> str:
     this_month = month()
-    lines = ledger_status(root) + pending(root) + backlog_status(root) + night_shift_status(root)
+    lines = ledger_status(root) + stale_install(root) + pending(root) + backlog_status(root) + night_shift_status(root)
     try:
         if refresh:
             report.write_report(root, this_month)
