@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Agentic shared experience session",
+  "description": "Proposed agent-neutral session-state envelope. Storage and agent adapters are not implemented.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "id",
+    "agent",
+    "workspace",
+    "createdAt",
+    "updatedAt",
+    "status",
+    "state"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1",
+      "description": "Contract version, independent of the future Dev Container Feature version."
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque, stable identifier unique within the shared store; not a filesystem path."
+    },
+    "agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Identifier for the originating agent or adapter."
+        },
+        "sessionId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional originating tool's session identifier, retained for provenance."
+        }
+      }
+    },
+    "workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Stable project identifier independent of host or container checkout paths."
+        }
+      }
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339 creation timestamp."
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339 timestamp of the most recent state update; must not precede createdAt."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["active", "paused", "completed", "failed"]
+    },
+    "state": {
+      "type": "object",
+      "description": "JSON-compatible session checkpoint. Agent-specific payloads remain opaque in this initial contract."
+    },
+    "extensions": {
+      "type": "object",
+      "description": "Optional namespaced metadata for adapters; not part of the normalized core."
+    }
+  }
+}
