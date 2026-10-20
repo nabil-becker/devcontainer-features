@@ -171,6 +171,35 @@ function Resolve-DockerPath {
     throw 'docker is not on PATH; install a Docker-compatible engine or set DEVCONTAINER_DOCKER_PATH.'
 }
 
+function Stop-Devcontainer {
+    <#
+    .SYNOPSIS
+        Stops the running container(s) of a workspace through the configured
+        engine. The CLI has no stop: the container is found by the
+        devcontainer.local_folder label `devcontainer up` puts on it.
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [Parameter(Mandatory)][string]$WorkspaceFolder,
+        [string]$DockerPath
+    )
+
+    $WorkspaceFolder = (Resolve-Path $WorkspaceFolder).Path
+    $engine = Resolve-DockerPath -DockerPath $DockerPath
+    if ($engine) { Write-Host "Container engine: $engine" } else { $engine = 'docker' }
+    $ids = @(& $engine ps -q --filter "label=devcontainer.local_folder=$WorkspaceFolder")
+    if ($LASTEXITCODE -ne 0) { throw "$engine could not list containers (exit code $LASTEXITCODE)." }
+    $ids = @($ids | Where-Object { $_ })
+    if ($ids.Count -eq 0) {
+        Write-Host "No running devcontainer for $WorkspaceFolder."
+        return
+    }
+    if ($PSCmdlet.ShouldProcess($WorkspaceFolder, "Stop container(s) $($ids -join ' ')")) {
+        & $engine stop @ids
+    }
+    if ($LASTEXITCODE -ne 0) { throw "$engine stop failed with exit code $LASTEXITCODE." }
+}
+
 function Invoke-DevcontainerCli {
     [CmdletBinding()]
     param(
@@ -182,6 +211,11 @@ function Invoke-DevcontainerCli {
         [string]$CliVersion,
         [string]$DockerPath
     )
+
+    if ($Subcommand -eq 'stop') {
+        Stop-Devcontainer -WorkspaceFolder $WorkspaceFolder -DockerPath $DockerPath
+        return
+    }
 
     $WorkspaceFolder = (Resolve-Path $WorkspaceFolder).Path
     $cliArgs = @($Subcommand)
@@ -231,4 +265,4 @@ function Invoke-DevcontainerCli {
     }
 }
 
-Export-ModuleMember -Function Get-SettingOrEnv, ConvertFrom-TaskCliArgString, Get-PortableNodeDir, Get-DevcontainersCliEntrypoint, Remove-DevcontainersCli, Resolve-DockerPath, Invoke-DevcontainerCli
+Export-ModuleMember -Function Get-SettingOrEnv, ConvertFrom-TaskCliArgString, Get-PortableNodeDir, Get-DevcontainersCliEntrypoint, Remove-DevcontainersCli, Resolve-DockerPath, Stop-Devcontainer, Invoke-DevcontainerCli

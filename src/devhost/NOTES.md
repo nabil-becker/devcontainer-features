@@ -67,6 +67,10 @@ All four: one `claude -p --model <model> --settings '{"disableAllHooks": true}' 
 
 Publishing is outward-facing: the skill runs only on the Operator's ask, never in a night shift, and an artifact is private until the Operator shares it. `task docs` regenerates this Feature's README from this file.
 
+## Shutdown
+
+The dev container specification has no stop hook, so shutdown is three pieces (ADR 0015). `devhost-shutdown-check` (`share/python/shutdown.py`, `task devhost:shutdown-check`) tests the rules that can be written down and prints one `NOT READY` line per finding, exit 1; exit 0 and `ready to stop` when none fails. Its rules: the working tree has no changed or untracked file (ignored files do not count); the current branch has an upstream and no commit it lacks (no upstream, or a detached HEAD, is a finding); no `$DEVHOST_STATE/<job>/lock` is held (tried with `flock` without blocking, never created; the tester's lock reads as a test run in progress); no `<job>/pending-<session id>` file is non-empty (a stretch waiting to be logged); and the newest dated report in `DEVHOST_NIGHT_SHIFT_DIR` is not mid-plan (its `Result:` line is missing or has no `Ended`, or an item still reads `: planned`). Stashes are listed as notes. A new back or lock needs a rule here. The skills `shutdown-devhost` (close the work, run the check, wait for the backs, ask about a night shift, name the stop command, report) and `restart-devhost` ship with `devhost-init`; `task devcontainer:stop` (the devcontainer-cli Feature's host tasks) runs the check inside the container before it stops it.
+
 ## Settings
 
 Every script reads the same variables; a repository overrides them in `containerEnv` (or `.devcontainer/.env`), none needs a rebuild. Paths are relative to the root unless absolute.
@@ -105,5 +109,5 @@ Every script reads the same variables; a repository overrides them in `container
 
 - `ghcr.io/nabil-becker/devcontainer-features/claude-code`: `claude` itself and `claude-host`, which starts or resumes the host session by UUID (`HOST_SESSION`); the backs run the same `claude` headless. The session transcripts under `CLAUDE_CONFIG_DIR` are what the condenser and the cost tools read.
 - `ghcr.io/nabil-becker/devcontainer-features/git`: its wrapper keeps `GIT_DIR`/`GIT_WORK_TREE` out of linked worktrees and of test fixtures, so a tester run or a con's worktree never commits onto the main checkout (a mistake the ledger of the original recorded).
-- `ghcr.io/nabil-becker/devcontainer-features/go-task`: `task devhost:*` (version, setup, log, jobs:state, briefing, report, costs, adr, package, verify, init), and `task test` as the tester's default command.
+- `ghcr.io/nabil-becker/devcontainer-features/go-task`: `task devhost:*` (version, setup, log, jobs:state, briefing, report, costs, adr, package, verify, shutdown-check, init), and `task test` as the tester's default command.
 - `ghcr.io/devcontainers/features/python` or the base image's `python3` (standard library only; apt installs it when absent).

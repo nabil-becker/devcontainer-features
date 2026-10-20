@@ -46,6 +46,8 @@ FILES = {
     "claude/skills/night-shift/SKILL.md": ".claude/skills/night-shift/SKILL.md",
     "claude/skills/new-adr/SKILL.md": ".claude/skills/new-adr/SKILL.md",
     "claude/skills/publish-site/SKILL.md": ".claude/skills/publish-site/SKILL.md",
+    "claude/skills/shutdown-devhost/SKILL.md": ".claude/skills/shutdown-devhost/SKILL.md",
+    "claude/skills/restart-devhost/SKILL.md": ".claude/skills/restart-devhost/SKILL.md",
     "devhost/gitignore": ".devhost/.gitignore",
     "devhost/CLAUDE.devhost.md": ".devhost/CLAUDE.devhost.md",
 }

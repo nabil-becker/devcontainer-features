@@ -147,6 +147,17 @@ installed globally on any host. Its host settings are
 `DEVCONTAINER_DOCKER_PATH`, `DEVCONTAINER_NODE_VERSION` and
 `DEVCONTAINER_CLI_VERSION`.
 
+`task devcontainer:stop` is the one host task that is not a CLI subcommand
+(the CLI has none): the `run stop` mode (and `Stop-Devcontainer` in the
+PowerShell module) finds the workspace's container by the
+`devcontainer.local_folder` label that `devcontainer up` sets, and stops it
+through the configured engine (`DEVCONTAINER_DOCKER_PATH`). Before that the
+task runs `devhost-shutdown-check` inside the container (the devhost Feature,
+ADR 0015) and refuses to stop when it fails; `FORCE=1` skips the check. The
+engine's `ps --filter label=...` and `stop` are assumed to behave as
+Docker's; this is not tested against `wslc` or Podman. Stopping the container
+any other way is not guarded.
+
 ## Why this one exists
 
 The Dev Container CLI is published by the Dev Containers project as an npm

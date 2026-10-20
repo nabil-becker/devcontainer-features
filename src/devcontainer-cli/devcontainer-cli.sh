@@ -13,6 +13,8 @@
 #       devcontainer-features - and report the container engine.
 #   devcontainer-cli.sh run <subcommand> --workspace-folder <dir> [--cmd-b64 <b64>] [-- <cli args...>]
 #       Host: run one CLI subcommand (what every devcontainer:* task does).
+#       `stop` is not a CLI subcommand: it stops the workspace's containers
+#       (found by their devcontainer.local_folder label) through the engine.
 #
 # Host settings, same names as the PowerShell flavour and the Taskfile:
 #   DEVCONTAINER_DOCKER_PATH   docker-compatible CLI for --docker-path (name
@@ -175,6 +177,21 @@ mode_init() {
   echo "devcontainer CLI : $("${cli[@]}" --version) (${cli[*]})"
 }
 
+# The CLI has no stop: find the workspace's container by the label `devcontainer up`
+# puts on it and stop it through the same engine.
+mode_stop() {
+  local workspace="$1" engine ids
+  engine="$(resolve_docker_path)"; engine="${engine:-docker}"
+  ids="$("$engine" ps -q --filter "label=devcontainer.local_folder=$workspace")" || die "$engine could not list containers."
+  if [ -z "$ids" ]; then
+    echo "No running devcontainer for $workspace."
+    return 0
+  fi
+  echo "Container engine: $engine" >&2
+  # shellcheck disable=SC2086  # one id per line, word splitting intended
+  "$engine" stop $ids
+}
+
 mode_run() {
   local subcommand="${1:-}"; shift || true
   [ -n "$subcommand" ] || die 'run: missing subcommand'
@@ -187,6 +204,12 @@ mode_run() {
       *) break ;;
     esac
   done
+
+  if [ "$subcommand" = stop ]; then
+    [ -n "$workspace" ] || die 'run: --workspace-folder is required for stop'
+    mode_stop "$(cd "$workspace" && pwd)"
+    return
+  fi
 
   local -a args=("$subcommand")
   case "$subcommand" in

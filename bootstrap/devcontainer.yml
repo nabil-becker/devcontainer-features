@@ -120,6 +120,16 @@ tasks:
           SUBCOMMAND: up
           ARGS: '{{.CLI_ARGS}}'
 
+  stop:
+    desc: 'Stop the devcontainer for {{.WORKSPACE_FOLDER}} through the configured engine, after running the shutdown check inside it (devhost-shutdown-check: tree clean and pushed, no back running or pending, no night shift mid-plan). A failing check refuses the stop; FORCE=1 stops anyway. Only this route is guarded: stopping the container with the engine directly is not (see the shutdown-devhost skill).'
+    vars:
+      FORCE: '{{.FORCE | default ""}}'
+    cmds:
+      - cmd: '{{if ._IN_CONTAINER}}echo "devcontainer:stop runs from the host: this Task is inside the container." >&2; exit 1{{else if .FORCE}}echo "FORCE set: skipping the shutdown check."{{else}}task {{regexReplaceAll ":[^:]+$" .TASK ""}}:exec CMD=devhost-shutdown-check || { echo "Not stopping: the shutdown check failed. Fix the findings (shutdown-devhost skill) or run again with FORCE=1." >&2; exit 1; }{{end}}'
+      - task: cli
+        vars:
+          SUBCOMMAND: stop
+
   rebuild:
     desc: 'Recreate the devcontainer from scratch (devcontainer up --remove-existing-container --build-no-cache). VS Code windows attached to the old container must reload.'
     cmds:
