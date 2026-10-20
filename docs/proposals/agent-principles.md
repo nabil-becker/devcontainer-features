@@ -1,6 +1,6 @@
 # Proposal: the principles of how agents work here
 
-Status: draft, for the Operator to decide.
+Status: accepted by the Operator 2026-10-19 as fourteen principles; superseded on 2026-10-20 by the five generic principles in `docs/principles/agents.md` (ADR 0013). The fourteen stay here as the learnings that inform the five.
 
 These principles say how agents work in this repository. Until now they lived in the Operator's head, in briefs and in lessons scattered through the ledger. They are learnings for the Agentic Delivery OS (`docs/iterations.md`): the foundation that each project iteration defines further. This is the third iteration.
 

@@ -1,6 +1,6 @@
 # Feature principles
 
-Status: draft, for the Operator to decide.
+Status: accepted by the Operator 2026-10-19; the binding text is `docs/principles/non-functional-requirements.md` (ADR 0011), where the ids were renamed from FP-n to NFR-n on 2026-10-20. This proposal keeps the old FP ids as history.
 
 These are the non-functional requirements every Feature in this collection meets. Today they are implicit, spread over README, CONTRIBUTING and the code. They are what sets these Features apart from other Features for the same tool: this collection has its own Claude Code Feature because the others do not meet them.
 
@@ -183,7 +183,7 @@ Nothing in the repo offers an MCP server today. A grep of `src/`, `.devhost/` an
 
 ## Adoption
 
-1. **`docs/principles/features.md`**: the accepted text of FP-1 to FP-10. The proposal stays here with its status.
+1. **`docs/principles/non-functional-requirements.md`**: the accepted text of FP-1 to FP-10. The proposal stays here with its status.
 2. **An ADR**: records that the principles bind, and that a Feature failing one needs a written exception in its NOTES.
 3. **Lint rules** for the automatable ones: FP-2, FP-3's `pinned_version`, FP-8's headings and task names, FP-10. First FP-2, as it already holds for 15 of 16.
 4. **A conformance table per Feature**: backlog item `feature-conformance`, one list per Feature with pass, fail or not applicable, and the audit's fixes folded in.

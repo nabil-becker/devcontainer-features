@@ -1,6 +1,6 @@
 {
   "id": "devhost",
-  "version": "1.2.4",
+  "version": "1.4.0",
   "name": "Devhost (host session, backs, ledger)",
   "description": "The way of working of this collection's consumer repositories as an installable Feature: one host Claude Code session per repository (claude-host, from the claude-code Feature), cons (sub-agents) and backs - background agents that run from Claude Code's Stop and SubagentStop hooks after every turn and keep the ledger (scribe), the backlog (secretary) and the lexicon and ADRs (librarian) without the person waiting, plus a model-free tester that runs the suite when code changed. Installs devhost-run-job (the runner), the four jobs with their briefs and guards, the name guard (devhost-redact), the transcript condenser (devhost-condense), the briefing, cost report, ADR, verify and init tools, a named volume at DEVHOST_STATE (/var/lib/devcontainer-features/devhost) for the jobs' offsets, locks, logs and metrics, a post-create hook (devhost-setup) that makes it usable and reports whether the repository is wired, and the Feature Taskfile (task devhost:init scaffolds a repository). Every path and model is a DEVHOST_* / <JOB>_MODEL variable with a default. Needs python3 (standard library only; installed with apt when missing) and claude on PATH.",
   "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/devhost",
