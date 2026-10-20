@@ -276,7 +276,7 @@ in `devcontainers/devcontainers.github.io` adding:
 
 ```yaml
 - name: Dev Container Features by nabil-becker
-  maintainer: Nabil Becker
+  maintainer: nabil-becker
   contact: https://github.com/nabil-becker/devcontainer-features/issues
   repository: https://github.com/nabil-becker/devcontainer-features
   ociReference: ghcr.io/nabil-becker/devcontainer-features
