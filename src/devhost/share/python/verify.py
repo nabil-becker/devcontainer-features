@@ -24,6 +24,8 @@ word itself), and needs only git and python3:
 - `skills`: every `.claude/skills/<dir>/SKILL.md` has frontmatter `name: <dir>` and a description.
 - `hook_modes`: every tracked file in the configured hooks path (`core.hooksPath`) has index mode
   100755; a 100644 hook never runs on Linux (`core.fileMode=false` on Windows hides the change).
+- `conflict_markers`: no tracked text file has a line starting with a merge-conflict marker
+  (`<<<<<<< ` or `>>>>>>> `), which a stash pop or a merge can leave behind unnoticed.
 - `model`: quiet without `docs/model/ontology.toml`; with it, the TOML, ids, types, relations, theme
   keys, the lexicon's bold terms against the ids' `term`s and the Mermaid node ids of
   `docs/model/*.md` are checked (needs Python 3.11 for tomllib).
@@ -199,6 +201,18 @@ def forbidden_words(root: Path) -> list[str]:
             for index, word in enumerate(words, 1):
                 if word in low:
                     findings.append(f"{where}:{number}: forbidden word #{index}")
+    return findings
+
+
+CONFLICT_MARKER = re.compile(r"^(<{7}|>{7})( |$)")
+
+
+def conflict_markers(root: Path) -> list[str]:
+    findings = []
+    for path in text_files(root):
+        for number, line in enumerate(read_text(path).splitlines(), 1):
+            if CONFLICT_MARKER.match(line):
+                findings.append(f"{rel(root, path)}:{number}: a merge-conflict marker; resolve the conflict")
     return findings
 
 
@@ -420,7 +434,7 @@ def model(root: Path) -> list[str]:
     return findings
 
 
-GUARDS = (ledger_append_only, ledger_shape, secrets, forbidden_words, adrs, taskfile, skills, hook_modes, model)
+GUARDS = (ledger_append_only, ledger_shape, secrets, forbidden_words, conflict_markers, adrs, taskfile, skills, hook_modes, model)
 
 
 def run(root: Path) -> tuple[dict[str, list[str]], list[str]]:

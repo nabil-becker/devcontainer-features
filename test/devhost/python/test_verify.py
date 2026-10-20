@@ -205,6 +205,23 @@ class Verify(h.RepoCase):
         results, _ = self.v.run(self.root)
         self.assertEqual({k: v for k, v in results.items() if v}, {})
 
+    def test_conflict_markers_are_refused_at_the_start_of_a_line_only(self):
+        lt, gt = "<" * 7, ">" * 7
+        h.write(self.root / "docs" / "notes.md", f"text\n{lt} Updated upstream\nmine\n=======\ntheirs\n{gt} Stashed changes\n")
+        h.write(self.root / "docs" / "about.md", f"A marker quoted inline, `{lt}`, is fine.\n")
+        h.track(self.root)
+        self.assertEqual(self.v.conflict_markers(self.root), [
+            "docs/notes.md:2: a merge-conflict marker; resolve the conflict",
+            "docs/notes.md:6: a merge-conflict marker; resolve the conflict",
+        ])
+
+    def test_the_entrypoint_runs_the_source_guards_in_the_devhost_repository(self):
+        import subprocess
+        entry = h.PYTHON_DIR.parent / "bin" / "entrypoints" / "verify"
+        h.write(self.root / "src" / "devhost" / "share" / "python" / "verify.py", "print('source guards')\n")
+        done = subprocess.run(["bash", str(entry)], cwd=str(self.root), capture_output=True, text=True)
+        self.assertEqual(done.stdout.strip(), "source guards", done.stderr)
+
 
 ONTOLOGY = """types = ["role", "record"]
 predicates = ["keeps"]

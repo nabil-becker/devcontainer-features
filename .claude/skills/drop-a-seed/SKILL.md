@@ -18,7 +18,9 @@ the Operator decides and trims.
    later one `Corrects:`, keep the correction in the story), each `## Review` section,
    `docs/night-shift/`, `docs/adr/`, the cost reports `docs/ledger/costs-*.md` (`task devhost:report`
    rebuilds one), `git log`. Then the seed received: `docs/iterations/package/` (its `README.md`,
-   its papers), and `docs/proposals/iteration-package.md`.
+   its papers), and `docs/proposals/iteration-package.md`. A subagent that reads for you writes
+   its brief to `docs/iterations/records-brief-<N>.md`, in the repository: a scratchpad does not
+   survive a rebuild, and iteration 3 lost its first outline and the Operator's answers to it that way.
 2. **The closing interview.** Ask only what the records cannot answer, and say which blank each
    question fills. Short numbered rounds (about ten questions, a recommendation on each, answerable
    as "1 yes, 3 no"); explain every term in the question, the Operator should not need the lexicon;
@@ -37,7 +39,8 @@ the Operator decides and trims.
    committed.
 3. **Name the iteration** with the Operator: its number and, if it has one, its short name.
 4. **The paper.** Propose an outline first (sections in story order, the records each draws on, the
-   gaps you already see) and wait for the Operator. Then, section by section, hand
+   gaps you already see), saved to `docs/iterations/iteration-<N>-outline.md` (not under `papers/`,
+   which the package carries forward), and wait for the Operator. Then, section by section, hand
    [journalist.md](journalist.md) together with the records and the interview to a writing
    subagent; show the Operator each section and ask what is wrong, missing or unclear; revise
    from the answer. The file is `docs/iterations/papers/iteration-<N>.md`. Check again at the end

@@ -1,3 +1,9 @@
 #!/usr/bin/env bash
-# devhost-verify: runs the devhost's verify.py (installed under /usr/local/share/devhost).
+# devhost-verify: runs the devhost's verify.py (installed under /usr/local/share/devhost). In a
+# repository that carries the devhost's own source (src/devhost, this collection), the source
+# guards run instead, so a guard changed on the branch is the one that checks it.
+root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+if [ -n "$root" ] && [ -f "$root/src/devhost/share/python/verify.py" ]; then
+  exec python3 "$root/src/devhost/share/python/verify.py" "$@"
+fi
 exec python3 /usr/local/share/devhost/python/verify.py "$@"
