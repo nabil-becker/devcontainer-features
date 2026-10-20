@@ -109,3 +109,9 @@ tasks:
       PRS: '{{.PRS | default ""}}'
     cmds:
       - devhost-site {{if .OUT}}--out {{.OUT}}{{end}} {{if .PRS}}--prs{{end}}
+
+  shutdown-check:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Check the devhost is safe to stop: working tree clean and pushed, no back running or holding a stretch to log, no tester run, no night shift mid-plan; lists stashes and untracked files. One line per finding, exit 1 when not ready. devcontainer:stop runs it first.'
+    cmds:
+      - devhost-shutdown-check
