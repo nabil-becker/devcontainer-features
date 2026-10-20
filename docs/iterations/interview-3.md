@@ -143,3 +143,45 @@ What each answered:
 - **22.** The outline (`docs/iterations/papers/iteration-3-outline.md`) is approved as proposed.
 - **23.** An untracked file blocks a shutdown in `devhost-shutdown-check`; it is not only a note.
 - **24.** `devhost-package`'s default skill list includes `shutdown-devhost` and `restart-devhost`.
+
+## Round 4, 2026-10-20: review of the paper's sections 1 to 4
+
+Questions put after the first draft of sections 1 to 4. The Operator's answers, word for word:
+
+> 25 - y
+> 26 - I would say yes, because those items were us refining. The King Author theme showed a need to begin to seperate out the concepts because having the ledger in old english would have been useless and painful
+> 27 - Yes
+> 28 - Yes
+> 29 - Yes
+
+What each answered:
+
+- **25.** The paper keeps the Operator's story for 2026-10-10 to 10-15 (the work was in the other
+  two projects) and mentions PR #10, opened 10-15, as the preparation that led into 10-16.
+- **26.** The inward turn of 2026-10-16 was planned, as refining: the Arthurian theme showed the
+  need to separate the concepts, because a ledger in old English would have been useless and
+  painful (so the theme became a layer, not a rename: ADR 0004).
+- **27.** The third report of work done that was not is the scribe's mistake, not a con's.
+- **28.** The paper gives the two partial 2026-10-16 cost figures as a marked guess and leaves out
+  "$65.28 session to date"; the rest is not available at the time of writing.
+- **29.** Section 4 is split into "Building the ground" and "The first night shift and review".
+
+## Round 5, 2026-10-20: the ontology guard, release timing, planned or drift, sections 6 to 9
+
+The Operator's answer, word for word, to questions 30 to 35:
+
+> Yes to all
+
+What it answered:
+
+- **30.** The ontology guard (branch `devhost/ontology-guard`, never merged; deleted in error on
+  2026-10-20 and restored) is brought up to date with `main` and opened as a pull request, a devhost
+  minor bump after the seed.
+- **31.** `chore/night-shift-2026-10-17` is deleted again: its content reached `main`.
+- **32.** The paper says the Features merged first on 2026-10-16 but were published only on 10-20,
+  so the other projects could reference them from 10-20.
+- **33.** The paper gives the Operator's account (planned, as refining) and the line in
+  `docs/iterations.md` as the rule written afterwards.
+- **34.** The paper follows the Operator on cost recovery (it may still be fetched), not the ledger
+  entry that says it is lost.
+- **35.** Sections 6 to 9 stand as drafted.
