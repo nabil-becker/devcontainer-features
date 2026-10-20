@@ -23,7 +23,12 @@
     "./features/go-task": {},
     "./features/devcontainer-cli": {},
     "./features/git": {
-      "hooksPath": ".githooks"
+      "hooksPath": ".githooks",
+      // Agents (any process Claude Code starts carries CLAUDECODE) commit as
+      // the bot; the Operator's own terminal keeps their identity (ADR 0002).
+      "commitName": "devhost agent",
+      "commitEmail": "devhost-agent@noreply.invalid",
+      "commitWhenEnv": "CLAUDECODE"
     },
     "./features/gh": {},
     "./features/claude-code": {},

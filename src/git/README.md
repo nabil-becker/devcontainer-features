@@ -21,6 +21,7 @@ Augments whichever git the image already has (base image, common-utils or ghcr.i
 | hooksPath | When set, git-setup runs `git config core.hooksPath <value>` in the workspace repository at post-create (e.g. '.githooks'); empty leaves core.hooksPath alone. Override per container with GIT_SETUP_HOOKS_PATH in containerEnv. | string | - |
 | commitName | Commit identity name for agents and bots. When commitEmail is set, the git wrapper exports GIT_AUTHOR_NAME and GIT_COMMITTER_NAME with this value (default: the email) for every git invocation that has not set them, so no repository-local or global user.name decides who commits. Empty with commitEmail empty = feature off. | string | - |
 | commitEmail | Commit identity email (e.g. 'bot@noreply.invalid'). When set, the git wrapper exports GIT_AUTHOR_EMAIL and GIT_COMMITTER_EMAIL with this value for every git invocation that has not set them: environment variables beat every config level, including a repository-local user.email in a shared git dir, and `git commit -s` signs off with it. Installs the wrapper even with worktreeAware=false. Empty = identity left alone. | string | - |
+| commitWhenEnv | Apply the commit identity only to git run with this environment variable set and non-empty, e.g. 'CLAUDECODE', which Claude Code sets on every process it starts (its tools, its subagents, headless runs): agents commit as commitName/commitEmail while a person's own terminal keeps their identity. Empty = the identity applies to every git invocation. | string | - |
 
 ## Why a wrapper
 
@@ -64,6 +65,14 @@ has to touch the shared config or pass `-c` overrides. `install.sh` writes the
 values to `/usr/local/share/git-feature/identity.env`, which the wrapper
 sources (one file read per call). The wrapper is installed for this even with
 `worktreeAware: false`. Empty (the default) leaves identity alone.
+
+`commitWhenEnv` narrows it to agents: with a variable name set (for example
+`CLAUDECODE`, which Claude Code sets on every process it starts: its tool
+calls, its subagents and headless `claude -p` runs such as the devhost's
+backs), the wrapper applies the identity only when that variable is set and
+non-empty. A person's own terminal does not have it, so their commits keep the
+repository's or their global identity, while every agent commit is the bot's.
+Empty (the default) applies the identity to every git invocation, as before.
 
 Why not the alternatives: `containerEnv` in a consumer's `devcontainer.json`
 works but cannot be driven by a Feature option, so each repo would repeat four

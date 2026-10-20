@@ -41,6 +41,14 @@ values to `/usr/local/share/git-feature/identity.env`, which the wrapper
 sources (one file read per call). The wrapper is installed for this even with
 `worktreeAware: false`. Empty (the default) leaves identity alone.
 
+`commitWhenEnv` narrows it to agents: with a variable name set (for example
+`CLAUDECODE`, which Claude Code sets on every process it starts: its tool
+calls, its subagents and headless `claude -p` runs such as the devhost's
+backs), the wrapper applies the identity only when that variable is set and
+non-empty. A person's own terminal does not have it, so their commits keep the
+repository's or their global identity, while every agent commit is the bot's.
+Empty (the default) applies the identity to every git invocation, as before.
+
 Why not the alternatives: `containerEnv` in a consumer's `devcontainer.json`
 works but cannot be driven by a Feature option, so each repo would repeat four
 variables; `profile.d` reaches only login shells, missing headless agents,
