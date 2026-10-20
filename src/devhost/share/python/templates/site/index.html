@@ -1,0 +1,551 @@
+<title>Court Dashboard</title>
+<style>
+:root{
+  --bg:#ffffff;--surface:#f6f8fa;--fg:#1b1f24;--muted:#57606a;--line:#d0d7de;--accent:#0b5fd0;--code-bg:#eef1f4;
+  --ok:#1a7f37;--ok-bg:#dafbe1;--warn:#7a4f00;--warn-bg:#fff1c2;--bad:#b42318;--bad-bg:#ffe3e0;--info:#0b5fd0;--info-bg:#ddf4ff;
+  --mark:#ffe58a;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0d1117;--surface:#161b22;--fg:#e6edf3;--muted:#9aa4af;--line:#30363d;--accent:#58a6ff;--code-bg:#1b222b;
+  --ok:#56d364;--ok-bg:#12361f;--warn:#e3b341;--warn-bg:#3d2e05;--bad:#ff7b72;--bad-bg:#4a1a17;--info:#79c0ff;--info-bg:#10294a;
+  --mark:#6b5600;
+}}
+:root[data-theme="dark"]{
+  --bg:#0d1117;--surface:#161b22;--fg:#e6edf3;--muted:#9aa4af;--line:#30363d;--accent:#58a6ff;--code-bg:#1b222b;
+  --ok:#56d364;--ok-bg:#12361f;--warn:#e3b341;--warn-bg:#3d2e05;--bad:#ff7b72;--bad-bg:#4a1a17;--info:#79c0ff;--info-bg:#10294a;
+  --mark:#6b5600;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;padding-inline:16px;background:var(--bg);color:var(--fg);
+  font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;overflow-wrap:anywhere}
+#app,#top{max-width:980px;margin-inline:auto}
+a{color:var(--accent)}
+a:focus-visible,button:focus-visible,input:focus-visible,summary:focus-visible,select:focus-visible{outline:3px solid var(--accent);outline-offset:2px;border-radius:3px}
+h1,h2,h3,h4{line-height:1.25;margin:1.2em 0 .45em}
+h1{font-size:1.5em}h2{font-size:1.25em}h3{font-size:1.08em}
+p{margin:.5em 0}
+code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.9em}
+code{background:var(--code-bg);padding:.1em .3em;border-radius:3px}
+pre{background:var(--code-bg);padding:10px;border-radius:6px;overflow-x:auto;max-width:100%}
+pre code{background:none;padding:0}
+.scroll{overflow-x:auto;max-width:100%}
+table{border-collapse:collapse;min-width:0}
+th,td{border:1px solid var(--line);padding:4px 8px;text-align:left;vertical-align:top}
+.nw{white-space:nowrap}
+th{background:var(--surface)}
+.muted{color:var(--muted)}
+.small{font-size:.86em}
+mark{background:var(--mark);color:inherit;border-radius:2px}
+
+#top{padding-top:10px}
+.bar{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center}
+.brand{font-weight:700;font-size:1.1em;text-decoration:none;color:var(--fg)}
+.search{flex:1 1 200px;min-width:0}
+.search input{width:100%;min-height:40px;padding:6px 10px;font:inherit;color:var(--fg);background:var(--surface);border:1px solid var(--line);border-radius:8px}
+nav{display:flex;gap:4px;overflow-x:auto;margin-top:8px;padding-bottom:4px;border-bottom:1px solid var(--line)}
+nav a{flex:0 0 auto;min-height:40px;display:inline-flex;align-items:center;padding:0 12px;border-radius:8px;text-decoration:none;color:var(--fg)}
+nav a[aria-current="page"]{background:var(--info-bg);color:var(--info);font-weight:600}
+.built{margin:6px 0 0}
+
+.chip{display:inline-block;padding:0 8px;border-radius:10px;font-size:.78em;line-height:1.6;font-weight:600;background:var(--surface);color:var(--muted);border:1px solid var(--line);white-space:nowrap}
+.chip.ok{background:var(--ok-bg);color:var(--ok);border-color:transparent}
+.chip.warn{background:var(--warn-bg);color:var(--warn);border-color:transparent}
+.chip.bad{background:var(--bad-bg);color:var(--bad);border-color:transparent}
+.chip.info{background:var(--info-bg);color:var(--info);border-color:transparent}
+.id{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.82em;color:var(--muted)}
+
+.rows{list-style:none;margin:0;padding:0}
+.rows>li{border-bottom:1px solid var(--line)}
+.rows a{display:block;text-decoration:none;color:var(--fg)}
+.row{display:flex;gap:10px;align-items:flex-start;padding:10px 4px;min-height:44px;text-decoration:none;color:var(--fg)}
+.row:hover{background:var(--surface)}
+.row .grow{flex:1 1 auto;min-width:0}
+.row .t{font-weight:600}
+.strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin:12px 0}
+.stat{border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--surface);min-width:0}
+.stat b{display:block;font-size:1.5em;line-height:1.2}
+.stat.warn{border-color:var(--warn)}
+details.entry{border-bottom:1px solid var(--line)}
+details.entry>summary{cursor:pointer;padding:10px 4px;min-height:44px;display:flex;gap:8px;flex-wrap:wrap;align-items:baseline}
+details.entry>summary .t{font-weight:600;flex:1 1 200px;min-width:0}
+details.entry .body{padding:0 4px 12px}
+dl.fields{margin:0}
+dl.fields dt{font-weight:600;margin-top:8px;color:var(--muted);font-size:.86em;text-transform:none}
+dl.fields dd{margin:0}
+dl.fields .friction{background:var(--warn-bg);color:var(--fg);border-left:4px solid var(--warn);padding:4px 8px;border-radius:4px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0;align-items:center}
+button.f{min-height:36px;padding:0 12px;font:inherit;font-size:.9em;border:1px solid var(--line);border-radius:18px;background:var(--surface);color:var(--fg);cursor:pointer}
+button.f[aria-pressed="true"]{background:var(--info-bg);color:var(--info);border-color:var(--info);font-weight:600}
+input.filter{width:100%;max-width:420px;min-height:40px;padding:6px 10px;font:inherit;color:var(--fg);background:var(--surface);border:1px solid var(--line);border-radius:8px}
+.crumbs{margin:10px 0 0;font-size:.9em}
+.docbody img{max-width:100%}
+.docbody blockquote{margin:.6em 0;padding:.1em 12px;border-left:4px solid var(--line);color:var(--muted)}
+.toc{border:1px solid var(--line);border-radius:8px;padding:6px 12px;background:var(--surface);margin:10px 0}
+.toc summary{cursor:pointer;min-height:36px;display:flex;align-items:center}
+.toc ul{margin:0 0 6px;padding-left:18px}
+.toc a{display:inline-block;padding:3px 0}
+.mermaid{overflow-x:auto;max-width:100%;margin:.6em 0}
+.note{border:1px solid var(--warn);background:var(--warn-bg);border-radius:8px;padding:6px 10px;margin:8px 0}
+.snip{margin:2px 0 0}
+</style>
+<!--SITE-DATA-->
+<div id="top">
+  <div class="bar">
+    <a class="brand" id="brand" href="#home">Court</a>
+    <div class="search"><input id="q" type="search" placeholder="Search every doc" aria-label="Search every doc" autocomplete="off"></div>
+  </div>
+  <nav id="nav" aria-label="Sections"></nav>
+  <p class="built muted small" id="built"></p>
+</div>
+<main id="app" tabindex="-1"></main>
+<script async src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+<script async src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
+<script>
+(function () {
+"use strict";
+var D = JSON.parse(document.getElementById("site-data").textContent);
+var M = D.meta, app = document.getElementById("app"), qbox = document.getElementById("q");
+var docs = D.docs, docByPath = new Map(), docByTok = new Map();
+function tok(path) { return path.replace(/[^A-Za-z0-9._-]/g, "~"); }
+docs.forEach(function (d) { d._low = (d.title + "\n" + d.text).toLowerCase(); docByPath.set(d.path, d); docByTok.set(tok(d.path), d); });
+var NAV = [["home", "Home"], ["features", "Features"], ["backlog", "Backlog"], ["ledger", "Ledger"], ["records", "Records"], ["docs", "Docs"]];
+
+function el(tag, props) {
+  var e = document.createElement(tag), i, k, v;
+  if (props) for (k in props) {
+    v = props[k];
+    if (v == null || v === false) continue;
+    if (k === "class") e.className = v;
+    else if (k === "text") e.textContent = v;
+    else if (k.slice(0, 2) === "on") e.addEventListener(k.slice(2), v);
+    else e.setAttribute(k, v === true ? "" : v);
+  }
+  for (i = 2; i < arguments.length; i++) add(e, arguments[i]);
+  return e;
+}
+function add(e, c) {
+  if (c == null || c === false) return;
+  if (Array.isArray(c)) { c.forEach(function (x) { add(e, x); }); return; }
+  e.appendChild(c.nodeType ? c : document.createTextNode(String(c)));
+}
+function chip(text, kind) { return el("span", { "class": "chip" + (kind ? " " + kind : "") }, text); }
+function link(text, target, cls) {
+  var ext = /^https:\/\//.test(target);
+  return el("a", { href: ext ? target : "#" + target, target: ext ? "_blank" : null, rel: ext ? "noopener noreferrer" : null, "class": cls }, text);
+}
+function docLink(path, text) {
+  var d = docByPath.get(path);
+  return d ? link(text || d.title, "d~" + tok(path)) : el("span", null, text || path);
+}
+function ghUrl(path, dir) {
+  return M.remote_url && M.branch && M.branch !== "HEAD" ? M.remote_url + "/" + (dir ? "tree/" : "blob/") + M.branch + "/" + path : null;
+}
+function empty(text) { return el("p", { "class": "muted" }, text); }
+function money(n) { return n == null ? "" : "$" + n.toFixed(2); }
+function ago(iso) {
+  var s = (Date.now() - Date.parse(iso)) / 1000;
+  if (!(s >= 0)) return "";
+  if (s < 90) return "just now";
+  if (s < 5400) return Math.round(s / 60) + " min ago";
+  if (s < 129600) return Math.round(s / 3600) + " h ago";
+  return Math.round(s / 86400) + " days ago";
+}
+var KIND = { "decision": ["Decision", "bad"], "operator-item": ["Yours", "warn"], "night-report": ["Night shift", "warn"],
+  "review-due": ["Review", "warn"], "proposal": ["Proposal", "info"], "pr": ["PR", "info"] };
+var STATUS_KIND = function (s) {
+  s = (s || "").toLowerCase();
+  if (/^(accepted|done|merged|passing)/.test(s)) return "ok";
+  if (/^(draft|open|proposed|pending)/.test(s)) return "warn";
+  if (/^(rejected|superseded|withdrawn|failing)/.test(s)) return "bad";
+  return "";
+};
+
+/* ---------- header ---------- */
+document.getElementById("brand").textContent = M.repo || "Court";
+var navEl = document.getElementById("nav");
+NAV.forEach(function (n) { navEl.appendChild(el("a", { href: "#" + n[0], "data-r": n[0] }, n[1])); });
+(function () {
+  var when = M.generated ? new Date(M.generated) : null, t = "";
+  try { t = when ? when.toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : ""; } catch (e) { t = M.generated || ""; }
+  var txt = "built " + t + (M.generated ? " (" + ago(M.generated) + ")" : "") + " from " + (M.branch || "?") + "@" + (M.commit || "?");
+  var p = document.getElementById("built");
+  p.textContent = txt;
+  if (M.dirty) p.appendChild(el("span", null, " ", chip("uncommitted changes", "warn")));
+})();
+
+/* ---------- views ---------- */
+function attentionList() {
+  if (!D.attention.length) return el("p", null, chip("all clear", "ok"), " Nothing is waiting for you.");
+  return el("ul", { "class": "rows" }, D.attention.map(function (a) {
+    var k = KIND[a.kind] || [a.kind, ""];
+    return el("li", null, link(el("span", { "class": "row" }, chip(k[0], k[1]),
+      el("span", { "class": "grow" }, el("span", { "class": "t" }, a.title), a.detail ? el("div", { "class": "muted small" }, a.detail.length > 220 ? a.detail.slice(0, 217) + "..." : a.detail) : null)), a.target));
+  }));
+}
+function counts() {
+  var open = 0, dec = 0;
+  D.todo.sections.forEach(function (s) {
+    var n = s.items.filter(function (i) { return !i.done; }).length;
+    if (/^decisions for/i.test(s.name)) dec += n; else open += n;
+  });
+  return { open: open, dec: dec };
+}
+function spend() {
+  var c = D.costs[0];
+  if (!c) return null;
+  var m = /Total:\s*(\$[\d.,]+)/.exec(c.headline);
+  return { value: m ? m[1] : "?", text: c.headline, path: c.path, month: c.month };
+}
+function stat(num, label, warn) { return el("div", { "class": "stat" + (warn ? " warn" : "") }, el("b", null, num), el("span", { "class": "muted small" }, label)); }
+
+function ledgerEntry(e, open) {
+  var fr = e.fields.Friction, hasFr = fr && !/^none\b/i.test(fr);
+  var sum = el("summary", null, el("span", { "class": "id" }, e.date), el("span", { "class": "t" }, e.title),
+    e.corrected_by ? chip("corrected", "bad") : null, hasFr ? chip("friction", "warn") : null,
+    e.cost != null ? el("span", { "class": "muted small" }, money(e.cost)) : null);
+  var dl = el("dl", { "class": "fields" });
+  var names = Object.keys(e.fields).sort(function (a, b) { return (b === "Friction") - (a === "Friction"); });
+  names.forEach(function (k) {
+    var v = e.fields[k];
+    if (!v || (/^none\.?$/i.test(v) && k !== "Friction")) return;
+    dl.appendChild(el("dt", null, k));
+    dl.appendChild(el("dd", { "class": k === "Friction" && hasFr ? "friction" : null }, v));
+  });
+  var body = el("div", { "class": "body" },
+    e.corrected_by ? el("p", null, chip("corrected", "bad"), " by ", link(e.corrected_by, "ledger~" + (e.corrected_by_anchor || ""))) : null, dl,
+    el("p", { "class": "small muted" }, docLink(e.path, e.path)));
+  return el("details", { "class": "entry", id: "e-" + e.anchor, open: open }, sum, body);
+}
+
+function viewHome() {
+  var c = counts(), sp = spend(), L = D.ledger, root = el("div");
+  root.appendChild(el("h2", null, "Needs you", " ", chip(String(D.attention.length), D.attention.length ? "warn" : "ok")));
+  root.appendChild(attentionList());
+  var strip = el("div", { "class": "strip" }, stat(c.open, "open items"), stat(c.dec, "decisions open", c.dec > 0),
+    stat(L.entries_since_review, "ledger entries since review", L.entries_since_review >= 5),
+    sp ? stat(sp.value, "agent spend " + sp.month) : null);
+  root.appendChild(strip);
+  root.appendChild(el("h2", null, "Recent ledger"));
+  root.appendChild(L.entries.length ? el("div", null, L.entries.slice(0, 8).map(function (e) { return ledgerEntry(e, false); })) : empty("No entries yet."));
+  root.appendChild(el("p", null, link("All ledger entries", "ledger")));
+  root.appendChild(el("h2", null, "Features"));
+  root.appendChild(featuresTable());
+  if (D.prs) {
+    root.appendChild(el("h2", null, "Open pull requests"));
+    root.appendChild(prList());
+  }
+  root.appendChild(el("h2", null, "Records"));
+  root.appendChild(el("p", null, link("ADRs, proposals, night shifts, journal, costs", "records"), " | ", link("All docs", "docs")));
+  M.notes.forEach(function (n) { root.appendChild(el("p", { "class": "note small" }, n)); });
+  return root;
+}
+function prList() {
+  if (!D.prs.length) return empty("None open.");
+  return el("ul", { "class": "rows" }, D.prs.map(function (p) {
+    return el("li", null, link(el("span", { "class": "row" }, el("span", { "class": "id" }, "#" + p.number),
+      el("span", { "class": "grow" }, el("span", { "class": "t" }, p.title), el("div", { "class": "muted small" }, p.head + " into " + p.base)),
+      p.draft ? chip("draft", "warn") : null, p.checks ? chip(p.checks, STATUS_KIND(p.checks)) : null), p.url));
+  }));
+}
+function featuresTable() {
+  if (!D.features.length) return empty("No Features found.");
+  var rows = D.features.map(function (f) {
+    var readme = f.docs.filter(function (p) { return /\/README\.md$/.test(p); })[0] || f.docs[0];
+    var first = f.summary || f.description || "";
+    return el("tr", null, el("td", { "class": "nw" }, readme ? docLink(readme, f.id) : f.id), el("td", { "class": "nw" }, f.version), el("td", null, first));
+  });
+  return el("div", { "class": "scroll" }, el("table", null, el("thead", null, el("tr", null, el("th", { "class": "nw" }, "Feature"), el("th", { "class": "nw" }, "Version"), el("th", null, "What"))), el("tbody", null, rows)));
+}
+function viewFeatures() {
+  var root = el("div", null, el("h2", null, "Features"), featuresTable());
+  D.features.forEach(function (f) {
+    root.appendChild(el("details", { "class": "entry" }, el("summary", null, el("span", { "class": "t" }, f.id + " " + f.version), el("span", { "class": "muted small" }, f.name)),
+      el("div", { "class": "body" }, el("p", null, f.description), el("p", { "class": "small" }, f.docs.map(function (p) { return [docLink(p, p.split("/").pop()), " "]; })))));
+  });
+  return root;
+}
+
+var BL = { state: "open", owner: "", text: "" };
+function viewBacklog() {
+  var root = el("div", null, el("h2", null, "Backlog")), owners = {}, list = el("div");
+  D.todo.sections.forEach(function (s) { s.items.forEach(function (i) { var o = i.owner || "(none)"; owners[o] = (owners[o] || 0) + 1; }); });
+  var chips = el("div", { "class": "chips", role: "group", "aria-label": "Filters" });
+  function draw() {
+    chips.textContent = "";
+    [["open", "Open"], ["done", "Done"], ["all", "All"]].forEach(function (s) {
+      chips.appendChild(el("button", { "class": "f", type: "button", "aria-pressed": BL.state === s[0] ? "true" : "false", onclick: function () { BL.state = s[0]; draw(); } }, s[1]));
+    });
+    chips.appendChild(el("span", { "class": "muted small" }, "owner:"));
+    [""].concat(Object.keys(owners).sort()).forEach(function (o) {
+      chips.appendChild(el("button", { "class": "f", type: "button", "aria-pressed": BL.owner === o ? "true" : "false", onclick: function () { BL.owner = o; draw(); } }, o === "" ? "any" : o));
+    });
+    list.textContent = "";
+    var shown = 0, q = BL.text.toLowerCase();
+    D.todo.sections.forEach(function (s) {
+      var items = s.items.filter(function (i) {
+        if (BL.state === "open" && i.done) return false;
+        if (BL.state === "done" && !i.done) return false;
+        if (BL.owner && (i.owner || "(none)") !== BL.owner) return false;
+        return !q || (i.id + " " + i.title + " " + i.text).toLowerCase().indexOf(q) >= 0;
+      }).sort(function (a, b) { return (a.done ? 1 : 0) - (b.done ? 1 : 0); });
+      if (!items.length) return;
+      shown += items.length;
+      list.appendChild(el("h3", null, s.name, " ", el("span", { "class": "muted small" }, String(items.length))));
+      list.appendChild(el("div", null, items.map(function (i) {
+        return el("details", { "class": "entry", id: "i-" + i.id }, el("summary", null, el("span", { "class": "id" }, i.id), el("span", { "class": "t" }, i.title),
+          chip(i.done ? "done" : "open", i.done ? "ok" : "warn"), i.owner ? chip(i.owner) : null),
+          el("div", { "class": "body" }, el("p", null, i.text), el("p", { "class": "small muted" }, (i.added ? "Added " + i.added : "") + (i.done_on ? ". Done " + i.done_on : ""))));
+      })));
+    });
+    if (!shown) list.appendChild(empty("No items match."));
+  }
+  var f = el("input", { "class": "filter", type: "search", placeholder: "Filter items", "aria-label": "Filter backlog items", value: BL.text, oninput: function () { BL.text = f.value; draw(); } });
+  root.appendChild(f); root.appendChild(chips); root.appendChild(list);
+  draw();
+  return root;
+}
+
+var LG = { text: "" };
+function viewLedger(anchor) {
+  var root = el("div", null, el("h2", null, "Ledger"), el("p", { "class": "muted small" }, D.ledger.entries.length + " entries, " + D.ledger.entries_since_review + " since the last review" + (D.ledger.last_review ? " (" + D.ledger.last_review + ")" : "") + ". Newest first.")),
+    list = el("div");
+  function draw() {
+    list.textContent = "";
+    var q = LG.text.toLowerCase(), n = 0;
+    D.ledger.entries.forEach(function (e) {
+      if (q && (e.date + " " + e.title + " " + Object.keys(e.fields).map(function (k) { return e.fields[k]; }).join(" ")).toLowerCase().indexOf(q) < 0) return;
+      n++;
+      list.appendChild(ledgerEntry(e, anchor === e.anchor || (!!q && n <= 3)));
+    });
+    if (!n) list.appendChild(empty("No entries match."));
+  }
+  var f = el("input", { "class": "filter", type: "search", placeholder: "Filter entries", "aria-label": "Filter ledger entries", value: LG.text, oninput: function () { LG.text = f.value; draw(); } });
+  root.appendChild(f); root.appendChild(list);
+  draw();
+  if (anchor) setTimeout(function () { var t = document.getElementById("e-" + anchor); if (t) t.scrollIntoView(); }, 0);
+  return root;
+}
+
+function viewRecords() {
+  var R = D.records, root = el("div");
+  root.appendChild(el("h2", null, "Decisions (ADRs)"));
+  root.appendChild(R.adrs.length ? el("div", { "class": "scroll" }, el("table", null, el("thead", null, el("tr", null, el("th", null, "No."), el("th", null, "Title"), el("th", null, "Status"), el("th", null, "Date"))),
+    el("tbody", null, R.adrs.map(function (a) { return el("tr", null, el("td", null, a.number), el("td", null, docLink(a.path, a.title)), el("td", null, chip(a.status || "?", STATUS_KIND(a.status))), el("td", null, a.date || "")); })))) : empty("None."));
+  root.appendChild(el("h2", null, "Proposals"));
+  root.appendChild(R.proposals.length ? el("ul", { "class": "rows" }, R.proposals.map(function (p) {
+    return el("li", null, link(el("span", { "class": "row" }, el("span", { "class": "grow" }, el("span", { "class": "t" }, p.title), el("div", { "class": "muted small" }, p.status)), chip((p.status || "?").split(/[\s:,.;(]/)[0], STATUS_KIND(p.status))), "d~" + tok(p.path)));
+  })) : empty("None."));
+  root.appendChild(el("h2", null, "Night shifts"));
+  root.appendChild(R.night_shift.length ? el("ul", { "class": "rows" }, R.night_shift.slice().reverse().map(function (n) {
+    return el("li", null, link(el("span", { "class": "row" }, el("span", { "class": "grow t" }, n.date), chip(n.reviewed ? "reviewed" : "not reviewed", n.reviewed ? "ok" : "warn")), "d~" + tok(n.path)));
+  })) : empty("None."));
+  root.appendChild(el("h2", null, "Journal"));
+  root.appendChild(R.journal.length ? el("ul", { "class": "rows" }, R.journal.slice().reverse().map(function (j) {
+    return el("li", null, link(el("span", { "class": "row" }, el("span", { "class": "grow t" }, j.date)), "d~" + tok(j.path)));
+  })) : empty("None."));
+  root.appendChild(el("h2", null, "Agent costs"));
+  root.appendChild(D.costs.length ? el("ul", { "class": "rows" }, D.costs.map(function (c) {
+    return el("li", null, link(el("span", { "class": "row" }, el("span", { "class": "grow" }, el("span", { "class": "t" }, c.month + " " + c.engineer), el("div", { "class": "muted small" }, c.headline))), "d~" + tok(c.path)));
+  })) : empty("None."));
+  return root;
+}
+
+var DG = { text: "" };
+function viewDocs() {
+  var root = el("div", null, el("h2", null, "Docs"), el("p", { "class": "muted small" }, docs.length + " documents. Search above reads inside them too.")), list = el("div");
+  function draw() {
+    list.textContent = "";
+    var q = DG.text.toLowerCase();
+    ["Product", "Way of working", "Records", "Proposals", "Model", "Skills", "Other"].forEach(function (g) {
+      var items = docs.filter(function (d) { return d.group === g && (!q || (d.title + " " + d.path).toLowerCase().indexOf(q) >= 0); });
+      if (!items.length) return;
+      list.appendChild(el("h3", null, g, " ", el("span", { "class": "muted small" }, String(items.length))));
+      list.appendChild(el("ul", { "class": "rows" }, items.map(function (d) {
+        return el("li", null, link(el("span", { "class": "row" }, el("span", { "class": "grow" }, el("span", { "class": "t" }, d.title), el("div", { "class": "id" }, d.path))), "d~" + tok(d.path)));
+      })));
+    });
+    if (!list.firstChild) list.appendChild(empty("No documents match."));
+  }
+  var f = el("input", { "class": "filter", type: "search", placeholder: "Filter by title or path", "aria-label": "Filter documents", value: DG.text, oninput: function () { DG.text = f.value; draw(); } });
+  root.appendChild(f); root.appendChild(list);
+  draw();
+  return root;
+}
+
+/* ---------- a document ---------- */
+var libs = {};
+function whenReady(name, test, ms) {
+  if (libs[name]) return libs[name];
+  return libs[name] = new Promise(function (res) {
+    var t0 = Date.now();
+    (function chk() { if (test()) return res(true); if (Date.now() - t0 > ms) return res(false); setTimeout(chk, 60); })();
+  });
+}
+function mdReady() { return whenReady("md", function () { return window.marked && window.DOMPurify; }, 10000); }
+function mermaidReady() {
+  return whenReady("mermaid", function () {
+    if (!document.getElementById("mermaid-lib")) {
+      var s = document.createElement("script");
+      s.id = "mermaid-lib"; s.async = true;
+      s.src = "https://cdnjs.cloudflare.com/ajax/libs/mermaid/10.9.1/mermaid.min.js";
+      document.head.appendChild(s);
+    }
+    return !!window.mermaid;
+  }, 20000);
+}
+function headingId(text, seen) {
+  var b = text.toLowerCase().replace(/[^\w\- ]+/g, "").trim().replace(/\s+/g, "-") || "section", n = seen[b] = (seen[b] || 0) + 1;
+  return "h-" + (n > 1 ? b + "-" + n : b);
+}
+function resolve(base, href) {
+  var parts = base.split("/").slice(0, -1);
+  href.split("/").forEach(function (p) {
+    if (p === "..") parts.pop(); else if (p !== "." && p !== "") parts.push(p);
+  });
+  return parts.join("/");
+}
+function fixLinks(box, d) {
+  Array.prototype.forEach.call(box.querySelectorAll("a[href]"), function (a) {
+    var href = a.getAttribute("href"), m;
+    if (href.charAt(0) === "#") {
+      a.addEventListener("click", function (ev) {
+        var t = document.getElementById("h-" + decodeURIComponent(href.slice(1)).toLowerCase().replace(/[^\w\- ]+/g, "")) || document.getElementById(href.slice(1));
+        ev.preventDefault();
+        if (t) t.scrollIntoView();
+      });
+      return;
+    }
+    if (/^(https?:|mailto:)/i.test(href)) { a.setAttribute("target", "_blank"); a.setAttribute("rel", "noopener noreferrer"); return; }
+    if (/^[a-z][a-z0-9+.-]*:/i.test(href) || href.slice(0, 2) === "//") { a.removeAttribute("href"); return; }
+    var clean = href.split("#")[0].split("?")[0], path;
+    try { path = decodeURIComponent(clean); } catch (e) { path = clean; }
+    path = path.charAt(0) === "/" ? path.slice(1) : resolve(d.path, path);
+    if (docByPath.has(path)) { a.setAttribute("href", "#d~" + tok(path)); return; }
+    m = ghUrl(path, /\/$/.test(clean) || !/\.[A-Za-z0-9]+$/.test(path));
+    if (m) { a.setAttribute("href", m); a.setAttribute("target", "_blank"); a.setAttribute("rel", "noopener noreferrer"); }
+    else { a.removeAttribute("href"); a.setAttribute("title", path); }
+  });
+  Array.prototype.forEach.call(box.querySelectorAll("img"), function (img) {
+    var src = img.getAttribute("src") || "";
+    if (!/^https:/i.test(src)) img.replaceWith(el("span", { "class": "muted" }, "[image: " + (img.getAttribute("alt") || src) + "]"));
+  });
+}
+function renderMermaid(box) {
+  var blocks = box.querySelectorAll("pre > code.language-mermaid");
+  if (!blocks.length) return;
+  mermaidReady().then(function (ok) {
+    if (ok) {
+      var dark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+      try { window.mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: dark ? "dark" : "default" }); } catch (e) { ok = false; }
+    }
+    Array.prototype.forEach.call(blocks, function (code, i) {
+      var pre = code.parentNode, src = code.textContent, holder = el("div", { "class": "mermaid" });
+      function fail(why) { holder.textContent = ""; holder.appendChild(el("p", { "class": "muted small" }, "Diagram not drawn (" + why + "); source:")); holder.appendChild(el("pre", null, src)); }
+      pre.replaceWith(holder);
+      if (!ok) return fail("mermaid did not load");
+      Promise.resolve().then(function () { return window.mermaid.render("mmd" + Date.now() + "x" + i, src); })
+        .then(function (r) { holder.innerHTML = r.svg; }, function () { fail("syntax or render error"); });
+    });
+  });
+}
+function viewDoc(d) {
+  var root = el("div"), parts = d.path.split("/");
+  root.appendChild(el("p", { "class": "crumbs muted" }, link("Docs", "docs"), " / " + d.group + " / ", parts.join(" / "), " ",
+    ghUrl(d.path) ? link("on GitHub", ghUrl(d.path)) : null));
+  var box = el("div", { "class": "docbody" });
+  root.appendChild(box);
+  box.appendChild(el("p", { "class": "muted" }, "Loading..."));
+  mdReady().then(function (ok) {
+    box.textContent = "";
+    if (!ok) { box.appendChild(el("p", { "class": "note small" }, "The markdown renderer did not load; showing the source.")); box.appendChild(el("pre", null, d.text)); return; }
+    var html = window.DOMPurify.sanitize(window.marked.parse(d.text, { gfm: true, breaks: false }));
+    var tmp = el("div"); tmp.innerHTML = html;
+    var seen = {}, heads = [];
+    Array.prototype.forEach.call(tmp.querySelectorAll("h1,h2,h3,h4"), function (h) {
+      h.id = headingId(h.textContent, seen);
+      if (/^H[23]$/.test(h.tagName)) heads.push(h);
+    });
+    Array.prototype.forEach.call(tmp.querySelectorAll("table"), function (t) { var w = el("div", { "class": "scroll" }); t.replaceWith(w); w.appendChild(t); });
+    fixLinks(tmp, d);
+    if (heads.length >= 4) {
+      var toc = el("details", { "class": "toc" }, el("summary", null, "Contents (" + heads.length + ")"),
+        el("ul", { "class": "rows" }, heads.map(function (h) {
+          return el("li", { style: h.tagName === "H3" ? "padding-left:14px" : null }, el("a", { href: "#" + h.id, onclick: function (ev) { ev.preventDefault(); h.scrollIntoView(); } }, h.textContent));
+        })));
+      box.appendChild(toc);
+    }
+    while (tmp.firstChild) box.appendChild(tmp.firstChild);
+    renderMermaid(box);
+  });
+  return root;
+}
+
+/* ---------- search ---------- */
+function snippet(d, terms) {
+  var low = d.text.toLowerCase(), at = -1, i;
+  for (i = 0; i < terms.length && at < 0; i++) at = low.indexOf(terms[i]);
+  if (at < 0) return el("span");
+  var from = Math.max(0, at - 50), s = d.text.slice(from, at + 110).replace(/\s+/g, " "), out = el("span", { "class": "muted small" }, from > 0 ? "..." : ""), low2 = s.toLowerCase(), pos = 0;
+  while (pos < s.length) {
+    var best = -1, bl = 0;
+    terms.forEach(function (t) { var k = low2.indexOf(t, pos); if (k >= 0 && (best < 0 || k < best)) { best = k; bl = t.length; } });
+    if (best < 0) break;
+    out.appendChild(document.createTextNode(s.slice(pos, best)));
+    out.appendChild(el("mark", null, s.slice(best, best + bl)));
+    pos = best + bl;
+  }
+  out.appendChild(document.createTextNode(s.slice(pos) + "..."));
+  return out;
+}
+function viewSearch(q) {
+  var terms = q.toLowerCase().split(/\s+/).filter(Boolean), hits = [];
+  docs.forEach(function (d) {
+    if (terms.every(function (t) { return d._low.indexOf(t) >= 0; })) {
+      var inTitle = terms.every(function (t) { return d.title.toLowerCase().indexOf(t) >= 0; });
+      hits.push({ d: d, rank: inTitle ? 0 : 1 });
+    }
+  });
+  hits.sort(function (a, b) { return a.rank - b.rank; });
+  var root = el("div", null, el("h2", null, hits.length + (hits.length === 1 ? " document matches" : " documents match"), " “", q, "”"));
+  if (!hits.length) root.appendChild(empty("Nothing found. Search reads the title and text of every tracked doc."));
+  root.appendChild(el("ul", { "class": "rows" }, hits.slice(0, 60).map(function (h) {
+    return el("li", null, link(el("span", { "class": "row" }, el("span", { "class": "grow" }, el("span", { "class": "t" }, h.d.title), " ", chip(h.d.group), el("div", { "class": "id" }, h.d.path), el("div", { "class": "snip" }, snippet(h.d, terms)))), "d~" + tok(h.d.path)));
+  })));
+  if (hits.length > 60) root.appendChild(empty("Showing the first 60; narrow the search."));
+  return root;
+}
+
+/* ---------- router ---------- */
+function show(node, title, keepScroll) {
+  app.textContent = "";
+  app.appendChild(node);
+  document.title = (title ? title + " - " : "") + (M.repo || "Court");
+  if (!keepScroll) window.scrollTo(0, 0);
+}
+function render() {
+  var q = qbox.value.trim();
+  if (q.length >= 2) { show(viewSearch(q), "Search: " + q, true); markNav(""); return; }
+  var raw = location.hash.replace(/^#/, "") || "home", bits = raw.split("~"), r = bits[0];
+  if (r === "d") {
+    var d = docByTok.get(raw.slice(2));
+    markNav("docs");
+    show(d ? viewDoc(d) : el("div", null, el("h2", null, "Not found"), el("p", null, "No document at ", el("code", null, raw.slice(2).replace(/~/g, "/")), ". ", link("Browse the docs", "docs"))), d ? d.title : "Not found");
+    return;
+  }
+  var views = { home: viewHome, features: viewFeatures, backlog: viewBacklog, ledger: function () { return viewLedger(bits.slice(1).join("~")); }, records: viewRecords, docs: viewDocs };
+  if (!views[r]) { r = "home"; }
+  markNav(r);
+  show(views[r](), r === "home" ? "" : r.charAt(0).toUpperCase() + r.slice(1), r === "ledger" && bits.length > 1);
+}
+function markNav(r) {
+  Array.prototype.forEach.call(navEl.querySelectorAll("a"), function (a) {
+    if (a.getAttribute("data-r") === r) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
+  });
+}
+window.addEventListener("hashchange", function () { if (qbox.value) qbox.value = ""; render(); });
+qbox.addEventListener("input", render);
+qbox.addEventListener("keydown", function (e) { if (e.key === "Escape") { qbox.value = ""; render(); } });
+render();
+})();
+</script>
