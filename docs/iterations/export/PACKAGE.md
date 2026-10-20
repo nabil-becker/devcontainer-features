@@ -36,7 +36,7 @@ Kinds: `paper` (carried or new, untouched except front matter on the new one), `
 | `papers/01-from-seed-to-tree.md` | 9b3408d8566589330f3f3be7bfd895dd1e05ea72fe1214fcfca5f2cd2f19a720 | paper |
 | `papers/README.md` | 4e7b342a4efe535ddf60eb34a69aec554b4e003a93b99d9e2fded1c986ba5abd | paper |
 | `papers/iteration-3.md` | 9aafd8fa3027ae4d0490459d8a1efe0127622d22e3d6553c92070a6d131bca67 | paper |
-| `skills/drop-a-seed/SKILL.md` | 3597e36050aa21b9a7fcad7355fd1cab6c799cf2864c5b98c9b2ecd7fce73837 | original |
+| `skills/drop-a-seed/SKILL.md` | fe11200a531905a2137839cf8187dacce94a43115b1562706172c86443554e3a | original |
 | `skills/drop-a-seed/journalist.md` | a36fc18434d7447f5072d97a1f578df07b6bfee3ec2b1eef3fcd20cb88875f97 | original |
 | `skills/ledger-review/SKILL.md` | 0db0def3e1c4b30552bdd5d9ec0d649c03bbeb1593355985b226fb06bbe15373 | original |
 | `skills/plant-a-seed/INTERVIEW.md` | c2d09b9e8e343e936b40e7ffcc708a583d498966a34b457a3cd7755e9e0e920d | original |
