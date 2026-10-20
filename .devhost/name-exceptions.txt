@@ -3,3 +3,5 @@
 # 2026-10-19: the first white paper, kept byte for byte with its byline (obtain-seed-to-tree).
 docs/iterations/papers/01-from-seed-to-tree.html
 docs/iterations/papers/01-from-seed-to-tree.md
+# 2026-10-20: the copyright holder must be named (redact list restored).
+LICENSE

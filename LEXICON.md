@@ -154,6 +154,12 @@ The domain words of the project itself are not here; they live with the project'
 - **Drop a seed**: the export skill (`drop-a-seed`), run when a project ends: the closing
   interview, the iteration named, the white paper written by a subagent, the seed's contents
   settled with the Operator, the seed folder assembled by `devhost-package` (ADR-0014).
+- **Shutdown check**: the script `devhost-shutdown-check` that says whether the devhost can be
+  stopped without losing work: tree clean and pushed, backs idle with locks free, no stretch
+  waiting, no tester run, no night shift mid-plan; it lists stash and untracked files. Run by the
+  `shutdown-devhost` skill and by `devcontainer:stop` (ADR-0015).
+- **Shutdown and restart** (`shutdown-devhost`, `restart-devhost`): the skill pair that closes the
+  devhost cleanly and brings it back where it was; both ship in the seed (ADR-0015).
 - **Plant a seed**: the import skill (`plant-a-seed`), run in the new place after the agent is
   pointed at the seed's README: it reads the papers and foundation, runs the interview, sets up or
   adapts a repository, and ends with the first ledger entry (ADR-0014).

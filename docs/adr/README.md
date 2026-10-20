@@ -63,3 +63,4 @@ numbering and a row below.
 | [0012](0012-agent-git-identity-through-the-git-feature-wrapper.md) | Agent git identity is set by the git Feature's wrapper | accepted | 2026-10-19 |
 | [0013](0013-the-agent-principles-are-trimmed-to-five-generic-ones.md) | The agent principles are trimmed to five generic ones | accepted | 2026-10-20 |
 | [0014](0014-the-seed-is-exported-and-imported-by-two-skills-and-the-journalist-is-folded-into-the-export.md) | The seed is exported and imported by two skills, and the journalist is folded into the export | accepted | 2026-10-20 |
+| [0015](0015-shutdown-is-a-check-script-a-skill-and-a-host-stop-task-because-the-spec-has-no-stop-hook.md) | Shutdown is a check script, a skill and a host stop task, because the spec has no stop hook | accepted | 2026-10-20 |
