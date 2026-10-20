@@ -14,3 +14,7 @@ __pycache__/
 .env
 .env.*
 !.env.example
+
+# The generated homepage and the URL it was published at (devhost-site, publish-site skill)
+.devhost/site/
+.devhost/site-url

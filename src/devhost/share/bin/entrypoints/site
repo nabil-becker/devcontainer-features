@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# devhost-site: runs the devhost's site.py (installed under /usr/local/share/devhost).
+exec python3 /usr/local/share/devhost/python/site.py "$@"

@@ -1,2 +1,5 @@
 # Per-engineer files the devhost tooling reads; never committed.
 redact-names.txt
+# The generated homepage and the URL it was published at (devhost-site, publish-site skill).
+site/
+site-url
