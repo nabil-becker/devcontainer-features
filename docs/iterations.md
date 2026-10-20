@@ -29,8 +29,8 @@ of a pyramid; each project iteration defines that foundation further.
 
 | Iteration | Project | White paper |
 |---|---|---|
-| 1 | Client engagement (the office consumer) | written: "From Seed to Tree", kept as it was used |
-| 2 | DSNP | when the Operator calls it |
+| 1 | Client engagement (the office consumer) | written: "From Seed to Tree", kept as it was used (`docs/iterations/papers/`) |
+| 2 | DSNP | none: bootstrapped from paper 1; the third paper names what came from it (ADR 0008) |
 | 3 | devcontainer-features (this repository) | when the Operator calls it; the first to export a package (`docs/proposals/iteration-package.md`) |
 
 ## The white paper

@@ -1,0 +1,5 @@
+# Files the Operator approved to carry a redacted name or forbidden word (devhost-verify,
+# forbidden_words). One repository-relative path per line; paths only, never a name.
+# 2026-10-19: the first white paper, kept byte for byte with its byline (obtain-seed-to-tree).
+docs/iterations/papers/01-from-seed-to-tree.html
+docs/iterations/papers/01-from-seed-to-tree.md
