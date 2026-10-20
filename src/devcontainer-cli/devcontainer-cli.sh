@@ -22,8 +22,9 @@
 #                              Pinning it forces the cached install even if a
 #                              `devcontainer` is on PATH.
 #
-# Every download is verified: Node.js against nodejs.org's SHASUMS256.txt;
-# the CLI comes through npm's registry with its integrity metadata.
+# Verification: the Node.js download is checked against nodejs.org's
+# SHASUMS256.txt. The CLI itself is NOT: it comes through `npm install` and
+# only npm's own integrity metadata protects it (no checksum, no lockfile).
 set -euo pipefail
 
 default_node_version="24.21.0"

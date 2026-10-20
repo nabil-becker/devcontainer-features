@@ -4,6 +4,32 @@ Status: accepted 2026-10-16 as option A, a layer, trimmed to ten names (LEXICON.
 
 The office generation was themed as an office; this devhost generation has its own words (LEXICON.md). The next generation is themed on King Arthur. This page maps the words, costs two ways of adopting it, and recommends one.
 
+The court at a glance: each plain role drawn under its Arthurian label, with the plain name in brackets. Solid arrows show who briefs, reports to or writes to whom; the dotted arrow marks the one role that only has a name in the layer.
+
+```mermaid
+flowchart TB
+  king["The King<br/>(the Operator)"]
+  merlin["Merlin<br/>(host)"]
+  knights["Knights on a quest<br/>(cons)"]
+  house["The household<br/>(backs)"]
+  chron["The Chronicle<br/>(ledger)"]
+  board["The Quest board<br/>(backlog)"]
+  table["The Round Table<br/>(ledger review)"]
+  vigil["The vigil<br/>(night shift)"]
+  watch["The castle watch<br/>(guards, devhost-verify)"]
+  bard["The bard<br/>(journalist)"]
+  king -->|"decides"| merlin
+  merlin -->|"briefs, one scope each"| knights
+  knights -->|"one report"| merlin
+  house -->|"keep"| chron
+  house -->|"keep"| board
+  table -->|"reads"| chron
+  table -.->|"the King still decides"| king
+  vigil -->|"works from"| board
+  watch -->|"checks what enters"| chron
+  bard -.->|"a name only"| house
+```
+
 ## 1. The mapping
 
 | Today | Arthurian | Why it fits | Caution |
@@ -51,6 +77,23 @@ The office generation was themed as an office; this devhost generation has its o
 Where the image would mislead: the Grail for the librarian (a quest, not a store); the Round Table for any standing body (it implies the Operator is one voice among equals, but the Operator decides); Excalibur or the Lady of the Lake for the guards (magic, not checking); "Lancelot/Mordred" for anything (a betrayer or a failed knight cannot be a role).
 
 ## 2. Layer or rename
+
+Option A puts the labels above what a person reads and leaves everything the machinery reads untouched; option B would replace the words in both.
+
+```mermaid
+flowchart TB
+  subgraph read["What a person reads: labels, in LEXICON.md and chat"]
+    l1["Merlin, the Chronicle,<br/>the Quest board, the vigil"]
+  end
+  subgraph machine["What the machinery reads: plain, unchanged"]
+    m1["ids, paths, task and file names,<br/>devhost-verify, devhost-briefing, /ledger-review"]
+    m2["ledger entries and their fields,<br/>job directories, entrypoints, consumer templates"]
+  end
+  l1 -->|"synonym only, nothing renamed"| m1
+  l1 -.->|"never enters"| m2
+  rename["Option B, a rename:<br/>about 130 files, both consumers,<br/>old and new words split in the ledger"]
+  rename -.->|"not chosen"| m2
+```
 
 | | A: a layer | B: a rename |
 |---|---|---|

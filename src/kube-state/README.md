@@ -1,7 +1,7 @@
 
 # Kubernetes client config (kube-state) (kube-state)
 
-Owns the kubeconfig for the Kubernetes tools in the image (kubectl, velero, kustomize, argocd, ...): sets KUBECONFIG=/var/lib/devcontainer-features/kube-state/config and mounts a named volume on /var/lib/devcontainer-features/kube-state, so a kubeconfig imported once survives rebuilds and no repo hand-mounts ~/.kube. Installs no kubectl itself (add ghcr.io/devcontainers/features/kubectl-helm-minikube before it if you want one). Adds a post-create hook (kube-state-setup) that makes the directory usable by the remote user, keeps the kubeconfig private to it, and reports whether a kubeconfig and a current context are present. Plus the Feature Taskfile.
+Owns the kubeconfig for the Kubernetes tools in the image that read one (kubectl, velero, ...): sets KUBECONFIG=/var/lib/devcontainer-features/kube-state/config and mounts a named volume on /var/lib/devcontainer-features/kube-state, so a kubeconfig imported once survives rebuilds and no repo hand-mounts ~/.kube. Installs no kubectl itself (add ghcr.io/devcontainers/features/kubectl-helm-minikube before it if you want one). Adds a post-create hook (kube-state-setup) that makes the directory usable by the remote user, keeps the kubeconfig private to it, and reports whether a kubeconfig and a current context are present. Plus the Feature Taskfile.
 
 ## Example Usage
 
@@ -21,8 +21,9 @@ Owns the kubeconfig for the Kubernetes tools in the image (kubectl, velero, kust
 ## State only: no kubectl installed
 
 This Feature owns the kubeconfig the Kubernetes tools in the image share
-(`kubectl`, `velero`, `kustomize`, `argocd`, `kubeconform`), the way `gh`
-and `az` own their logins. It installs no binary: each of the tool Features
+that read one (`kubectl`, `velero`), the way `gh` and `az` own their
+logins. `kustomize` and `kubeconform` work offline on files and never read
+`KUBECONFIG`; `argocd` keeps its own login (see its Feature). It installs no binary: each of the tool Features
 brings its own, and `kubectl` comes from the official
 `ghcr.io/devcontainers/features/kubectl-helm-minikube` Feature, which
 `installsAfter` orders this one behind:
@@ -100,8 +101,11 @@ Linux/macOS), with `KUBECONFIG` left at its default. Alternatively point
 ## Pairs with
 
 - `ghcr.io/devcontainers/features/kubectl-helm-minikube` for `kubectl`.
-- The `velero`, `kustomize`, `argocd` and `kubeconform` Features of this
-  collection: they read `KUBECONFIG` and need nothing else from here.
+- The `velero` Feature of this collection: it reads `KUBECONFIG` and needs
+  nothing else from here. The `kustomize`, `kubeconform` and `argocd`
+  Features do not read it (kustomize and kubeconform work on files;
+  argocd logs in to its server and keeps that session in
+  `ARGOCD_CONFIG_DIR`).
 - `task kube-state:import` / `task kube-state:contexts` from a root Taskfile that
   includes the go-task registry.
 

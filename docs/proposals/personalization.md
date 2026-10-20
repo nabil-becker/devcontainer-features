@@ -23,6 +23,23 @@ how the backs work, so it belongs in `PROCESS.md` (a project rule found in memor
 A preference changes **presentation and delegation style** (format, naming, level of detail,
 who does what). It never changes a guard, a permission or what may be committed.
 
+The three kinds side by side: project rules and facts are committed and bind everyone, a preference is never committed and binds one person.
+
+```mermaid
+flowchart TB
+    subgraph committed["Committed in the repo"]
+        R["Project rule<br/>CLAUDE.md, PROCESS.md<br/>binds everyone"]
+        F["Fact about the repo<br/>CLAUDE.md, README.md, ADRs<br/>information for everyone"]
+    end
+    subgraph personal["Never committed"]
+        P["Preference<br/>auto-memory today, this repo only<br/>binds one person"]
+    end
+    T{"Would it bind<br/>a second engineer?"}
+    T -->|yes| R
+    T -->|"no, it is how this person likes to be told things"| P
+    P -.->|"promote if it binds everyone"| R
+```
+
 ## 2. Where it lives: options
 
 Facts checked in this tree:
@@ -116,6 +133,23 @@ the host learns about a repo and leave its feedback files as they are until the 
 
 Two lines: the Operator edits one file on the workstation; every devhost, in every repo, hands it to
 the host, its cons (through the brief) and its backs (through the runner).
+
+The five options weighed against what each one lacks, and the pair the recommendation combines.
+
+```mermaid
+flowchart LR
+    A["A. User-level CLAUDE.md<br/>does not follow across repos"]
+    B["B. Auto-memory<br/>per repo; backs unverified"]
+    C["C. File in a state volume<br/>one volume per repo"]
+    D["D. Ignored file per repo<br/>lost on fresh clone; copies drift"]
+    E["E. Workstation file<br/>one source for every repo"]
+    A --> X["Not enough alone"]
+    B --> X
+    C --> X
+    D --> X
+    E --> X
+    X --> REC["Recommendation: E plus C<br/>E is the source,<br/>C is the fixed path inside the devhost"]
+```
 
 ### One-week trial
 

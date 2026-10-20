@@ -91,6 +91,8 @@ The domain words of the project itself are not here; they live with the project'
 - **Agentic Delivery OS**: the product the Operator is building: a set of tools that lets one
   person, technical or not, bootstrap a devhost. It is the foundation of a pyramid, and each
   iteration helps define that foundation (`docs/iterations.md`).
+- **Way of working** (WoW): how work gets done here: the roles, the records, the loop that improves
+  them and the rules of thumb, as `PROCESS.md` describes them. Approved by the Operator 2026-10-17.
 - **Iteration**: one project in which the way of working is tried and learned from: client
   engagement first, then DSNP, then this repository. The Operator decides when an iteration is
   done.
@@ -125,7 +127,10 @@ The domain words of the project itself are not here; they live with the project'
   the themes and the C4 views must agree with it; it is not the instances, which the ledger holds.
 - **White paper**: the account of one iteration, written once when the Operator calls it done, in
   plain words, function over form, every fact traceable to the ledger, ADRs, reviews and cost
-  reports. Written by the journalist.
+  reports. Written with the Operator through the journalist skill (ADR 0009).
+- **Journalist**: the skill that writes the white paper in conversation with the Operator when
+  the iteration is called; part of the iteration package and its instructions, not a back
+  (ADR-0009).
 - **Iteration package**: what an iteration hands to the next, cumulative: every earlier white
   paper kept unchanged, plus the newest set of artifacts (a bootstrap prompt, context, whatever the
   iteration finds foundational), which each iteration merges into and replaces, so packages never

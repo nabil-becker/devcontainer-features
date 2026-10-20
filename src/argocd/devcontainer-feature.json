@@ -1,6 +1,6 @@
 {
   "id": "argocd",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "name": "Argo CD CLI",
   "description": "Installs the Argo CD CLI (https://argo-cd.readthedocs.io) as a release binary at /usr/local/bin/argocd, verified against the release's cli_checksums.txt. Pin version to your Argo CD server version. The login session lives in ARGOCD_CONFIG_DIR at /var/lib/devcontainer-features/argocd, a named volume the Feature mounts so it survives rebuilds; the argocd-setup post-create hook hands the folder to the remote user.",
   "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/argocd",

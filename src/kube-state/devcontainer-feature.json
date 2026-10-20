@@ -1,8 +1,8 @@
 {
   "id": "kube-state",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Kubernetes client config (kube-state)",
-  "description": "Owns the kubeconfig for the Kubernetes tools in the image (kubectl, velero, kustomize, argocd, ...): sets KUBECONFIG=/var/lib/devcontainer-features/kube-state/config and mounts a named volume on /var/lib/devcontainer-features/kube-state, so a kubeconfig imported once survives rebuilds and no repo hand-mounts ~/.kube. Installs no kubectl itself (add ghcr.io/devcontainers/features/kubectl-helm-minikube before it if you want one). Adds a post-create hook (kube-state-setup) that makes the directory usable by the remote user, keeps the kubeconfig private to it, and reports whether a kubeconfig and a current context are present. Plus the Feature Taskfile.",
+  "description": "Owns the kubeconfig for the Kubernetes tools in the image that read one (kubectl, velero, ...): sets KUBECONFIG=/var/lib/devcontainer-features/kube-state/config and mounts a named volume on /var/lib/devcontainer-features/kube-state, so a kubeconfig imported once survives rebuilds and no repo hand-mounts ~/.kube. Installs no kubectl itself (add ghcr.io/devcontainers/features/kubectl-helm-minikube before it if you want one). Adds a post-create hook (kube-state-setup) that makes the directory usable by the remote user, keeps the kubeconfig private to it, and reports whether a kubeconfig and a current context are present. Plus the Feature Taskfile.",
   "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/kube-state",
   "licenseURL": "https://github.com/nabil-becker/devcontainer-features/blob/main/LICENSE",
   "options": {
