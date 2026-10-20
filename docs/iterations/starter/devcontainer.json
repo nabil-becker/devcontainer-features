@@ -1,0 +1,27 @@
+{
+  "name": "my-project",
+  // A Microsoft base image, as this collection's own devhost uses.
+  "image": "mcr.microsoft.com/devcontainers/base:debian",
+  // Published Features of this collection. ":1" follows the 1.x line; pin an
+  // exact version ("1.3.0") when builds must match everywhere.
+  "features": {
+    // Task, the runner every command goes through (`task --list`).
+    "ghcr.io/nabil-becker/devcontainer-features/go-task:1": {},
+    // Claude Code and its state (config, login) in a volume that survives rebuilds.
+    "ghcr.io/nabil-becker/devcontainer-features/claude-code:1": {},
+    // git for the container: worktree-aware wrapper, hooks path, global config in a volume.
+    "ghcr.io/nabil-becker/devcontainer-features/git:1": {
+      "hooksPath": ".githooks"
+    },
+    // GitHub CLI; its login lives in a volume.
+    "ghcr.io/nabil-becker/devcontainer-features/gh:1": {},
+    // The way of working: backs, briefing, cost report, verify guards, devhost-init.
+    "ghcr.io/nabil-becker/devcontainer-features/devhost:1": {}
+  },
+  // The handle on ledger entries and the cost report. Committed, so never a
+  // name: set DEVHOST_ENGINEER on your machine to tell engineers apart.
+  "containerEnv": {
+    "DEVHOST_ENGINEER": "${localEnv:DEVHOST_ENGINEER:operator}"
+  },
+  "remoteUser": "vscode"
+}
