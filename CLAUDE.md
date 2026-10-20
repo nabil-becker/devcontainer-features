@@ -24,7 +24,10 @@ Delivery OS, whose learnings become a white paper: [docs/iterations.md](docs/ite
 - **The checkout is the only thing on disk.** Feature state (Claude Code,
   git's global config, gh) lives in the Features' volumes; the checkout's git
   dir sits outside OneDrive and is bind-mounted, with the git Feature's wrapper
-  keeping `GIT_DIR` scoped to it.
+  keeping `GIT_DIR` scoped to it. Because of that, Claude Code cannot create a
+  worktree for a subagent (`isolation: worktree` fails); make one with
+  `git worktree add -b <branch> <path in the scratchpad> origin/main`, which
+  the wrapper handles, and remove it with `git worktree remove` when merged.
 - **Consumers are the office (`Client Engagement Assesments`) and DSNP
   (`kgo__dsnp`)**, both under `..\..\kgo\`. Their `.devcontainer/DEVCONTAINER_CONTRIBUTION.md`
   says what they adopt from each release. A wrapper found there is a backlog
@@ -48,8 +51,9 @@ Delivery OS, whose learnings become a white paper: [docs/iterations.md](docs/ite
 commit (`task repo:setup` makes it automatic), required checks `validate`,
 `lint`, `tests`, `DCO`. Work on a topic branch; bump the Feature `version` in
 the same change; run `task docs` and commit the README; commit and push only
-when asked. Releases are a manual workflow on `main`; an unpublished Feature
-cannot be named in `installsAfter` or pulled by a consumer until then.
+when asked. Releases are a manual workflow on `main` that the Operator starts: an agent says a
+release is due and what it would publish, and never runs it. An unpublished Feature cannot be
+named in `installsAfter` or pulled by a consumer until then.
 
 Agent commits carry the bot identity `devhost agent <devhost-agent@noreply.invalid>`
 (author, committer and sign-off) and a co-author trailer naming the model that wrote the commit,
