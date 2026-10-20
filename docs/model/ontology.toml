@@ -305,6 +305,91 @@ type = "product"
 term = "Feature state"
 summary = "What a Feature keeps outside the checkout: a named volume under `/var/lib/devcontainer-features/<id>` or host disk."
 
+[agent-place]
+type = "concept"
+term = "Place"
+summary = "What an agent knows about where it stands: who it serves (always the Operator) and its boundaries."
+
+[boundaries]
+type = "concept"
+term = "Boundaries"
+summary = "What an agent may and may not do, is responsible for, and consults; its row in a RACI chart."
+
+[agentic-delivery-os]
+type = "product"
+term = "Agentic Delivery OS"
+summary = "The product the Operator is building: tools that let one person bootstrap a devhost."
+
+[way-of-working]
+type = "concept"
+term = "Way of working"
+summary = "How work gets done here: the roles, the records, the improvement loop and the rules of thumb."
+
+[iteration]
+type = "concept"
+term = "Iteration"
+summary = "One project in which the way of working is tried and learned from."
+
+[cost-store]
+type = "record"
+term = "Cost store"
+summary = "The committed ids-and-numbers record beside the cost report; never drops committed rows."
+
+[shared-language]
+type = "concept"
+term = "Shared language"
+summary = "The lexicon and the ontology together: the agreed words and the model behind them."
+
+[white-paper]
+type = "record"
+term = "White paper"
+summary = "The account of one iteration, written once when the Operator calls it done."
+
+[iteration-package]
+type = "record"
+term = "Iteration package"
+summary = "What an iteration hands to the next: every earlier white paper plus the newest artifacts."
+
+[drop-a-seed]
+type = "mechanism"
+term = "Drop a seed"
+summary = "The export skill run when a project ends: interview, white paper, seed folder."
+
+[shutdown-check]
+type = "mechanism"
+term = "Shutdown check"
+summary = "The script that says whether the devhost can be stopped without losing work."
+
+[shutdown-and-restart]
+type = "mechanism"
+term = "Shutdown and restart"
+summary = "The skill pair that closes the devhost cleanly and brings it back where it was."
+
+[plant-a-seed]
+type = "mechanism"
+term = "Plant a seed"
+summary = "The import skill run in a new place: reads the seed, interviews, sets up, writes the first entry."
+
+[docs-site]
+type = "product"
+term = "Docs site"
+summary = "The one self-contained HTML page devhost-site builds from the docs and records."
+
+[name-exception]
+type = "record"
+term = "Name exception"
+summary = "A file the Operator approves that the forbidden-words guard skips; by file, never by word."
+
+[agent-principles]
+type = "concept"
+term = "Agent principles"
+summary = "The five generic principles (P1 to P5) of the way of working."
+
+[non-functional-requirement]
+type = "concept"
+term = "Non-functional requirement"
+summary = "One of ten requirements every work item touching a Feature must meet or record an exception for."
+
 # Relations
 
 [[relation]]
@@ -606,3 +691,93 @@ object = "c4-view"
 subject = "guards"
 predicate = "checks"
 object = "ontology"
+
+[[relation]]
+subject = "agent-place"
+predicate = "contains"
+object = "boundaries"
+
+[[relation]]
+subject = "agent"
+predicate = "uses"
+object = "agent-place"
+
+[[relation]]
+subject = "agent"
+predicate = "uses"
+object = "agent-principles"
+
+[[relation]]
+subject = "agentic-delivery-os"
+predicate = "contains"
+object = "way-of-working"
+
+[[relation]]
+subject = "agentic-delivery-os"
+predicate = "contains"
+object = "devhost"
+
+[[relation]]
+subject = "iteration"
+predicate = "uses"
+object = "way-of-working"
+
+[[relation]]
+subject = "iteration-package"
+predicate = "contains"
+object = "white-paper"
+
+[[relation]]
+subject = "cost-report"
+predicate = "uses"
+object = "cost-store"
+
+[[relation]]
+subject = "shared-language"
+predicate = "contains"
+object = "lexicon"
+
+[[relation]]
+subject = "drop-a-seed"
+predicate = "writes"
+object = "white-paper"
+
+[[relation]]
+subject = "drop-a-seed"
+predicate = "builds"
+object = "iteration-package"
+
+[[relation]]
+subject = "plant-a-seed"
+predicate = "reads"
+object = "iteration-package"
+
+[[relation]]
+subject = "shutdown-check"
+predicate = "checks"
+object = "devhost"
+
+[[relation]]
+subject = "shutdown-and-restart"
+predicate = "uses"
+object = "shutdown-check"
+
+[[relation]]
+subject = "guards"
+predicate = "reads"
+object = "name-exception"
+
+[[relation]]
+subject = "docs-site"
+predicate = "contains"
+object = "backlog"
+
+[[relation]]
+subject = "docs-site"
+predicate = "contains"
+object = "ledger"
+
+[[relation]]
+subject = "non-functional-requirement"
+predicate = "checks"
+object = "feature"

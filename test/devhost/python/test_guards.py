@@ -113,3 +113,25 @@ class DocsGuard(h.RepoCase):
         done = h.run(["guards", "docs", str(self.snapshot), str(self.root)], self.root, self.env)
         self.assertEqual(done.returncode, 1)
         self.assertIn("LEXICON.md: changed or lost", done.stdout)
+
+
+class DocsGuardModel(h.RepoCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.g = h.load("guards")
+        self.snapshot = self.base / "snapshot"
+        for place in (self.snapshot / "model", self.root / "docs" / "model"):
+            h.write(place / "ontology.toml", 'types = [\n  "role",\n]\n\n[host]\ntype = "role"\n')
+            h.write(place / "themes" / "a.toml", 'host = "Merlin"\n')
+
+    def test_adding_to_the_model_is_fine(self):
+        h.write(self.root / "docs" / "model" / "ontology.toml", 'types = [\n  "role",\n  "place",\n]\n\n[host]\ntype = "role"\n\n[devhost]\ntype = "place"\n')
+        h.write(self.root / "docs" / "model" / "c4.md", "new file\n")
+        self.assertIsNone(self.g.docs_guard(self.snapshot, self.root))
+
+    def test_a_changed_removed_or_deleted_model_line_is_refused(self):
+        h.write(self.root / "docs" / "model" / "themes" / "a.toml", 'host = "Arthur"\n')
+        self.assertEqual(self.g.docs_guard(self.snapshot, self.root), 'docs/model/themes/a.toml: changed or lost: host = "Merlin"')
+        h.write(self.root / "docs" / "model" / "themes" / "a.toml", 'host = "Merlin"\n')
+        (self.root / "docs" / "model" / "themes" / "a.toml").unlink()
+        self.assertEqual(self.g.docs_guard(self.snapshot, self.root), "docs/model/themes/a.toml: removed")

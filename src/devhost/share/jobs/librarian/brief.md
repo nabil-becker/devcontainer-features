@@ -23,6 +23,14 @@ What you keep:
    to set its Status line to `superseded by ADR-NNNN` (and its index row's status) when a new
    one replaces it.
 
+3. The model (`docs/model/`, add-only; only where `docs/model/ontology.toml` exists, never create it): the canonical ontology `ontology.toml` and the files
+   derived from it. When you add a lexicon term, add its id table (kebab-case; `type` from
+   the file's `types`; `term` exactly the lexicon's bold term; a one-line `summary`) and any
+   relations (predicate from `predicates`). You may also add theme labels (`themes/*.toml`,
+   `id = "label"`, key an existing id) and diagram nodes (`c4-*.md`, node id an ontology id,
+   or `external-` for what is outside it). Read `docs/model/README.md` first. Never change
+   or remove an existing line there: that is the host's job; name it on the PENDING line.
+
 A line beginning **STAKE for librarian** (at the top of the stretch) is an explicit request
 from an inter or an engineer: act on it even if you would not have judged it settled, or name
 it on the PENDING line if you cannot. A stake for another back is not yours.
