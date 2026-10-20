@@ -86,7 +86,7 @@ The earlier iterations are not reconstructed (the Operator, 2026-10-16). The ser
 
 - **Iteration 1 (client engagement)** produced one document, the article "From Seed to Tree". It is kept exactly as it was used, never rewritten.
 - **Iteration 2 (DSNP)** was bootstrapped from that article almost at once, before any package existed: DSNP read it. The first package carries the article as DSNP received it.
-- **Iteration 3 (this repository)** was bootstrapped after DSNP's success. It started from no package and no article. Its way of working was ported by reading the two earlier repositories directly (commit `ff21f35`, 2026-10-15; `src/devhost/NOTES.md`, "Where it comes from"). No record shows the article was read here.
+- **Iteration 3 (this repository)** was bootstrapped after DSNP's success. It started from no package and no article. Its way of working was ported by reading the two earlier repositories directly (commit `ff21f35`, 2026-10-15; `docs/iterations.md`, "Where this iteration's devhost comes from"). No record shows the article was read here.
 - **This repository exports the first package:** the first foundation, the first seed. Its white paper names the concepts that came over from iterations 1 and 2, so the lineage is recorded once, in the paper, not in rebuilt payloads.
 - The other projects are only aligned on the story. They produce nothing for it.
 
@@ -134,7 +134,7 @@ flowchart LR
 
 ## Open
 
-- What this repository will consider foundational when it exports: decided when the Operator calls the iteration.
+- What this repository will consider foundational when it exports: decided by the Operator on 2026-10-19, after naming the iteration "From tree to seed": the five agent principles and the Feature non-functional requirements (`docs/principles/`), ADRs 0003 to 0009, and the skills `ledger-review` and `journalist` (ADR 0009). ADRs 0001, 0002 and 0010 to 0013 stay out: they are this repository's git and naming. The ledger, lexicon, process and ontology already counted as foundational.
 - Where a received package lives: `docs/iterations/package/` (accepted with the proposal).
 - **Format (accepted with the proposal):** Markdown, which people and agents both read without tools, with a short front matter per file (iteration, date, sources). The docs site renders it for people. The journey's raw material is released with V1 of the Agentic Delivery OS, so it must stay readable outside any tool.
 - The journalist is a skill, not a back (the Operator, 2026-10-17); it ships with the package and its instructions.

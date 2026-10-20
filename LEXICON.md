@@ -30,6 +30,13 @@ The domain words of the project itself are not here; they live with the project'
   Operator is one. The cost report is per engineer.
 - **Agent**: any model doing work for the repository: a Claude Code session, a subagent, or a
   background run. Every agent is an inter or a back.
+- **Place** (of an agent): what an agent knows about where it stands: who it ultimately serves
+  (always the Operator, even when another agent started it) and its boundaries. Agent principle 3
+  (P3); the Operator sets it up per agent, with defaults from a personal-assistant or a
+  software-delivery use case.
+  - **Boundaries**: the part of a place that says what an agent may and may not do, what it is
+    responsible for, and who it consults or keeps informed; in practice its row in a RACI chart.
+    For example, a developer agent owns its pull request but cannot merge it.
 - **Host** (the main session): the Claude Code session an engineer is talking to, the one that
   briefs and merges the work of the others; the main inter. The machine outside the container is
   the **workstation**, never "the host".
@@ -45,7 +52,8 @@ The domain words of the project itself are not here; they live with the project'
   - **Librarian**: the back for this lexicon and the ADRs.
   - **Tester**: the back with no model: runs the suite after a turn that changed code and
     speaks only when it is red, or green again.
-  - **Journalist**: the back for the journal; accepted, not yet built.
+  - **Journalist**: planned as the back for the journal; never built: it became a skill
+    (ADR-0009), then the writing brief inside `drop-a-seed` (ADR-0014).
 - **Con** (consult agent): an agent briefed by the host for one job, a Claude Code subagent, with
   its scope, model and isolation set for that job; it replies once, in the hand-off shape, and
   its job gets its own ledger entry. Not a standing role.
@@ -125,12 +133,17 @@ The domain words of the project itself are not here; they live with the project'
 - **Ontology**: the canonical data model of the way of working: what kinds of thing exist (by
   plain base id), and how they relate (briefs, writes, keeps, checks, decides). The lexicon words,
   the themes and the C4 views must agree with it; it is not the instances, which the ledger holds.
+- **Shared language**: the lexicon and the ontology taken together: the agreed words and the model
+  behind them, which keep the Operator and the agents aligned. The technical term is controlled
+  vocabulary. A theme (optional, a matter of taste, changeable later) is a voice over it that makes
+  the place quicker to grasp.
 - **White paper**: the account of one iteration, written once when the Operator calls it done, in
   plain words, function over form, every fact traceable to the ledger, ADRs, reviews and cost
-  reports. Written with the Operator through the journalist skill (ADR 0009).
-- **Journalist**: the skill that writes the white paper in conversation with the Operator when
-  the iteration is called; part of the iteration package and its instructions, not a back
-  (ADR-0009).
+  reports. Written with the Operator during `drop-a-seed`, by a subagent following its journalist
+  brief (ADR 0009, ADR-0014).
+- **Journalist**: the brief (`drop-a-seed/journalist.md`) a writing subagent follows to draft the
+  white paper with the Operator when the iteration is called; not a back (ADR-0009), and no longer
+  a skill of its own (ADR-0014).
 - **Iteration package**: what an iteration hands to the next, cumulative: every earlier white
   paper kept unchanged, plus the newest set of artifacts (a bootstrap prompt, context, whatever the
   iteration finds foundational), which each iteration merges into and replaces, so packages never
@@ -138,6 +151,12 @@ The domain words of the project itself are not here; they live with the project'
   ingest and why, not how to transform it. In the life theme (ADR-0007) it is the **seed**, a label only:
   plain names stay in every id, path and sentence, as in ADR-0004
   (`docs/proposals/iteration-package.md`).
+- **Drop a seed**: the export skill (`drop-a-seed`), run when a project ends: the closing
+  interview, the iteration named, the white paper written by a subagent, the seed's contents
+  settled with the Operator, the seed folder assembled by `devhost-package` (ADR-0014).
+- **Plant a seed**: the import skill (`plant-a-seed`), run in the new place after the agent is
+  pointed at the seed's README: it reads the papers and foundation, runs the interview, sets up or
+  adapts a repository, and ends with the first ledger entry (ADR-0014).
 - **Docs site**: the one self-contained HTML page `devhost-site` builds from the docs and records,
   a homepage that leads with what needs the Operator. Publishing it is a separate skill, so the
   host (Claude artifacts today) can change without touching the page (ADR-0006).
@@ -163,11 +182,21 @@ The domain words of the project itself are not here; they live with the project'
   to (`devhost` `guards.py`: the backlog guard, the docs guard).
 - **Name guard**: the replacement of every name in the ignored `.devhost/redact-names.txt` by
   "the Operator" in everything a back writes.
+- **Name exception**: a file the Operator approves, listed in
+  `.devhost/name-exceptions.txt`, that the commit-time forbidden-words guard skips so it can be
+  committed unchanged (the first white paper, ADR-0010). By file, never by word.
 - **Metrics line**: the one JSON line every back run appends to its `runs.jsonl`: when, which
   back, model, size, outcome, guard undos, duration, cost, tokens.
 - **The guards** (`devhost-verify`): the commit-time checks the pre-commit hook runs: the ledger
   append-only and well-formed, no secrets, no forbidden words, the ADR shape, every task
   described, every skill named.
+- **Agent principles**: the five generic principles (P1 to P5) of the way of working: separate
+  personalization from process, continuous improvement, the agent knows its place, claims need
+  evidence, right-size the work. Generic by design: each Operator sets them up
+  (`docs/principles/agents.md`, ADR-0013).
+- **Non-functional requirement** (NFR): one of ten requirements (NFR-1 to NFR-10) that every work
+  item touching a Feature must meet, or else record a backlog item or a written exception in the
+  Feature's NOTES (`docs/principles/non-functional-requirements.md`).
 
 ## The Arthurian layer
 

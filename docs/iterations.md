@@ -33,6 +33,12 @@ of a pyramid; each project iteration defines that foundation further.
 | 2 | DSNP | when the Operator calls it |
 | 3 | devcontainer-features (this repository) | when the Operator calls it; the first to export a package (`docs/proposals/iteration-package.md`) |
 
+## Where this iteration's devhost comes from
+
+Moved here from the devhost Feature's NOTES on 2026-10-19 (Feature principles, decision on "Where it comes from"): it is lineage, not something an adopter acts on.
+
+The devhost was ported (commit `ff21f35`, 2026-10-15) from the housekeeping of two private repositories: the agentic workspace where the roles were first built ("the office": helpers, housekeepers, contractors, a name guard turning people's names into "the Operator") and a client project that made it a shared, pushed repository (one level, no rooms; a container gate so a workstation session is never touched; the forbidden-words guard shared by the backs and the commit check; `merge=union` on the monthly ledger files; the cost measured from the transcripts, never by the model; the tester). The original's ledger lists the mistakes already fixed and kept fixed here: stakes mid-paragraph are missed, so a stake stands on its own line; a reply is written once per content block and the first record can carry a partial count, so the cost script keeps the fullest record; the guards undo a run that rewords or reorders rather than trust the brief; a test fixture under a container-wide `GIT_DIR` committed onto the real branch, hence the git wrapper and `DEVHOST_JOB_CHILD` on the suite; the librarian woken at the scribe's rate had nothing to do a third of the time, hence its own thresholds; the state out of the checkout, so nothing is synced or committed by mistake. Vocabulary and prefix changed with the words: housekeeper to back, helper to inter, contractor to con, `Housekeeper <job>` to `Back <job>`.
+
 ## The white paper
 
 At a point the Operator chooses, an iteration produces one white paper: the journey told as a

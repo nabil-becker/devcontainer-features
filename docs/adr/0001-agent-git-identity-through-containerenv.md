@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | accepted |
+| **Status** | superseded by [ADR 0012](0012-agent-git-identity-through-the-git-feature-wrapper.md) |
 | **Date** | 2026-10-16 |
 | **Deciders** | the Operator; proposed by the host |
 
@@ -63,3 +63,4 @@ leaks the real address.
 | Date | Change |
 |---|---|
 | 2026-10-16 | First draft. |
+| 2026-10-19 | Superseded by ADR 0012: the git Feature's wrapper exports the identity. |
