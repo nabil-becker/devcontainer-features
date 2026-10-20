@@ -82,6 +82,12 @@ The domain words of the project itself are not here; they live with the project'
   `release-collection`) that names a backlog item; unique in `TODO.md`, never reused, never
   renamed once written, and cited the same way in commits and ledger entries. It replaces the
   earlier `TD-nn` numbers, which survive only as `(was TD-nn)` on converted items.
+- **Branch rule**: every branch is named `<type>/<backlog-id>/<n>` (type `feature`, `fix`, `docs`
+  or `chore`; `<n>` the workstream number, always present) and names a backlog item that exists in
+  `TODO.md`; the backs' records use the standing item `records`. Made by `task devhost:branch`,
+  listed and pruned by `task devhost:branches`, enforced by the pre-push hook (ADR-0017).
+- **Workstream number**: the `<n>` in a branch name, always present and counted from 1; a parallel
+  stream on the same backlog item (for example a con in a worktree) takes the next free number.
 - **Amend item**: a backlog item with the id `amend-<id>`, added by the secretary when a stake asks
   to change an existing item; it names the item and the change, and a person makes the change by
   hand, since backs never reword (ADR-0003).

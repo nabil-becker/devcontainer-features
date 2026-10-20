@@ -781,3 +781,23 @@ object = "ledger"
 subject = "non-functional-requirement"
 predicate = "checks"
 object = "feature"
+
+[branch-rule]
+type = "mechanism"
+term = "Branch rule"
+summary = "Every branch is named <type>/<backlog-id>/<n> and names an item in the backlog; enforced by the pre-push hook."
+
+[[relation]]
+subject = "branch-rule"
+predicate = "uses"
+object = "backlog-id"
+
+[workstream-number]
+type = "concept"
+term = "Workstream number"
+summary = "The <n> in a branch name, always present and counted from 1; a parallel stream on the same item takes the next."
+
+[[relation]]
+subject = "branch-rule"
+predicate = "uses"
+object = "workstream-number"
