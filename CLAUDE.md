@@ -52,8 +52,8 @@ when asked. Releases are a manual workflow on `main`; an unpublished Feature
 cannot be named in `installsAfter` or pulled by a consumer until then.
 
 Agent commits carry the bot identity `devhost agent <devhost-agent@noreply.invalid>`
-(author, committer and sign-off) and a co-author trailer naming the model at an
-unclaimable address: `Co-Authored-By: Claude Sonnet 5.5 <claude-sonnet-5-5@noreply.invalid>`.
+(author, committer and sign-off) and a co-author trailer naming the model that wrote the commit,
+at an unclaimable address, for example `Co-Authored-By: Claude Opus 5.5 <claude-opus-5-5@noreply.invalid>`.
 Never `noreply@anthropic.com`: a stranger's GitHub account appears to have claimed it; it
 shows up as a participant (ADR 0002). This overrides Claude Code's default
 attribution trailer.

@@ -55,6 +55,8 @@ ADR_FILE = re.compile(r"^(\d{4})-[a-z0-9-]+\.md$")
 ADR_SECTIONS = ("## Context", "## Decision", "## Options considered", "## Consequences", "## Change log")
 ADR_STATUSES = {"proposed", "accepted", "rejected", "superseded"}
 LEDGER_HEADING = re.compile(r"^(### \d{4}-\d{2}-\d{2} \S|## Review \d{4}-\d{2}-\d{2})")
+CORRECTS_NONE = re.compile(r"^- \*\*Corrects:\*\*\s*none[\s.,;:!]*$", re.I)
+CORRECTS_NONE_FROM = "2026-10-19"  # the Operator's decision: refused from this date, never retroactively
 TASK_LINE = re.compile(r"^  ([a-z][\w:-]*):\s*$")
 FRONTMATTER = re.compile(r"^---\r?\n(.*?)\r?\n---\r?\n", re.S)
 
@@ -113,9 +115,14 @@ def ledger_shape(root: Path) -> list[str]:
         if MONTHLY.match(path.name):
             if not text.startswith(f"# Ledger, {path.stem}\n"):
                 findings.append(f"{where}:1: must start with '# Ledger, {path.stem}'")
+            dated = ""
             for number, line in enumerate(text.splitlines(), 1):
                 if re.match(r"^#{2,3} ", line) and not LEDGER_HEADING.match(line):
                     findings.append(f"{where}:{number}: headings are '### YYYY-MM-DD <title>' or '## Review YYYY-MM-DD' only")
+                if line.startswith("### "):
+                    dated = line[4:14]
+                if CORRECTS_NONE.match(line) and dated >= CORRECTS_NONE_FROM:
+                    findings.append(f"{where}:{number}: 'Corrects: none'; leave the line out when the entry corrects nothing")
         elif path.name == "README.md":
             continue
         elif COST_REPORT.match(path.name):

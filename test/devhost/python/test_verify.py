@@ -86,6 +86,15 @@ class Verify(h.RepoCase):
         h.write(folder / "2026-12.md", "# Ledger\n")
         self.assertIn("docs/ledger/2026-12.md:1: must start with '# Ledger, 2026-12'", self.v.ledger_shape(self.root))
 
+    def test_corrects_none_is_refused_from_2026_10_19_only(self):
+        folder = self.root / "docs" / "ledger"
+        h.write(folder / "2026-10.md", "# Ledger, 2026-10\n\n"
+                "### 2026-10-18 Before the rule\n\n- **Corrects:** none\n\n"
+                "### 2026-10-19 After it\n\n- **Corrects:** None.\n\n"
+                "### 2026-10-20 A real correction\n\n- **Corrects:** 2026-10-19 After it\n")
+        self.assertEqual([f for f in self.v.ledger_shape(self.root) if "2026-10.md" in f],
+                         ["docs/ledger/2026-10.md:9: 'Corrects: none'; leave the line out when the entry corrects nothing"])
+
     def test_secret_patterns_and_the_allow_list(self):
         token = "ghp_" + "a" * 36
         h.write(self.root / "config.md", f"token: {token}\n\nAccountKey={'B' * 64}==\n")

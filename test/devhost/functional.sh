@@ -37,6 +37,14 @@ PENDING: none
 - **Asked:** build the thing for Zebulonica
 - **Friction:** none
 - **Measures:** MEASURES
+
+### 2026-10-14 Thing tested
+
+- **Session:** host (s1)
+- **Asked:** test the thing
+- **Friction:** none
+- **Measures:** MEASURES
+- **Corrects:** none
 ANSWER
 
   # A transcript: a few user/assistant records and one stake line, long enough to pass the
@@ -87,6 +95,8 @@ PY
   check "ledger file created with its heading" bash -c "head -n1 '$ledger' | grep -qx '# Ledger, $month'"
   check "ledger gained the entry" grep -q '^### 2026-10-14 Thing built' "$ledger"
   check "Measures filled by the job, not the model" bash -c "grep -q '^- \*\*Measures:\*\* ' '$ledger' && ! grep -q 'MEASURES' '$ledger'"
+  check "the stretch's cost is on its first entry only" bash -c "[ \"\$(grep -c '^- \*\*Measures:\*\* .*this stretch; model' '$ledger')\" = 1 ] && grep -q '^- \*\*Measures:\*\* counted in the first entry of this stretch' '$ledger'"
+  check "a Corrects: none line is dropped" bash -c "! grep -qi '^- \*\*Corrects:\*\* *none' '$ledger'"
   check "the name guard replaced the name" bash -c "grep -q 'build the thing for the Operator' '$ledger' && ! grep -qi zebulonica '$ledger'"
   check "offset file written" test -s "$state/scribe/offsets/s1"
   check "job.log written" test -s "$state/scribe/job.log"
@@ -97,7 +107,7 @@ PY
   out="$(run_job scribe s1)"; rc=$?
   check "second run exits 0" test "$rc" -eq 0
   check "second run calls nothing and says nothing" bash -c "[ '$(calls)' = 1 ] && [ -z '$out' ]"
-  check "ledger unchanged by the second run" bash -c "[ \"\$(grep -c '^### ' '$ledger')\" = 1 ]"
+  check "ledger unchanged by the second run" bash -c "[ \"\$(grep -c '^### ' '$ledger')\" = 2 ]"
 
   # 3. Outside a container (marker absent): exit 0, no call, nothing written.
   rm -f "$marker"

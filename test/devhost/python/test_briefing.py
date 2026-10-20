@@ -125,3 +125,37 @@ class Report(h.RepoCase):
         self.assertTrue(h.run(["report", "--log"], self.root, self.env).stdout.startswith("no job runs recorded under"))
         h.write(self.base / "state" / "scribe" / "job.log", "line 1\nline 2\n")
         self.assertEqual(h.run(["report", "--log", "1"], self.root, self.env).stdout.strip(), "== scribe\nline 2")
+
+    def test_a_rebuild_loses_no_history(self):
+        before = self.report.summary(self.root, "2026-10")
+        self.report.write_report(self.root, "2026-10")
+        store = self.root / "docs" / "ledger" / "costs-2026-10-tester.jsonl"
+        self.assertEqual(len(store.read_text(encoding="utf-8").splitlines()), 3, "two replies and one run stored")
+        self.assertNotIn(h.PERSON, store.read_text(encoding="utf-8"))
+        # the volumes are emptied: no transcripts, no run records
+        for p in h.project_folder(self.root).rglob("*.jsonl"):
+            p.unlink()
+        (self.base / "state" / "runs.jsonl").unlink()
+        self.report.write_report(self.root, "2026-10")
+        self.assertEqual(self.report.summary(self.root, "2026-10"), before, "the store keeps what the volumes lost")
+        self.assertEqual(len(store.read_text(encoding="utf-8").splitlines()), 3, "regenerating stores nothing twice")
+
+    def test_a_baseline_adds_to_every_table(self):
+        tables = {
+            "sessions": {"sess-0": {"models": ["claude-opus-5-5"], "replies": 10, "cost": 2.0, "first": "2026-10-01T09:00", "last": "2026-10-01T10:00"}},
+            "cons": {"general-purpose|claude-sonnet-5-5": {"runs": 2, "replies": 8, "cost": 1.0}},
+            "backs": {"scribe": {"models": ["haiku"], "runs": 4, "changed": 2, "nothing": 2, "cost": 0.4, "duration_s": 40.0, "stretch_chars": 400}},
+            "models": {"opus": {"inters": 2.0, "n": 10, "out": 500}},
+            "days": {"2026-10-01": {"inters": 2.0, "cons": 1.0, "backs": 0.4}},
+        }
+        # a local reply at or before `until` is already counted in the baseline
+        h.write(self.root / "docs" / "ledger" / "costs-2026-10-tester.jsonl",
+                json.dumps({"baseline": {"until": "2026-10-05T10:00:01.000Z", "tables": tables}}) + "\n")
+        text = self.report.render(self.root, "2026-10")
+        self.assertIn("Total: $3.40. Inter sessions: $2.00 in 1 sessions. Cons: $1.00 in 3 runs. Backs: $0.40 in 4 runs", text)
+        self.assertIn("| sess-0 | claude-opus-5-5 | 10 | $2.00 |", text)
+        self.assertNotIn("| sess-1 |", text)  # 10:00:01, not after `until`
+        self.assertIn("| Explore | claude-haiku-5 | 1 | 1 |", text)  # 2026-10-06, after it
+        self.assertIn("| general-purpose | claude-sonnet-5-5 | 2 | 8 | $1.00 | $0.50 |", text)
+        self.assertIn("| scribe | haiku | 4 | 2 | 2 |", text)
+        self.assertIn("| 2026-10-01 | $2.00 | $1.00 | $0.40 | $3.40 |", text)

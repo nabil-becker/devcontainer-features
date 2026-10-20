@@ -41,11 +41,16 @@ job_run() {
   JOB_PENDING="$(sed -n 's/^PENDING: *//p' "$tmp/out" | head -n1)"
   [ "$JOB_PENDING" = "none" ] && JOB_PENDING=""
   printf '%s' "$JOB_PENDING" >"$state/pending-$SID"
-  # The numbers are the script's, never the model's: every Measures line gets this stretch's.
+  # The numbers are the script's, never the model's: the stretch's cost goes on its first entry
+  # only, so summing the ledger's Measures counts it once; the others point to that entry.
   entries="$(sed -n '/^---$/,$p' "$tmp/out" | sed '1d' \
     | MEASURES="$measures (this stretch; model $MODEL wrote the entry)" python3 -c 'import os,re,sys
-t=sys.stdin.read(); m=os.environ["MEASURES"]
-print(re.sub(r"^- \*\*Measures:\*\*.*$", lambda _: "- **Measures:** " + m, t, flags=re.M), end="")' \
+t=sys.stdin.read(); m=os.environ["MEASURES"]; n=[0]
+def fill(_):
+    n[0] += 1
+    return "- **Measures:** " + (m if n[0] == 1 else "counted in the first entry of this stretch, above")
+t=re.sub(r"^- \*\*Corrects:\*\*[ \t]*none[ \t.,;:!]*\n", "", t, flags=re.M | re.I)  # the guard refuses it
+print(re.sub(r"^- \*\*Measures:\*\*.*$", fill, t, flags=re.M), end="")' \
     | redact)"
   case "$status" in
     logged)
