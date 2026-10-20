@@ -119,13 +119,18 @@ The domain words of the project itself are not here; they live with the project'
 - **Friction**: what a unit of work lacked, got wrong or had to work out, tagged `[tooling]`,
   `[docs]`, `[skill: <name>]`, `[skill: new]` or `[process]`. "none" is a valid entry.
 - **Measures**: the numbers of an entry: the stretch's cost at list price, its tokens and models,
-  filled in by the scribe's script from the transcripts, never by a model.
+  filled in by the scribe's script from the transcripts, never by a model. A stretch's cost goes on
+  its first entry only; the stretch's other entries point to it, so summing the ledger counts it once.
 - **Review**: reading the cost report and the entries since the last review, checking whether the
   last review's friction came back, and turning each group into one action; appended to the
   ledger as a `## Review` section. Run with `/ledger-review`.
 - **Cost report**: `docs/ledger/costs-YYYY-MM-<engineer>.md`, the monthly agent costs on one
-  engineer's machine (inters, cons, backs, by model), rebuilt by `devhost-report` with no model.
-  Read first by the review.
+  engineer's machine (inters, cons, backs, by model), rebuilt by `devhost-report` with no model
+  from the cost store and this machine's new records. Read first by the review.
+- **Cost store**: `docs/ledger/costs-YYYY-MM-<engineer>.jsonl`, the committed ids-and-numbers
+  record beside the cost report. `devhost-report` adds this machine's new records to it and never
+  drops committed rows, so a rebuilt machine cannot empty the month; figures from before the store
+  existed enter once as a baseline taken from the committed report.
 - **List-price estimate**: every cost figure here: tokens priced at the published list price,
   which on a subscription measures use, not a charge.
 - **ADR**: an architecture decision record in `docs/adr/`, for a decision whose reasoning does
