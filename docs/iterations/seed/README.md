@@ -10,9 +10,13 @@ up a new repository or adapt an existing one.
 ## What is in this folder
 
 - `papers/`: what each iteration learned, oldest first. Read these first.
-- `foundation/`: the pieces worth adopting, each with its reason.
+- `foundation/`: the pieces worth adopting: the agent principles, the decisions (ADRs) that explain
+  the why, and this project's lexicon, process and ontology as worked examples. The person's
+  project builds its own lexicon and process; it does not take these as they are.
 - `starter/`: files to copy into the target (`devcontainer.json`, `SETUP.md`, `CONTEXT.md`).
-- `skills/`: the skills that run the cycle, `plant-a-seed` and `drop-a-seed`.
+- `skills/`: the skills that run the cycle: `plant-a-seed` and `drop-a-seed`, `ledger-review`
+  (turning the records into changes), and `shutdown-devhost` with `restart-devhost` (stopping
+  and resuming a dev container where agents run in the background).
 - `PACKAGE.md`: how the folder is built and what it holds.
 
 ## What to do

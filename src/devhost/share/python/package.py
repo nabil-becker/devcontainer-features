@@ -21,14 +21,15 @@ Options (paths are relative to the repository root unless absolute):
                     (default docs/iterations/starter)
     --skills LIST   comma-separated skill names whose folders .claude/skills/<name>/ are copied
                     whole and untouched to skills/<name>/
-                    (default plant-a-seed,drop-a-seed,ledger-review)
+                    (default plant-a-seed,drop-a-seed,ledger-review,shutdown-devhost,restart-devhost)
     --out DIR       where the package is written; must be missing or empty
                     (default docs/iterations/export)
     --date D        YYYY-MM-DD (default today)
 
 The package is a seed: a plain folder holding `README.md` (the entry point an agent is pointed
 at), `starter/` (what the next place begins with), `skills/` (`plant-a-seed`, which imports it,
-`drop-a-seed`, which exports the next one, and `ledger-review`), `papers/` (every paper received,
+`drop-a-seed`, which exports the next one, `ledger-review`, and `shutdown-devhost` with
+`restart-devhost`), `papers/` (every paper received,
 byte for byte, the papers kept here, the new paper), `foundation/<repository path>` (the
 manifest's files) and `PACKAGE.md`: iteration, date,
 every file with its sha256 and kind (paper, original, derived, foundation), and the instruction
@@ -58,7 +59,7 @@ ROW = re.compile(r"^\|\s*`([^`]+)`\s*\|\s*([0-9a-f]{64})\s*\|\s*(\w+)\s*\|\s*$")
 DEFAULTS = {"received": "docs/iterations/package", "papers": "docs/iterations/papers",
             "foundation": "docs/iterations/foundation.txt", "readme": "docs/iterations/seed/README.md",
             "starter": "docs/iterations/starter",
-            "skills": "plant-a-seed,drop-a-seed,ledger-review", "out": "docs/iterations/export"}
+            "skills": "plant-a-seed,drop-a-seed,ledger-review,shutdown-devhost,restart-devhost", "out": "docs/iterations/export"}
 
 
 class Refused(Exception):
@@ -213,6 +214,7 @@ def _display(root: Path, path: Path) -> str:
 
 def index_text(iteration: str, date: str, files: list[tuple[str, str, str]], received: str) -> str:
     rows = "\n".join(f"| `{name}` | {digest} | {kind} |" for name, digest, kind in files)
+    skills = ", ".join(f"`{s}`" for s in sorted({name.split("/")[1] for name, _, _ in files if name.startswith("skills/")}))
     return "\n".join([
         front_matter(iteration, date, [received]).decode("utf-8").rstrip("\n"),
         "",
@@ -221,7 +223,7 @@ def index_text(iteration: str, date: str, files: list[tuple[str, str, str]], rec
         f"Exported {date}. Papers carry over unchanged; the foundation is the newest, merged, never nested.",
         "",
         "This is a seed. Start at `README.md`; `starter/` is what the new place begins with, `skills/` holds the skills "
-        "that import (`plant-a-seed`) and export (`drop-a-seed`) it.",
+        f"({skills}): `plant-a-seed` imports the seed, `drop-a-seed` exports the next one.",
         "",
         "**Keep this folder in the repository. It is the source of the next export and must not be deleted.**",
         "",

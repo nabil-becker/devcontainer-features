@@ -9,7 +9,7 @@
 ## Context
 
 Each iteration of the Agentic Delivery OS ends by handing the next project what it needs to
-start. The first two iterations had no such hand-over: DSNP read the article from the first
+start. The first two iterations had no such hand-over: DSNP (software project 1) read the article from the first
 directly, and this repository was ported by reading both earlier repositories
 (`docs/iterations.md`, `docs/proposals/iteration-package.md`). This repository will export the
 first package. The Operator drafts the final white paper from the papers the iterations leave,
@@ -43,7 +43,7 @@ A seed's white paper is an honest account, source material rather than polish:
   recovered.
 
 Earlier iterations are not reconstructed (no true-up): iteration 1's article is kept as used,
-the first package carries it as DSNP received it, and this repository's paper names what came
+the first package carries it as DSNP (software project 1) received it, and this repository's paper names what came
 over, so the lineage is recorded once. The package is assembled by a script and the judgement
 work is done in a skill (AP-14).
 
@@ -91,3 +91,4 @@ differently: no package existed, and no record shows the article was read here.
 | Date | Change |
 |---|---|
 | 2026-10-16 | First draft; accepted by the Operator in the session. |
+| 2026-10-20 | The projects' names in the papers added in brackets: iteration 1 is "the office", iteration 2 (DSNP) "software project 1" (the Operator, closing interview 3, question 41). |

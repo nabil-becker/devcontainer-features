@@ -50,6 +50,23 @@ the person picks the use case closer to their work (software delivery or persona
 its answers fill every part they do not change. Purpose still has to be asked: it has no default
 and cannot be backfilled. Say what you assumed in the plan.
 
+The defaults end in a project that runs, not a plan. On the defaults path, after the purpose and
+one confirmation of the plan:
+
+1. **git, locally.** `git init` in a blank directory (an existing repository: a topic branch). No
+   remote is created or pushed to; that is the person's step.
+2. **The README.** A short `README.md` with the purpose in the person's words and how to start.
+3. **The dev container and the Taskfile.** Run the collection's bootstrap (`starter/SETUP.md`): it
+   writes `Taskfile.yml`, `.devcontainer/devcontainer.json` and `.devcontainer/.env.example`.
+   Replace that `devcontainer.json` with `starter/devcontainer.json`, and copy
+   `starter/CONTEXT.md`, filled in from the purpose.
+4. **Stop before the container.** Tell the person the two commands that start it and the agent
+   session inside: `task devcontainer:up`, then `task devcontainer:claude`.
+5. **Inside the container**, in that session: `task devhost:init` writes the records (`LEXICON.md`,
+   `PROCESS.md`, `TODO.md`, the ledger, the ADR folder, the skills, the hooks). The foundation's
+   lexicon and process are this seed's worked examples, not the project's: start the project's
+   own from them. Then step 7 above: the first ledger entry, and a first commit.
+
 ## Rules
 
 - You propose; the person decides. Never choose for them what the guide marks as theirs.

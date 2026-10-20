@@ -1,20 +1,26 @@
 # The foundation: what the Operator named as carried from one iteration to the next.
 # One repository-relative path per line; `!path` marks a file copied untouched.
-# The tooling is not foundation (the OS is not the package).
+# The tooling is not foundation (the OS is not the package). Settled in the closing interview of
+# iteration 3 (docs/iterations/interview-3.md, questions 11 to 14).
 #
-# docs/principles/* exist only on another, unmerged branch; the two lines below are expected to
-# be missing here until it is merged, and devhost-package refuses until then.
+# The agent principles. The Feature non-functional requirements stay here: they belong to this
+# project's product, not to the way of working.
 docs/principles/agents.md
-docs/principles/non-functional-requirements.md
+# This project's lexicon and process, carried as worked examples: the next project builds its own
+# (devhost-init scaffolds them). The ontology goes with the lexicon: shared words and the model of
+# how they relate, always exported together.
 LEXICON.md
 PROCESS.md
-# the ontology
 docs/model/ontology.toml
-# ADRs 0003 to 0009 (0009 also exists only on unmerged branches, like the principles)
+# The decisions that explain the way of working, so the next project knows the why. The theme
+# ADRs (0004, 0007) stay in this repository, out of the seed: a theme is personalization (interview 3, questions 11 and 19).
 docs/adr/0003-backs-only-add-so-change-stakes-become-amend-items.md
-docs/adr/0004-the-arthurian-theme-is-a-layer-not-a-rename.md
 docs/adr/0005-the-ontology-is-the-canonical-model-and-a-guard-keeps-the-rest-in-line.md
 docs/adr/0006-the-docs-site-is-built-by-a-script-and-hosting-is-a-swappable-skill.md
-docs/adr/0007-the-life-theme-is-a-shared-layer-above-each-projects-own.md
 docs/adr/0008-the-iteration-package-carries-papers-forward-and-merges-the-foundation.md
 docs/adr/0009-the-journalist-is-a-skill-in-the-iteration-package-not-a-back.md
+docs/adr/0011-the-feature-and-agent-principles-are-binding.md
+docs/adr/0013-the-agent-principles-are-trimmed-to-five-generic-ones.md
+docs/adr/0014-the-seed-is-exported-and-imported-by-two-skills-and-the-journalist-is-folded-into-the-export.md
+docs/adr/0015-shutdown-is-a-check-script-a-skill-and-a-host-stop-task-because-the-spec-has-no-stop-hook.md
+docs/adr/0016-the-bot-identity-applies-only-to-git-run-by-an-agent.md

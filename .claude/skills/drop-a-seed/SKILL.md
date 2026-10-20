@@ -6,7 +6,8 @@ description: Export the seed at the end of a project (the iteration), the folder
 # Drop a seed
 
 A **seed** is a plain folder that carries the way of working to the next place: a `README.md` to
-point an agent at, a `starter/`, the skills `plant-a-seed`, `drop-a-seed` and `ledger-review`, every
+point an agent at, a `starter/`, the skills `plant-a-seed`, `drop-a-seed`, `ledger-review`, `shutdown-devhost` and
+`restart-devhost` (ADRs 0014, 0015), every
 paper so far and the foundation. `devhost-package` assembles it (ADR 0008); the judgement work is
 here: the closing interview, the paper, and what is foundation. Plain words (ADR 0004). You draft;
 the Operator decides and trims.

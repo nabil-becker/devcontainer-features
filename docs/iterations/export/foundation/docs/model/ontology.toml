@@ -1,0 +1,783 @@
+# The ontology of the way of working: one canonical model of the base names.
+#
+# Canonical: LEXICON.md explains these ids in prose for people, docs/model/themes/*.toml only
+# label them, and the C4 views in docs/model/*.md draw them. `devhost-verify` (guard `model`)
+# keeps all of them agreeing with this file. The librarian back only adds (new ids, relations,
+# labels, diagram nodes); the host changes or removes.
+#
+# Layout: `types` and `predicates` are the closed sets; each `[id]` table is one base name
+# (kebab-case) with `type`, `term` (the bold term exactly as LEXICON.md writes it) and a
+# one-line `summary`; each `[[relation]]` joins two ids with a predicate.
+
+types = [
+  "role",
+  "record",
+  "mechanism",
+  "place",
+  "concept",
+  "product",
+]
+
+predicates = [
+  "is-a",
+  "contains",
+  "briefs",
+  "returns",
+  "writes",
+  "keeps",
+  "checks",
+  "decides",
+  "runs",
+  "reads",
+  "uses",
+  "publishes",
+  "builds",
+  "pulls",
+]
+
+[operator]
+type = "role"
+term = "The Operator"
+summary = "The person who owns the repository: asks, reviews, decides, ratifies."
+
+[engineer]
+type = "role"
+term = "Engineer"
+summary = "Anyone who works the repository with their own sessions; the Operator is one."
+
+[agent]
+type = "role"
+term = "Agent"
+summary = "Any model doing work for the repository: an inter or a back."
+
+[host]
+type = "role"
+term = "Host"
+summary = "The main session an engineer talks to; briefs cons and merges their work."
+
+[inter]
+type = "role"
+term = "Inter"
+summary = "An agent that works with an engineer, directly or through another inter."
+
+[back]
+type = "role"
+term = "Back"
+summary = "A background agent that keeps one record current after each turn; never works with a person."
+
+[scribe]
+type = "role"
+term = "Scribe"
+summary = "The back for the ledger."
+
+[secretary]
+type = "role"
+term = "Secretary"
+summary = "The back for the backlog; adds and ticks, never rewords."
+
+[librarian]
+type = "role"
+term = "Librarian"
+summary = "The back for the lexicon, the ADRs and the model; adds, never changes."
+
+[tester]
+type = "role"
+term = "Tester"
+summary = "The back with no model: runs the suite after a code change."
+
+[journalist]
+type = "role"
+term = "Journalist"
+summary = "The back for the journal; accepted, not yet built."
+
+[con]
+type = "role"
+term = "Con"
+summary = "A consult agent briefed by the host for one job; replies once in the hand-off shape."
+
+[devhost]
+type = "place"
+term = "Devhost"
+summary = "The dev container where sessions run and the backs act."
+
+[workstation]
+type = "place"
+term = "Workstation"
+summary = "An engineer's own machine outside the devhost."
+
+[worktree]
+type = "place"
+term = "Worktree"
+summary = "A separate checkout on its own branch where a con changes shared tooling."
+
+[night-shift]
+type = "mechanism"
+term = "Night shift"
+summary = "A host session left open to work an agreed backlog list alone under a cap."
+
+[note]
+type = "concept"
+term = "Note"
+summary = "Something the Operator says that the repository must remember."
+
+[unit-of-work]
+type = "concept"
+term = "Unit of work"
+summary = "One thing asked and done or settled; one ledger entry each."
+
+[backlog]
+type = "record"
+term = "Backlog"
+summary = "TODO.md: the engineering items and the decisions for the Operator."
+
+[backlog-item]
+type = "record"
+term = "Backlog item"
+summary = "An engineering item that needs no external answer, named by its backlog id."
+
+[backlog-id]
+type = "concept"
+term = "Backlog id"
+summary = "The kebab-case slug that names a backlog item, never reused."
+
+[amend-item]
+type = "record"
+term = "Amend item"
+summary = "A backlog item amend-<id> asking a person to change an existing item."
+
+[decision]
+type = "record"
+term = "Decision for the Operator"
+summary = "A choice only the Operator can make, listed in the backlog with a recommendation."
+
+[brief]
+type = "concept"
+term = "Brief"
+summary = "What an inter gives a con: job, scope, model, isolation, reply shape."
+
+[hand-off]
+type = "concept"
+term = "Hand-off"
+summary = "The one reply shape: Outcome, Outputs, Friction, For the repository, Decisions needed."
+
+[model-sizing]
+type = "concept"
+term = "Model sizing"
+summary = "Matching the model to the blast radius of the work."
+
+[trial]
+type = "concept"
+term = "Trial"
+summary = "Running a new mechanism once on real work before the process describes it."
+
+[ledger]
+type = "record"
+term = "Ledger"
+summary = "The append-only record of what agents did, in monthly files."
+
+[ledger-entry]
+type = "record"
+term = "Entry"
+summary = "One ledger record, one per unit of work."
+
+[friction]
+type = "concept"
+term = "Friction"
+summary = "What a unit of work lacked, got wrong or had to work out."
+
+[measures]
+type = "concept"
+term = "Measures"
+summary = "The numbers of an entry, filled in by script from the transcripts."
+
+[ledger-review]
+type = "mechanism"
+term = "Review"
+summary = "Reading the cost report and the entries since the last review; run with /ledger-review."
+
+[cost-report]
+type = "record"
+term = "Cost report"
+summary = "The monthly agent costs on one engineer's machine, rebuilt with no model."
+
+[list-price-estimate]
+type = "concept"
+term = "List-price estimate"
+summary = "Tokens priced at the published list price; measures use, not a charge."
+
+[adr]
+type = "record"
+term = "ADR"
+summary = "An architecture decision record for a decision whose reasoning needs room."
+
+[lexicon]
+type = "record"
+term = "Lexicon"
+summary = "LEXICON.md: the words of the way of working and what they mean."
+
+[journal]
+type = "record"
+term = "Journal"
+summary = "The record of the project's iterations, in plain words, add-only."
+
+[night-shift-report]
+type = "record"
+term = "Night-shift report"
+summary = "The morning report of a night shift, in docs/night-shift/."
+
+[hook]
+type = "mechanism"
+term = "Hook"
+summary = "A command Claude Code runs on an event, set in .claude/settings.json."
+
+[briefing]
+type = "mechanism"
+term = "Briefing"
+summary = "What an inter is told at session start by devhost-briefing."
+
+[stretch]
+type = "concept"
+term = "Stretch"
+summary = "The part of a transcript a back has not read yet, condensed."
+
+[stake]
+type = "mechanism"
+term = "Stake"
+summary = "One plain line left in a session when a chore might not be caught."
+
+[quiet-notice]
+type = "mechanism"
+term = "Quiet notice"
+summary = "How a back reports: one line of context on the next turn."
+
+[guard]
+type = "mechanism"
+term = "Guard"
+summary = "The script that undoes a back's run that changed what it may only add to."
+
+[name-guard]
+type = "mechanism"
+term = "Name guard"
+summary = "Replaces every redact-list name by the Operator in what a back writes."
+
+[metrics-line]
+type = "record"
+term = "Metrics line"
+summary = "The JSON line every back run appends to its runs.jsonl."
+
+[guards]
+type = "mechanism"
+term = "The guards"
+summary = "The commit-time checks of devhost-verify."
+
+[feature]
+type = "product"
+term = "Feature"
+summary = "A Dev Container Feature in `src/<id>`: the deliverable of this repository, installed by a devcontainer."
+
+[consuming-repo]
+type = "product"
+term = "Consuming repo"
+summary = "A repository whose devcontainer pulls these Features; the office and software project 1 are two."
+
+[devcontainer]
+type = "product"
+term = "Devcontainer"
+summary = "A consuming repo's `.devcontainer/`: the container definition that lists the Features it uses."
+
+[feature-registry]
+type = "product"
+term = "Feature registry"
+summary = "Where released Features are published and pulled from: GHCR, listed on containers.dev."
+
+[release]
+type = "product"
+term = "Release"
+summary = "The manual workflow on `main` that publishes the Features to the registry."
+
+[feature-taskfile]
+type = "product"
+term = "Feature Taskfile"
+summary = "The Taskfile a Feature ships for its tool, registered at build time."
+
+[feature-state]
+type = "product"
+term = "Feature state"
+summary = "What a Feature keeps outside the checkout: a named volume under `/var/lib/devcontainer-features/<id>` or host disk."
+
+[agent-place]
+type = "concept"
+term = "Place"
+summary = "What an agent knows about where it stands: who it serves (always the Operator) and its boundaries."
+
+[boundaries]
+type = "concept"
+term = "Boundaries"
+summary = "What an agent may and may not do, is responsible for, and consults; its row in a RACI chart."
+
+[agentic-delivery-os]
+type = "product"
+term = "Agentic Delivery OS"
+summary = "The product the Operator is building: tools that let one person bootstrap a devhost."
+
+[way-of-working]
+type = "concept"
+term = "Way of working"
+summary = "How work gets done here: the roles, the records, the improvement loop and the rules of thumb."
+
+[iteration]
+type = "concept"
+term = "Iteration"
+summary = "One project in which the way of working is tried and learned from."
+
+[cost-store]
+type = "record"
+term = "Cost store"
+summary = "The committed ids-and-numbers record beside the cost report; never drops committed rows."
+
+[shared-language]
+type = "concept"
+term = "Shared language"
+summary = "The lexicon and the ontology together: the agreed words and the model behind them."
+
+[white-paper]
+type = "record"
+term = "White paper"
+summary = "The account of one iteration, written once when the Operator calls it done."
+
+[iteration-package]
+type = "record"
+term = "Iteration package"
+summary = "What an iteration hands to the next: every earlier white paper plus the newest artifacts."
+
+[drop-a-seed]
+type = "mechanism"
+term = "Drop a seed"
+summary = "The export skill run when a project ends: interview, white paper, seed folder."
+
+[shutdown-check]
+type = "mechanism"
+term = "Shutdown check"
+summary = "The script that says whether the devhost can be stopped without losing work."
+
+[shutdown-and-restart]
+type = "mechanism"
+term = "Shutdown and restart"
+summary = "The skill pair that closes the devhost cleanly and brings it back where it was."
+
+[plant-a-seed]
+type = "mechanism"
+term = "Plant a seed"
+summary = "The import skill run in a new place: reads the seed, interviews, sets up, writes the first entry."
+
+[docs-site]
+type = "product"
+term = "Docs site"
+summary = "The one self-contained HTML page devhost-site builds from the docs and records."
+
+[name-exception]
+type = "record"
+term = "Name exception"
+summary = "A file the Operator approves that the forbidden-words guard skips; by file, never by word."
+
+[agent-principles]
+type = "concept"
+term = "Agent principles"
+summary = "The five generic principles (P1 to P5) of the way of working."
+
+[non-functional-requirement]
+type = "concept"
+term = "Non-functional requirement"
+summary = "One of ten requirements every work item touching a Feature must meet or record an exception for."
+
+# Relations
+
+[[relation]]
+subject = "host"
+predicate = "is-a"
+object = "inter"
+
+[[relation]]
+subject = "back"
+predicate = "is-a"
+object = "agent"
+
+[[relation]]
+subject = "inter"
+predicate = "is-a"
+object = "agent"
+
+[[relation]]
+subject = "scribe"
+predicate = "is-a"
+object = "back"
+
+[[relation]]
+subject = "secretary"
+predicate = "is-a"
+object = "back"
+
+[[relation]]
+subject = "librarian"
+predicate = "is-a"
+object = "back"
+
+[[relation]]
+subject = "tester"
+predicate = "is-a"
+object = "back"
+
+[[relation]]
+subject = "journalist"
+predicate = "is-a"
+object = "back"
+
+[[relation]]
+subject = "host"
+predicate = "briefs"
+object = "con"
+
+[[relation]]
+subject = "brief"
+predicate = "contains"
+object = "hand-off"
+
+[[relation]]
+subject = "con"
+predicate = "returns"
+object = "hand-off"
+
+[[relation]]
+subject = "con"
+predicate = "runs"
+object = "worktree"
+
+[[relation]]
+subject = "devhost"
+predicate = "contains"
+object = "host"
+
+[[relation]]
+subject = "devhost"
+predicate = "contains"
+object = "back"
+
+[[relation]]
+subject = "scribe"
+predicate = "writes"
+object = "ledger-entry"
+
+[[relation]]
+subject = "ledger"
+predicate = "contains"
+object = "ledger-entry"
+
+[[relation]]
+subject = "ledger-entry"
+predicate = "contains"
+object = "measures"
+
+[[relation]]
+subject = "ledger-entry"
+predicate = "contains"
+object = "friction"
+
+[[relation]]
+subject = "secretary"
+predicate = "keeps"
+object = "backlog"
+
+[[relation]]
+subject = "secretary"
+predicate = "writes"
+object = "decision"
+
+[[relation]]
+subject = "secretary"
+predicate = "writes"
+object = "amend-item"
+
+[[relation]]
+subject = "backlog"
+predicate = "contains"
+object = "backlog-item"
+
+[[relation]]
+subject = "backlog"
+predicate = "contains"
+object = "decision"
+
+[[relation]]
+subject = "librarian"
+predicate = "keeps"
+object = "lexicon"
+
+[[relation]]
+subject = "librarian"
+predicate = "keeps"
+object = "adr"
+
+[[relation]]
+subject = "journalist"
+predicate = "keeps"
+object = "journal"
+
+[[relation]]
+subject = "back"
+predicate = "writes"
+object = "quiet-notice"
+
+[[relation]]
+subject = "hook"
+predicate = "runs"
+object = "back"
+
+[[relation]]
+subject = "hook"
+predicate = "runs"
+object = "briefing"
+
+[[relation]]
+subject = "briefing"
+predicate = "reads"
+object = "ledger"
+
+[[relation]]
+subject = "briefing"
+predicate = "reads"
+object = "backlog"
+
+[[relation]]
+subject = "briefing"
+predicate = "reads"
+object = "cost-report"
+
+[[relation]]
+subject = "host"
+predicate = "runs"
+object = "ledger-review"
+
+[[relation]]
+subject = "ledger-review"
+predicate = "reads"
+object = "cost-report"
+
+[[relation]]
+subject = "ledger-review"
+predicate = "reads"
+object = "ledger"
+
+[[relation]]
+subject = "host"
+predicate = "runs"
+object = "night-shift"
+
+[[relation]]
+subject = "night-shift"
+predicate = "writes"
+object = "night-shift-report"
+
+[[relation]]
+subject = "guard"
+predicate = "checks"
+object = "backlog"
+
+[[relation]]
+subject = "guard"
+predicate = "checks"
+object = "lexicon"
+
+[[relation]]
+subject = "guard"
+predicate = "checks"
+object = "adr"
+
+[[relation]]
+subject = "guards"
+predicate = "checks"
+object = "ledger"
+
+[[relation]]
+subject = "guards"
+predicate = "checks"
+object = "adr"
+
+[[relation]]
+subject = "operator"
+predicate = "decides"
+object = "decision"
+
+[[relation]]
+subject = "operator"
+predicate = "is-a"
+object = "engineer"
+
+[[relation]]
+subject = "name-guard"
+predicate = "checks"
+object = "back"
+
+[[relation]]
+subject = "consuming-repo"
+predicate = "contains"
+object = "devcontainer"
+
+[[relation]]
+subject = "devcontainer"
+predicate = "uses"
+object = "feature"
+
+[[relation]]
+subject = "consuming-repo"
+predicate = "uses"
+object = "feature"
+
+[[relation]]
+subject = "devcontainer"
+predicate = "pulls"
+object = "feature"
+
+[[relation]]
+subject = "feature-registry"
+predicate = "contains"
+object = "feature"
+
+[[relation]]
+subject = "release"
+predicate = "publishes"
+object = "feature"
+
+[[relation]]
+subject = "devhost"
+predicate = "builds"
+object = "feature"
+
+[[relation]]
+subject = "feature"
+predicate = "contains"
+object = "feature-taskfile"
+
+[[relation]]
+subject = "feature"
+predicate = "keeps"
+object = "feature-state"
+
+[[relation]]
+subject = "engineer"
+predicate = "uses"
+object = "devcontainer"
+
+[ontology]
+type = "record"
+term = "Ontology"
+summary = "The canonical data model: what kinds of thing exist, by base id, and how they relate; docs/model/ontology.toml."
+
+[c4-view]
+type = "record"
+term = "C4 view"
+summary = "A Mermaid diagram of the system at one zoom level (Context, Container), named by ontology ids; docs/model/c4-*.md."
+
+[[relation]]
+subject = "librarian"
+predicate = "keeps"
+object = "ontology"
+
+[[relation]]
+subject = "librarian"
+predicate = "keeps"
+object = "c4-view"
+
+[[relation]]
+subject = "guards"
+predicate = "checks"
+object = "ontology"
+
+[[relation]]
+subject = "agent-place"
+predicate = "contains"
+object = "boundaries"
+
+[[relation]]
+subject = "agent"
+predicate = "uses"
+object = "agent-place"
+
+[[relation]]
+subject = "agent"
+predicate = "uses"
+object = "agent-principles"
+
+[[relation]]
+subject = "agentic-delivery-os"
+predicate = "contains"
+object = "way-of-working"
+
+[[relation]]
+subject = "agentic-delivery-os"
+predicate = "contains"
+object = "devhost"
+
+[[relation]]
+subject = "iteration"
+predicate = "uses"
+object = "way-of-working"
+
+[[relation]]
+subject = "iteration-package"
+predicate = "contains"
+object = "white-paper"
+
+[[relation]]
+subject = "cost-report"
+predicate = "uses"
+object = "cost-store"
+
+[[relation]]
+subject = "shared-language"
+predicate = "contains"
+object = "lexicon"
+
+[[relation]]
+subject = "drop-a-seed"
+predicate = "writes"
+object = "white-paper"
+
+[[relation]]
+subject = "drop-a-seed"
+predicate = "builds"
+object = "iteration-package"
+
+[[relation]]
+subject = "plant-a-seed"
+predicate = "reads"
+object = "iteration-package"
+
+[[relation]]
+subject = "shutdown-check"
+predicate = "checks"
+object = "devhost"
+
+[[relation]]
+subject = "shutdown-and-restart"
+predicate = "uses"
+object = "shutdown-check"
+
+[[relation]]
+subject = "guards"
+predicate = "reads"
+object = "name-exception"
+
+[[relation]]
+subject = "docs-site"
+predicate = "contains"
+object = "backlog"
+
+[[relation]]
+subject = "docs-site"
+predicate = "contains"
+object = "ledger"
+
+[[relation]]
+subject = "non-functional-requirement"
+predicate = "checks"
+object = "feature"
