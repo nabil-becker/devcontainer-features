@@ -31,6 +31,9 @@
 #   DEVCONTAINER_CLI_VERSION   @devcontainers/cli version (default: latest).
 #   DEVCONTAINER_HOMES         host folder for bind-mounted tool state
 #                              (homes task; default ~/.devcontainer-homes).
+#   STOP_CHECK                 command `devcontainer:stop` runs inside the
+#                              container before stopping it (default
+#                              devhost-shutdown-check; no single quote in it).
 #   HOST_SESSION               UUID of the Claude Code session that the claude
 #                              task resumes (HOST_SESSION_<DIR> per sub-folder).
 #   WORKSPACE_FOLDER           folder containing .devcontainer/ (default: the
@@ -121,11 +124,12 @@ tasks:
           ARGS: '{{.CLI_ARGS}}'
 
   stop:
-    desc: 'Stop the devcontainer for {{.WORKSPACE_FOLDER}} through the configured engine, after running the shutdown check inside it (devhost-shutdown-check: tree clean and pushed, no back running or pending, no night shift mid-plan). A failing check refuses the stop; FORCE=1 stops anyway. Only this route is guarded: stopping the container with the engine directly is not (see the shutdown-devhost skill).'
+    desc: 'Stop the devcontainer for {{.WORKSPACE_FOLDER}} through the configured engine, after running the shutdown check inside it (STOP_CHECK, default devhost-shutdown-check: tree clean and pushed, no back running or pending, no night shift mid-plan). A failing check refuses the stop; FORCE=1 stops anyway. Only this route is guarded: stopping the container with the engine directly is not (see the shutdown-devhost skill).'
     vars:
       FORCE: '{{.FORCE | default ""}}'
+      STOP_CHECK: '{{.STOP_CHECK | default "devhost-shutdown-check"}}'
     cmds:
-      - cmd: '{{if ._IN_CONTAINER}}echo "devcontainer:stop runs from the host: this Task is inside the container." >&2; exit 1{{else if .FORCE}}echo "FORCE set: skipping the shutdown check."{{else}}task {{regexReplaceAll ":[^:]+$" .TASK ""}}:exec CMD=devhost-shutdown-check || { echo "Not stopping: the shutdown check failed. Fix the findings (shutdown-devhost skill) or run again with FORCE=1." >&2; exit 1; }{{end}}'
+      - cmd: '{{if ._IN_CONTAINER}}echo "devcontainer:stop runs from the host: this Task is inside the container." >&2; exit 1{{else if .FORCE}}echo "FORCE set: skipping the shutdown check."{{else}}task {{regexReplaceAll ":[^:]+$" .TASK ""}}:exec CMD=''{{.STOP_CHECK}}'' || { echo "Not stopping: the shutdown check failed. Fix the findings (shutdown-devhost skill) or run again with FORCE=1." >&2; exit 1; }{{end}}'
       - task: cli
         vars:
           SUBCOMMAND: stop

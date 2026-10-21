@@ -152,8 +152,10 @@ installed globally on any host. Its host settings are
 PowerShell module) finds the workspace's container by the
 `devcontainer.local_folder` label that `devcontainer up` sets, and stops it
 through the configured engine (`DEVCONTAINER_DOCKER_PATH`). Before that the
-task runs `devhost-shutdown-check` inside the container (the devhost Feature,
-ADR 0015) and refuses to stop when it fails; `FORCE=1` skips the check. The
+task runs the `STOP_CHECK` command inside the container (task var,
+environment variable or `.devcontainer/.env`; default `devhost-shutdown-check`
+of the devhost Feature, ADR 0015) and refuses to stop when it fails; `FORCE=1`
+skips the check. The check is in the Taskfile, so both host paths honour it. The
 engine's `ps --filter label=...` and `stop` are assumed to behave as
 Docker's; this is not tested against `wslc` or Podman. Stopping the container
 any other way is not guarded.
