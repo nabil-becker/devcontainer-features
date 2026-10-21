@@ -48,6 +48,23 @@ class Briefing(h.RepoCase):
         self.assertNotIn("pending", text)
         self.assertFalse(list((self.root / "docs" / "ledger").glob("costs-*")))
 
+    def test_branches_line_is_quiet_when_all_is_in_order_and_says_what_is_left(self):
+        h.git(self.root, "branch", "-q", "-m", "feature/first-item/1")
+        self.assertNotIn("Branches:", self.b.briefing(self.root, refresh=False))
+        h.write(self.root / "a.txt", "x\n")
+        h.git(self.root, "add", "-A")
+        h.git(self.root, "commit", "-q", "-m", "work")
+        h.git(self.root, "branch", "-q", "oldname", "main")
+        h.fake_gh(self.base, {})
+        text = self.b.briefing(self.root, refresh=False)
+        self.assertIn("Branches: 1 with work and no pull request, 1 named against the rule (task devhost:branches).", text)
+        h.fake_gh(self.base, {"feature/first-item/1": ["MERGED"]})
+        self.assertIn("Branches: 1 merged and not deleted, 1 named against the rule", self.b.briefing(self.root, refresh=False))
+
+    def test_branches_line_survives_a_missing_gh_and_says_so(self):
+        text = self.b.briefing(self.root, refresh=False)  # the test branch `work` breaks the rule
+        self.assertIn("Branches: 1 named against the rule (task devhost:branches); pull requests not checked (gh unavailable).", text)
+
     def _versions(self, installed, source):
         share = self.base / "share"
         if installed is not None:

@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# devhost-branches: runs the devhost's branches.py (installed under /usr/local/share/devhost).
+exec python3 /usr/local/share/devhost/python/branches.py "$@"

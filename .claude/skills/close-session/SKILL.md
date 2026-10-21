@@ -36,11 +36,19 @@ engineer's machine, can pick up from the repository alone. This is the order to 
 4. **Scan the diff for boundaries.** The diff against the base branch must contain no
    credentials, no identifiers, no real data, no name from the redact list.
 
-5. **Commit on a topic branch.** Never on the base branch directly. Conventional Commit messages
+5. **Commit on a topic branch named for the work.** Start it with `task devhost:branch -- <backlog-id>`
+   (`<type>/<id>/<n>` from `origin/main`; the id must be in `TODO.md`, so work with no item gets one
+   first). Never on the base branch directly. Conventional Commit messages
    naming the backlog ids; the agent's co-author trailer when the agent wrote the commit, at its `@noreply.invalid` address (ADR 0002). Commit
    and push only when the user asked for it. If they did not, stop here and report what is ready.
 
-6. **Open the pull request** when asked, with the template filled in and the checks stated as run.
+6. **Open the pull request** when asked, with the template filled in and the checks stated as run,
+   and every backlog id the branch covers listed.
+
+   **After the merge:** `git switch main && git pull`, then `task devhost:branches PRUNE=1`: it deletes
+   the merged branch locally and on the remote, and its worktree, and keeps any branch that still adds
+   something. Never push to a branch whose pull request merged (the pre-push hook refuses it): start a
+   new branch with `task devhost:branch`.
 
 7. **Report, in the hand-off shape**, so that what the session lacked travels with what it made:
 

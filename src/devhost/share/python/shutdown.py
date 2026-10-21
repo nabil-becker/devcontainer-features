@@ -12,6 +12,8 @@ The rules (ADR-0015), each a function returning finding strings:
   blocking). A held tester lock is reported as a test run in progress.
 - `pending`: no back has a stretch waiting to be logged: a non-empty `$DEVHOST_STATE/<job>/pending-<session>`
   file (the scribe writes what it held back there).
+- `branches`: no branch has commits that add to main and no pull request ("unfinished work"; needs a
+  logged-in `gh`, else skipped). A branch whose pull request merged and still exists is a note.
 - `night_shift`: the newest report in the night-shift directory is not mid-plan. Mid-plan means its
   `Result:` line is missing or has no `Ended`, or an item still reads `: planned` (the shape in
   `docs/night-shift/README.md`; the night-shift skill fills the Result line when it stops).
@@ -30,6 +32,7 @@ try:
 except ImportError:  # no flock on this platform: the lock rule cannot run
     fcntl = None
 
+import branches as branch_rules
 from devhost_common import git, night_shift_dir, rel, repo_root, state_dir
 
 MAX_LISTED = 10
@@ -123,15 +126,31 @@ def night_shift(root: Path) -> list[str]:
     return []
 
 
+def _leftovers(root: Path) -> branch_rules.Leftovers | None:
+    try:
+        return branch_rules.leftovers(root)
+    except Exception:  # never fails the check
+        return None
+
+
+def unfinished_branches(root: Path) -> list[str]:
+    found = _leftovers(root)
+    return [f"branch {name} has commits that add to main and no pull request (unfinished work)"
+            for name in (found.unfinished if found else [])]
+
+
 def notes(root: Path) -> list[str]:
     out = []
+    found = _leftovers(root)
+    for name in (found.merged if found else []):
+        out.append(f"branch {name}: its pull request merged and it still exists (task devhost:branches PRUNE=1)")
     stashes = [s for s in (git(root, "stash", "list") or "").splitlines() if s.strip()]
     if stashes:
         out.append(f"{len(stashes)} stash(es): {_listed(stashes)}")
     return out
 
 
-RULES = (tree, pushed, locks, pending, night_shift)
+RULES = (tree, pushed, unfinished_branches, locks, pending, night_shift)
 
 
 def run(root: Path) -> tuple[list[str], list[str]]:
