@@ -38,5 +38,15 @@
       }
     },
     "remoteUser": "vscode"
+  },
+  "git_dirs_mapping": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "git": {}
+    },
+    "containerEnv": {
+      "GIT_DIRS_ROOT": "/tmp/git-dirs-test"
+    },
+    "remoteUser": "vscode"
   }
 }

@@ -16,7 +16,9 @@
     // Every Feature of the collection owns its persistent state (logins,
     // config, transcripts) in a named volume it mounts itself and makes
     // usable at post-create; nothing to configure. git: worktree-aware
-    // wrapper when GIT_DIR is set, safe.directory and core.hooksPath.
+    // wrapper, safe.directory and core.hooksPath; a checkout whose git dir
+    // lives in %USERPROFILE%\.git-dirs (OneDrive) needs only the .git-dirs
+    // mount below (git 1.4.0 or later).
     "ghcr.io/nabil-becker/devcontainer-features/git:1": {},
     // "ghcr.io/nabil-becker/devcontainer-features/gh:1": {},
     // "ghcr.io/nabil-becker/devcontainer-features/claude-code:1": {},
@@ -31,7 +33,10 @@
   //   "initializeCommand": ["task", "devcontainer:homes", "NAME=myrepo", "--", "claude-code", "gh"],
   //   "mounts": [
   //     "source=${localEnv:USERPROFILE}/.devcontainer-homes/myrepo/claude-code,target=/var/lib/devcontainer-features/claude-code,type=bind",
-  //     "source=${localEnv:USERPROFILE}/.devcontainer-homes/myrepo/gh,target=/var/lib/devcontainer-features/gh,type=bind"
+  //     "source=${localEnv:USERPROFILE}/.devcontainer-homes/myrepo/gh,target=/var/lib/devcontainer-features/gh,type=bind",
+  //     // The checkout's git dir under %USERPROFILE%\.git-dirs (the same line in every repo;
+  //     // devcontainer:homes creates the folder when missing):
+  //     "source=${localEnv:USERPROFILE}/.git-dirs,target=/git-dirs,type=bind"
   //   ],
   "remoteUser": "vscode"
 }

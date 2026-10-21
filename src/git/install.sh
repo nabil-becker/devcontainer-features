@@ -5,7 +5,9 @@
 #   - /usr/local/bin/git, a wrapper that drops GIT_DIR/GIT_WORK_TREE inside
 #     linked worktrees and nested repositories (git-wrapper.sh);
 #   - /usr/local/bin/git-setup, the per-container setup (safe.directory,
-#     core.hooksPath) that this Feature's postCreateCommand hook runs.
+#     core.hooksPath) that this Feature's postCreateCommand hook runs;
+#   - /usr/local/share/git-feature/git-dirs.sh, the mapping of a .git pointer
+#     under the host's .git-dirs onto GIT_DIRS_ROOT, sourced by both.
 # Feature options arrive as upper-cased environment variables (see
 # devcontainer-feature.json): WORKTREEAWARE, SAFEDIRECTORY, HOOKSPATH, COMMITNAME, COMMITEMAIL, COMMITWHENENV.
 #
@@ -49,6 +51,7 @@ marker='# devcontainer-features git wrapper'
 mkdir -p "$share"
 
 install -m 0755 "$feature_dir/git-setup.sh" /usr/local/bin/git-setup
+install -m 0644 "$feature_dir/git-dirs.sh" "$share/git-dirs.sh"
 
 # The commit identity is applied by the wrapper, so it keeps the wrapper in
 # place even with worktreeAware=false (the wrapper then only exports it).
