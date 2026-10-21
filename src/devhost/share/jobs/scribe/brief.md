@@ -15,6 +15,8 @@ STILL PENDING FROM YOUR LAST RUN (below the stretch, when there is one) lists un
 back last time. Their start is not in this stretch; if this stretch shows one finished, write
 its entry now from that line and what the stretch shows, unless the ledger tail already has it.
 
+Write the PENDING line as items separated by `;`, each worded the same on every run: the job drops an item after it has been carried three runs, so finish or drop one yourself before that.
+
 A line beginning **STAKE for scribe** (at the top of the stretch) is an explicit request from
 an inter or an engineer: act on it even if you would not have judged it settled, or name it on
 the PENDING line if you cannot. A stake for another back is not yours.
