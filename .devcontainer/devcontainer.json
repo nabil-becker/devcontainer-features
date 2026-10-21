@@ -34,21 +34,20 @@
     "./features/claude-code": {},
     "./features/devhost": {}
   },
-  // Host side, before every start: stage the Features, and check the git dir
-  // that the checkout's .git pointer file names (kept outside OneDrive).
+  // Host side, before every start: stage the Features, and make sure
+  // ~/.git-dirs exists so the mount below never fails.
   "initializeCommand": {
     "features": ["task", "features:stage"],
-    "git-dir": ["task", "devcontainer:homes", "NAME=devcontainer-features", "HOST_GIT_DIR=${localEnv:USERPROFILE}/.git-dirs/nabil-becker/devcontainer-features"]
+    "git-dirs": ["task", "devcontainer:homes", "NAME=devcontainer-features"]
   },
-  // The checkout's .git is a pointer file holding a Windows path, so the real
-  // git dir is bind-mounted and git is told where it is; the git Feature's
-  // wrapper keeps that scoped to this checkout.
+  // The checkout's .git is a pointer file naming a git dir under ~/.git-dirs
+  // (outside OneDrive). The whole folder is mounted, the same line in every
+  // repository; the git Feature's wrapper maps the pointer onto it (ADR 0020).
+  // Every git dir under ~/.git-dirs is visible here, accepted 2026-10-21.
   "mounts": [
-    "source=${localEnv:USERPROFILE}/.git-dirs/nabil-becker/devcontainer-features,target=/git/devcontainer-features.git,type=bind"
+    "source=${localEnv:USERPROFILE}/.git-dirs,target=/git-dirs,type=bind"
   ],
   "containerEnv": {
-    "GIT_DIR": "/git/devcontainer-features.git",
-    "GIT_WORK_TREE": "${containerWorkspaceFolder}",
     // The handle on ledger entries and the cost report (committed, so never a
     // name): set DEVHOST_ENGINEER on the workstation to tell engineers apart.
     "DEVHOST_ENGINEER": "${localEnv:DEVHOST_ENGINEER:operator}",
