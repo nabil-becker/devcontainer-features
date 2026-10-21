@@ -1,0 +1,41 @@
+﻿<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<test-results xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="nunit_schema_2.5.xsd" name="Pester" total="12" errors="0" failures="0" not-run="0" inconclusive="0" ignored="0" skipped="0" invalid="0" date="2026-10-21" time="16:34:57">
+  <environment nunit-version="2.5.8.0" platform="Linux" cwd="/tmp/claude-1000/-workspaces-devcontainer-features/d7e03a48-93bd-44ef-a1d2-045ad84afabf/scratchpad/wt/lock" user="vscode" clr-version="10.0.13" machine-name="ebb758095e13" os-version="6.18.54.1-microsoft-standard-WSL2" user-domain="" />
+  <culture-info current-culture="" current-uiculture="" />
+  <test-suite type="TestFixture" name="Pester" executed="True" result="Success" success="True" time="7.5722" asserts="0" description="Pester">
+    <results>
+      <test-suite type="TestFixture" name="/tmp/claude-1000/-workspaces-devcontainer-features/d7e03a48-93bd-44ef-a1d2-045ad84afabf/scratchpad/wt/lock/test/bootstrap/DevcontainerCli.Tests.ps1" executed="True" result="Success" success="True" time="7.5722" asserts="0" description="/tmp/claude-1000/-workspaces-devcontainer-features/d7e03a48-93bd-44ef-a1d2-045ad84afabf/scratchpad/wt/lock/test/bootstrap/DevcontainerCli.Tests.ps1">
+        <results>
+          <test-suite type="TestFixture" name="Enter-DevcontainerBuildLock" executed="True" result="Success" success="True" time="5.8962" asserts="0" description="Enter-DevcontainerBuildLock">
+            <results>
+              <test-case description="serialises two holders: the second waits until the first releases" name="Enter-DevcontainerBuildLock.serialises two holders: the second waits until the first releases" time="4.7922" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="takes a free lock at once and prints nothing" name="Enter-DevcontainerBuildLock.takes a free lock at once and prints nothing" time="0.031" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="treats an abandoned lock (holder died without releasing) as acquired" name="Enter-DevcontainerBuildLock.treats an abandoned lock (holder died without releasing) as acquired" time="0.5019" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="takes no lock when DEVCONTAINER_BUILD_LOCK=0" name="Enter-DevcontainerBuildLock.takes no lock when DEVCONTAINER_BUILD_LOCK=0" time="0.5249" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Invoke-DevcontainerCli and the build lock" executed="True" result="Success" success="True" time="6.9432" asserts="0" description="Invoke-DevcontainerCli and the build lock">
+            <results>
+              <test-case description="releases the lock when the build fails" name="Invoke-DevcontainerCli and the build lock.releases the lock when the build fails" time="0.1527" asserts="0" success="True" result="Success" executed="True" />
+              <test-suite type="ParameterizedTest" name="Invoke-DevcontainerCli and the build lock.takes and releases the lock for &lt;sub&gt;" executed="True" result="Success" success="True" time="0.5931" asserts="0" description="takes and releases the lock for &lt;sub&gt;">
+                <results>
+                  <test-case description="takes and releases the lock for up" name="Invoke-DevcontainerCli and the build lock.takes and releases the lock for up" time="0.5184" asserts="0" success="True" result="Success" executed="True" />
+                  <test-case description="takes and releases the lock for build" name="Invoke-DevcontainerCli and the build lock.takes and releases the lock for build" time="0.0747" asserts="0" success="True" result="Success" executed="True" />
+                </results>
+              </test-suite>
+              <test-suite type="ParameterizedTest" name="Invoke-DevcontainerCli and the build lock.takes no lock for &lt;sub&gt;" executed="True" result="Success" success="True" time="0.2914" asserts="0" description="takes no lock for &lt;sub&gt;">
+                <results>
+                  <test-case description="takes no lock for exec" name="Invoke-DevcontainerCli and the build lock.takes no lock for exec" time="0.0585" asserts="0" success="True" result="Success" executed="True" />
+                  <test-case description="takes no lock for run-user-commands" name="Invoke-DevcontainerCli and the build lock.takes no lock for run-user-commands" time="0.053" asserts="0" success="True" result="Success" executed="True" />
+                  <test-case description="takes no lock for set-up" name="Invoke-DevcontainerCli and the build lock.takes no lock for set-up" time="0.0556" asserts="0" success="True" result="Success" executed="True" />
+                  <test-case description="takes no lock for read-configuration" name="Invoke-DevcontainerCli and the build lock.takes no lock for read-configuration" time="0.0702" asserts="0" success="True" result="Success" executed="True" />
+                  <test-case description="takes no lock for features" name="Invoke-DevcontainerCli and the build lock.takes no lock for features" time="0.0541" asserts="0" success="True" result="Success" executed="True" />
+                </results>
+              </test-suite>
+            </results>
+          </test-suite>
+        </results>
+      </test-suite>
+    </results>
+  </test-suite>
+</test-results>

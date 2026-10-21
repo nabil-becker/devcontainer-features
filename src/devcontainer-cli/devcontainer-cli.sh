@@ -31,6 +31,16 @@
 #   DEVCONTAINER_CLI_VERSION   @devcontainers/cli version (default latest).
 #                              Pinning it forces the cached install even if a
 #                              `devcontainer` is on PATH.
+#   DEVCONTAINER_BUILD_LOCK    0 = do not serialise image builds (below).
+#
+# Builds are serialised: `up` and `build` hold an flock on
+# $cache_root/build.lock while they run, and a second one prints "waiting for
+# another devcontainer build to finish..." and then proceeds. Why: when the
+# engine has no BuildKit build context (wslc), the CLI tags the Feature content
+# image `dev_container_feature_content_temp` for every repository, so two builds
+# at once overwrite each other's image ("/tmp/build-features/<feature>_N": not
+# found). The kernel drops the lock when the holder dies, so a crash leaves
+# nothing stale. Without flock (stock macOS) no lock is taken.
 #
 # Verification: the Node.js download is checked against nodejs.org's
 # SHASUMS256.txt. The CLI itself is NOT: it comes through `npm install` and
@@ -293,7 +303,25 @@ run_cli() {
 
   local -a cli
   mapfile -t cli < <(host_cli_command)
-  "${cli[@]}" "${args[@]}"
+  # 9>&-: the CLI and what it starts must not inherit the build lock's descriptor.
+  "${cli[@]}" "${args[@]}" 9>&-
+}
+
+# Subcommands that build an image (`up` also covers `rebuild`); the others work
+# on an existing container and take no lock.
+builds_image() { case "$1" in up | build) return 0 ;; *) return 1 ;; esac; }
+
+# take_build_lock: flock on descriptor 9 for the rest of this process (released
+# when it exits, crashed or not). No-op when DEVCONTAINER_BUILD_LOCK=0 or there is no flock.
+take_build_lock() {
+  [ "${DEVCONTAINER_BUILD_LOCK:-}" != 0 ] || return 0
+  command -v flock > /dev/null 2>&1 || return 0
+  mkdir -p "$cache_root"
+  exec 9> "$cache_root/build.lock"
+  if ! flock -n 9; then
+    echo 'waiting for another devcontainer build to finish...' >&2
+    flock 9
+  fi
 }
 
 # A failed exec: say which of three things failed, by asking the engine.
@@ -333,6 +361,7 @@ mode_run() {
       return ;;
   esac
 
+  if builds_image "$subcommand"; then take_build_lock; fi
   local rc=0
   run_cli "$subcommand" "$workspace" "$cmd_b64" "$@" || rc=$?
   if [ "$rc" -ne 0 ] && [ "$subcommand" = exec ]; then

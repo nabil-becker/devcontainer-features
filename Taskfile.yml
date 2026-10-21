@@ -84,6 +84,12 @@ tasks:
       - pwsh -NoLogo -NoProfile -File '{{.ROOT_DIR}}/.github/scripts/Invoke-PSScriptAnalyzer.ps1'
       - task: common:check
       - task: test:devhost
+      - task: test:bootstrap
+
+  test:bootstrap:
+    desc: 'Pester tests of the Windows host launcher (bootstrap/host/DevcontainerCli.psm1): the build lock that serialises devcontainer up/build across repositories. Needs pwsh with Pester 5 or later (Install-Module Pester -Scope CurrentUser); runs on any host, so it is part of lint.'
+    cmds:
+      - pwsh -NoLogo -NoProfile -Command "Import-Module Pester -MinimumVersion 5.0; Invoke-Pester -Path '{{.ROOT_DIR}}/test/bootstrap' -Output Detailed -CI"
 
   test:devhost:
     desc: 'Unit tests of the devhost Feature''s Python tooling (session cost, guards, verify, adr, init, briefing), stdlib only, against temp repos; runs on any host with python3 and git, so it is part of lint.'

@@ -25,10 +25,19 @@
     (loaded by Task's dotenv: or by bootstrap.ps1) can drive it:
       DEVCONTAINER_DOCKER_PATH, DEVCONTAINER_NODE_VERSION,
       DEVCONTAINER_CLI_VERSION. Explicit parameters win over the environment.
+
+    Image builds are serialised host-wide: `up` and `build` hold the named
+    mutex Global\devcontainer-features-build while they run (see
+    Enter-DevcontainerBuildLock). DEVCONTAINER_BUILD_LOCK=0 turns that off.
 #>
 
 $script:CacheRoot = if ($IsWindows) { Join-Path $env:LOCALAPPDATA 'devcontainer-features\devcontainer-node' } else { $null }
 $script:DefaultNodeVersion = '24.21.0'
+$script:BuildLockName = 'Global\devcontainer-features-build'
+# The subcommands that build an image. `up` also covers `rebuild` (up
+# --remove-existing-container). `run-user-commands`, `set-up` and `exec` work on a
+# container that exists, so they take no lock.
+$script:BuildSubcommands = @('up', 'build')
 
 function Get-SettingOrEnv {
     <# .SYNOPSIS Explicit value if non-empty, else the environment variable, else the default. #>
@@ -277,6 +286,67 @@ function Stop-Devcontainer {
     }
 }
 
+function Test-BuildSubcommand {
+    <# .SYNOPSIS $true for a subcommand that builds an image and so takes the build lock. #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Subcommand)
+    return $Subcommand -in $script:BuildSubcommands
+}
+
+function Enter-DevcontainerBuildLock {
+    <#
+    .SYNOPSIS
+        Takes the host-wide build lock, waiting for another devcontainer
+        build to finish first. Returns the held mutex for
+        Exit-DevcontainerBuildLock, or $null when DEVCONTAINER_BUILD_LOCK=0.
+
+    .DESCRIPTION
+        Why: when the engine has no BuildKit build context (wslc), the
+        @devcontainers/cli tags the Feature content image with the fixed name
+        `dev_container_feature_content_temp` for every repository, so two
+        builds at once overwrite each other's image and the first fails with
+        `"/tmp/build-features/<feature>_N": not found`.
+
+        A named mutex rather than a lock file: the operating system releases
+        it when the holder dies, so a crash can leave no stale lock behind,
+        and an abandoned mutex (the holder died without releasing it) counts
+        as acquired. The mutex belongs to the thread that took it, so enter
+        and exit in the same script, as Invoke-DevcontainerCli does.
+
+    .PARAMETER Name
+        Mutex name; the default is shared by every repository on the host.
+    #>
+    [CmdletBinding()]
+    param([string]$Name = $script:BuildLockName)
+
+    if ((Get-SettingOrEnv '' 'DEVCONTAINER_BUILD_LOCK') -eq '0') { return $null }
+
+    $mutex = [System.Threading.Mutex]::new($false, $Name)
+    $announced = $false
+    while ($true) {
+        try {
+            # 500 ms slices, not an endless wait, so Ctrl+C is honoured while waiting.
+            if ($mutex.WaitOne(500)) { return $mutex }
+        }
+        catch [System.Threading.AbandonedMutexException] {
+            # The holder died without releasing; the mutex is now ours.
+            return $mutex
+        }
+        if (-not $announced) {
+            Write-Host 'waiting for another devcontainer build to finish...'
+            $announced = $true
+        }
+    }
+}
+
+function Exit-DevcontainerBuildLock {
+    <# .SYNOPSIS Releases the lock Enter-DevcontainerBuildLock returned (a $null is ignored). #>
+    [CmdletBinding()]
+    param($Lock)
+    if (-not $Lock) { return }
+    try { $Lock.ReleaseMutex() } finally { $Lock.Dispose() }
+}
+
 function Invoke-DevcontainerCliProcess {
     <# .SYNOPSIS One @devcontainers/cli call; its exit code is left in $script:CliExitCode (no throw for a failing CLI). #>
     [CmdletBinding()]
@@ -370,8 +440,14 @@ function Invoke-DevcontainerCli {
         if ($ids.Count -gt 0) { exit 0 } else { exit 1 }
     }
 
-    Invoke-DevcontainerCliProcess -Subcommand $Subcommand -WorkspaceFolder $WorkspaceFolder -Arguments $Arguments `
-        -CommandB64 $CommandB64 -NodeVersion $NodeVersion -CliVersion $CliVersion -DockerPath $DockerPath
+    # An image build takes the host-wide lock (see Enter-DevcontainerBuildLock);
+    # the CLI's own temp image name is shared by every repository.
+    $lock = if (Test-BuildSubcommand -Subcommand $Subcommand) { Enter-DevcontainerBuildLock }
+    try {
+        Invoke-DevcontainerCliProcess -Subcommand $Subcommand -WorkspaceFolder $WorkspaceFolder -Arguments $Arguments `
+            -CommandB64 $CommandB64 -NodeVersion $NodeVersion -CliVersion $CliVersion -DockerPath $DockerPath
+    }
+    finally { Exit-DevcontainerBuildLock -Lock $lock }
     $rc = $script:CliExitCode
     if ($rc -eq 0) { return }
 
@@ -396,4 +472,4 @@ function Invoke-DevcontainerCli {
     exit $rc
 }
 
-Export-ModuleMember -Function Get-SettingOrEnv, ConvertFrom-TaskCliArgString, Get-PortableNodeDir, Get-DevcontainersCliEntrypoint, Remove-DevcontainersCli, Resolve-DockerPath, Get-WorkspaceFolderVariant, Get-RunningDevcontainerId, Stop-Devcontainer, Invoke-DevcontainerCliProcess, Invoke-DevcontainerCli
+Export-ModuleMember -Function Get-SettingOrEnv, ConvertFrom-TaskCliArgString, Get-PortableNodeDir, Get-DevcontainersCliEntrypoint, Remove-DevcontainersCli, Resolve-DockerPath, Get-WorkspaceFolderVariant, Get-RunningDevcontainerId, Stop-Devcontainer, Test-BuildSubcommand, Enter-DevcontainerBuildLock, Exit-DevcontainerBuildLock, Invoke-DevcontainerCliProcess, Invoke-DevcontainerCli
