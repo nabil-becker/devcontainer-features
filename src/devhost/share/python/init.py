@@ -45,6 +45,7 @@ FILES = {
     "claude/skills/drop-a-seed/SKILL.md": ".claude/skills/drop-a-seed/SKILL.md",
     "claude/skills/drop-a-seed/journalist.md": ".claude/skills/drop-a-seed/journalist.md",
     "claude/skills/night-shift/SKILL.md": ".claude/skills/night-shift/SKILL.md",
+    "claude/skills/over/SKILL.md": ".claude/skills/over/SKILL.md",
     "claude/skills/new-adr/SKILL.md": ".claude/skills/new-adr/SKILL.md",
     "claude/skills/publish-site/SKILL.md": ".claude/skills/publish-site/SKILL.md",
     "claude/skills/shutdown-devhost/SKILL.md": ".claude/skills/shutdown-devhost/SKILL.md",
