@@ -14,7 +14,6 @@ flowchart TB
       secretary["Secretary"]
       librarian["Librarian"]
       tester["Tester"]
-      journalist["Journalist (planned)"]
     end
     guard["Back guard"]
     guards["The guards"]
@@ -23,6 +22,9 @@ flowchart TB
     lexicon["Lexicon"]
     adr["ADR"]
     journal["Journal"]
+    drop-a-seed["Drop a seed"]
+    journalist["Journalist (a brief, not a back)"]
+    white-paper["White paper"]
   end
   host -->|briefs| con
   con -->|returns hand-off to| host
@@ -30,7 +32,8 @@ flowchart TB
   secretary -->|keeps| backlog
   librarian -->|keeps| lexicon
   librarian -->|keeps| adr
-  journalist -.->|keeps| journal
+  drop-a-seed -->|uses| journalist
+  journalist -->|writes| white-paper
   guard -->|checks| backlog
   guard -->|checks| lexicon
   guard -->|checks| adr

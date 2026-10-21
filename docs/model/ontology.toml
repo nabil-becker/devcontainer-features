@@ -86,9 +86,9 @@ term = "Tester"
 summary = "The back with no model: runs the suite after a code change."
 
 [journalist]
-type = "role"
+type = "concept"
 term = "Journalist"
-summary = "The back for the journal; accepted, not yet built."
+summary = "The brief (drop-a-seed/journalist.md) a writing subagent follows to draft the white paper; not a back (ADR 0009, ADR 0014)."
 
 [con]
 type = "role"
@@ -430,7 +430,7 @@ object = "back"
 [[relation]]
 subject = "journalist"
 predicate = "is-a"
-object = "back"
+object = "brief"
 
 [[relation]]
 subject = "host"
@@ -519,8 +519,13 @@ object = "adr"
 
 [[relation]]
 subject = "journalist"
-predicate = "keeps"
-object = "journal"
+predicate = "writes"
+object = "white-paper"
+
+[[relation]]
+subject = "drop-a-seed"
+predicate = "uses"
+object = "journalist"
 
 [[relation]]
 subject = "back"
