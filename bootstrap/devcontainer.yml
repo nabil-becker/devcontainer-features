@@ -113,7 +113,7 @@ tasks:
         platforms: [linux, darwin]
 
   homes:
-    desc: 'Create the host-side folders that devcontainer.json bind-mounts for tool state (Claude Code config, gh/az logins): <DEVCONTAINER_HOMES or ~/.devcontainer-homes>/<NAME>/<dir> for each dir after --, so a start never fails on a missing mount source. Use as initializeCommand: task devcontainer:homes NAME=myrepo -- claude gh. HOST_GIT_DIR=<path> also checks a git dir kept outside the checkout exists.'
+    desc: 'Create the host-side folders that devcontainer.json bind-mounts for tool state (Claude Code config, gh/az logins): <DEVCONTAINER_HOMES or ~/.devcontainer-homes>/<NAME>/<dir> for each dir after --, so a start never fails on a missing mount source; also creates ~/.git-dirs (%USERPROFILE%\.git-dirs), the source of the git Feature''s one .git-dirs mount. Use as initializeCommand: task devcontainer:homes NAME=myrepo -- claude gh. Optional HOST_GIT_DIR=<path> also checks that a git dir kept outside the checkout has a HEAD.'
     requires:
       vars: [NAME]
     vars:

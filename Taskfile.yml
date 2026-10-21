@@ -77,13 +77,19 @@ tasks:
           echo "generated READMEs are up to date"
 
   lint:
-    desc: 'shellcheck every shell script, yamllint every YAML file (.yamllint), PSScriptAnalyzer every PowerShell file, and the vendored copies of src/common/*.sh identical to the canonical ones (same checks as CI; the tools must be installed - this repo''s devcontainer has them).'
+    desc: 'shellcheck every shell script, yamllint every YAML file (.yamllint), PSScriptAnalyzer every PowerShell file, the vendored copies of src/common/*.sh identical to the canonical ones, and the Docker-free unit tests (devhost tooling, the git Feature''s .git-dirs mapping) (same checks as CI; the tools must be installed - this repo''s devcontainer has them).'
     cmds:
-      - shellcheck -x src/*/*.sh src/*/share/bin/*.sh src/*/share/jobs/*/*.sh test/*/*.sh bootstrap/*.sh bootstrap/host/*.sh .githooks/*
+      - shellcheck -x src/*/*.sh src/*/share/bin/*.sh src/*/share/jobs/*/*.sh test/*/*.sh test/*/unit/*.sh bootstrap/*.sh bootstrap/host/*.sh .githooks/*
       - yamllint --strict .
       - pwsh -NoLogo -NoProfile -File '{{.ROOT_DIR}}/.github/scripts/Invoke-PSScriptAnalyzer.ps1'
       - task: common:check
       - task: test:devhost
+      - task: test:git-unit
+
+  test:git-unit:
+    desc: 'Docker-free tests of the git Feature''s wrapper, git-setup and .git-dirs mapping, run from src/git against temp folders (never the checkout''s own git dir or global config); part of lint.'
+    cmds:
+      - bash test/git/unit/git_dirs_test.sh
 
   test:devhost:
     desc: 'Unit tests of the devhost Feature''s Python tooling (session cost, guards, verify, adr, init, briefing), stdlib only, against temp repos; runs on any host with python3 and git, so it is part of lint.'

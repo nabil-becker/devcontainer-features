@@ -17,6 +17,12 @@
     and it stays outside a synced checkout (OneDrive) so transcripts and
     tokens are never synced.
 
+    It also creates %USERPROFILE%\.git-dirs (~/.git-dirs off Windows) when
+    missing: a checkout kept in OneDrive has its git dir there, and every
+    devcontainer bind-mounts that one folder for the git Feature
+      source=${localEnv:USERPROFILE}/.git-dirs,target=/git-dirs,type=bind
+    so a machine without it must not fail the start.
+
 .PARAMETER Name
     Folder under the homes root for this repository (a short slug, no spaces;
     the same literal the mounts in devcontainer.json use).
@@ -32,9 +38,9 @@
 .PARAMETER GitDir
     Optional: a git dir kept outside the checkout (the OneDrive pattern: the
     checkout's .git is a pointer file, the real git dir lives in e.g.
-    %USERPROFILE%\.git-dirs\<repo> and is bind-mounted into the container).
-    When given, the script fails with a plain message if <GitDir>\HEAD is
-    missing, rather than letting the mount fail later.
+    %USERPROFILE%\.git-dirs\<owner>\<repo>). When given, the script fails
+    with a plain message if <GitDir>\HEAD is missing, rather than letting git
+    fail later in the container.
 #>
 [CmdletBinding()]
 param(
@@ -49,11 +55,9 @@ $ErrorActionPreference = 'Stop'
 if ($Name -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$') {
     throw "devcontainer:homes NAME '$Name' must be a plain slug (letters, digits, . _ -), the same one the mounts in devcontainer.json use."
 }
+$profileDir = if ($IsWindows) { $env:USERPROFILE } else { $env:HOME }
 if (-not $Root) { $Root = $env:DEVCONTAINER_HOMES }
-if (-not $Root) {
-    $profileDir = if ($IsWindows) { $env:USERPROFILE } else { $env:HOME }
-    $Root = Join-Path $profileDir '.devcontainer-homes'
-}
+if (-not $Root) { $Root = Join-Path $profileDir '.devcontainer-homes' }
 # Task passes CLI_ARGS as one string; accept both that and a real array.
 $Dirs = @($Dirs | ForEach-Object { $_ -split '\s+' } | Where-Object { $_ })
 
@@ -67,9 +71,15 @@ foreach ($d in $Dirs) {
     Write-Host "  $d`t$state"
 }
 
+# The source of the one .git-dirs bind mount (git Feature); empty is fine.
+$gitDirs = Join-Path $profileDir '.git-dirs'
+$state = if (Test-Path -LiteralPath $gitDirs) { 'exists' } else { 'created' }
+New-Item -ItemType Directory -Force -Path $gitDirs | Out-Null
+Write-Host "  .git-dirs`t$state ($gitDirs)"
+
 if ($GitDir) {
     if (-not (Test-Path -LiteralPath (Join-Path $GitDir 'HEAD'))) {
-        throw "git dir not found at $GitDir (no HEAD). The devcontainer bind-mounts it as GIT_DIR; create or move the repository's git dir there first."
+        throw "git dir not found at $GitDir (no HEAD). The devcontainer reaches it through its git-dir mount; create or move the repository's git dir there first."
     }
     Write-Host "  git dir`t$GitDir"
 }

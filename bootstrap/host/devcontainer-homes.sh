@@ -13,8 +13,13 @@
 #              same literal the mounts in devcontainer.json use)
 #   --root     homes root; default $DEVCONTAINER_HOMES, else ~/.devcontainer-homes
 #   --git-dir  optional git dir kept outside the checkout; fail plainly if it
-#              has no HEAD, rather than letting the GIT_DIR mount fail later
+#              has no HEAD, rather than letting git fail later in the container
 #   <dir>...   folders to create under <root>/<name>, e.g. claude gh azure
+#
+# It also creates ~/.git-dirs when missing: the source of the one bind mount
+# every devcontainer declares for the git Feature
+# (source=${localEnv:USERPROFILE}/.git-dirs,target=/git-dirs,type=bind), so a
+# machine without it must not fail the start.
 set -euo pipefail
 
 name='' root="${DEVCONTAINER_HOMES:-}" git_dir=''
@@ -45,9 +50,15 @@ for d in $@; do
   printf '  %s\t%s\n' "$d" "$state"
 done
 
+# The source of the one .git-dirs bind mount (git Feature); empty is fine.
+git_dirs="$HOME/.git-dirs"
+if [ -d "$git_dirs" ]; then state=exists; else state=created; fi
+mkdir -p "$git_dirs"
+printf '  .git-dirs\t%s (%s)\n' "$state" "$git_dirs"
+
 if [ -n "$git_dir" ]; then
   if [ ! -e "$git_dir/HEAD" ]; then
-    echo "git dir not found at $git_dir (no HEAD). The devcontainer bind-mounts it as GIT_DIR; create or move the repository's git dir there first." >&2
+    echo "git dir not found at $git_dir (no HEAD). The devcontainer reaches it through its git-dir mount; create or move the repository's git dir there first." >&2
     exit 1
   fi
   printf '  git dir\t%s\n' "$git_dir"
