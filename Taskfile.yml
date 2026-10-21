@@ -7,6 +7,7 @@ dotenv: ['.env', '.devcontainer/.env']
 includes:
   devcontainer:
     taskfile: ./bootstrap/devcontainer.yml
+    aliases: [dc]   # task dc:up == task devcontainer:up, as in the Taskfile the bootstrap writes
   # Tasks contributed by the Features installed in this repo's devcontainer
   # (go-task:*, devcontainer-cli:*); absent on the host.
   features:
