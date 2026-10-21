@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import re
 import unittest
 
@@ -100,6 +101,7 @@ class Site(h.RepoCase):
         self.assertIn("Needs a login.", now["gamma-item"]["text"])
 
     def test_attention_order_and_content(self):
+        os.environ["DEVHOST_REVIEW_EVERY"] = "5"
         ledger = self.root / "docs" / "ledger" / f"{h.LEDGER_MONTH}.md"
         h.write(ledger, ledger.read_text(encoding="utf-8") + "\n".join(h.entry(f"2026-10-{d:02d}", f"Extra {d}") for d in range(3, 6)))
         h.track(self.root)

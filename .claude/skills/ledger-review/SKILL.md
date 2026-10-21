@@ -1,12 +1,12 @@
 ---
 name: ledger-review
-description: Review the ledger (docs/ledger/YYYY-MM.md, written by the scribe back) every five or so entries, reading the month's agent-cost report first, and turn what the entries recorded (friction, learnings, measures, questions) into one concrete change per group - a TODO.md item, a decision for the Operator, a change made now with its test, or no action with a reason - starting by checking whether the last review's friction came back. Use it when the briefing says a review is due, or when the Operator asks what keeps going wrong, what the agents cost, or whether a model is the right size.
+description: Review the ledger (docs/ledger/YYYY-MM.md, written by the scribe back) every 25 entries, reading the month's agent-cost report first, and turn what the entries recorded (friction, learnings, measures, questions) into one concrete change per group - a TODO.md item, a decision for the Operator, a change made now with its test, or no action with a reason - starting by checking whether the last review's friction came back. Use it when the briefing says a review is due, or when the Operator asks what keeps going wrong, what the agents cost, or whether a model is the right size.
 ---
 
 # Review the ledger
 
 The ledger is only worth keeping if it is read. A review is where its entries become changes:
-one per group, small, with a test where it is tooling. Every five or so entries, a review; each
+one per group, small, with a test where it is tooling. Every 25 entries (the setting; the entry rate in the cost report shows whether that is too often or too rarely), a review; each
 review starts by checking whether last time's friction came back, because an agreed fix can go
 unapplied; and it starts from the numbers, so the models can be right-sized.
 

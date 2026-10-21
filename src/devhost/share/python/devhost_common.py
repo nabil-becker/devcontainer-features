@@ -10,6 +10,9 @@ job runner uses, so a repository can keep its records elsewhere without changing
   `DEVHOST_NIGHT_SHIFT_DIR`: the records, relative to the root unless absolute.
 - `DEVHOST_ENGINEER`: whose machine this is, as a slug; else `operator`. Never the git identity: the handle
   is committed (entries, the cost report's file name) and a git name may be a person's name.
+- `DEVHOST_REVIEW_EVERY`: ledger entries between reviews (25); the briefing says a review is due then.
+- `DEVHOST_MONTHLY_TARGET`: a monthly list-price spend in dollars to measure against; unset by default.
+  A tracking point, never a cap: nothing warns or blocks.
 - `DEVHOST_FORBIDDEN_WORDS`: words (separated by `;`) that may appear nowhere in the repository.
 - `DEVHOST_REDACT_FILE` (`.devhost/redact-names.txt`, ignored by git): names replaced, whole
   word, by `DEVHOST_REDACT_WITH` (`the Operator`) in everything a job writes, and refused by
@@ -110,6 +113,31 @@ def slug(text: str) -> str:
 
 def engineer(root: Path) -> str:
     return slug(os.environ.get("DEVHOST_ENGINEER", "")) or "operator"
+
+
+DEFAULT_REVIEW_EVERY = 25
+
+
+def review_every() -> int:
+    """Entries between ledger reviews: `DEVHOST_REVIEW_EVERY` when a positive integer, else 25."""
+    try:
+        n = int(os.environ.get("DEVHOST_REVIEW_EVERY", "").strip())
+    except ValueError:
+        return DEFAULT_REVIEW_EVERY
+    return n if n > 0 else DEFAULT_REVIEW_EVERY
+
+
+def monthly_target() -> float | None:
+    """The monthly spend tracking point in dollars (`DEVHOST_MONTHLY_TARGET`), or None when unset."""
+    try:
+        n = float(os.environ.get("DEVHOST_MONTHLY_TARGET", "").strip().lstrip("$"))
+    except ValueError:
+        return None
+    return n if n > 0 else None
+
+
+def money_target(n: float) -> str:
+    return f"${n:,.0f}" if n == int(n) else f"${n:,.2f}"
 
 
 def _words(text: str) -> list[str]:

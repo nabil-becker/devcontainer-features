@@ -11,7 +11,7 @@ briefing at every session start), never edited by hand.
   the devhost, and fills the Measures line from the transcripts (`devhost-costs --measures`).
 - A **host** writes an entry by hand only on a workstation (no backs there) or to correct one:
   a wrong entry is never edited; a new entry with a `Corrects:` line replaces it.
-- The **review** (`/ledger-review`) appends a `## Review YYYY-MM-DD` section every five or so
+- The **review** (`/ledger-review`) appends a `## Review YYYY-MM-DD` section every 25
   entries, after reading the cost report.
 
 ## Shape

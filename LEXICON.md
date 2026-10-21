@@ -129,10 +129,10 @@ The domain words of the project itself are not here; they live with the project'
   its first entry only; the stretch's other entries point to it, so summing the ledger counts it once.
 - **Review**: reading the cost report and the entries since the last review, checking whether the
   last review's friction came back, and turning each group into one action; appended to the
-  ledger as a `## Review` section. Run with `/ledger-review`.
+  ledger as a `## Review` section, every 25 entries by default (`DEVHOST_REVIEW_EVERY`). Run with `/ledger-review`.
 - **Cost report**: `docs/ledger/costs-YYYY-MM-<engineer>.md`, the monthly agent costs on one
   engineer's machine (inters, cons, backs, by model), rebuilt by `devhost-report` with no model
-  from the cost store and this machine's new records. Read first by the review.
+  from the cost store and this machine's new records, with the month's entry rate and, when `DEVHOST_MONTHLY_TARGET` is set, the spend against that tracking point. Read first by the review.
 - **Cost store**: `docs/ledger/costs-YYYY-MM-<engineer>.jsonl`, the committed ids-and-numbers
   record beside the cost report. `devhost-report` adds this machine's new records to it and never
   drops committed rows, so a rebuilt machine cannot empty the month; figures from before the store

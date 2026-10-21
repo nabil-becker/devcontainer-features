@@ -75,7 +75,7 @@ The way of working grows from what real work shows it lacks, never ahead of it:
 2. **Costs.** Every agent run is costed at list price: host sessions and cons from their
    transcripts, backs from their metrics lines; a monthly report per engineer sets them side by
    side by model. The briefing shows the month's spend at every session start.
-3. **Review.** Every five or so entries (the briefing says when) a review reads the cost report
+3. **Review.** Every 25 entries (the setting; the entry rate in the cost report shows whether that is too often or too rarely; the briefing says when) a review reads the cost report
    first, checks whether the last review's friction came back, groups the new friction by cause,
    and turns each group into exactly one action (`/ledger-review`).
 4. **The backlog.** Each action is a `TODO.md` item with an owner and the friction it should make
