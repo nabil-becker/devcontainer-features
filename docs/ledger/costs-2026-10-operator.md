@@ -6,45 +6,46 @@ so a rebuild loses nothing. Every figure is a list-price estimate (Opus $5/$25, 
 Numbers and ids only. Read first by the ledger review: see "What to look for".
 Regenerated, never edited by hand.
 
-Total: $112.73. Inter sessions: $86.25 in 2 sessions. Cons: $14.48 in 14 runs. Backs: $12.00 in 299 runs, 2 undone by guards. Ledger corrections: 10.
+Total: $149.76. Inter sessions: $119.04 in 2 sessions. Cons: $17.42 in 16 runs. Backs: $13.29 in 346 runs, 3 undone by guards. Ledger corrections: 16.
 
 ## By model
 
 | Model | Inters | Cons | Backs | Total | Replies or runs | Tokens out |
 |---|---|---|---|---|---|---|
-| haiku | $0.00 | $0.00 | $6.19 | $6.19 | 145 | 630,030 |
-| opus | $86.25 | $0.00 | $0.00 | $86.25 | 561 | 399,708 |
-| other | $0.00 | $0.00 | $0.00 | $0.00 | 109 | 0 |
-| sonnet | $0.00 | $14.48 | $5.80 | $20.28 | 313 | 79,703 |
+| haiku | $0.00 | $0.00 | $6.39 | $6.39 | 165 | 732,809 |
+| opus | $119.04 | $0.00 | $0.00 | $119.04 | 652 | 461,686 |
+| other | $0.00 | $0.00 | $0.00 | $0.00 | 130 | 0 |
+| sonnet | $0.00 | $17.42 | $6.89 | $24.31 | 397 | 103,409 |
 
 ## Inter sessions
 
 | Session | Models | Replies | Cost | First | Last |
 |---|---|---|---|---|---|
 | d91c4e06-06f3-4fea-ad00-57cd6502eb6e | claude-opus-5-5 | 1 | $0.21 | 2026-10-19T14:23 | 2026-10-19T14:23 |
-| d7e03a48-93bd-44ef-a1d2-045ad84afabf | claude-opus-5-5 | 560 | $86.04 | 2026-10-19T14:25 | 2026-10-20T19:46 |
+| d7e03a48-93bd-44ef-a1d2-045ad84afabf | claude-opus-5-5 | 651 | $118.83 | 2026-10-19T14:25 | 2026-10-21T11:20 |
 
 ## Cons (subagents)
 
 | Agent type | Model | Runs | Replies | Cost | Per run |
 |---|---|---|---|---|---|
-| general-purpose | claude-sonnet-5-5 | 14 | 268 | $14.48 | $1.03 |
+| general-purpose | claude-sonnet-5-5 | 16 | 346 | $17.42 | $1.09 |
 
 ## Backs
 
 | Back | Model | Runs | Changed | Nothing | Pending | Error | Undone | Stakes | Cost | Per run | Per change | Avg s | Avg chars in |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| librarian | sonnet | 45 | 7 | 19 | 19 | 0 | 0 | 1 | $5.80 | $0.13 | $0.83 | 13 | 11627 |
-| scribe | haiku | 79 | 47 | 32 | 0 | 0 | 0 | 0 | $2.56 | $0.03 | $0.05 | 38 | 4891 |
-| secretary | haiku | 66 | 44 | 19 | 3 | 0 | 2 | 2 | $3.64 | $0.06 | $0.08 | 40 | 3678 |
-| tester | none | 109 | 2 | 107 | 0 | 0 | 0 | 0 | $0.00 | $0.00 | $0.00 | 0 | 2204 |
+| librarian | sonnet | 51 | 9 | 23 | 19 | 0 | 1 | 1 | $6.89 | $0.14 | $0.77 | 14 | 11559 |
+| scribe | haiku | 90 | 56 | 34 | 0 | 0 | 0 | 0 | $2.63 | $0.03 | $0.05 | 36 | 4977 |
+| secretary | haiku | 75 | 52 | 20 | 3 | 0 | 2 | 2 | $3.77 | $0.05 | $0.07 | 38 | 3674 |
+| tester | none | 130 | 2 | 128 | 0 | 0 | 0 | 0 | $0.00 | $0.00 | $0.00 | 0 | 2109 |
 
 ## By day
 
 | Day | Inters | Cons | Backs | Total |
 |---|---|---|---|---|
 | 2026-10-19 | $17.30 | $2.90 | $4.11 | $24.31 |
-| 2026-10-20 | $68.95 | $11.58 | $7.88 | $88.41 |
+| 2026-10-20 | $84.50 | $12.53 | $8.71 | $105.74 |
+| 2026-10-21 | $17.24 | $1.99 | $0.47 | $19.70 |
 
 ## What to look for
 
