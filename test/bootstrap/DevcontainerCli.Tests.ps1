@@ -129,4 +129,32 @@ Describe 'Invoke-DevcontainerCli and the build lock' {
         Should -Invoke -ModuleName DevcontainerCli Enter-DevcontainerBuildLock -Times 0 -Exactly
         Should -Invoke -ModuleName DevcontainerCli Invoke-DevcontainerCliProcess -Times 1 -Exactly
     }
+
+    It 'features test takes no lock by default' {
+        $env:DEVCONTAINER_BUILD_LOCK_FEATURES_TEST = $null
+        Invoke-DevcontainerCli -Subcommand features -Arguments @('test', '-f', 'git') -WorkspaceFolder $TestDrive
+        Should -Invoke -ModuleName DevcontainerCli Enter-DevcontainerBuildLock -Times 0 -Exactly
+    }
+
+    It 'features test takes the lock with DEVCONTAINER_BUILD_LOCK_FEATURES_TEST=<value>' -ForEach @(
+        @{ value = 'true' }
+        @{ value = '1' }
+    ) {
+        $env:DEVCONTAINER_BUILD_LOCK_FEATURES_TEST = $value
+        try {
+            Invoke-DevcontainerCli -Subcommand features -Arguments @('test', '-f', 'git') -WorkspaceFolder $TestDrive
+            Should -Invoke -ModuleName DevcontainerCli Enter-DevcontainerBuildLock -Times 1 -Exactly
+            Should -Invoke -ModuleName DevcontainerCli Exit-DevcontainerBuildLock -Times 1 -Exactly
+        }
+        finally { $env:DEVCONTAINER_BUILD_LOCK_FEATURES_TEST = $null }
+    }
+
+    It 'other features subcommands take no lock even with the flag' {
+        $env:DEVCONTAINER_BUILD_LOCK_FEATURES_TEST = 'true'
+        try {
+            Invoke-DevcontainerCli -Subcommand features -Arguments @('generate-docs') -WorkspaceFolder $TestDrive
+            Should -Invoke -ModuleName DevcontainerCli Enter-DevcontainerBuildLock -Times 0 -Exactly
+        }
+        finally { $env:DEVCONTAINER_BUILD_LOCK_FEATURES_TEST = $null }
+    }
 }

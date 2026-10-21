@@ -287,10 +287,20 @@ function Stop-Devcontainer {
 }
 
 function Test-BuildSubcommand {
-    <# .SYNOPSIS $true for a subcommand that builds an image and so takes the build lock. #>
+    <#
+    .SYNOPSIS
+        $true for a subcommand that builds an image and so takes the build lock.
+        `features test` builds too, but takes the lock only with
+        DEVCONTAINER_BUILD_LOCK_FEATURES_TEST=true (default false): a long test
+        run would hold up every repository's rebuild.
+    #>
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$Subcommand)
-    return $Subcommand -in $script:BuildSubcommands
+    param([Parameter(Mandatory)][string]$Subcommand, [string[]]$Arguments = @())
+    if ($Subcommand -in $script:BuildSubcommands) { return $true }
+    if ($Subcommand -eq 'features' -and $Arguments.Count -gt 0 -and $Arguments[0] -eq 'test') {
+        return (Get-SettingOrEnv '' 'DEVCONTAINER_BUILD_LOCK_FEATURES_TEST' 'false') -in @('true', '1')
+    }
+    return $false
 }
 
 function Enter-DevcontainerBuildLock {
@@ -442,7 +452,7 @@ function Invoke-DevcontainerCli {
 
     # An image build takes the host-wide lock (see Enter-DevcontainerBuildLock);
     # the CLI's own temp image name is shared by every repository.
-    $lock = if (Test-BuildSubcommand -Subcommand $Subcommand) { Enter-DevcontainerBuildLock }
+    $lock = if (Test-BuildSubcommand -Subcommand $Subcommand -Arguments $Arguments) { Enter-DevcontainerBuildLock }
     try {
         Invoke-DevcontainerCliProcess -Subcommand $Subcommand -WorkspaceFolder $WorkspaceFolder -Arguments $Arguments `
             -CommandB64 $CommandB64 -NodeVersion $NodeVersion -CliVersion $CliVersion -DockerPath $DockerPath

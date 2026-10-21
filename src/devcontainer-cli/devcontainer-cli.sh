@@ -32,6 +32,8 @@
 #                              Pinning it forces the cached install even if a
 #                              `devcontainer` is on PATH.
 #   DEVCONTAINER_BUILD_LOCK    0 = do not serialise image builds (below).
+#   DEVCONTAINER_BUILD_LOCK_FEATURES_TEST  true = `features test` takes the
+#                              lock too (default false).
 #
 # Builds are serialised: `up` and `build` hold an flock on
 # $cache_root/build.lock while they run, and a second one prints "waiting for
@@ -308,8 +310,16 @@ run_cli() {
 }
 
 # Subcommands that build an image (`up` also covers `rebuild`); the others work
-# on an existing container and take no lock.
-builds_image() { case "$1" in up | build) return 0 ;; *) return 1 ;; esac; }
+# on an existing container and take no lock. `features test` builds too, but
+# locks only with DEVCONTAINER_BUILD_LOCK_FEATURES_TEST=true (default false), so
+# a long test run does not hold up every repository's rebuild.
+builds_image() { # <subcommand> [first argument]
+  case "$1" in
+    up | build) return 0 ;;
+    features) [ "${2:-}" = test ] && case "${DEVCONTAINER_BUILD_LOCK_FEATURES_TEST:-false}" in true | 1) return 0 ;; esac ;;
+  esac
+  return 1
+}
 
 # take_build_lock: flock on descriptor 9 for the rest of this process (released
 # when it exits, crashed or not). No-op when DEVCONTAINER_BUILD_LOCK=0 or there is no flock.
@@ -361,7 +371,7 @@ mode_run() {
       return ;;
   esac
 
-  if builds_image "$subcommand"; then take_build_lock; fi
+  if builds_image "$subcommand" "${1:-}"; then take_build_lock; fi
   local rc=0
   run_cli "$subcommand" "$workspace" "$cmd_b64" "$@" || rc=$?
   if [ "$rc" -ne 0 ] && [ "$subcommand" = exec ]; then

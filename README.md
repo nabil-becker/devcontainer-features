@@ -221,7 +221,9 @@ Without BuildKit build contexts (`wslc`) the devcontainer CLI tags the Feature
 content image `dev_container_feature_content_temp` for every repository, so two
 builds at once overwrite each other's image and the first fails with
 `"/tmp/build-features/<feature>_N": not found`. `exec` and the other
-subcommands take no lock; `DEVCONTAINER_BUILD_LOCK=0` turns it off.
+subcommands take no lock; `devcontainer features test` takes it only with
+`DEVCONTAINER_BUILD_LOCK_FEATURES_TEST=true` (default false);
+`DEVCONTAINER_BUILD_LOCK=0` turns it off.
 
 Both honour the settings above. The include must be a *local* include - the
 tasks run the scripts next to the Taskfile, which remote includes cannot

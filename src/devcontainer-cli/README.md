@@ -188,8 +188,9 @@ prints `waiting for another devcontainer build to finish...` and then runs;
 the lock is released when the build ends or its process dies (an abandoned lock
 counts as free). It applies on every engine, harmless with Docker Desktop;
 `exec`, `run-user-commands`, `set-up` and the other subcommands take no lock,
-and `devcontainer features test` is not covered. `DEVCONTAINER_BUILD_LOCK=0`
-turns the lock off.
+and `devcontainer features test` takes it only with
+`DEVCONTAINER_BUILD_LOCK_FEATURES_TEST=true` (default false, so a long test run
+does not hold up every rebuild). `DEVCONTAINER_BUILD_LOCK=0` turns the lock off.
 
 `stop` is the one host task that is not a CLI subcommand (the CLI has none),
 and it is one host-script command, the same in `run stop` and
