@@ -155,6 +155,22 @@ run `up` first; `rebuild` runs `stop` first (shutdown check included; `FORCE=1` 
 (the check refuses, or any error) prints one line and the rebuild continues.
 `build` and `config` touch no container.
 
+One build at a time. `up` (so `rebuild` too) and `build` hold a host-wide lock
+while they run: the named mutex `Global\devcontainer-features-build` on Windows,
+an `flock` on `~/.cache/devcontainer-features/build.lock` on Linux/macOS (none
+on a host without `flock`, such as stock macOS). Why: when the engine has no
+BuildKit build context (`wslc`), `@devcontainers/cli` tags the Feature content
+image with the fixed name `dev_container_feature_content_temp` for every
+repository, so two builds at once overwrite each other's image and the first
+fails with `"/tmp/build-features/<feature>_N": not found`. A second build
+prints `waiting for another devcontainer build to finish...` and then runs;
+the lock is released when the build ends or its process dies (an abandoned lock
+counts as free). It applies on every engine, harmless with Docker Desktop;
+`exec`, `run-user-commands`, `set-up` and the other subcommands take no lock,
+and `devcontainer features test` takes it only with
+`DEVCONTAINER_BUILD_LOCK_FEATURES_TEST=true` (default false, so a long test run
+does not hold up every rebuild). `DEVCONTAINER_BUILD_LOCK=0` turns the lock off.
+
 `stop` is the one host task that is not a CLI subcommand (the CLI has none),
 and it is one host-script command, the same in `run stop` and
 `Stop-Devcontainer` (running? check? stop?), not nested tasks. The workspace's
