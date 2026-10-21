@@ -7,6 +7,8 @@
 # commit` in a temporary folder (a test fixture) would re-initialise the real
 # repository and commit onto its branch. The wrapper scopes the variables to
 # the main checkout: everywhere else git behaves as if they were not set.
+# Claude Code replaces an unusable GIT_DIR with <somewhere>/not-a-git-repository;
+# inside the main checkout the wrapper puts the real values back (below).
 # @REAL_GIT@ is baked in by install.sh.
 real="${GIT_WRAPPER_REAL_GIT:-@REAL_GIT@}"
 
@@ -51,6 +53,35 @@ done
 dir=$(cd "$dir" 2>/dev/null && pwd -P) || exec "$real" "$@"
 wt=
 [ -n "${GIT_WORK_TREE:-}" ] && wt=$(cd "$GIT_WORK_TREE" 2>/dev/null && pwd -P)
+
+# Claude Code reads <cwd>/.git itself and, when that pointer holds a path the
+# container cannot use (the git dir lives outside the workspace), runs git
+# with GIT_DIR=<somewhere>/not-a-git-repository, overwriting the real values
+# (its subagent worktree isolation then fails). git-setup recorded the real
+# values from containerEnv at post-create; with the placeholder set and the
+# directory inside the main checkout, but not inside a linked worktree under
+# .claude/worktrees, restore them. Elsewhere nothing changes: the rules below
+# treat the placeholder like any other GIT_DIR.
+case "$GIT_DIR" in
+  */not-a-git-repository)
+    dirsfile="${GIT_WRAPPER_DIRS_FILE:-/var/lib/devcontainer-features/git/dirs.env}"
+    if [ -r "$dirsfile" ]; then
+      DCF_GIT_DIR=
+      DCF_WORK_TREE=
+      # shellcheck disable=SC1090  # written by git-setup
+      . "$dirsfile"
+      if [ -f "$DCF_GIT_DIR/HEAD" ] && [ -n "$DCF_WORK_TREE" ]; then
+        real_wt=$(cd "$DCF_WORK_TREE" 2>/dev/null && pwd -P) || real_wt=
+        case "$dir/" in
+          "$real_wt"/.claude/worktrees/*) ;;
+          "$real_wt"/*)
+            export GIT_DIR="$DCF_GIT_DIR" GIT_WORK_TREE="$DCF_WORK_TREE"
+            unset GIT_COMMON_DIR
+            wt=$real_wt ;;
+        esac
+      fi
+    fi ;;
+esac
 
 # 1. Commands that create a repository mean "here", never the main checkout:
 #    with the variables kept, clone would check out into GIT_WORK_TREE and a

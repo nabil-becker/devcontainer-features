@@ -23,6 +23,32 @@ if [ -n "${GIT_CONFIG_GLOBAL:-}" ]; then
   dcf-persist --label git "$(dirname "$GIT_CONFIG_GLOBAL")"
 fi
 
+# The real GIT_DIR and GIT_WORK_TREE, for the wrapper: Claude Code overwrites
+# both with a not-a-git-repository placeholder when it cannot use the
+# checkout's .git pointer, and the wrapper needs them from somewhere stable.
+# They are in the container's environment now (containerEnv). Kept in the
+# Feature's state folder, which is writable by this user; never fatal.
+dirs_file="${GIT_WRAPPER_DIRS_FILE:-/var/lib/devcontainer-features/git/dirs.env}"
+case "${GIT_DIR:-}" in
+  '' | */not-a-git-repository) ;;
+  *)
+    if [ -n "${GIT_WORK_TREE:-}" ] && [ -d "$(dirname "$dirs_file")" ]; then
+      sq() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\''/g")"; }
+      if {
+        echo "# Written by git-setup from containerEnv GIT_DIR and GIT_WORK_TREE; sourced by the git wrapper."
+        printf 'DCF_GIT_DIR=%s\n' "$(sq "$GIT_DIR")"
+        printf 'DCF_WORK_TREE=%s\n' "$(sq "$GIT_WORK_TREE")"
+      } > "$dirs_file.tmp" 2>/dev/null && mv -f "$dirs_file.tmp" "$dirs_file" 2>/dev/null; then
+        echo "git dir: recorded GIT_DIR and GIT_WORK_TREE in $dirs_file"
+      else
+        rm -f "$dirs_file.tmp" 2>/dev/null || true
+        echo "git dir: could not write $dirs_file"
+      fi
+    fi
+    ;;
+esac
+[ -n "${GIT_DIR:-}" ] || rm -f "$dirs_file" 2>/dev/null || true
+
 # safe.directory first: the workspace and the git dir are bind mounts owned
 # by another uid, and every repo-local command below needs them trusted.
 add_safe_directory() {
