@@ -68,4 +68,17 @@ check "no identity file by default" bash -c '[ ! -e /usr/local/share/git-feature
 # shellcheck disable=SC2016  # expansion is meant to happen inside the inner bash
 check "default commit keeps the repository's own identity" bash -c 'unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GIT_DIR GIT_WORK_TREE; d="$(mktemp -d)" && cd "$d" && git init -q && git config user.name Local && git config user.email local@example.com && git commit -q --allow-empty -m x && [ "$(git log -1 --format="%an <%ae> %cn <%ce>")" = "Local <local@example.com> Local <local@example.com>" ]'
 
+# Claude Code replaces GIT_DIR with <somewhere>/not-a-git-repository when it
+# cannot use the checkout's .git pointer. git-setup records the real values
+# (here: the containerEnv-like GIT_DIR/GIT_WORK_TREE exported above) and the
+# wrapper puts them back inside the main checkout only.
+export GIT_WRAPPER_DIRS_FILE="$tmp/dirs.env"
+check "git-setup records the real git dir and work tree" bash -c "cd '$tmp/main' && git-setup >/dev/null && grep -qxF \"DCF_GIT_DIR='$tmp/main.git'\" '$tmp/dirs.env' && grep -qxF \"DCF_WORK_TREE='$tmp/main'\" '$tmp/dirs.env'"
+placeholder="$tmp/nowhere/not-a-git-repository"
+check "placeholder GIT_DIR inside the checkout is restored" bash -c "cd '$tmp/main/src' && [ \"\$(GIT_DIR='$placeholder' GIT_WORK_TREE='$tmp/nowhere' git rev-parse --git-dir)\" = '$tmp/main.git' ]"
+check "placeholder GIT_DIR inside a linked worktree finds the worktree" bash -c "cd '$wt' && [ \"\$(GIT_DIR='$placeholder' GIT_WORK_TREE='$tmp/nowhere' git rev-parse --show-toplevel)\" = '$wt' ]"
+check "placeholder GIT_DIR outside the work tree is left alone" bash -c "cd / && ! GIT_DIR='$placeholder' git rev-parse --git-dir >/dev/null 2>&1"
+check "placeholder GIT_DIR in a nested repository finds the nested repository" bash -c "cd '$tmp/main/tests/tmp' && [ \"\$(GIT_DIR='$placeholder' git rev-parse --show-toplevel)\" = '$tmp/main/tests/tmp' ]"
+unset GIT_WRAPPER_DIRS_FILE
+
 reportResults

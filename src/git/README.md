@@ -1,7 +1,7 @@
 
 # git (devcontainer wrapper and setup) (git)
 
-Augments whichever git the image already has (base image, common-utils or ghcr.io/devcontainers/features/git) for devcontainers whose checkout keeps its git dir outside the workspace and reaches it through GIT_DIR and GIT_WORK_TREE in containerEnv: a /usr/local/bin/git wrapper drops those two variables inside linked worktrees (Claude Code's .claude/worktrees/<name>) and nested repositories, so they are not sent to the main checkout, and a postCreateCommand hook (git-setup) does the per-container setup every repo otherwise scripts by hand - safe.directory and core.hooksPath - in a global git config (GIT_CONFIG_GLOBAL at /var/lib/devcontainer-features/git/gitconfig) kept in a named volume so identity and credential helper survive rebuilds.
+Augments whichever git the image already has (base image, common-utils or ghcr.io/devcontainers/features/git) for devcontainers whose checkout keeps its git dir outside the workspace and reaches it through GIT_DIR and GIT_WORK_TREE in containerEnv: a /usr/local/bin/git wrapper drops those two variables inside linked worktrees (Claude Code's .claude/worktrees/<name>) and nested repositories, so they are not sent to the main checkout, and puts the real values back when Claude Code replaces GIT_DIR with a not-a-git-repository placeholder, and a postCreateCommand hook (git-setup) does the per-container setup every repo otherwise scripts by hand - safe.directory and core.hooksPath - in a global git config (GIT_CONFIG_GLOBAL at /var/lib/devcontainer-features/git/gitconfig) kept in a named volume so identity and credential helper survive rebuilds.
 
 ## Example Usage
 
@@ -52,6 +52,29 @@ the subcommand, then unsets both variables when:
 Everywhere else git runs unchanged, and without `GIT_DIR` the wrapper only
 `exec`s the real git. `GIT_WRAPPER_REAL_GIT` overrides the baked-in path to
 the real git.
+
+## The placeholder Claude Code puts in GIT_DIR
+
+Claude Code does not pass an inherited `GIT_DIR` on. It reads `<cwd>/.git`
+itself and, when that pointer holds a path it cannot use (the git dir lives
+outside the workspace, so the pointer is a host path), runs git with
+`GIT_DIR=<somewhere>/not-a-git-repository`; its subagent worktree isolation
+then fails ("Failed to resolve base branch"). By the time the wrapper runs, the
+placeholder has overwritten the real values, so `git-setup` records them at
+post-create, from the container's `GIT_DIR` and `GIT_WORK_TREE`
+(`containerEnv`), in `/var/lib/devcontainer-features/git/dirs.env` (the
+Feature's state volume; rewritten on every post-create, removed when `GIT_DIR`
+is unset, never written from a placeholder). The wrapper reads it only when
+`GIT_DIR` ends in `/not-a-git-repository`, and when the directory git runs in
+(`$PWD`, moved by `-C`) is inside the main checkout's work tree but not inside
+a linked worktree (`<work tree>/.claude/worktrees/<name>`), puts `GIT_DIR` and
+`GIT_WORK_TREE` back and unsets `GIT_COMMON_DIR`; the rules above then apply as
+usual (a nested repository still drops them). In a linked worktree, or outside
+the work tree, nothing is restored. A consumer sets nothing new: `GIT_DIR` and
+`GIT_WORK_TREE` in `containerEnv` are what it already has, and post-create has
+to run once (rebuild or `task git:setup`). `GIT_WRAPPER_DIRS_FILE` overrides
+the file's path. The decision is made on the directory, not on the inherited
+`GIT_WORK_TREE`, because that is what git is about to run in.
 
 ## Commit identity for agents
 
