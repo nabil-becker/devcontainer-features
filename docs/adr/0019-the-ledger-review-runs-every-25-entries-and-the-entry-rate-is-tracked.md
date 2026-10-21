@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | accepted |
+| **Status** | superseded by ADR-0021 |
 | **Date** | 2026-10-21 |
 | **Deciders** | the Operator; proposed by the host during the seed self-interview |
 
