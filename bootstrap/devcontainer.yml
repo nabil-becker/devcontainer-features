@@ -43,6 +43,8 @@
 # others require them: exec, shell, pwsh and claude bring the container up
 # first, stop does nothing when none runs, rebuild stops it first (with the
 # shutdown check; a failing stop does not block it) and then recreates it. build and config touch no container.
+# stop is one host-script command (running? check? stop?), the same in both
+# scripts; running exits 0/1/2 (running / none / engine unreachable).
 # Precedence, as Task resolves template vars: a var on the command line
 # (`task devcontainer:up DEVCONTAINER_DOCKER_PATH=wslc`) beats the .env
 # files, which beat an exported environment variable. This file must not
@@ -70,20 +72,21 @@ vars:
 
 tasks:
   cli:
-    desc: 'Internal: run one @devcontainers/cli subcommand. vars: SUBCOMMAND, ARGS (string, shell-split), CMD (exec only, base64-encoded on the way through).'
+    desc: 'Internal: run one @devcontainers/cli subcommand. vars: SUBCOMMAND, ARGS (string, shell-split), CMD (exec, and stop for its shutdown check; base64-encoded on the way through), FORCE (stop only).'
     internal: true
     interactive: true
     requires:
       vars: [SUBCOMMAND]
     vars:
       ARGS: '{{.ARGS | default ""}}'
-      # Only exec takes a command: a CMD given on the command line of an outer
-      # task (task exec CMD=ls) must not reach the up that runs before it.
-      CMD: '{{if eq .SUBCOMMAND "exec"}}{{.CMD | default ""}}{{end}}'
+      # Only exec and stop take a command: a CMD given on the command line of an
+      # outer task (task exec CMD=ls) must not reach the up that runs before it.
+      CMD: '{{if or (eq .SUBCOMMAND "exec") (eq .SUBCOMMAND "stop")}}{{.CMD | default ""}}{{end}}'
+      FORCE: '{{if eq .SUBCOMMAND "stop"}}{{.FORCE | default ""}}{{end}}'
     cmds:
-      - cmd: pwsh -NoLogo -NoProfile -File '{{.TASKFILE_DIR}}/host/Invoke-DevcontainerCli.ps1' -WorkspaceFolder '{{.WORKSPACE_FOLDER}}' {{._PS_SETTINGS}} -Subcommand '{{.SUBCOMMAND}}' -CliArgsB64 '{{.ARGS | splitArgs | toJson | b64enc}}' {{if .CMD}}-CommandB64 '{{.CMD | b64enc}}'{{end}}
+      - cmd: pwsh -NoLogo -NoProfile -File '{{.TASKFILE_DIR}}/host/Invoke-DevcontainerCli.ps1' -WorkspaceFolder '{{.WORKSPACE_FOLDER}}' {{._PS_SETTINGS}} -Subcommand '{{.SUBCOMMAND}}' -CliArgsB64 '{{.ARGS | splitArgs | toJson | b64enc}}' {{if .CMD}}-CommandB64 '{{.CMD | b64enc}}'{{end}} {{if .FORCE}}-Force{{end}}
         platforms: [windows]
-      - cmd: '{{._SH_SETTINGS}} bash ''{{._BASH_CLI}}'' run ''{{.SUBCOMMAND}}'' --workspace-folder ''{{.WORKSPACE_FOLDER}}'' {{if .CMD}}--cmd-b64 ''{{.CMD | b64enc}}''{{end}} -- {{.ARGS}}'
+      - cmd: '{{._SH_SETTINGS}} bash ''{{._BASH_CLI}}'' run ''{{.SUBCOMMAND}}'' --workspace-folder ''{{.WORKSPACE_FOLDER}}'' {{if .CMD}}--cmd-b64 ''{{.CMD | b64enc}}''{{end}} {{if .FORCE}}--force{{end}} -- {{.ARGS}}'
         platforms: [linux, darwin]
 
   run:
@@ -132,7 +135,7 @@ tasks:
           ARGS: '{{.CLI_ARGS}}'
 
   running:
-    desc: 'Silent test: exit 0 when a container of {{.WORKSPACE_FOLDER}} is running, 1 when none is (2 when the engine cannot be asked; use `task --exit-code` to read the code). Never starts anything.'
+    desc: 'Silent test: the script exits 0 when a container of {{.WORKSPACE_FOLDER}} is running, 1 when none is, 2 when the engine cannot be asked. Task itself reports a failed command as 201 unless called as `task --exit-code devcontainer:running`, which passes 0/1/2 through. Never starts anything.'
     cmds:
       - task: cli
         vars:
@@ -140,42 +143,17 @@ tasks:
 
   stop:
     aliases: [down]
-    desc: 'Stop the devcontainer for {{.WORKSPACE_FOLDER}} through the configured engine; also task devcontainer:down. Idempotent: with no running container it says so and succeeds, without running the check or starting anything. Otherwise runs the shutdown check inside the container first (STOP_CHECK, default devhost-shutdown-check: tree clean and pushed, no back running or pending, no night shift mid-plan); a failing check refuses the stop, FORCE=1 stops anyway. Only this route is guarded: stopping the container with the engine directly is not (see the shutdown-devhost skill).'
+    desc: 'Stop the devcontainer for {{.WORKSPACE_FOLDER}} through the configured engine; also task devcontainer:down. One host-script command: with no running container it says so and succeeds, without running the check or starting anything. Otherwise runs the shutdown check inside the container first (STOP_CHECK, default devhost-shutdown-check: tree clean and pushed, no back running or pending, no night shift mid-plan); a failing check refuses the stop (its exit code), FORCE=1 stops anyway. Only this route is guarded: stopping the container with the engine directly is not (see the shutdown-devhost skill).'
     vars:
       FORCE: '{{.FORCE | default ""}}'
       STOP_CHECK: '{{.STOP_CHECK | default "devhost-shutdown-check"}}'
     cmds:
-      - cmd: '{{if ._IN_CONTAINER}}echo "devcontainer:stop runs from the host: this Task is inside the container." >&2; exit 1{{else}}rc=0; err=$(task --exit-code {{regexReplaceAll ":[^:]+$" .TASK ""}}:running 2>&1 >/dev/null) || rc=$?; if [ "$rc" -eq 1 ]; then echo "No running devcontainer for {{.WORKSPACE_FOLDER}}: already stopped."; elif [ "$rc" -ne 0 ]; then echo "$err" >&2; exit "$rc"; fi{{end}}'
-      - task: _stop
-        vars:
-          FORCE: '{{.FORCE}}'
-          STOP_CHECK: '{{.STOP_CHECK}}'
-
-  _stop:
-    desc: 'Internal: the check and the stop of a running container; skipped (status) when none runs. Never starts a container: the check goes through _exec.'
-    internal: true
-    status:
-      - '! task {{regexReplaceAll ":[^:]+$" .TASK ""}}:running >/dev/null 2>&1'
-    cmds:
-      - '{{if .FORCE}}echo "FORCE set: skipping the shutdown check."{{end}}'
-      - '{{if not .FORCE}}echo "Running the shutdown check ({{.STOP_CHECK}}); if it fails the stop is refused: fix the findings (shutdown-devhost skill) or run again with FORCE=1."{{end}}'
-      - task: _stop-check
-        vars:
-          FORCE: '{{.FORCE}}'
-          STOP_CHECK: '{{.STOP_CHECK}}'
+      - cmd: '{{if ._IN_CONTAINER}}echo "devcontainer:stop runs from the host: this Task is inside the container." >&2; exit 1{{else}}:{{end}}'
       - task: cli
         vars:
           SUBCOMMAND: stop
-
-  _stop-check:
-    desc: 'Internal: run STOP_CHECK inside the running container (not with FORCE); a failure refuses the stop.'
-    internal: true
-    status:
-      - '{{if .FORCE}}true{{else}}false{{end}}'
-    cmds:
-      - task: _exec
-        vars:
           CMD: '{{.STOP_CHECK}}'
+          FORCE: '{{.FORCE}}'
 
   rebuild:
     desc: 'Recreate the devcontainer from scratch (devcontainer up --remove-existing-container --build-no-cache). Stops it first like devcontainer:stop (shutdown check included; FORCE=1 and STOP_CHECK pass through), but continues even when that stop fails: a refusing check or an error prints one line and the rebuild goes on. VS Code windows attached to the old container must reload.'
@@ -195,7 +173,7 @@ tasks:
           ARGS: '{{.CLI_ARGS}}'
 
   _exec:
-    desc: 'Internal: devcontainer exec of CMD with no up first. What stop uses for its check, which must never start a container.'
+    desc: 'Internal: devcontainer exec of CMD with no up first; exec runs it after up.'
     internal: true
     interactive: true
     requires:

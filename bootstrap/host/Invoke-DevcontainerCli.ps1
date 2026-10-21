@@ -18,9 +18,12 @@
     '{{.CLI_ARGS | splitArgs | toJson | b64enc}}'.
 
 .PARAMETER CommandB64
-    exec only: a base64-encoded shell command, run as `bash -lc "<cmd>"`
-    inside the container. Encoding it means the command crosses PowerShell,
+    exec, and stop (its shutdown check): a base64-encoded shell command, run
+    as `bash -lc "<cmd>"` inside the container. Encoding it means the command crosses PowerShell,
     the CLI and docker exec untouched - no nested-quoting surprises.
+
+.PARAMETER Force
+    stop only: skip the shutdown check (the command in -CommandB64).
 
 .PARAMETER DockerPath
     Docker-compatible CLI (name on PATH or full path) for --docker-path.
@@ -43,7 +46,8 @@ param(
     [string]$CommandB64,
     [string]$DockerPath,
     [string]$NodeVersion,
-    [string]$CliVersion
+    [string]$CliVersion,
+    [switch]$Force
 )
 
 $ErrorActionPreference = 'Stop'
@@ -58,4 +62,5 @@ $params = @{
     CliVersion      = $CliVersion
 }
 if ($CommandB64) { $params.CommandB64 = $CommandB64 }
+if ($Force) { $params.Force = $true }
 Invoke-DevcontainerCli @params
