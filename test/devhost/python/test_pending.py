@@ -38,7 +38,8 @@ class Carry(unittest.TestCase):
             outs = [h.run(["pending", str(pending), "x; y"], Path(d)) for _ in range(3)]
             self.assertEqual([o.stdout for o in outs], ["x; y", "x; y", ""])
             self.assertIn("dropped a pending item carried 3 runs: x", outs[2].stderr)
-            self.assertTrue((Path(d) / "pending-s1.counts").is_file())
+            self.assertTrue((Path(d) / "counts-pending-s1").is_file())
+            self.assertEqual([f.name for f in Path(d).glob("pending-*")], [], "no pending-* file is made by the helper")
             self.assertEqual(h.run(["pending", str(pending), "none"], Path(d)).stdout, "")
 
 

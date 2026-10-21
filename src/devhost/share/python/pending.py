@@ -6,7 +6,7 @@ Usage: pending.py <pending file> <the PENDING text the run printed>   prints the
 The scribe writes its PENDING line as items separated by `;`. The job keeps that line in
 `pending-<session id>` and hands it back on the next run. Without a limit an item the scribe
 can never resolve (its start is gone, its end never comes) is carried for good. Here each
-item has a run count in a sidecar next to the pending file (`<pending file>.counts`, JSON):
+item has a run count in a sidecar next to the pending file (`counts-<pending file name>`, JSON; not `pending-*`, which the briefing and the shutdown check read):
 an item that comes back unchanged (case and spacing aside) counts one more, a new item
 starts at one, and at LIMIT it is dropped, with a line on stderr for the job log. An item the
 scribe rewords counts as new; the limit then catches only items that are carried as they are.
@@ -50,7 +50,7 @@ def main(argv: list[str]) -> int:
         print(__doc__)
         return 2
     pending, text = Path(argv[0]), argv[1]
-    sidecar = pending.with_name(pending.name + ".counts")
+    sidecar = pending.with_name("counts-" + pending.name)
     try:
         previous = json.loads(sidecar.read_text(encoding="utf-8"))
     except (OSError, ValueError):
