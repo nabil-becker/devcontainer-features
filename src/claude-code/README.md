@@ -54,7 +54,13 @@ What the Feature adds in both cases:
   hint. Names given with `/rename` are labels; the UUID (shown by `/status`)
   is the handle. `task claude-code:host` inside, `task devcontainer:claude`
   from the host machine (the `bootstrap/devcontainer.yml` include, which
-  reads `HOST_SESSION` from `.devcontainer/.env`).
+  reads `HOST_SESSION` from `.devcontainer/.env`). With
+  `CLAUDE_HOST_PRINT_FLAG=1` it instead prints that decision, `--resume <uuid>`
+  or `--session-id <uuid>`, on stdout and exits 0 without starting `claude`,
+  so a launcher of your own (detached `claude remote-control` sessions, say)
+  reuses it: `claude remote-control $(CLAUDE_HOST_PRINT_FLAG=1 claude-host)`.
+  With `HOST_SESSION` unset it prints nothing and exits 0; an invalid UUID is
+  still exit 2. Messages go to stderr.
 - `CLAUDE_CONFIG_DIR=/var/lib/devcontainer-features/claude-code` in
   `containerEnv` and a named volume mounted there, so login and sessions
   survive rebuilds without any configuration (see below).
