@@ -15,6 +15,8 @@
 #       Host: run one CLI subcommand (what every devcontainer:* task does).
 #       `stop` is not a CLI subcommand: it stops the workspace's containers
 #       (found by their devcontainer.local_folder label) through the engine.
+#       `running` is not one either: silent, exit 0 when such a container runs,
+#       1 when none does, 2 when the engine cannot be asked.
 #
 # Host settings, same names as the PowerShell flavour and the Taskfile:
 #   DEVCONTAINER_DOCKER_PATH   docker-compatible CLI for --docker-path (name
@@ -179,10 +181,24 @@ mode_init() {
 
 # The CLI has no stop: find the workspace's container by the label `devcontainer up`
 # puts on it and stop it through the same engine.
+running_ids() {
+  local workspace="$1" engine
+  engine="$(resolve_docker_path)"; engine="${engine:-docker}"
+  "$engine" ps -q --filter "label=devcontainer.local_folder=$workspace"
+}
+
+# Exit 0 when a container of the workspace runs, 1 when none does, 2 when the
+# engine cannot list containers. Prints nothing on stdout.
+mode_running() {
+  local ids
+  ids="$(running_ids "$1")" || { echo "devcontainer-cli: the container engine could not list containers." >&2; exit 2; }
+  [ -n "$ids" ]
+}
+
 mode_stop() {
   local workspace="$1" engine ids
   engine="$(resolve_docker_path)"; engine="${engine:-docker}"
-  ids="$("$engine" ps -q --filter "label=devcontainer.local_folder=$workspace")" || die "$engine could not list containers."
+  ids="$(running_ids "$workspace")" || die "$engine could not list containers."
   if [ -z "$ids" ]; then
     echo "No running devcontainer for $workspace."
     return 0
@@ -208,6 +224,12 @@ mode_run() {
   if [ "$subcommand" = stop ]; then
     [ -n "$workspace" ] || die 'run: --workspace-folder is required for stop'
     mode_stop "$(cd "$workspace" && pwd)"
+    return
+  fi
+
+  if [ "$subcommand" = running ]; then
+    [ -n "$workspace" ] || die 'run: --workspace-folder is required for running'
+    mode_running "$(cd "$workspace" && pwd)"
     return
   fi
 

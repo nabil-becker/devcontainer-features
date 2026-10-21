@@ -147,18 +147,31 @@ installed globally on any host. Its host settings are
 `DEVCONTAINER_DOCKER_PATH`, `DEVCONTAINER_NODE_VERSION` and
 `DEVCONTAINER_CLI_VERSION`.
 
-`task devcontainer:stop` is the one host task that is not a CLI subcommand
-(the CLI has none): the `run stop` mode (and `Stop-Devcontainer` in the
-PowerShell module) finds the workspace's container by the
-`devcontainer.local_folder` label that `devcontainer up` sets, and stops it
-through the configured engine (`DEVCONTAINER_DOCKER_PATH`). Before that the
-task runs the `STOP_CHECK` command inside the container (task var,
+`task devcontainer:up` (alias `start`) and `task devcontainer:stop` (alias
+`down`) are idempotent, so other tasks can require them. `up` starts a stopped
+container and leaves a running one alone. `exec`, `shell`, `pwsh` and `claude`
+run `up` first; `rebuild` runs `stop` first (shutdown check included; `FORCE=1` and
+`STOP_CHECK` pass through) and then recreates the container; a stop that fails
+(the check refuses, or any error) prints one line and the rebuild continues.
+`build` and `config` touch no container.
+
+`stop` is the one host task that is not a CLI subcommand (the CLI has none):
+the `run stop` mode (and `Stop-Devcontainer` in the PowerShell module) finds
+the workspace's container by the `devcontainer.local_folder` label that
+`devcontainer up` sets, and stops it through the configured engine
+(`DEVCONTAINER_DOCKER_PATH`). `run running` (and `Get-RunningDevcontainerId`)
+is the same lookup as a silent test: exit 0 when a container runs, 1 when none
+does, 2 when the engine cannot be asked; the `running` task wraps it. `stop`
+asks it first: with no running container it prints "already stopped" and
+succeeds, without running the check and without starting anything. Otherwise
+the task runs the `STOP_CHECK` command inside the container (task var,
 environment variable or `.devcontainer/.env`; default `devhost-shutdown-check`
 of the devhost Feature, ADR 0015) and refuses to stop when it fails; `FORCE=1`
-skips the check. The check is in the Taskfile, so both host paths honour it. The
-engine's `ps --filter label=...` and `stop` are assumed to behave as
-Docker's; this is not tested against `wslc` or Podman. Stopping the container
-any other way is not guarded.
+skips the check. The check goes through an internal exec that does not run `up`,
+so a stop never starts a container. The check is in the Taskfile, so both host
+paths honour it. The engine's `ps --filter label=...` and `stop` are assumed to
+behave as Docker's; this is not tested against `wslc` or Podman. Stopping the
+container any other way is not guarded.
 
 ## Why this one exists
 
