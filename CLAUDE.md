@@ -9,11 +9,15 @@ in [CONTRIBUTING.md](CONTRIBUTING.md); read both before changing a Feature.
 
 @.devhost/CLAUDE.devhost.md
 
+Purpose, personas and who may do what are in [CONTEXT.md](CONTEXT.md).
+
 The Features are the product; the devhost here is also the third iteration of the Agentic
 Delivery OS, whose learnings become a white paper: [docs/iterations.md](docs/iterations.md).
 
 ## This repository in the way of working
 
+- **Brief a con with a "who you serve" note**: the Operator, through the host, and the persona the
+  work is for (an engineer, a consumer's maintainer), as [CONTEXT.md](CONTEXT.md)'s personas say.
 - **Sessions run in the devhost.** `.devcontainer/` is this collection's own
   devhost, built from the Features in `src/` by local path (`task
   features:stage` copies them into `.devcontainer/features/` before every
