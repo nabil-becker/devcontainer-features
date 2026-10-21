@@ -106,6 +106,8 @@ Every script reads the same variables; a repository overrides them in `container
 | `DEVHOST_JOB_SKIP_AGENTS` | `Explore claude-code-guide statusline-setup` | Sub-agent types whose runs are not jobs |
 | `DEVHOST_JOB_QUIET_SECS` | per job (120; librarian 600; tester 0) | Minimum seconds between two runs of one job, unless much is new or a stake names it |
 | `DEVHOST_ENGINEER` | `operator` | A stable, non-identifying handle for whose machine this is, on the metrics line, in the entries and the cost report's file name. Never derived from git (the handle is committed and a git name may be a person's name); set it per engineer, e.g. `DEVHOST_ENGINEER=alice-laptop`, via the devcontainer `containerEnv` |
+| `DEVHOST_REVIEW_EVERY` | `25` | Ledger entries since the last review at which the briefing says a review is due. The cost report's entry rate (per day, per week, days per review) shows whether that is too often or too rarely |
+| `DEVHOST_MONTHLY_TARGET` | unset | A monthly list-price spend in dollars to measure against. The cost report adds a line "Spend $X of the $N target (Y%), a tracking point, not a cap." and the briefing's spend line says "of the $N target"; nothing warns, colours or blocks |
 | `SCRIBE_MODEL`, `SECRETARY_MODEL`, `LIBRARIAN_MODEL`, `TESTER_MODEL` | `haiku`, `haiku`, `sonnet`, `none` | The model each back runs on |
 | `TESTER_CMD` | `task test` when the root Taskfile lists a `test` task, else nothing | The test command the tester runs |
 | `TESTER_PATHS` | `src tests scripts` | What the tester hashes to decide whether code changed |

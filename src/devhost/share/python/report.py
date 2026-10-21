@@ -21,6 +21,7 @@ its tables add to the report's, and local records up to its `until` are already 
 """
 from __future__ import annotations
 
+import datetime
 import json
 import re
 import sys
@@ -28,7 +29,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import session_cost as sc  # noqa: E402
-from devhost_common import engineer, ledger_dir, month as this_month, rel, repo_root, state_dir, write_text  # noqa: E402
+from devhost_common import (engineer, ledger_dir, money_target, monthly_target, month as this_month, rel, repo_root,  # noqa: E402
+                            review_every, state_dir, write_text)
 
 RUN_FIELDS = ("ts", "job", "model", "status", "undone", "stakes", "duration_s", "stretch_chars", "cost_usd", "output_tokens")
 
@@ -59,6 +61,41 @@ def corrections(root: Path, month: str) -> int:
         return 0
     text = path.read_text(encoding="utf-8", errors="replace")
     return sum(1 for v in re.findall(r"^- \*\*Corrects:\*\*(.*)$", text, re.M) if not NO_CORRECTION.match(v))
+
+
+ENTRY_DAY = re.compile(r"^### (\d{4}-\d{2}-\d{2})", re.M)
+
+
+def entry_rate(root: Path, month: str) -> str:
+    """The ledger's entry rate for the month, so the review setting can be judged: entries per day
+    and per week over the days (weeks) that have entries, and the days one review takes at that rate."""
+    path = ledger_dir(root) / f"{month}.md"
+    text = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
+    days: dict[str, int] = {}
+    for d in ENTRY_DAY.findall(text):
+        days[d] = days.get(d, 0) + 1
+    if not days:
+        return f"Entry rate: no ledger entries in {month}. A review is due every {review_every()} entries (DEVHOST_REVIEW_EVERY)."
+    weeks: dict[tuple, int] = {}
+    for d, n in days.items():
+        try:
+            iso = datetime.date.fromisoformat(d).isocalendar()
+        except ValueError:
+            continue
+        weeks[(iso[0], iso[1])] = weeks.get((iso[0], iso[1]), 0) + n
+    total = sum(days.values())
+    per_day = total / len(days)
+    per_week = total / len(weeks) if weeks else 0.0
+    return (f"Entry rate: {total} entries on {len(days)} days with entries, {per_day:.1f} per day, "
+            f"{per_week:.1f} per week (over {len(weeks)} weeks with entries). A review every {review_every()} entries "
+            f"(DEVHOST_REVIEW_EVERY) comes every {review_every() / per_day:.1f} days at this rate.")
+
+
+def target_line(total: float) -> str | None:
+    target = monthly_target()
+    if target is None:
+        return None
+    return f"Spend {m(total)} of the {money_target(target)} target ({total / target:.0%}), a tracking point, not a cap."
 
 
 def m(x: float | None) -> str:
@@ -211,8 +248,11 @@ def totals(agg: dict) -> dict:
 
 def summary(root: Path, month: str) -> str:
     t = totals(tables(root, month))
+    total = t['inters'] + t['cons'] + t['backs']
+    target = monthly_target()
+    of = f" of the {money_target(target)} target" if target is not None else ""
     return (f"Agent spend {month} to date on this machine ({engineer(root)}), list-price estimate: "
-            f"{m(t['inters'] + t['cons'] + t['backs'])} (inters {m(t['inters'])}, cons {m(t['cons'])}, "
+            f"{m(total)}{of} (inters {m(t['inters'])}, cons {m(t['cons'])}, "
             f"backs {m(t['backs'])} in {t['back_runs']} runs, {t['undone']} undone by guards; "
             f"{corrections(root, month)} ledger corrections).")
 
@@ -237,6 +277,13 @@ def render_tables(root: Path, month: str, agg: dict) -> str:
         f"Backs: {m(t['backs'])} in {t['back_runs']} runs, {t['undone']} undone by guards. "
         f"Ledger corrections: {corrections(root, month)}.",
         "",
+        entry_rate(root, month),
+        "",
+    ]
+    target = target_line(t['inters'] + t['cons'] + t['backs'])
+    if target:
+        lines += [target, ""]
+    lines += [
         "## By model",
         "",
         "| Model | Inters | Cons | Backs | Total | Replies or runs | Tokens out |",

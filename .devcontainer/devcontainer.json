@@ -51,7 +51,10 @@
     "GIT_WORK_TREE": "${containerWorkspaceFolder}",
     // The handle on ledger entries and the cost report (committed, so never a
     // name): set DEVHOST_ENGINEER on the workstation to tell engineers apart.
-    "DEVHOST_ENGINEER": "${localEnv:DEVHOST_ENGINEER:operator}"
+    "DEVHOST_ENGINEER": "${localEnv:DEVHOST_ENGINEER:operator}",
+    // A tracking point for the month's agent spend at list price (dollars),
+    // not a cap: the cost report and the briefing show it, nothing blocks.
+    "DEVHOST_MONTHLY_TARGET": "200"
   },
   "postCreateCommand": "bash .devcontainer/post-create.sh",
   "remoteUser": "vscode",

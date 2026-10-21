@@ -24,7 +24,7 @@ Included from CLAUDE.md. The words are in [LEXICON.md](../LEXICON.md), the proce
 
 `docs/ledger/YYYY-MM.md` is append-only: one entry per unit of work, written by the scribe back
 after each turn and each con's job, with its measured cost. A wrong entry is never edited; a
-new entry with a `Corrects:` line replaces it. Every five or so entries the briefing asks for a
+new entry with a `Corrects:` line replaces it. Every 25 entries (the setting; the entry rate in the cost report shows whether that is too often or too rarely) the briefing asks for a
 review (`/ledger-review`), which reads the cost report first and turns each group of friction
 into one action.
 

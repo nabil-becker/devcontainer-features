@@ -4,7 +4,7 @@
 Usage: briefing.py [--json] [--no-refresh]
 
 Says, in a few sentences: the ledger entries since the last review and whether a review is due
-(five or more), what the backs left pending, how many backlog items and decisions for the
+(`DEVHOST_REVIEW_EVERY`, 25 by default), what the backs left pending, how many backlog items and decisions for the
 Operator are open, a warning when `gh` is not logged in or git has no GitHub credential helper (silent without gh),
 a warning when src/devhost is newer than the installed devhost
 (`$DEVHOST_SHARE/VERSION`), any night-shift report not yet reviewed, and the month-to-date agent spend
@@ -26,12 +26,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import branches  # noqa: E402
 import report  # noqa: E402
 from devhost_common import (DECISIONS_HEADING, REVIEWED_MARKER, backlog_path, ledger_dir, month,  # noqa: E402
-                            night_shift_dir, rel, repo_root, state_dir)
+                            night_shift_dir, rel, review_every, repo_root, state_dir)
 
 ENTRY = re.compile(r"^### (\d{4}-\d{2}-\d{2})", re.M)
 REVIEW = re.compile(r"^## Review (\S+)", re.M)
 FRICTION = re.compile(r"^- \*\*Friction:\*\*\s*(.*)$", re.M)
-REVIEW_DUE_AT = 5
 DEFAULT_SHARE = "/usr/local/share/devhost"  # where install.sh puts the share/ tree and its VERSION file
 
 
@@ -45,7 +44,7 @@ def ledger_status(root: Path) -> list[str]:
     friction = [f for f in FRICTION.findall(since) if not f.strip().lower().startswith("none")]
     where = f"the last review ({reviews[-1].group(1)})" if reviews else "the start (no review yet)"
     lines = [f"Ledger ({rel(root, folder)}/): {len(entries)} entries since {where}, {len(friction)} with friction."]
-    if len(entries) >= REVIEW_DUE_AT:
+    if len(entries) >= review_every():
         lines.append("Review due: run /ledger-review (it reads the cost report first).")
     return lines
 

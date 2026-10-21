@@ -14,6 +14,7 @@ class Briefing(h.RepoCase):
         self.report = h.load("report")
 
     def test_counts_review_due_backlog_night_shift_and_pending(self):
+        os.environ["DEVHOST_REVIEW_EVERY"] = "5"
         ledger = self.root / "docs" / "ledger" / "2026-10.md"
         h.write(ledger, ledger.read_text(encoding="utf-8") + "## Review 2026-10-03\n\nreviewed.\n\n" + "".join(
             h.entry(f"2026-10-{d:02d}", f"Thing {d}", "[docs] missing" if d % 2 else "none") for d in range(4, 9)))
@@ -40,6 +41,21 @@ class Briefing(h.RepoCase):
         self.assertNotIn(h.PERSON, text)  # seeded as the repo's git user.name by h.make_repo
         report = self.root / "docs" / "ledger" / f"costs-{self.b.month()}-tester.md"
         self.assertTrue(report.exists(), "the briefing rewrites the month's cost report")
+
+    def test_the_review_threshold_is_25_and_a_setting(self):
+        ledger = self.root / "docs" / "ledger" / "2026-10.md"
+        h.write(ledger, ledger.read_text(encoding="utf-8") + "".join(
+            h.entry(f"2026-10-{d:02d}", f"Thing {d}") for d in range(4, 8)))
+        self.assertIn("6 entries since the start", self.b.briefing(self.root, refresh=False))
+        self.assertNotIn("Review due", self.b.briefing(self.root, refresh=False))
+        os.environ["DEVHOST_REVIEW_EVERY"] = "6"
+        self.assertIn("Review due", self.b.briefing(self.root, refresh=False))
+        os.environ["DEVHOST_REVIEW_EVERY"] = "junk"
+        self.assertNotIn("Review due", self.b.briefing(self.root, refresh=False))
+        h.write(ledger, ledger.read_text(encoding="utf-8") + "".join(
+            h.entry(f"2026-10-{d:02d}", f"More {d}") for d in range(8, 27)))
+        self.assertIn("25 entries since", self.b.briefing(self.root, refresh=False))
+        self.assertIn("Review due", self.b.briefing(self.root, refresh=False))
 
     def test_below_the_threshold_no_review_is_due(self):
         text = self.b.briefing(self.root, refresh=False)
@@ -158,6 +174,22 @@ class Report(h.RepoCase):
         self.assertIn("decision for the Operator", text)
         self.assertNotIn(h.PERSON, text)  # seeded as the repo's git user.name by h.make_repo
         self.assertEqual(self.report.render(self.root, "2026-11").count("| $"), 0, "another month has no rows")
+
+    def test_the_entry_rate_and_the_target_line(self):
+        ledger = self.root / "docs" / "ledger" / "2026-10.md"
+        h.write(ledger, "".join(h.entry(d, f"T{i}") for i, d in enumerate(
+            ["2026-10-05", "2026-10-05", "2026-10-06", "2026-10-06", "2026-10-06", "2026-10-13"])))
+        text = self.report.render(self.root, "2026-10")
+        self.assertIn("Entry rate: 6 entries on 3 days with entries, 2.0 per day, 3.0 per week (over 2 weeks with entries). "
+                      "A review every 25 entries (DEVHOST_REVIEW_EVERY) comes every 12.5 days at this rate.", text)
+        self.assertNotIn("target", text.split("## By model")[0])
+        self.assertIn("no ledger entries in 2026-11", self.report.render(self.root, "2026-11"))
+        os.environ["DEVHOST_MONTHLY_TARGET"] = "200"
+        os.environ["DEVHOST_REVIEW_EVERY"] = "10"
+        text = self.report.render(self.root, "2026-10")
+        self.assertIn("Spend $0.02 of the $200 target (0%), a tracking point, not a cap.", text)
+        self.assertIn("A review every 10 entries (DEVHOST_REVIEW_EVERY) comes every 5.0 days", text)
+        self.assertIn("list-price estimate: $0.02 of the $200 target (inters", self.report.summary(self.root, "2026-10"))
 
     def test_summary_and_the_cli_write_the_file(self):
         line = self.report.summary(self.root, "2026-10")

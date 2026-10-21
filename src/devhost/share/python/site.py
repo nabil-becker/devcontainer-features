@@ -29,13 +29,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from devhost_common import (COST_REPORT, DECISIONS_HEADING, MONTHLY, REVIEWED_MARKER, adr_dir, backlog_path,  # noqa: E402
-                            git, ledger_dir, night_shift_dir, read_text, redact_text, rel, repo_root,
+                            git, ledger_dir, night_shift_dir, review_every, read_text, redact_text, rel, repo_root,
                             tracked_files, write_text)
 
 SCHEMA = 1
 PLACEHOLDER = "<!--SITE-DATA-->"
 TEMPLATE = Path(__file__).resolve().parent / "templates" / "site" / "index.html"
-REVIEW_DUE_AT = 5
 GROUPS = ("Product", "Way of working", "Records", "Proposals", "Model", "Skills", "Other")
 
 ITEM = re.compile(r"^- \[([ xX])\] \*\*(\S+)\s+(.*?)\*\*\s*(?:\(([^)]*)\))?\.?\s*(.*)$")
@@ -298,7 +297,7 @@ def attention_of(todo: dict, ledger: dict, night: list, proposals: list, prs: li
     out += [{"kind": "night-report", "title": f"Night-shift report {n['date']} not reviewed",
              "detail": "Say 'morning report' to walk through it.", "target": "d~" + n["path"].replace("/", "~")}
             for n in night if not n["reviewed"]]
-    if ledger["entries_since_review"] >= REVIEW_DUE_AT:
+    if ledger["entries_since_review"] >= review_every():
         out.append({"kind": "review-due", "title": "Ledger review due",
                     "detail": f"{ledger['entries_since_review']} entries since the last review ({ledger['last_review'] or 'none yet'}).",
                     "target": "ledger"})
