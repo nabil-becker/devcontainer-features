@@ -21,6 +21,9 @@ The domain words of the project itself are not here; they live with the project'
 - **Feature Taskfile**: the Taskfile a Feature ships for its tool, registered at build time.
 - **Feature state**: what a Feature keeps outside the checkout: a named volume under
   `/var/lib/devcontainer-features/<id>` or host disk.
+- **Git dirs mount**: the one line every consuming repo adds to bind the workstation's `.git-dirs`
+  folder at `/git-dirs` (the `GIT_DIRS_ROOT` default); the git Feature's wrapper maps a checkout's
+  `.git` pointer onto it, so no repo sets `GIT_DIR` or `GIT_WORK_TREE` (ADR-0020).
 
 ## People and agents
 

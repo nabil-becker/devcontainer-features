@@ -836,3 +836,13 @@ summary = "The $200 monthly agent spend at list price to measure against; a targ
 subject = "spend-target"
 predicate = "uses"
 object = "cost-report"
+
+[git-dirs-mount]
+type = "product"
+term = "Git dirs mount"
+summary = "The one line a consuming repo adds to bind the workstation's .git-dirs at /git-dirs; the git wrapper maps the checkout's pointer onto it."
+
+[[relation]]
+subject = "devcontainer"
+predicate = "uses"
+object = "git-dirs-mount"

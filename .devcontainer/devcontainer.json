@@ -53,7 +53,10 @@
     "DEVHOST_ENGINEER": "${localEnv:DEVHOST_ENGINEER:operator}",
     // A tracking point for the month's agent spend at list price (dollars),
     // not a cap: the cost report and the briefing show it, nothing blocks.
-    "DEVHOST_MONTHLY_TARGET": "200"
+    "DEVHOST_MONTHLY_TARGET": "200",
+    // Ledger entries between reviews: 75 here, about one review a day at this
+    // repository's entry rate (the Operator, ledger review 2026-10-21).
+    "DEVHOST_REVIEW_EVERY": "75"
   },
   "postCreateCommand": "bash .devcontainer/post-create.sh",
   "remoteUser": "vscode",
