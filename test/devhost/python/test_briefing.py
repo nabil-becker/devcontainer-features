@@ -65,6 +65,35 @@ class Briefing(h.RepoCase):
         text = self.b.briefing(self.root, refresh=False)  # the test branch `work` breaks the rule
         self.assertIn("Branches: 1 named against the rule (task devhost:branches); pull requests not checked (gh unavailable).", text)
 
+    def _gh(self, auth_ok: bool, helper: bool):
+        """A fake gh whose `auth status` succeeds or fails, and a global git config with or without the helper."""
+        import os
+        import stat
+        import sys
+        from unittest import mock
+        fake = self.base / "fake-gh-auth"
+        fake.write_text(f"#!{sys.executable}\nimport sys\nsys.exit({0 if auth_ok else 1})\n", encoding="utf-8")
+        fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
+        config = self.base / "gitconfig"
+        config.write_text('[credential "https://github.com"]\n\thelper = !gh auth git-credential\n' if helper else "", encoding="utf-8")
+        patch = mock.patch.dict(os.environ, {"DEVHOST_GH": str(fake), "GIT_CONFIG_GLOBAL": str(config), "GIT_CONFIG_NOSYSTEM": "1"})
+        patch.start()
+        self.addCleanup(patch.stop)
+        return self.b.briefing(self.root, refresh=False)
+
+    def test_gh_auth_line_is_quiet_when_all_is_well_or_gh_is_absent(self):
+        self.assertNotIn("GitHub writes", self.b.briefing(self.root, refresh=False))  # no gh: the test default
+        self.assertNotIn("GitHub writes", self._gh(auth_ok=True, helper=True))
+
+    def test_gh_auth_line_names_the_two_commands_when_login_or_helper_is_missing(self):
+        for auth_ok, helper, what in ((False, True, "gh is not logged in to GitHub"),
+                                       (True, False, "git has no credential helper for github.com"),
+                                       (False, False, "gh is not logged in to GitHub and git has no credential helper for github.com")):
+            text = self._gh(auth_ok, helper)
+            self.assertIn(f"GitHub writes (push, pull requests) will fail: {what}. In a container terminal run", text)
+            self.assertIn("`gh auth login --web --git-protocol https`", text)
+            self.assertIn("`gh auth setup-git`", text)
+
     def _versions(self, installed, source):
         share = self.base / "share"
         if installed is not None:
