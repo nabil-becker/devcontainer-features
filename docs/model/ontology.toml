@@ -245,6 +245,16 @@ type = "mechanism"
 term = "Stake"
 summary = "One plain line left in a session when a chore might not be caught."
 
+[over]
+type = "mechanism"
+term = "Over"
+summary = "The word that ends a run of Operator messages: act on all of them now."
+
+[walkie-talkie]
+type = "mechanism"
+term = "Walkie-talkie"
+summary = "The skill that holds a run of Operator messages until over, switched on by invoking it or saying hold on or wait."
+
 [quiet-notice]
 type = "mechanism"
 term = "Quiet notice"
@@ -806,3 +816,23 @@ summary = "The <n> in a branch name, always present and counted from 1; a parall
 subject = "branch-rule"
 predicate = "uses"
 object = "workstream-number"
+
+[done]
+type = "concept"
+term = "Done"
+summary = "A backlog item is done when its pull request is merged to main; releasing is a separate step the Operator starts."
+
+[[relation]]
+subject = "done"
+predicate = "uses"
+object = "backlog-item"
+
+[spend-target]
+type = "concept"
+term = "Spend target"
+summary = "The $200 monthly agent spend at list price to measure against; a target to track, not a cap."
+
+[[relation]]
+subject = "spend-target"
+predicate = "uses"
+object = "cost-report"
