@@ -1,6 +1,6 @@
 {
   "id": "common",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Common helpers (devcontainer-features)",
   "description": "Shared helpers used by this collection's Features and available to a repo's own post-create scripts. Today one: dcf-persist, which makes a tool's state directory (a named volume or a bind mount) usable by the remote user and reports what backs it.",
   "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/common",

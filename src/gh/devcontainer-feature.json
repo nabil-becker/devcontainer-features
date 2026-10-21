@@ -1,6 +1,6 @@
 {
   "id": "gh",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "GitHub CLI (gh)",
   "description": "GitHub CLI (https://cli.github.com) as a member of this collection's ecosystem: keeps a gh already in the image (e.g. from the official ghcr.io/devcontainers/features/github-cli, which is augmented instead of replaced) or installs the sha256-verified release binary at /usr/local/bin/gh (version pinnable); owns the login state as a named volume at GH_CONFIG_DIR=/var/lib/devcontainer-features/gh so `gh auth login` survives rebuilds; and adds a post-create hook (gh-setup) that makes that directory usable by the remote user, configures git to take GitHub credentials from gh, and reports whether a login is present. Plus the Feature Taskfile.",
   "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/gh",
