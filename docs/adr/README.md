@@ -67,5 +67,6 @@ numbering and a row below.
 | [0016](0016-the-bot-identity-applies-only-to-git-run-by-an-agent.md) | The bot identity applies only to git run by an agent | accepted | 2026-10-20 |
 | [0017](0017-every-branch-name-carries-a-backlog-id-and-a-workstream-number.md) | Every branch name carries a backlog id and a workstream number | accepted | 2026-10-20 |
 | [0018](0018-start-and-stop-are-idempotent-prerequisites-and-rebuild-continues-after-a-failed-stop.md) | Start and stop are idempotent prerequisites, and rebuild continues after a failed stop | accepted | 2026-10-21 |
-| [0019](0019-the-ledger-review-runs-every-25-entries-and-the-entry-rate-is-tracked.md) | The ledger review runs every 25 entries, and the entry rate is tracked | accepted | 2026-10-21 |
+| [0019](0019-the-ledger-review-runs-every-25-entries-and-the-entry-rate-is-tracked.md) | The ledger review runs every 25 entries, and the entry rate is tracked | superseded by 0021 | 2026-10-21 |
 | [0020](0020-consuming-repos-mount-the-whole-git-dirs-folder-and-the-git-wrapper-maps-the-pointer.md) | Consuming repos mount the whole git-dirs folder, and the git wrapper maps the pointer | accepted | 2026-10-21 |
+| [0021](0021-the-ledger-review-runs-every-75-entries.md) | The ledger review runs every 75 entries | accepted | 2026-10-21 |
