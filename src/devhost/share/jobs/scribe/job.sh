@@ -40,6 +40,13 @@ job_run() {
   summary="$(sed -n 's/^SUMMARY: *//p' "$tmp/out" | head -n1)"; summary="${summary%.}"
   JOB_PENDING="$(sed -n 's/^PENDING: *//p' "$tmp/out" | head -n1)"
   [ "$JOB_PENDING" = "none" ] && JOB_PENDING=""
+  # An item carried three runs in a row is dropped (share/python/pending.py keeps the counts
+  # beside the file); without the helper the line is kept as printed.
+  if [ -f "$DEVHOST_SHARE/python/pending.py" ]; then
+    JOB_PENDING="$(python3 "$DEVHOST_SHARE/python/pending.py" "$state/pending-$SID" "$JOB_PENDING" 2>>"$tmp/pending.log")" \
+      || JOB_PENDING="$(sed -n 's/^PENDING: *//p' "$tmp/out" | head -n1)"
+    [ -s "$tmp/pending.log" ] && log "$(head -c 300 "$tmp/pending.log")"
+  fi
   printf '%s' "$JOB_PENDING" >"$state/pending-$SID"
   # The numbers are the script's, never the model's: the stretch's cost goes on its first entry
   # only, so summing the ledger's Measures counts it once; the others point to that entry.

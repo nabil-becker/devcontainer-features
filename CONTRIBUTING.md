@@ -265,9 +265,28 @@ go-task registry (see the go-task Feature's notes).
 
 ### `NOTES.md`
 
-Short sections only: how the download is verified, which environment
-variable persists the tool's login or config across rebuilds, what it pairs
-with, and why it exists if a similar Feature is published elsewhere.
+Requirement NFR-8 (`docs/principles/non-functional-requirements.md`) says
+`NOTES.md` MUST cover its ten items, or say in one line that an item does not
+apply, so that a missing topic always means "forgotten" and
+never "not applicable". Short sections, one per topic:
+
+- what the Feature installs and where it lands, and how the download is
+  verified (the checksum or signature, or the plain statement that it is
+  not);
+- each option: what it does and when to change it;
+- state: which environment variable persists the tool's login or config
+  across rebuilds, and the volume behind it (NFR-1), or that there is none;
+- a copy-pasteable `features` block for `devcontainer.json`;
+- how to check that it works (the command and what it prints);
+- what it pairs with, and what it needs from other Features;
+- every task in its `taskfile.yml`, by name (NFR-2);
+- its limits and known gaps, stated plainly;
+- why it exists, in one paragraph, if a similar Feature is published
+  elsewhere: which one and what differs (NFR-9);
+- version and upgrade: how a version is pinned or changed, and what an
+  upgrade changes.
+
+NFR-8 is the authority: if it and this list disagree, fix this list.
 
 ### Code style
 

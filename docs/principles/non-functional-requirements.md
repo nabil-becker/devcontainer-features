@@ -93,10 +93,24 @@ Every task an agent may run MUST be non-interactive unless marked `interactive: 
 - **Today:** the `interactive` marking is used in 8 Features (login tasks). Machine-readable output is not a written rule yet: this one is new.
 
 ### NFR-8 documented-to-the-standard
-`NOTES.md` MUST cover the audit's 10 items, or say in one line that an item does not apply.
+`NOTES.md` MUST cover these 10 items, or say in one line that an item does not apply:
+
+1. What it installs and where it lands, and how the download is verified (or the plain statement
+   that it is not).
+2. Each option: what it does and when to change it.
+3. State: what persists across rebuilds, in which volume (NFR-1), or that there is none.
+4. A minimal, copy-pasteable `features` block for `devcontainer.json`.
+5. How to verify it works: the command and what it prints.
+6. What it pairs with, and what it needs from other Features.
+7. Every task in its `taskfile.yml`, by name (NFR-2).
+8. Its limits and known gaps, and how to troubleshoot them.
+9. Why it exists, when a similar Feature is published elsewhere: which one and what differs (NFR-9).
+10. Version and upgrade: how a version is pinned or changed, and what an upgrade changes.
 
 - **Why:** absence then always means "forgotten".
-- **Source:** the docs audit, section 1; CONTRIBUTING "NOTES.md" (today only four short topics).
+- **Source:** the docs audit of 2026-10-16 (its report was lost with a scratchpad; items 1 to 9 are
+  the sections the Features' NOTES were brought to on 2026-10-17 and 2026-10-19, item 10 added by the
+  Operator on 2026-10-21); CONTRIBUTING "NOTES.md".
 - **Checked by:** the docs standard. Lint can check headings and that every task is named.
 - **Today:** none meets all 10 yet. Eight Features' NOTES were brought to the standard on 2026-10-17 and 2026-10-19.
 

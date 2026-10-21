@@ -135,3 +135,33 @@ class DocsGuardModel(h.RepoCase):
         h.write(self.root / "docs" / "model" / "themes" / "a.toml", 'host = "Merlin"\n')
         (self.root / "docs" / "model" / "themes" / "a.toml").unlink()
         self.assertEqual(self.g.docs_guard(self.snapshot, self.root), "docs/model/themes/a.toml: removed")
+
+    def test_a_model_file_replaced_by_one_word_is_refused(self):
+        h.write(self.root / "docs" / "model" / "ontology.toml", "PLACEHOLDER\n")
+        self.assertEqual(self.g.docs_guard(self.snapshot, self.root), "docs/model/ontology.toml: changed or lost: types = [")
+        h.write(self.root / "docs" / "model" / "ontology.toml", "PLACEHOLDER")  # no newline, as a Write tool leaves it
+        self.assertTrue(self.g.docs_guard(self.snapshot, self.root).startswith("docs/model/ontology.toml: changed or lost"))
+        h.write(self.root / "docs" / "model" / "ontology.toml", "")
+        self.assertTrue(self.g.docs_guard(self.snapshot, self.root).startswith("docs/model/ontology.toml: changed or lost"))
+
+    def test_the_cli_refuses_a_wiped_model_with_the_snapshot_laid_out_as_the_job_does(self):
+        # job.sh: cp -pR "$model_dir" "$tmp/snap/model" (the real repository's model, not a toy)
+        import shutil
+        real = h.HERE.parents[2] / "docs" / "model"
+        shutil.rmtree(self.snapshot, ignore_errors=True)
+        shutil.copytree(real, self.snapshot / "model")
+        shutil.rmtree(self.root / "docs" / "model")
+        shutil.copytree(real, self.root / "docs" / "model")
+        args = ["guards", "docs", str(self.snapshot), str(self.root)]
+        self.assertEqual(h.run(args, self.root, self.env).returncode, 0)
+        h.write(self.root / "docs" / "model" / "ontology.toml", "PLACEHOLDER\n")
+        done = h.run(args, self.root, self.env)
+        self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+        self.assertIn("docs/model/ontology.toml: changed or lost", done.stdout)
+
+    def test_a_model_file_already_emptied_in_the_snapshot_is_still_refused(self):
+        # something else emptied the file before the run's snapshot was taken: the comparison alone passes
+        h.write(self.snapshot / "model" / "ontology.toml", "PLACEHOLDER\n")
+        h.write(self.root / "docs" / "model" / "ontology.toml", "PLACEHOLDER\n")
+        finding = self.g.docs_guard(self.snapshot, self.root)
+        self.assertTrue(finding.startswith("docs/model/ontology.toml: not valid TOML"), finding)

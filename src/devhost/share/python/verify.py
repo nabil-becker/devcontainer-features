@@ -88,6 +88,10 @@ def ledger_append_only(root: Path, notes: list[str] | None = None) -> list[str]:
         if notes is not None:
             notes.append(SKIPPED_NOTE)
         return []
+    # The merge base, not the base ref's tip: a branch cut before another change added ledger
+    # lines must not read those lines as its own removals.
+    fork = (git(root, "merge-base", "HEAD", base) or "").strip()
+    tip, base = base, fork or base
     folder = ledger_dir(root)
     names = {p.name for p in folder.glob("*.md") if MONTHLY.match(p.name)} if folder.is_dir() else set()
     listed = git(root, "ls-tree", "--name-only", f"{base}:{rel(root, folder)}")
@@ -106,7 +110,7 @@ def ledger_append_only(root: Path, notes: list[str] | None = None) -> list[str]:
             if hunk:
                 old_line = int(hunk.group(1))
             elif line.startswith("-") and not line.startswith("---"):
-                findings.append(f"{path}:{old_line}: ledger line on {base} changed or removed; add a correcting entry instead")
+                findings.append(f"{path}:{old_line}: ledger line on {tip} changed or removed; add a correcting entry instead")
                 old_line += 1
             elif line.startswith(" "):
                 old_line += 1

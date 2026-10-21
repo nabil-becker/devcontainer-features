@@ -45,6 +45,28 @@ class Verify(h.RepoCase):
         self.assertEqual(len(notes), 1)
         self.assertIn("NOT RUN", notes[0])
 
+    def _main_gains_an_entry(self):
+        h.git(self.root, "switch", "-q", "main")
+        path = self.root / "docs" / "ledger" / "2026-10.md"
+        h.write(path, path.read_text(encoding="utf-8") + h.entry("2026-10-05", "Added on main by another PR"))
+        h.git(self.root, "commit", "-q", "-am", "another PR")
+        h.git(self.root, "switch", "-q", "work")
+
+    def test_a_branch_behind_the_base_is_not_blamed_for_its_new_lines(self):
+        self._main_gains_an_entry()
+        path = self.root / "docs" / "ledger" / "2026-10.md"
+        h.write(path, path.read_text(encoding="utf-8") + h.entry("2026-10-03", "Third thing"))
+        self.assertEqual(self.v.ledger_append_only(self.root), [])
+        self.assertEqual(h.run(["verify", "--quiet"], self.root, self.env).returncode, 0)
+
+    def test_a_branch_behind_the_base_that_edits_a_line_still_fails(self):
+        self._main_gains_an_entry()
+        path = self.root / "docs" / "ledger" / "2026-10.md"
+        h.write(path, path.read_text(encoding="utf-8").replace("### 2026-10-01 First thing", "### 2026-10-01 First thing, reworded"))
+        findings = self.v.ledger_append_only(self.root)
+        self.assertEqual(len(findings), 1, findings)
+        self.assertIn("docs/ledger/2026-10.md:3: ledger line on main changed", findings[0])
+
     def test_the_append_only_guard_runs_when_the_base_ref_exists(self):
         notes = []
         self.assertEqual(self.v.ledger_append_only(self.root, notes), [])

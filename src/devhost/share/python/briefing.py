@@ -5,7 +5,8 @@ Usage: briefing.py [--json] [--no-refresh]
 
 Says, in a few sentences: the ledger entries since the last review and whether a review is due
 (five or more), what the backs left pending, how many backlog items and decisions for the
-Operator are open, a warning when src/devhost is newer than the installed devhost
+Operator are open, a warning when `gh` is not logged in or git has no GitHub credential helper (silent without gh),
+a warning when src/devhost is newer than the installed devhost
 (`$DEVHOST_SHARE/VERSION`), any night-shift report not yet reviewed, and the month-to-date agent spend
 on this machine. Refreshes this month's cost report (`costs-YYYY-MM-<engineer>.md` in the ledger
 directory) on the way, unless --no-refresh. The SessionStart hook prints it as --json, for the
@@ -16,6 +17,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -95,6 +98,40 @@ def branch_status(root: Path) -> list[str]:
     return [line] if line else []
 
 
+GH_FIX = ("In a container terminal run `gh auth login --web --git-protocol https`, then `gh auth setup-git`.")
+
+
+def _run(args: list[str], root: Path) -> subprocess.CompletedProcess | None:
+    try:
+        return subprocess.run(args, cwd=str(root), capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=15)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def gh_auth(root: Path) -> list[str]:
+    """One line when `gh` is installed but not logged in, or git has no credential helper for github.com.
+
+    Silent when all is well and when gh is absent (the gh Feature is optional). The command is
+    `DEVHOST_GH` when set, as in branches.py, so tests point it at a fake."""
+    exe = shutil.which(os.environ.get("DEVHOST_GH", "").strip() or "gh")
+    if not exe:
+        return []
+    status = _run([exe, "auth", "status"], root)
+    if status is None:
+        return []
+    problems = []
+    if status.returncode != 0:
+        problems.append("gh is not logged in to GitHub")
+    helpers = _run(["git", "config", "--get-all", "credential.https://github.com.helper"], root)
+    generic = _run(["git", "config", "--get-all", "credential.helper"], root)
+    if not any(p is not None and p.stdout.strip() for p in (helpers, generic)):
+        problems.append("git has no credential helper for github.com")
+    if not problems:
+        return []
+    return [f"GitHub writes (push, pull requests) will fail: {' and '.join(problems)}. {GH_FIX}"]
+
+
 def _version(text: str) -> tuple[int, ...] | None:
     m = re.match(r"^\s*v?(\d+(?:\.\d+)*)", text)
     return tuple(int(x) for x in m.group(1).split(".")) if m else None
@@ -116,7 +153,7 @@ def stale_install(root: Path) -> list[str]:
 
 def briefing(root: Path, refresh: bool = True) -> str:
     this_month = month()
-    lines = ledger_status(root) + stale_install(root) + pending(root) + backlog_status(root) + branch_status(root) + night_shift_status(root)
+    lines = ledger_status(root) + stale_install(root) + pending(root) + backlog_status(root) + branch_status(root) + gh_auth(root) + night_shift_status(root)
     try:
         if refresh:
             report.write_report(root, this_month)

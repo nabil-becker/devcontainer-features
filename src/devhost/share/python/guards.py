@@ -31,6 +31,10 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+try:
+    import tomllib
+except ImportError:  # Python before 3.11: the comparison above still runs
+    tomllib = None
 from devhost_common import adr_dir, lexicon_path, model_dir, rel  # noqa: E402
 
 STATUS_ROW = re.compile(r"^\| \*\*Status\*\* \|")
@@ -107,6 +111,15 @@ def docs_guard(snapshot: Path, root: Path) -> str | None:
         lost = lost_line(lines(old_model), lines(now))
         if lost is not None:
             return f"{rel(root, now)}: changed or lost: {lost.strip()[:160]}"
+    # Whatever the snapshot held, a model file must still be what it claims to be: a snapshot
+    # taken after something else emptied a file (a stray `PLACEHOLDER`) would pass the
+    # comparison above, so the files are read on their own too.
+    if tomllib is not None and models.is_dir():
+        for path in sorted(models.rglob("*.toml")):
+            try:
+                tomllib.loads(path.read_text(encoding="utf-8", errors="replace"))
+            except tomllib.TOMLDecodeError as err:
+                return f"{rel(root, path)}: not valid TOML ({str(err)[:100]})"
     return None
 
 
