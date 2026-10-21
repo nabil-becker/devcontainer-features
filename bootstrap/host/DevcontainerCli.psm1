@@ -171,6 +171,27 @@ function Resolve-DockerPath {
     throw 'docker is not on PATH; install a Docker-compatible engine or set DEVCONTAINER_DOCKER_PATH.'
 }
 
+function Get-RunningDevcontainerId {
+    <#
+    .SYNOPSIS
+        The ids of the running container(s) of a workspace, found by the
+        devcontainer.local_folder label `devcontainer up` puts on them; empty
+        when none runs. Throws when the engine cannot list containers.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$WorkspaceFolder,
+        [string]$DockerPath
+    )
+
+    $WorkspaceFolder = (Resolve-Path $WorkspaceFolder).Path
+    $engine = Resolve-DockerPath -DockerPath $DockerPath
+    if (-not $engine) { $engine = 'docker' }
+    $ids = @(& $engine ps -q --filter "label=devcontainer.local_folder=$WorkspaceFolder")
+    if ($LASTEXITCODE -ne 0) { throw "$engine could not list containers (exit code $LASTEXITCODE)." }
+    return @($ids | Where-Object { $_ })
+}
+
 function Stop-Devcontainer {
     <#
     .SYNOPSIS
@@ -187,9 +208,7 @@ function Stop-Devcontainer {
     $WorkspaceFolder = (Resolve-Path $WorkspaceFolder).Path
     $engine = Resolve-DockerPath -DockerPath $DockerPath
     if ($engine) { Write-Host "Container engine: $engine" } else { $engine = 'docker' }
-    $ids = @(& $engine ps -q --filter "label=devcontainer.local_folder=$WorkspaceFolder")
-    if ($LASTEXITCODE -ne 0) { throw "$engine could not list containers (exit code $LASTEXITCODE)." }
-    $ids = @($ids | Where-Object { $_ })
+    $ids = @(Get-RunningDevcontainerId -WorkspaceFolder $WorkspaceFolder -DockerPath $DockerPath)
     if ($ids.Count -eq 0) {
         Write-Host "No running devcontainer for $WorkspaceFolder."
         return
@@ -215,6 +234,15 @@ function Invoke-DevcontainerCli {
     if ($Subcommand -eq 'stop') {
         Stop-Devcontainer -WorkspaceFolder $WorkspaceFolder -DockerPath $DockerPath
         return
+    }
+
+    # `running` is not a CLI subcommand either: exit 0 when a container of the
+    # workspace runs, 1 when none does, 2 when the engine cannot be asked.
+    # Silent, for the stop task's "already stopped?" test.
+    if ($Subcommand -eq 'running') {
+        try { $ids = @(Get-RunningDevcontainerId -WorkspaceFolder $WorkspaceFolder -DockerPath $DockerPath) }
+        catch { [Console]::Error.WriteLine($_.Exception.Message); exit 2 }
+        if ($ids.Count -gt 0) { exit 0 } else { exit 1 }
     }
 
     $WorkspaceFolder = (Resolve-Path $WorkspaceFolder).Path
@@ -265,4 +293,4 @@ function Invoke-DevcontainerCli {
     }
 }
 
-Export-ModuleMember -Function Get-SettingOrEnv, ConvertFrom-TaskCliArgString, Get-PortableNodeDir, Get-DevcontainersCliEntrypoint, Remove-DevcontainersCli, Resolve-DockerPath, Stop-Devcontainer, Invoke-DevcontainerCli
+Export-ModuleMember -Function Get-SettingOrEnv, ConvertFrom-TaskCliArgString, Get-PortableNodeDir, Get-DevcontainersCliEntrypoint, Remove-DevcontainersCli, Resolve-DockerPath, Get-RunningDevcontainerId, Stop-Devcontainer, Invoke-DevcontainerCli
