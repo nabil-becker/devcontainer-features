@@ -198,9 +198,9 @@ The domain words of the project itself are not here; they live with the project'
   own: `Stake for the <back>: <what> needs <what>.` Lifted to the top of what every back reads;
   the one addressed treats it as an explicit request.
 - **Over**: the word the Operator ends a run of messages with, on its own and with no punctuation
-  needed (decided 2026-10-21, for dictation): it means "act on everything sent since the last
-  over". Until it arrives, the inter only acknowledges each message. Needs the `hang-on-skill`
-  backlog item to be enforced.
+  needed (decided 2026-10-21, for dictation): "act on everything in the run". It applies only while
+  the `walkie-talkie` skill is on, which it is not by default; outside a run every message is acted
+  on as usual.
 - **Walkie-talkie**: the skill (`walkie-talkie`) that holds a run of the Operator's messages
   until "over" (decided 2026-10-21). Off by default, so every message is acted on as usual; it
   turns on when the Operator invokes it or says "hold on" or "wait". While on, the inter gives one
