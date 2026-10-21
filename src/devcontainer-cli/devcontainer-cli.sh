@@ -14,9 +14,15 @@
 #   devcontainer-cli.sh run <subcommand> --workspace-folder <dir> [--cmd-b64 <b64>] [-- <cli args...>]
 #       Host: run one CLI subcommand (what every devcontainer:* task does).
 #       `stop` is not a CLI subcommand: it stops the workspace's containers
-#       (found by their devcontainer.local_folder label) through the engine.
+#       (found by their devcontainer.local_folder label, the drive letter of a
+#       Windows path matched in either case) through the engine. With
+#       --cmd-b64 it first runs that check inside the container (not with
+#       --force) and refuses to stop when it fails; nothing running = "already
+#       stopped", exit 0.
 #       `running` is not one either: silent, exit 0 when such a container runs,
 #       1 when none does, 2 when the engine cannot be asked.
+#       A failed `exec` says which of three things failed: the command (its
+#       exit code is passed on), no running container (1), the engine (2).
 #
 # Host settings, same names as the PowerShell flavour and the Taskfile:
 #   DEVCONTAINER_DOCKER_PATH   docker-compatible CLI for --docker-path (name
@@ -179,65 +185,93 @@ mode_init() {
   echo "devcontainer CLI : $("${cli[@]}" --version) (${cli[*]})"
 }
 
+# The folder as the CLI labels it can differ from the folder as given in the
+# drive letter's case (`devcontainer up` writes c:\..., the Taskfile has C:\...)
+# and the engine's label filter is case-sensitive. Prints the folder as given,
+# then with the drive letter lowercased, then uppercased (only for an X:\ path;
+# paths on Linux/macOS have no drive), without repeats.
+workspace_variants() {
+  local w="$1" rest first lo up
+  printf '%s\n' "$w"
+  if [[ "$w" =~ ^[A-Za-z]:[\\/] ]]; then
+    rest="${w:1}"; first="${w:0:1}"
+    lo="$(printf '%s' "$first" | tr '[:upper:]' '[:lower:]')"
+    up="$(printf '%s' "$first" | tr '[:lower:]' '[:upper:]')"
+    [ "$lo$rest" = "$w" ] || printf '%s\n' "$lo$rest"
+    [ "$up$rest" = "$w" ] || printf '%s\n' "$up$rest"
+  fi
+}
+
+engine_name() { local e; e="$(resolve_docker_path)" || return 1; printf '%s' "${e:-docker}"; }
+
 # The CLI has no stop: find the workspace's container by the label `devcontainer up`
-# puts on it and stop it through the same engine.
+# puts on it and stop it through the same engine. Prints the ids of the first
+# folder spelling that matches (none = nothing runs); returns 2, with the engine's
+# own error on stderr, when the engine cannot list containers.
 running_ids() {
-  local workspace="$1" engine
-  engine="$(resolve_docker_path)"; engine="${engine:-docker}"
-  "$engine" ps -q --filter "label=devcontainer.local_folder=$workspace"
+  local workspace="$1" engine v out
+  engine="$(engine_name)" || return 2
+  while IFS= read -r v; do
+    out="$("$engine" ps -q --filter "label=devcontainer.local_folder=$v")" || return 2
+    if [ -n "$out" ]; then printf '%s\n' "$out"; return 0; fi
+  done < <(workspace_variants "$workspace")
+  return 0
+}
+
+engine_unreachable() {
+  echo "devcontainer-cli: the container engine ($(engine_name || echo '?')) could not be reached." >&2
 }
 
 # Exit 0 when a container of the workspace runs, 1 when none does, 2 when the
 # engine cannot list containers. Prints nothing on stdout.
 mode_running() {
   local ids
-  ids="$(running_ids "$1")" || { echo "devcontainer-cli: the container engine could not list containers." >&2; exit 2; }
+  ids="$(running_ids "$1")" || { engine_unreachable; exit 2; }
   [ -n "$ids" ]
 }
 
+# stop <workspace> <check-b64> <force>: nothing running = "already stopped", exit 0;
+# else, unless forced, the check command runs inside the container (no `up`) and
+# a failure refuses the stop with its exit code; then the container(s) stop.
 mode_stop() {
-  local workspace="$1" engine ids
-  engine="$(resolve_docker_path)"; engine="${engine:-docker}"
-  ids="$(running_ids "$workspace")" || die "$engine could not list containers."
+  local workspace="$1" check_b64="$2" force="$3" engine ids rc=0 check
+  ids="$(running_ids "$workspace")" || { engine_unreachable; exit 2; }
   if [ -z "$ids" ]; then
-    echo "No running devcontainer for $workspace."
+    echo "No running devcontainer for $workspace: already stopped."
     return 0
   fi
+  if [ -n "$force" ]; then
+    echo "FORCE set: skipping the shutdown check."
+  elif [ -n "$check_b64" ]; then
+    check="$(printf '%s' "$check_b64" | base64 -d)"
+    echo "Running the shutdown check ($check); if it fails the stop is refused."
+    run_cli exec "$workspace" "$check_b64" || rc=$?
+    if [ "$rc" -ne 0 ]; then
+      echo "Not stopping: the shutdown check ($check) found the problems above. Fix them (shutdown-devhost skill) or run again with FORCE=1." >&2
+      exit "$rc"
+    fi
+  fi
+  engine="$(engine_name)"
   echo "Container engine: $engine" >&2
   # shellcheck disable=SC2086  # one id per line, word splitting intended
   "$engine" stop $ids
 }
 
-mode_run() {
-  local subcommand="${1:-}"; shift || true
-  [ -n "$subcommand" ] || die 'run: missing subcommand'
-  local workspace='' cmd_b64=''
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --workspace-folder) workspace="$2"; shift 2 ;;
-      --cmd-b64) cmd_b64="$2"; shift 2 ;;
-      --) shift; break ;;
-      *) break ;;
-    esac
-  done
+# The folder as the engine and CLI should see it: a Windows drive path (Git
+# Bash) as given, any other made absolute.
+resolve_workspace() {
+  if [[ "$1" =~ ^[A-Za-z]:[\\/] ]]; then printf '%s' "$1"; else (cd "$1" && pwd); fi
+}
 
-  if [ "$subcommand" = stop ]; then
-    [ -n "$workspace" ] || die 'run: --workspace-folder is required for stop'
-    mode_stop "$(cd "$workspace" && pwd)"
-    return
-  fi
-
-  if [ "$subcommand" = running ]; then
-    [ -n "$workspace" ] || die 'run: --workspace-folder is required for running'
-    mode_running "$(cd "$workspace" && pwd)"
-    return
-  fi
-
+# run_cli <subcommand> <workspace> <cmd-b64> [cli args...]: one @devcontainers/cli
+# call; returns its exit code.
+run_cli() {
+  local subcommand="$1" workspace="$2" cmd_b64="$3"; shift 3
   local -a args=("$subcommand")
   case "$subcommand" in
     up | set-up | build | run-user-commands | read-configuration | outdated | upgrade | exec)
       [ -n "$workspace" ] || die 'run: --workspace-folder is required for this subcommand'
-      args+=(--workspace-folder "$(cd "$workspace" && pwd)") ;;
+      args+=(--workspace-folder "$(resolve_workspace "$workspace")") ;;
   esac
   # Only the subcommands that drive an engine take --docker-path;
   # `features ...`, `templates ...` and `outdated` reject it.
@@ -262,9 +296,56 @@ mode_run() {
   "${cli[@]}" "${args[@]}"
 }
 
+# A failed exec: say which of three things failed, by asking the engine.
+explain_exec_failure() { # <exit code> <workspace> <command text>
+  local rc="$1" workspace="$2" text="$3" ids lrc=0
+  ids="$(running_ids "$workspace")" || lrc=$?
+  if [ "$lrc" -ne 0 ]; then
+    engine_unreachable
+    exit 2
+  elif [ -z "$ids" ]; then
+    echo "No running devcontainer for $workspace. Start it with: task dc:start" >&2
+    exit 1
+  fi
+  echo "The command exited with code $rc inside the devcontainer: ${text:0:80} (its output is above)." >&2
+  exit "$rc"
+}
+
+mode_run() {
+  local subcommand="${1:-}"; shift || true
+  [ -n "$subcommand" ] || die 'run: missing subcommand'
+  local workspace='' cmd_b64='' force=''
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --workspace-folder) workspace="$2"; shift 2 ;;
+      --cmd-b64) cmd_b64="$2"; shift 2 ;;
+      --force) force=1; shift ;;
+      --) shift; break ;;
+      *) break ;;
+    esac
+  done
+
+  case "$subcommand" in
+    stop | running)
+      [ -n "$workspace" ] || die "run: --workspace-folder is required for $subcommand"
+      workspace="$(resolve_workspace "$workspace")"
+      if [ "$subcommand" = stop ]; then mode_stop "$workspace" "$cmd_b64" "$force"; else mode_running "$workspace"; fi
+      return ;;
+  esac
+
+  local rc=0
+  run_cli "$subcommand" "$workspace" "$cmd_b64" "$@" || rc=$?
+  if [ "$rc" -ne 0 ] && [ "$subcommand" = exec ]; then
+    local text="$*"
+    [ -z "$cmd_b64" ] || text="$(printf '%s' "$cmd_b64" | base64 -d)"
+    explain_exec_failure "$rc" "$(resolve_workspace "$workspace")" "$text"
+  fi
+  return "$rc"
+}
+
 case "${1:-}" in
   install) shift; mode_install "$@" ;;
   init) shift; mode_init "$@" ;;
   run) shift; mode_run "$@" ;;
-  *) sed -n '2,24p' "$0" >&2; exit 2 ;;
+  *) sed -n '2,30p' "$0" >&2; exit 2 ;;
 esac

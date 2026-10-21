@@ -155,23 +155,37 @@ run `up` first; `rebuild` runs `stop` first (shutdown check included; `FORCE=1` 
 (the check refuses, or any error) prints one line and the rebuild continues.
 `build` and `config` touch no container.
 
-`stop` is the one host task that is not a CLI subcommand (the CLI has none):
-the `run stop` mode (and `Stop-Devcontainer` in the PowerShell module) finds
-the workspace's container by the `devcontainer.local_folder` label that
-`devcontainer up` sets, and stops it through the configured engine
-(`DEVCONTAINER_DOCKER_PATH`). `run running` (and `Get-RunningDevcontainerId`)
-is the same lookup as a silent test: exit 0 when a container runs, 1 when none
-does, 2 when the engine cannot be asked; the `running` task wraps it. `stop`
-asks it first: with no running container it prints "already stopped" and
-succeeds, without running the check and without starting anything. Otherwise
-the task runs the `STOP_CHECK` command inside the container (task var,
-environment variable or `.devcontainer/.env`; default `devhost-shutdown-check`
-of the devhost Feature, ADR 0015) and refuses to stop when it fails; `FORCE=1`
-skips the check. The check goes through an internal exec that does not run `up`,
-so a stop never starts a container. The check is in the Taskfile, so both host
-paths honour it. The engine's `ps --filter label=...` and `stop` are assumed to
-behave as Docker's; this is not tested against `wslc` or Podman. Stopping the
-container any other way is not guarded.
+`stop` is the one host task that is not a CLI subcommand (the CLI has none),
+and it is one host-script command, the same in `run stop` and
+`Stop-Devcontainer` (running? check? stop?), not nested tasks. The workspace's
+container is found by the `devcontainer.local_folder` label that `devcontainer
+up` sets, through the configured engine (`DEVCONTAINER_DOCKER_PATH`). The
+engine's label filter is case-sensitive and the CLI writes a lowercase drive
+letter (`c:\...`) where the task has `C:\...`, so the lookup tries the folder as
+given, then with the drive letter lowercased, then uppercased (only for an `X:\`
+path). With no running container `stop` prints "already stopped" and succeeds,
+without running the check and without starting anything. Otherwise it runs the
+`STOP_CHECK` command inside the container (task var, environment variable or
+`.devcontainer/.env`; default `devhost-shutdown-check` of the devhost Feature,
+ADR 0015) through the same exec path, without `up`, and when the check fails it
+prints "Not stopping: ..." and exits with the check's code, before stopping
+anything; `FORCE=1` skips the check. The engine's `ps --filter label=...` and
+`stop` are assumed to behave as Docker's; this is not tested against `wslc` or
+Podman. Stopping the container any other way is not guarded.
+
+`run running` (and `Get-RunningDevcontainerId`) is the same lookup as a silent
+test: exit 0 when a container runs, 1 when none does, 2 when the engine cannot
+be asked. Task reports a failed command as 201 itself; `task --exit-code
+devcontainer:running` passes the script's 0/1/2 through.
+
+A failing `exec` (what `exec`, `shell`, `pwsh` and `claude` run) asks the same
+lookup which of three things failed and says so, instead of one guess: the
+container runs, so the command failed (`The command exited with code <n> inside
+the devcontainer: <command>`, exit with that code); none runs (`No running
+devcontainer for <folder>. Start it with: task dc:start`, exit 1); or the
+engine could not be reached (its own error plus `the container engine (<path>)
+could not be reached`, exit 2). Other subcommands keep their generic failure
+message.
 
 ## Why this one exists
 
