@@ -47,6 +47,9 @@ task devcontainer:claude
 from scratch, `task devcontainer:shell` opens a shell inside. `devcontainer:claude` starts or
 resumes the Claude Code session inside the container.
 
+The starter sets the agents' commit identity: git run by Claude Code commits as `devhost agent
+<devhost-agent@noreply.invalid>`, while your own terminal keeps your identity (ADR 0016).
+
 ## More
 
 The Features' README (`github.com/nabil-becker/devcontainer-features`) lists every Feature, its
