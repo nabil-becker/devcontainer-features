@@ -213,6 +213,18 @@ Taskfile). Each task dispatches per platform (Task's per-command
   under `~/.cache/devcontainer-features`. Needs bash and curl. `homes` runs
   `devcontainer-homes.sh`.
 
+Builds are serialised host-wide: `up` (and so `rebuild`) and `build` hold the
+named mutex `Global\devcontainer-features-build` (Windows) or an `flock` on
+`~/.cache/devcontainer-features/build.lock` (Linux/macOS), and a second one
+prints `waiting for another devcontainer build to finish...` before it runs.
+Without BuildKit build contexts (`wslc`) the devcontainer CLI tags the Feature
+content image `dev_container_feature_content_temp` for every repository, so two
+builds at once overwrite each other's image and the first fails with
+`"/tmp/build-features/<feature>_N": not found`. `exec` and the other
+subcommands take no lock; `devcontainer features test` takes it only with
+`DEVCONTAINER_BUILD_LOCK_FEATURES_TEST=true` (default false);
+`DEVCONTAINER_BUILD_LOCK=0` turns it off.
+
 Both honour the settings above. The include must be a *local* include - the
 tasks run the scripts next to the Taskfile, which remote includes cannot
 reach. It declares no global `env:` on purpose: with Task 3.45 an `env:` key

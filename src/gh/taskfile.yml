@@ -3,23 +3,27 @@ version: '3'
 
 tasks:
   version:
+    dir: '{{.USER_WORKING_DIR}}'
     desc: 'Show which gh binary runs and its version (updates come from rebuilding).'
     cmds:
       - command -v gh
       - gh --version
 
   status:
+    dir: '{{.USER_WORKING_DIR}}'
     desc: 'Show the GitHub login state (gh auth status): accounts, hosts, token scopes.'
     cmds:
       - gh auth status {{.CLI_ARGS}}
 
   login:
+    dir: '{{.USER_WORKING_DIR}}'
     desc: 'Log in to GitHub interactively (gh auth login); the token is kept in GH_CONFIG_DIR and survives rebuilds. Extra arguments after --, e.g. task gh:login -- --hostname ghe.example.com.'
     interactive: true
     cmds:
       - gh auth login {{.CLI_ARGS}}
 
   setup:
+    dir: '{{.USER_WORKING_DIR}}'
     desc: 'Re-run the post-create setup: make GH_CONFIG_DIR usable by the current user, configure the git credential helper for github.com, report the login state (idempotent; GH_SETUP_GIT_CREDENTIAL_HELPER overrides the Feature option).'
     cmds:
       - gh-setup

@@ -6,16 +6,19 @@ version: '3'
 
 tasks:
   version:
+    dir: '{{.USER_WORKING_DIR}}'
     desc: 'Show the client (and server, when logged in) Argo CD versions.'
     cmds:
       - argocd version --short || argocd version --client --short
 
   setup:
+    dir: '{{.USER_WORKING_DIR}}'
     desc: 'Re-run the post-create setup: make ARGOCD_CONFIG_DIR (the Feature''s named volume, or a repo''s bind mount over it) belong to you and report what backs it and whether a login is present (idempotent).'
     cmds:
       - argocd-setup
 
   login:
+    dir: '{{.USER_WORKING_DIR}}'
     desc: 'Log in to SERVER=<host[:port]>. Extra flags (e.g. --sso, --grpc-web) after --.'
     requires:
       vars: [SERVER]
@@ -24,11 +27,13 @@ tasks:
       - argocd login '{{.SERVER}}' {{.CLI_ARGS}}
 
   apps:
+    dir: '{{.USER_WORKING_DIR}}'
     desc: 'List applications.'
     cmds:
       - argocd app list {{.CLI_ARGS}}
 
   diff:
+    dir: '{{.USER_WORKING_DIR}}'
     desc: 'Show the live-vs-desired diff for APP=<name>.'
     requires:
       vars: [APP]
@@ -36,6 +41,7 @@ tasks:
       - argocd app diff '{{.APP}}' {{.CLI_ARGS}}
 
   sync:
+    dir: '{{.USER_WORKING_DIR}}'
     desc: 'Sync APP=<name> now. Extra flags (e.g. --prune) after --.'
     requires:
       vars: [APP]

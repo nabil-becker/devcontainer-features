@@ -3,30 +3,35 @@ version: '3'
 
 tasks:
   version:
+    dir: '{{.USER_WORKING_DIR}}'
     desc: 'Show which claude binary runs and its version (updates come from rebuilding; the auto-updater is off).'
     cmds:
       - command -v claude
       - claude --version
 
   host:
+    dir: '{{.USER_WORKING_DIR}}'
     desc: 'Start or resume the host session with claude-host: the session named by HOST_SESSION (a UUID) is resumed, or created under that UUID the first time; unset, a plain new session. Extra arguments after --, e.g. task claude-code:host -- --model sonnet. From the host machine use task devcontainer:claude instead.'
     interactive: true
     cmds:
       - claude-host {{.CLI_ARGS}}
 
   doctor:
+    dir: '{{.USER_WORKING_DIR}}'
     desc: 'Run Claude Code''s self-check (installation, auth, config dir).'
     interactive: true
     cmds:
       - claude doctor
 
   config:
+    dir: '{{.USER_WORKING_DIR}}'
     desc: 'Show where Claude Code keeps its state in this container (CLAUDE_CONFIG_DIR), what backs it (volume, bind, image), whether it is writable and holds a login, and whether HOST_SESSION is set.'
     silent: true
     cmds:
       - claude-code-setup
 
   setup:
+    dir: '{{.USER_WORKING_DIR}}'
     desc: 'Re-run the post-create setup: create CLAUDE_CONFIG_DIR (by default the Feature''s named volume) and hand it to the current user (what the Feature does on every create). Idempotent.'
     cmds:
       - claude-code-setup

@@ -49,4 +49,15 @@ check "feature tasks resolve through the registry" bash -c "task -t $registry --
 check "feature task runs" task -t "$registry" dsc:version
 check "registered list task" bash -c "task -t $registry go-task:registered | grep -qx dsc"
 
+# A consuming repository whose root Taskfile includes the registry flattened.
+# Feature tasks must run where task was started (dir: USER_WORKING_DIR), not
+# in /usr/local/share/go-task/includes.d: git:setup there reported "no
+# repository" and added that folder to safe.directory in the shared volume.
+repo="$(mktemp -d)"
+git -C "$repo" init -q
+printf "version: '3'\nincludes:\n  features:\n    taskfile: %s\n    flatten: true\n" "$registry" > "$repo/Taskfile.yml"
+check "git:worktrees runs in the consuming repo" bash -c "cd '$repo' && task git:worktrees | grep -F '$repo'"
+check "git:setup runs in the consuming repo" bash -c "cd '$repo' && task git:setup | grep -F 'workspace $repo: ok'"
+check "git:setup trusts only the repo" bash -c "git config --global --get-all safe.directory | grep -qxF '$repo' && ! git config --global --get-all safe.directory | grep -F /usr/local/share"
+
 reportResults

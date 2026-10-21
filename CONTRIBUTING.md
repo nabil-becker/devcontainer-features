@@ -243,9 +243,14 @@ go-task registry (see the go-task Feature's notes).
   so the default would silently be the shell's value.
 - A literal `{{` for the tool (kubeconform's `{{.Group}}`) is written
   `{{"{{"}}` in a Taskfile; backtick raw strings do not survive `default`.
-- Tasks run in the user's current directory, so paths are relative to their
-  project. No environment-, server- or project-specific values; those come
-  from the user's `containerEnv` or `.env`.
+- Every task sets `dir: '{{.USER_WORKING_DIR}}'` (`task taskfiles:check`,
+  part of `task lint`, fails without it). Task runs an included Taskfile's
+  commands in that file's own folder, here `/usr/local/share/go-task/includes.d`,
+  and Task 3.54 does not template a `dir` on the include itself, so each
+  task says it. That keeps the tasks in the user's current directory, with
+  paths relative to their project. No environment-, server- or
+  project-specific values; those come from the user's `containerEnv` or
+  `.env`.
 - Plain `sh`-compatible commands; the Taskfile must not assume PowerShell or
   other Features are present unless its description says so.
 

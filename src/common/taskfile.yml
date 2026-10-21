@@ -3,6 +3,7 @@ version: '3'
 
 tasks:
   version:
+    dir: '{{.USER_WORKING_DIR}}'
     desc: 'Show which shared helpers are installed and where they come from (the header line of /usr/local/bin/dcf-persist).'
     silent: true
     cmds:
@@ -16,6 +17,7 @@ tasks:
         fi
 
   persist:
+    dir: '{{.USER_WORKING_DIR}}'
     desc: 'Make DIR usable by the current user (create it, chown it with sudo when a mount arrived root-owned) and report what backs it: image, volume or bind. LABEL names it in the report (default "dir").'
     requires:
       vars:

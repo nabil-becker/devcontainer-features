@@ -1,18 +1,17 @@
 #!/usr/bin/env bash
 # Augments the Azure CLI (https://learn.microsoft.com/cli/azure) that
 # ghcr.io/devcontainers/features/azure-cli installs from Microsoft's apt
-# repository, with the pieces that make it part of this collection's
+# repository (a dependsOn of this Feature, so it is always there), with the pieces that make it part of this collection's
 # ecosystem: the dcf-persist helper, the post-create setup of
 # AZURE_CONFIG_DIR and the bicep setting (az-setup), and the Feature
 # Taskfile. Feature options arrive as upper-cased environment variables (see
 # devcontainer-feature.json): BICEPFROMPATH.
 #
-# This Feature installs no az itself: Microsoft publishes it through its apt
+# az itself comes from the dependsOn: Microsoft publishes it through its apt
 # repository (signed packages), which is what the official Feature uses, and
-# there is no better verified source to re-implement. A missing az is a loud
-# warning rather than a failure, so the auto-generated test (Feature alone
-# on a bare image) and an image that adds az later still build; az-setup
-# reports the absence again at post-create.
+# there is no better verified source to re-implement. A missing az (a
+# tool that ignores dependsOn) is a loud warning rather than a failure;
+# az-setup reports the absence again at post-create.
 #
 # Never writes into AZURE_CONFIG_DIR: the volume is not mounted at image
 # build; az-setup makes it usable at post-create.
@@ -37,7 +36,7 @@ if [ -n "$az_bin" ]; then
   trap 'rm -rf "$tmp"' EXIT
   echo "az: $(AZURE_CONFIG_DIR="$tmp" "$az_bin" version -o tsv --only-show-errors 2>/dev/null | cut -f1 || echo '(version unknown)') at $az_bin"
 else
-  echo "az: WARNING - az not found; add ghcr.io/devcontainers/features/azure-cli:1 before this Feature. The az-setup hook, dcf-persist and the Taskfile are installed anyway." >&2
+  echo "az: WARNING - az not found; this Feature's dependsOn on ghcr.io/devcontainers/features/azure-cli:1 should have installed it (check the build log for that Feature). The az-setup hook, dcf-persist and the Taskfile are installed anyway." >&2
 fi
 
 # ------------------------------------------------------- ecosystem pieces ----

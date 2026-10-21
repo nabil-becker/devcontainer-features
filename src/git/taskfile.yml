@@ -3,6 +3,7 @@ version: '3'
 
 tasks:
   version:
+    dir: '{{.USER_WORKING_DIR}}'
     desc: 'Show the git version and which binary runs it: the Feature''s wrapper at /usr/local/bin/git (and the real git it forwards to) or a plain git.'
     silent: true
     cmds:
@@ -16,11 +17,13 @@ tasks:
         fi
 
   setup:
+    dir: '{{.USER_WORKING_DIR}}'
     desc: 'Re-run the post-create git setup for the repository in the current directory: safe.directory, core.hooksPath, the GIT_CONFIG_GLOBAL folder in the Feature''s named volume (idempotent; GIT_SETUP_SAFE_DIRECTORY / GIT_SETUP_HOOKS_PATH override the Feature options).'
     cmds:
       - git-setup
 
   worktrees:
+    dir: '{{.USER_WORKING_DIR}}'
     desc: 'List the linked worktrees of the repository in the current directory (git worktree list).'
     cmds:
       - git worktree list {{.CLI_ARGS}}

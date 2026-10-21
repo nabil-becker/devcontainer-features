@@ -83,13 +83,20 @@ tasks:
       - yamllint --strict .
       - pwsh -NoLogo -NoProfile -File '{{.ROOT_DIR}}/.github/scripts/Invoke-PSScriptAnalyzer.ps1'
       - task: common:check
+      - task: taskfiles:check
       - task: test:devhost
       - task: test:git-unit
+      - task: test:bootstrap
 
   test:git-unit:
     desc: 'Docker-free tests of the git Feature''s wrapper, git-setup and .git-dirs mapping, run from src/git against temp folders (never the checkout''s own git dir or global config); part of lint.'
     cmds:
       - bash test/git/unit/git_dirs_test.sh
+
+  test:bootstrap:
+    desc: 'Pester tests of the Windows host launcher (bootstrap/host/DevcontainerCli.psm1): the build lock that serialises devcontainer up/build across repositories. Needs pwsh with Pester 5 or later (Install-Module Pester -Scope CurrentUser); runs on any host, so it is part of lint.'
+    cmds:
+      - pwsh -NoLogo -NoProfile -Command "Import-Module Pester -MinimumVersion 5.0; Invoke-Pester -Path '{{.ROOT_DIR}}/test/bootstrap' -Output Detailed -CI"
 
   test:devhost:
     desc: 'Unit tests of the devhost Feature''s Python tooling (session cost, guards, verify, adr, init, briefing), stdlib only, against temp repos; runs on any host with python3 and git, so it is part of lint.'
@@ -123,6 +130,24 @@ tasks:
             done
           done
           [ "$rc" -eq 0 ] && echo "common helper copies are up to date"
+          exit "$rc"
+
+  taskfiles:check:
+    desc: 'Fail if a task in a Feature Taskfile (src/<id>/taskfile.yml) does not run in the directory task was started from (dir: ''{{"{{"}}.USER_WORKING_DIR{{"}}"}}''). Included through features.yml, a task otherwise runs in /usr/local/share/go-task/includes.d, not in the consuming repository.'
+    silent: true
+    cmds:
+      - cmd: |
+          rc=0
+          for f in src/*/taskfile.yml; do
+            missing="$(awk -v q="'" '
+              function flush() { if (task != "" && !ok) print task; task = ""; ok = 0 }
+              /^tasks:$/ { in_tasks = 1; next }
+              in_tasks && /^  [A-Za-z0-9:_-]+:$/ { flush(); task = $1; sub(/:$/, "", task); next }
+              in_tasks && $0 == "    dir: " q "{{"{{"}}.USER_WORKING_DIR{{"}}"}}" q { ok = 1 }
+              END { flush() }' "$f")"
+            for t in $missing; do echo "$f: task $t has no dir: '{{"{{"}}.USER_WORKING_DIR{{"}}"}}'"; rc=1; done
+          done
+          [ "$rc" -eq 0 ] && echo "every Feature task runs in the caller's directory"
           exit "$rc"
 
   common:sync:

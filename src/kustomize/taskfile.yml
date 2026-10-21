@@ -3,11 +3,13 @@ version: '3'
 
 tasks:
   version:
+    dir: '{{.USER_WORKING_DIR}}'
     desc: 'Show the installed kustomize version.'
     cmds:
       - kustomize version
 
   build:
+    dir: '{{.USER_WORKING_DIR}}'
     desc: 'Render the kustomization in DIR (default: current directory) to stdout. Extra kustomize flags after --.'
     vars:
       DIR: '{{.DIR | default "."}}'
@@ -15,6 +17,7 @@ tasks:
       - kustomize build '{{.DIR}}' {{.CLI_ARGS}}
 
   build:all:
+    dir: '{{.USER_WORKING_DIR}}'
     desc: 'Render every kustomization.yaml under ROOT (default: current directory) to /dev/null - a quick "does everything still build" check.'
     vars:
       ROOT: '{{.ROOT | default "."}}'

@@ -37,6 +37,10 @@
 #   FORCE=1 (task var)         stop/rebuild without running that check.
 #   HOST_SESSION               UUID of the Claude Code session that the claude
 #                              task resumes (HOST_SESSION_<DIR> per sub-folder).
+#   DEVCONTAINER_BUILD_LOCK    0 = do not serialise `up`/`build` host-wide (default:
+#                              one image build at a time, see README).
+#   DEVCONTAINER_BUILD_LOCK_FEATURES_TEST  true = `features test` takes that
+#                              lock too (default false).
 #   WORKSPACE_FOLDER           folder containing .devcontainer/ (default: the
 #                              root Taskfile's folder).
 # Tasks: up (alias start) and stop (alias down) are idempotent, so the

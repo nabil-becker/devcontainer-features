@@ -50,6 +50,12 @@ jobs:
           Install-Module PSScriptAnalyzer -Scope CurrentUser -Force
           ./.github/scripts/Invoke-PSScriptAnalyzer.ps1
 
+      - name: "Pester (host launcher build lock)"
+        shell: pwsh
+        run: |
+          Install-Module Pester -Scope CurrentUser -Force -SkipPublisherCheck -MinimumVersion 5.0
+          Invoke-Pester -Path test/bootstrap -Output Detailed -CI
+
       - name: "Install devcontainer CLI"
         run: npm install -g @devcontainers/cli
 
