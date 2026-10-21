@@ -88,6 +88,11 @@ The domain words of the project itself are not here; they live with the project'
   listed and pruned by `task devhost:branches`, enforced by the pre-push hook (ADR-0017).
 - **Workstream number**: the `<n>` in a branch name, always present and counted from 1; a parallel
   stream on the same backlog item (for example a con in a worktree) takes the next free number.
+- **Done**: a backlog item is done when its pull request is merged to `main` (decided 2026-10-21);
+  releasing is a separate step only the Operator starts.
+- **Spend target**: the monthly agent spend the Operator measures against, $200 at list price
+  (decided 2026-10-21). A target to track, not a cap: no warning and no block until a month or
+  two of data shows what the work costs; real caps come later.
 - **Amend item**: a backlog item with the id `amend-<id>`, added by the secretary when a stake asks
   to change an existing item; it names the item and the change, and a person makes the change by
   hand, since backs never reword (ADR-0003).
@@ -192,6 +197,15 @@ The domain words of the project itself are not here; they live with the project'
 - **Stake**: one plain line anyone leaves in a session when a chore might not be caught on its
   own: `Stake for the <back>: <what> needs <what>.` Lifted to the top of what every back reads;
   the one addressed treats it as an explicit request.
+- **Over**: the word the Operator ends a run of messages with, on its own and with no punctuation
+  needed (decided 2026-10-21, for dictation): "act on everything in the run". It applies only while
+  the `walkie-talkie` skill is on, which it is not by default; outside a run every message is acted
+  on as usual.
+- **Walkie-talkie**: the skill (`walkie-talkie`) that holds a run of the Operator's messages
+  until "over" (decided 2026-10-21). Off by default, so every message is acted on as usual; it
+  turns on when the Operator invokes it or says "hold on" or "wait". While on, the inter gives one
+  short acknowledgement per message; "over" ends the run and the inter acts on everything in it
+  together, "over and out" ends it without acting.
 - **Quiet notice**: how a back reports: one line of context on the inter's next turn, never a
   message to the engineer; the inter reads the change before the next commit and mentions it
   only when asked, when something was wrong, or when the Operator must act.
