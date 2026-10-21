@@ -27,8 +27,9 @@ Delivery OS, whose learnings become a white paper: [docs/iterations.md](docs/ite
   paths outside this checkout.
 - **The checkout is the only thing on disk.** Feature state (Claude Code,
   git's global config, gh) lives in the Features' volumes; the checkout's git
-  dir sits outside OneDrive and is bind-mounted, with the git Feature's wrapper
-  keeping `GIT_DIR` scoped to it. Because of that, Claude Code cannot create a
+  dir sits outside OneDrive under `~/.git-dirs`, which is bind-mounted whole at
+  `/git-dirs`, and the git Feature's wrapper maps the checkout's `.git` pointer
+  onto it (ADR 0020). Because of that, Claude Code cannot create a
   worktree for a subagent (`isolation: worktree` fails); make one with
   `git worktree add -b <branch> <path in the scratchpad> origin/main`, which
   the wrapper handles, and remove it with `git worktree remove` when merged.
