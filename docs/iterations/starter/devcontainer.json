@@ -11,7 +11,12 @@
     "ghcr.io/nabil-becker/devcontainer-features/claude-code:1": {},
     // git for the container: worktree-aware wrapper, hooks path, global config in a volume.
     "ghcr.io/nabil-becker/devcontainer-features/git:1": {
-      "hooksPath": ".githooks"
+      "hooksPath": ".githooks",
+      // Agents (any process Claude Code starts) commit as this bot identity, at an
+      // unclaimable address; the person's own terminal keeps theirs (ADR 0016).
+      "commitName": "devhost agent",
+      "commitEmail": "devhost-agent@noreply.invalid",
+      "commitWhenEnv": "CLAUDECODE"
     },
     // GitHub CLI; its login lives in a volume.
     "ghcr.io/nabil-becker/devcontainer-features/gh:1": {},

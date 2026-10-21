@@ -24,3 +24,14 @@ docs/adr/0013-the-agent-principles-are-trimmed-to-five-generic-ones.md
 docs/adr/0014-the-seed-is-exported-and-imported-by-two-skills-and-the-journalist-is-folded-into-the-export.md
 docs/adr/0015-shutdown-is-a-check-script-a-skill-and-a-host-stop-task-because-the-spec-has-no-stop-hook.md
 docs/adr/0016-the-bot-identity-applies-only-to-git-run-by-an-agent.md
+# The branch rule and the git identity decisions, added for the next export (interview 4, answer 9):
+# 0017 names every branch after a backlog id and a workstream number; 0002 keeps agent co-author
+# addresses unclaimable; 0012 and 0016 say how the identity is applied (the Git Feature wrapper,
+# only to git an agent runs). ADR 0001 is superseded by 0012 and stays out.
+docs/adr/0017-every-branch-name-carries-a-backlog-id-and-a-workstream-number.md
+docs/adr/0002-agent-co-author-trailers-use-unclaimable-addresses.md
+docs/adr/0012-agent-git-identity-through-the-git-feature-wrapper.md
+# The ledger's shape: where entries live, who writes them, the append-only rule. The monthly files
+# are records of this project, not foundation, so they stay out; ledger-review is already a default
+# skill of the seed (interview 4, answer 9).
+docs/ledger/README.md
