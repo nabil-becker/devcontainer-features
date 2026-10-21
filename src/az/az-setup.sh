@@ -27,7 +27,7 @@ dir="${AZURE_CONFIG_DIR:-$HOME/.azure}"
 dcf-persist --label az "$dir"
 
 if ! command -v az >/dev/null 2>&1; then
-  echo "az: not found on PATH; add ghcr.io/devcontainers/features/azure-cli:1 before this Feature in devcontainer.json" >&2
+  echo "az: not found on PATH; the az Feature installs it through its dependsOn on ghcr.io/devcontainers/features/azure-cli:1 - rebuild the container and check the build log for that Feature" >&2
   exit 0
 fi
 

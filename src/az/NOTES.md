@@ -1,27 +1,39 @@
-## Augmentation only: bring the official Feature
+## az comes with it (dependsOn)
 
-This Feature installs no `az`. Microsoft ships the Azure CLI through its
-signed apt repository, which is exactly what
-`ghcr.io/devcontainers/features/azure-cli` installs, and there is no better
-verified source to re-implement here. List that Feature first; `installsAfter`
-orders this one behind it:
+The Feature brings the Azure CLI in itself, through `dependsOn` on the
+official Feature, which installs it from Microsoft's signed apt repository:
 
 ```json
-"features": {
-  "ghcr.io/devcontainers/features/azure-cli:1": {
-    "installBicep": true
-  },
-  "ghcr.io/nabil-becker/devcontainer-features/az:1": {}
+"dependsOn": {
+  "ghcr.io/devcontainers/features/azure-cli:1": { "installBicep": true }
 }
 ```
 
-When `az` is absent at image build, `install.sh` prints a loud warning
-(`az not found; add ghcr.io/devcontainers/features/azure-cli:1 before this
-Feature`) and still installs the hook, `dcf-persist` and the Taskfile
-rather than failing: the auto-generated test of `devcontainer features
-test` installs every Feature alone on a bare image, and an image that gets
-az from a later layer should not break. `az-setup` repeats the warning at
-post-create.
+So listing only `ghcr.io/nabil-becker/devcontainer-features/az:1` gives an
+image with `az` and `bicep`, installed before this Feature. `dependsOn`
+installs the dependency; `installsAfter` (what this Feature used before
+1.1.0) only orders it, and is dropped when the repo does not list it, which
+left such images with no `az`. `installBicep: true` is passed because
+`bicepFromPath` (default true) wires up a `bicep` on PATH.
+
+### When the repo lists azure-cli too
+
+The devcontainer CLI counts two entries as one Feature only when both the
+id and the options are equal; otherwise it installs both.
+
+- Listed with the same options (`"installBicep": true`, nothing else): one
+  install, nothing to do. Listing it is not needed any more.
+- Listed with other options (a pinned `version`, `extensions`, no bicep):
+  the official Feature is installed **twice**, once with each set of
+  options. Both runs install the apt package; which run comes last, and
+  so which `version` ends up installed, is not fixed by the spec. If you
+  need a pinned az version, say so on this collection's backlog rather than
+  relying on the order.
+
+When `az` is absent at image build anyway (a tool that does not resolve
+`dependsOn`), `install.sh` prints a loud warning and still installs the
+hook, `dcf-persist` and the Taskfile rather than failing; `az-setup`
+repeats the warning at post-create.
 
 What the Feature adds:
 
@@ -75,7 +87,8 @@ other mounted path; `az-setup` follows the variable.
 
 ## Pairs with
 
-- `ghcr.io/devcontainers/features/azure-cli` (required) for az itself and,
-  with `installBicep`, the bicep binary this Feature wires up.
+- `ghcr.io/devcontainers/features/azure-cli`, pulled in through
+  `dependsOn` (with `installBicep`), for az itself and the bicep binary this
+  Feature wires up.
 - `task az:login` / `task az:account` from a root Taskfile that includes
   the go-task registry.

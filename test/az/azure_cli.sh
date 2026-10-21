@@ -1,7 +1,8 @@
 #!/bin/bash
-# Scenario 'azure_cli' (see scenarios.json): the official
-# ghcr.io/devcontainers/features/azure-cli (with bicep) installs az first,
-# this Feature augments it; remoteUser=vscode. The checks the default
+# Scenario 'azure_cli' (see scenarios.json): the repo also lists the
+# official ghcr.io/devcontainers/features/azure-cli with the same options
+# as this Feature's dependsOn (installBicep), so the CLI counts it once;
+# remoteUser=vscode. The checks the default
 # options need a real az for.
 set -e
 # shellcheck disable=SC1091  # provided by the devcontainer CLI at test time

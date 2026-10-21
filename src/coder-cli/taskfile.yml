@@ -5,16 +5,19 @@ version: '3'
 
 tasks:
   version:
+    dir: '{{.USER_WORKING_DIR}}'
     desc: 'Show the client (and server, when logged in) Coder versions.'
     cmds:
       - coder version
 
   setup:
+    dir: '{{.USER_WORKING_DIR}}'
     desc: 'Re-run the post-create setup: make CODER_CONFIG_DIR (the Feature''s named volume, or a repo''s bind mount over it) belong to you and report what backs it and whether a login is present (idempotent).'
     cmds:
       - coder-cli-setup
 
   login:
+    dir: '{{.USER_WORKING_DIR}}'
     desc: 'Log in to URL=<https://coder.example.com>. Extra flags after --.'
     requires:
       vars: [URL]
@@ -23,16 +26,19 @@ tasks:
       - coder login '{{.URL}}' {{.CLI_ARGS}}
 
   workspaces:
+    dir: '{{.USER_WORKING_DIR}}'
     desc: 'List your workspaces.'
     cmds:
       - coder list {{.CLI_ARGS}}
 
   templates:
+    dir: '{{.USER_WORKING_DIR}}'
     desc: 'List templates on the server.'
     cmds:
       - coder templates list {{.CLI_ARGS}}
 
   ssh:
+    dir: '{{.USER_WORKING_DIR}}'
     desc: 'Open an SSH session to WORKSPACE=<name>.'
     requires:
       vars: [WORKSPACE]

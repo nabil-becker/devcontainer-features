@@ -3,6 +3,7 @@ version: '3'
 
 tasks:
   version:
+    dir: '{{.USER_WORKING_DIR}}'
     desc: 'Show the installed devhost version, where its scripts live, which devhost-* tools are on PATH and where the job state is (DEVHOST_STATE).'
     silent: true
     cmds:
@@ -20,6 +21,7 @@ tasks:
       - devhost-setup
 
   log:
+    dir: '{{.USER_WORKING_DIR}}'
     desc: 'Show the last N lines (default 20) of every back''s job.log under DEVHOST_STATE: what each run did, what a guard undid, why a model call failed.'
     silent: true
     vars:
@@ -36,6 +38,7 @@ tasks:
         [ "$found" = 1 ] || echo "no job logs under $state yet"
 
   jobs:state:
+    dir: '{{.USER_WORKING_DIR}}'
     desc: 'List the backs'' state under DEVHOST_STATE: per job the sessions read (offsets), what is pending, whether its lock is held, the tester''s last verdict, and the number of metrics lines in runs.jsonl.'
     silent: true
     cmds:

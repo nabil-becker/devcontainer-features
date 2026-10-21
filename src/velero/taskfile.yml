@@ -8,16 +8,19 @@ vars:
 
 tasks:
   version:
+    dir: '{{.USER_WORKING_DIR}}'
     desc: 'Show client and (if reachable) server Velero versions.'
     cmds:
       - velero version -n '{{.NAMESPACE}}' || velero version --client-only
 
   backups:
+    dir: '{{.USER_WORKING_DIR}}'
     desc: 'List backups.'
     cmds:
       - velero backup get -n '{{.NAMESPACE}}' {{.CLI_ARGS}}
 
   backup:
+    dir: '{{.USER_WORKING_DIR}}'
     desc: 'Create an on-demand backup NAME=<name>. Extra flags (e.g. --include-namespaces) after --.'
     requires:
       vars: [NAME]
@@ -25,6 +28,7 @@ tasks:
       - velero backup create '{{.NAME}}' -n '{{.NAMESPACE}}' {{.CLI_ARGS}}
 
   describe:
+    dir: '{{.USER_WORKING_DIR}}'
     desc: 'Describe backup NAME=<name> with details.'
     requires:
       vars: [NAME]
@@ -32,11 +36,13 @@ tasks:
       - velero backup describe '{{.NAME}}' -n '{{.NAMESPACE}}' --details {{.CLI_ARGS}}
 
   restores:
+    dir: '{{.USER_WORKING_DIR}}'
     desc: 'List restores.'
     cmds:
       - velero restore get -n '{{.NAMESPACE}}' {{.CLI_ARGS}}
 
   schedules:
+    dir: '{{.USER_WORKING_DIR}}'
     desc: 'List backup schedules.'
     cmds:
       - velero schedule get -n '{{.NAMESPACE}}' {{.CLI_ARGS}}

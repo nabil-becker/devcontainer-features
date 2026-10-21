@@ -1,6 +1,6 @@
 {
   "id": "kustomize",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "name": "kustomize",
   "description": "Installs kustomize (https://kustomize.io), the Kubernetes manifest customization tool, as a release binary at /usr/local/bin/kustomize, verified against the release's checksums.txt. Standalone - does not require kubectl.",
   "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/kustomize",

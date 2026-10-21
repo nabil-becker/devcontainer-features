@@ -1,6 +1,6 @@
 {
   "id": "coder-cli",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "name": "Coder CLI",
   "description": "Installs the Coder CLI (https://coder.com) as a release binary at /usr/local/bin/coder, verified against the release's coder_<version>_checksums.txt. Pin version to your coderd server version to avoid 'version mismatch' warnings. The login session lives in CODER_CONFIG_DIR at /var/lib/devcontainer-features/coder-cli, a named volume the Feature mounts so it survives rebuilds; the coder-cli-setup post-create hook hands the folder to the remote user.",
   "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/coder-cli",
