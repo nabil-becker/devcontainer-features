@@ -48,7 +48,7 @@ Add a Feature to `devcontainer.json` and rebuild: its tasks are in
 `task --list`. Remove it: they are gone. Install order does not matter, since
 each Feature refreshes the registry after dropping its file and this Feature
 refreshes it when it installs. `task go-task:registered` shows what is
-registered.
+registered; `task go-task:version` which `task` runs and its version.
 
 Feature tasks run in your current directory, so paths such as `CONFIG=` or
 `DIR=` are relative to the project.

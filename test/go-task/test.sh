@@ -12,4 +12,6 @@ check "bash completion installed" test -f /etc/bash_completion.d/task
 
 check "taskfile registered" test -f /usr/local/share/go-task/includes.d/go-task.yml
 
+check "go-task:version runs and prints the version" bash -c "task -t /usr/local/share/go-task/includes.d/go-task.yml version | grep -E '^[0-9]+\\.[0-9]+\\.[0-9]+'"
+
 reportResults

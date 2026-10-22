@@ -2,6 +2,13 @@
 version: '3'
 
 tasks:
+  version:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Show which task binary runs and its version (updates come from rebuilding; the version option pins it).'
+    cmds:
+      - command -v task
+      - task --version
+
   registered:
     dir: '{{.USER_WORKING_DIR}}'
     desc: 'List the Feature Taskfiles registered under /usr/local/share/go-task/includes.d - what the "features" include of your root Taskfile exposes.'
