@@ -32,10 +32,22 @@ class BacklogGuard(h.RepoCase):
         heading_suffixed = BACKLOG[:2] + ["## Now and then"] + BACKLOG[3:]
         self.assertIsNotNone(self.g.backlog_guard(BACKLOG, heading_suffixed), "a heading may not grow a suffix")
 
+    def test_a_close_with_an_outcome_is_fine_and_a_reworded_close_is_not(self):
+        outcome = "Done 2026-10-21: on Windows the first stops missed the container; after #41 `task dc:down` refused, FORCE=1 stopped it."
+        closed = BACKLOG[:4] + [BACKLOG[4].replace("- [ ]", "- [x]", 1) + " " + outcome] + BACKLOG[5:]
+        self.assertIsNone(self.g.backlog_guard(BACKLOG, closed))
+        wrapped = BACKLOG[:5] + ["  A second line of the first item."] + BACKLOG[5:]
+        closed_wrapped = BACKLOG[:4] + [BACKLOG[4].replace("- [ ]", "- [x]", 1),
+                                        "  A second line of the first item. " + outcome] + BACKLOG[5:]
+        self.assertIsNone(self.g.backlog_guard(wrapped, closed_wrapped), "the outcome may go on the item's last line")
+        reworded = BACKLOG[:4] + ["- [x] **first-item One** (host). Why it mattered. Added 2026-10-01. " + outcome] + BACKLOG[5:]
+        self.assertIsNotNone(self.g.backlog_guard(BACKLOG, reworded))
+
     def test_the_finding_names_the_line_and_the_rule(self):
         reworded = BACKLOG[:5] + ["- [ ] **second-item Two reworded** (host). Why. Added 2026-10-01."] + BACKLOG[6:]
         finding = self.g.backlog_guard(BACKLOG, reworded)
         self.assertIn("rule: an existing line may only be ticked", finding)
+        self.assertIn("an outcome may follow", finding, "the secretary reads the rule: it must know an outcome is allowed")
         self.assertIn("**second-item Two**", finding)
 
     def test_the_cli_prints_the_finding_then_a_capped_diff(self):
