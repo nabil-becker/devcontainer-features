@@ -31,8 +31,9 @@
          Feature-Taskfile registry, loads .env files),
          .devcontainer/devcontainer.json (go-task, devcontainer-cli,
          git, docker-outside-of-docker, PowerShell) and
-         .devcontainer/.env.example - only if they don't exist - and
-         gitignores .devcontainer/.env.
+         .devcontainer/.env.example and the starter
+         .devcontainer/shutdown-check.sh (bootstrap/SHUTDOWN.md) - only if they
+         don't exist - and gitignores .devcontainer/.env.
       3. Runs `task devcontainer:init` (caches the portable Node.js +
          @devcontainers/cli, reports the engine) and then
          `task devcontainer:up`, unless -NoUp.
@@ -142,6 +143,7 @@ $templates = [ordered]@{
     'bootstrap/Taskfile.yml'      = 'Taskfile.yml'
     'bootstrap/devcontainer.json' = '.devcontainer/devcontainer.json'
     'bootstrap/env.example'       = '.devcontainer/.env.example'
+    'bootstrap/shutdown-check.sh' = '.devcontainer/shutdown-check.sh'
 }
 foreach ($entry in $templates.GetEnumerator()) {
     $dest = Join-Path $Path $entry.Value
@@ -180,6 +182,18 @@ Taskfile.yml already exists and does not include the devcontainer tasks. Add:
       taskfile: /usr/local/share/go-task/features.yml
       optional: true
       flatten: true
+"@
+}
+
+if ((Get-Content $taskfile -Raw) -notmatch 'shutdown:check') {
+    Write-Host @"
+NOTE: Taskfile.yml has no shutdown:check task, so devcontainer:stop and :rebuild run no check of this
+repository (see bootstrap/SHUTDOWN.md in the collection). To use .devcontainer/shutdown-check.sh, add under tasks:
+
+  shutdown:check:
+    desc: 'Shutdown check run by devcontainer:stop and :rebuild inside the container (edit .devcontainer/shutdown-check.sh).'
+    cmds:
+      - sh .devcontainer/shutdown-check.sh
 "@
 }
 

@@ -79,7 +79,7 @@ tasks:
   lint:
     desc: 'shellcheck every shell script, yamllint every YAML file (.yamllint), PSScriptAnalyzer every PowerShell file, the vendored copies of src/common/*.sh identical to the canonical ones, and the Docker-free unit tests (devhost tooling, the git Feature''s .git-dirs mapping) (same checks as CI; the tools must be installed - this repo''s devcontainer has them).'
     cmds:
-      - shellcheck -x src/*/*.sh src/*/share/bin/*.sh src/*/share/jobs/*/*.sh test/*/*.sh test/*/unit/*.sh bootstrap/*.sh bootstrap/host/*.sh .githooks/*
+      - shellcheck -x src/*/*.sh src/*/share/bin/*.sh src/*/share/jobs/*/*.sh test/*/*.sh test/*/unit/*.sh test/bootstrap/*.sh bootstrap/*.sh bootstrap/host/*.sh .githooks/*
       - yamllint --strict .
       - pwsh -NoLogo -NoProfile -File '{{.ROOT_DIR}}/.github/scripts/Invoke-PSScriptAnalyzer.ps1'
       - task: common:check
@@ -87,11 +87,17 @@ tasks:
       - task: test:devhost
       - task: test:git-unit
       - task: test:bootstrap
+      - task: test:shutdown
 
   test:git-unit:
     desc: 'Docker-free tests of the git Feature''s wrapper, git-setup and .git-dirs mapping, run from src/git against temp folders (never the checkout''s own git dir or global config); part of lint.'
     cmds:
       - bash test/git/unit/git_dirs_test.sh
+
+  test:shutdown:
+    desc: 'Docker-free bash tests of the shutdown-check contract (bootstrap/SHUTDOWN.md): the default resolution snippet from bootstrap/devcontainer.yml against fake task and devhost-shutdown-check commands, the starter bootstrap/shutdown-check.sh in temp git repos, and the bash twin''s stop (127 message, refusal, FORCE, prepshutdown) with a stub engine and CLI; part of lint.'
+    cmds:
+      - bash test/bootstrap/shutdown_resolution_test.sh
 
   test:bootstrap:
     desc: 'Pester tests of the Windows host launcher (bootstrap/host/DevcontainerCli.psm1): the build lock that serialises devcontainer up/build across repositories. Needs pwsh with Pester 5 or later (Install-Module Pester -Scope CurrentUser); runs on any host, so it is part of lint.'

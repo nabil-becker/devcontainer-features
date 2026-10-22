@@ -19,6 +19,8 @@
 #       --cmd-b64 it first runs that check inside the container (not with
 #       --force) and refuses to stop when it fails; nothing running = "already
 #       stopped", exit 0.
+#       `prepshutdown` is the same without the stop: it runs the check and
+#       stops nothing (devcontainer:prepshutdown).
 #       `running` is not one either: silent, exit 0 when such a container runs,
 #       1 when none does, 2 when the engine cannot be asked.
 #       A failed `exec` says which of three things failed: the command (its
@@ -246,22 +248,31 @@ mode_running() {
 # else, unless forced, the check command runs inside the container (no `up`) and
 # a failure refuses the stop with its exit code; then the container(s) stop.
 mode_stop() {
-  local workspace="$1" check_b64="$2" force="$3" engine ids rc=0 check
+  local workspace="$1" check_b64="$2" force="$3" check_only="${4:-}" engine ids rc=0 check
   ids="$(running_ids "$workspace")" || { engine_unreachable; exit 2; }
   if [ -z "$ids" ]; then
-    echo "No running devcontainer for $workspace: already stopped."
+    if [ -n "$check_only" ]; then echo "No running devcontainer for $workspace: nothing to check."
+    else echo "No running devcontainer for $workspace: already stopped."; fi
     return 0
   fi
-  if [ -n "$force" ]; then
+  if [ -n "$force" ] && [ -z "$check_only" ]; then
     echo "FORCE set: skipping the shutdown check."
   elif [ -n "$check_b64" ]; then
     check="$(printf '%s' "$check_b64" | base64 -d)"
     echo "Running the shutdown check ($check); if it fails the stop is refused."
     run_cli exec "$workspace" "$check_b64" || rc=$?
+    if [ "$rc" -eq 127 ]; then
+      echo "Not stopping: the shutdown check ($check) is not installed in the container (exit 127). Define it, unset STOP_CHECK to use the default resolution, or run again with FORCE=1." >&2
+      exit "$rc"
+    fi
     if [ "$rc" -ne 0 ]; then
       echo "Not stopping: the shutdown check ($check) found the problems above. Fix them (shutdown-devhost skill) or run again with FORCE=1." >&2
       exit "$rc"
     fi
+  fi
+  if [ -n "$check_only" ]; then
+    echo 'The shutdown check passed (or none is defined): a stop would go ahead.'
+    return 0
   fi
   engine="$(engine_name)"
   echo "Container engine: $engine" >&2
@@ -364,10 +375,14 @@ mode_run() {
   done
 
   case "$subcommand" in
-    stop | running)
+    stop | prepshutdown | running)
       [ -n "$workspace" ] || die "run: --workspace-folder is required for $subcommand"
       workspace="$(resolve_workspace "$workspace")"
-      if [ "$subcommand" = stop ]; then mode_stop "$workspace" "$cmd_b64" "$force"; else mode_running "$workspace"; fi
+      case "$subcommand" in
+        stop) mode_stop "$workspace" "$cmd_b64" "$force" ;;
+        prepshutdown) mode_stop "$workspace" "$cmd_b64" '' check-only ;;
+        *) mode_running "$workspace" ;;
+      esac
       return ;;
   esac
 
