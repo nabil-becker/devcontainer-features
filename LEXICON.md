@@ -173,10 +173,14 @@ The domain words of the project itself are not here; they live with the project'
 - **Drop a seed**: the export skill (`drop-a-seed`), run when a project ends: the closing
   interview, the iteration named, the white paper written by a subagent, the seed's contents
   settled with the Operator, the seed folder assembled by `devhost-package` (ADR-0014).
-- **Shutdown check**: the script `devhost-shutdown-check` that says whether the devhost can be
-  stopped without losing work: tree clean and pushed, backs idle with locks free, no stretch
-  waiting, no tester run, no night shift mid-plan; it lists stash and untracked files. Run by the
-  `shutdown-devhost` skill and by `devcontainer:stop` (ADR-0015).
+- **Shutdown check**: what `devcontainer:stop` and `:rebuild` run inside the container before
+  stopping it, and `devcontainer:prepshutdown` runs on its own: exit 0 is safe, non-zero refuses,
+  `FORCE=1` skips it. Resolved in order: the repository's `task shutdown:check`, else
+  `devhost-shutdown-check`, else none (the stop goes ahead); `STOP_CHECK` overrides
+  (`bootstrap/SHUTDOWN.md`, ADR-0022). Here it is `devhost-shutdown-check`, which says whether
+  the devhost can be stopped without losing work: tree clean and pushed, backs idle with locks
+  free, no stretch waiting, no tester run, no night shift mid-plan; it lists stash and untracked
+  files. Also run by the `shutdown-devhost` skill (ADR-0015).
 - **Shutdown and restart** (`shutdown-devhost`, `restart-devhost`): the skill pair that closes the
   devhost cleanly and brings it back where it was; both ship in the seed (ADR-0015).
 - **Plant a seed**: the import skill (`plant-a-seed`), run in the new place after the agent is
