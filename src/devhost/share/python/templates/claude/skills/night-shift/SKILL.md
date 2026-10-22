@@ -29,7 +29,9 @@ the session, within the cap, in a worktree when they change shared tooling.
 4. **Write the plan** into `docs/night-shift/YYYY-MM-DD.md` (the shape in
    `docs/night-shift/README.md`): the items in order with their done-checks, the cap, the stop
    time and the start time in UTC. Cut the night's branch from the branch the day ended on:
-   `git switch -c chore/night-shift-YYYY-MM-DD`, and commit the plan as its first commit, so the
+   `git switch -c chore/night-shift/<n>` (the standing item `night-shift`, n the next number
+   `task devhost:branches` has not used, merged ones included: the pre-push rule refuses a dated
+   name and a reused one), and commit the plan as its first commit, so the
    whole night can be undone.
 5. **Pre-flight check**, before they go; say any failure at once:
    - the session is in auto mode; if not, ask them to switch, since one permission prompt stalls
