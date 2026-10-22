@@ -21,10 +21,13 @@ workflows: work pushed with no pull request, a push to a branch whose pull reque
 What a branch "adds" is what a merge into the base (`origin/main`, else `main`) would change:
 `git merge-tree --write-tree <base> <branch>`, then `git diff --shortstat <base> <tree>`. A squash
 merge hides a branch from `git branch --merged` but not from this: the tree equals the base's and
-the branch adds nothing. `--prune` deletes, locally and on `origin`, only a branch that adds
-nothing and whose pull request merged (or that is contained in the base), never the current
-branch, `main` or a branch that still adds something, and removes the worktree of a branch it
-deletes. Pull request states come from `gh` (command overridable with `DEVHOST_GH`) in one call;
+the branch adds nothing. When main has moved on over the same lines since, a squash-merged
+branch "still adds" their older form; a branch whose every ref is the head commit of one of its
+merged pull requests counts as merged anyway, since that commit is exactly what was merged (a
+commit after the merge keeps it). `--prune` deletes, locally and on `origin`, only a branch that
+adds nothing, or sits at a merged pull request's head, and whose pull request merged (or that is
+contained in the base), never the current branch, `main` or a branch that still adds something,
+and removes the worktree of a branch it deletes. Pull request states come from `gh` (command overridable with `DEVHOST_GH`) in one call;
 without a logged-in `gh` they are "unknown" and only a branch contained in the base is pruned.
 
 GitHub note: renaming a branch on GitHub CLOSES the pull requests whose head is that branch
@@ -65,6 +68,7 @@ class Branch(NamedTuple):
     pr: str | None  # "none", "open", "merged", "closed", or None when unknown
     current: bool
     worktree: str | None
+    at_merged_head: bool = False  # every ref is the head commit of a merged pull request
 
 
 class Leftovers(NamedTuple):
@@ -132,12 +136,27 @@ def _state(states: list[str]) -> str:
     return "none"
 
 
-def pr_states(root: Path, use_gh: bool = True) -> dict[str, str] | None:
-    """Branch name -> "open" / "merged" / "closed" for every branch that ever had a pull request
-    (one `gh` call); None when `gh` is unavailable, not logged in or offline."""
+def pr_rows(root: Path, use_gh: bool = True) -> list | None:
+    """Every pull request's head branch, state and head commit (one `gh` call); None when `gh` is
+    unavailable, not logged in or offline."""
     if not use_gh:
         return None
-    rows = _gh_in(root, "pr", "list", "--state", "all", "--limit", "1000", "--json", "headRefName,state")
+    return _gh_in(root, "pr", "list", "--state", "all", "--limit", "1000", "--json", "headRefName,state,headRefOid")
+
+
+def merged_heads(rows: list | None) -> dict[str, set[str]]:
+    """Branch name -> the head commits of its merged pull requests."""
+    heads: dict[str, set[str]] = {}
+    for row in rows or []:
+        if str(row.get("state", "")) == "MERGED" and row.get("headRefOid"):
+            heads.setdefault(row.get("headRefName", ""), set()).add(str(row["headRefOid"]))
+    return heads
+
+
+def pr_states(root: Path, use_gh: bool = True, rows: list | None = None) -> dict[str, str] | None:
+    """Branch name -> "open" / "merged" / "closed" for every branch that ever had a pull request;
+    None when `gh` is unavailable, not logged in or offline."""
+    rows = pr_rows(root, use_gh) if rows is None else rows
     if rows is None:
         return None
     seen: dict[str, list[str]] = {}
@@ -213,7 +232,9 @@ def adds(root: Path, base: str, ref: str) -> str | None:
 
 def gather(root: Path, use_gh: bool = True) -> list[Branch]:
     base = base_ref(root)
-    states = pr_states(root, use_gh)
+    rows = pr_rows(root, use_gh)
+    states = pr_states(root, use_gh, rows)
+    heads = merged_heads(rows)
     work = _worktrees(root)
     current = _run(root, "branch", "--show-current")[1].strip()
     out = []
@@ -225,9 +246,11 @@ def gather(root: Path, use_gh: bool = True) -> list[Branch]:
             found.append(adds(root, base, ref) if base else None)
         added = None if None in found else next((a for a in found if a != "nothing"), "nothing")
         pr = None if states is None else states.get(name, "none")
+        tips = {_run(root, "rev-parse", ref)[1].strip() for ref in refs}
+        at_head = bool(heads.get(name)) and tips <= heads[name]
         out.append(Branch(name, any(r.startswith("refs/heads/") for r in refs),
                           any(r.startswith("refs/remotes/") for r in refs), tuple(refs), ahead, added, pr,
-                          name == current, work.get(name)))
+                          name == current, work.get(name), at_head))
     return out
 
 
@@ -294,7 +317,7 @@ def keep_reason(b: Branch) -> str | None:
         return "it is the current branch"
     if b.adds is None:
         return "what it adds could not be told"
-    if b.adds != "nothing":
+    if b.adds != "nothing" and not (b.pr == "merged" and b.at_merged_head):
         return f"it still adds to main ({b.adds})"
     if b.pr == "open":
         return "its pull request is open"
@@ -330,8 +353,9 @@ def prune(root: Path, use_gh: bool = True) -> list[str]:
         if b.remote:
             code, _ = _run(root, "push", "--quiet", REMOTE, "--delete", b.name)
             done.append("remote" if code == 0 else "remote delete FAILED")
+        what = ", adds nothing" if b.adds == "nothing" else ", at its merged pull request's head"
         out.append(f"deleted {b.name} ({', '.join(done)}): " + ("pull request merged" if b.pr == "merged" else "contained in main")
-                   + ", adds nothing" + (f", worktree {b.worktree} removed" if b.worktree else ""))
+                   + what + (f", worktree {b.worktree} removed" if b.worktree else ""))
     return out or ["nothing to prune"]
 
 
