@@ -6,27 +6,27 @@ so a rebuild loses nothing. Every figure is a list-price estimate (Opus $5/$25, 
 Numbers and ids only. Read first by the ledger review: see "What to look for".
 Regenerated, never edited by hand.
 
-Total: $221.78. Inter sessions: $176.72 in 2 sessions. Cons: $28.07 in 29 runs. Backs: $16.99 in 495 runs, 4 undone by guards. Ledger corrections: 16.
+Total: $242.29. Inter sessions: $196.72 in 2 sessions. Cons: $28.07 in 29 runs. Backs: $17.50 in 527 runs, 4 undone by guards. Ledger corrections: 16.
 
-Entry rate: 216 entries on 5 days with entries, 43.2 per day, 108.0 per week (over 2 weeks with entries). A review every 75 entries (DEVHOST_REVIEW_EVERY) comes every 1.7 days at this rate.
+Entry rate: 225 entries on 6 days with entries, 37.5 per day, 112.5 per week (over 2 weeks with entries). A review every 75 entries (DEVHOST_REVIEW_EVERY) comes every 2.0 days at this rate.
 
-Spend $221.78 of the $200 target (111%), a tracking point, not a cap.
+Spend $242.29 of the $200 target (121%), a tracking point, not a cap.
 
 ## By model
 
 | Model | Inters | Cons | Backs | Total | Replies or runs | Tokens out |
 |---|---|---|---|---|---|---|
-| haiku | $0.00 | $0.00 | $7.15 | $7.15 | 240 | 1,057,477 |
-| opus | $176.72 | $5.03 | $0.00 | $181.75 | 947 | 628,040 |
-| other | $0.00 | $0.00 | $0.00 | $0.00 | 183 | 0 |
-| sonnet | $0.00 | $23.04 | $9.83 | $32.87 | 551 | 139,173 |
+| haiku | $0.00 | $0.00 | $7.34 | $7.34 | 256 | 1,125,656 |
+| opus | $196.72 | $5.03 | $0.00 | $201.75 | 1047 | 676,175 |
+| other | $0.00 | $0.00 | $0.00 | $0.00 | 196 | 0 |
+| sonnet | $0.00 | $23.04 | $10.15 | $33.19 | 554 | 140,246 |
 
 ## Inter sessions
 
 | Session | Models | Replies | Cost | First | Last |
 |---|---|---|---|---|---|
 | d91c4e06-06f3-4fea-ad00-57cd6502eb6e | claude-opus-5-5 | 1 | $0.21 | 2026-10-19T14:23 | 2026-10-19T14:23 |
-| d7e03a48-93bd-44ef-a1d2-045ad84afabf | claude-opus-5-5 | 888 | $176.51 | 2026-10-19T14:25 | 2026-10-21T17:23 |
+| d7e03a48-93bd-44ef-a1d2-045ad84afabf | claude-opus-5-5 | 988 | $196.51 | 2026-10-19T14:25 | 2026-10-22T11:34 |
 
 ## Cons (subagents)
 
@@ -39,10 +39,10 @@ Spend $221.78 of the $200 target (111%), a tracking point, not a cap.
 
 | Back | Model | Runs | Changed | Nothing | Pending | Error | Undone | Stakes | Cost | Per run | Per change | Avg s | Avg chars in |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| librarian | sonnet | 72 | 15 | 35 | 22 | 0 | 1 | 3 | $9.83 | $0.14 | $0.66 | 15 | 11326 |
-| scribe | haiku | 134 | 92 | 42 | 0 | 0 | 0 | 0 | $2.89 | $0.02 | $0.03 | 31 | 5157 |
-| secretary | haiku | 106 | 76 | 26 | 4 | 0 | 3 | 5 | $4.27 | $0.04 | $0.06 | 36 | 3699 |
-| tester | none | 183 | 3 | 180 | 0 | 0 | 0 | 0 | $0.00 | $0.00 | $0.00 | 0 | 2154 |
+| librarian | sonnet | 75 | 15 | 37 | 23 | 0 | 1 | 3 | $10.15 | $0.14 | $0.68 | 15 | 11235 |
+| scribe | haiku | 142 | 98 | 44 | 0 | 0 | 0 | 0 | $2.94 | $0.02 | $0.03 | 30 | 5028 |
+| secretary | haiku | 114 | 83 | 27 | 4 | 0 | 3 | 5 | $4.41 | $0.04 | $0.05 | 35 | 3641 |
+| tester | none | 196 | 3 | 193 | 0 | 0 | 0 | 0 | $0.00 | $0.00 | $0.00 | 1 | 2120 |
 
 ## By day
 
@@ -50,7 +50,8 @@ Spend $221.78 of the $200 target (111%), a tracking point, not a cap.
 |---|---|---|---|---|
 | 2026-10-19 | $17.30 | $2.90 | $4.11 | $24.31 |
 | 2026-10-20 | $84.50 | $12.53 | $8.71 | $105.74 |
-| 2026-10-21 | $74.91 | $12.64 | $4.17 | $91.72 |
+| 2026-10-21 | $77.88 | $12.64 | $4.35 | $94.87 |
+| 2026-10-22 | $17.03 | $0.00 | $0.33 | $17.36 |
 
 ## What to look for
 
