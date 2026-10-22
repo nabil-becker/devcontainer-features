@@ -29,6 +29,10 @@ unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE GIT_OBJECT_DIRECTORY \
 T="$(mktemp -d)"
 trap 'rm -rf "$T"' EXIT
 T="$(cd "$T" && pwd -P)"
+# Run from the temp folder: started from a checkout whose .git pointer maps
+# under the real /git-dirs (this devhost), the checks' plain `git config
+# --global` would map it against the fake GIT_DIRS_ROOT and git would refuse.
+cd "$T" || exit 1
 
 mkdir -p "$T/bin" "$T/real" "$T/state" "$T/work"
 cp "$src/git-wrapper.sh" "$T/bin/git"
