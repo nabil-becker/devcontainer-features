@@ -185,6 +185,8 @@ stays. Ids are short descriptive slugs (two to four kebab-case words naming the 
 - [x] **merge-pr-56 Review and merge PR #56 (the shutdown check contract)** (the Operator). The default route when `STOP_CHECK` is unset, the missing-check message, `devcontainer:prepshutdown`, `bootstrap/SHUTDOWN.md` and the starter script; `task lint` passes on the branch (26 Pester and 24 shell tests). Added 2026-10-22. Done 2026-10-22: merged.
 - [ ] **release-cli-1-4-3 Release devcontainer-cli 1.4.3 after PR #56 merges** (the Operator). Run the release once #56 is in, then rebuild the devhost so `task dc:stop` runs the contract here. The host does not start the release. Added 2026-10-22.
 - [ ] **shutdown-check-real-run Try the shutdown check in a real container** (the Operator). Nothing has run against a real container: the default route, a repository's own `shutdown:check`, a refusal, a missing configured check (exit 127) and `task devcontainer:prepshutdown`; try each once on the workstation before relying on them, alongside `stop-check-real-stop`. Added 2026-10-22.
+- [ ] **merge-pr-57 Review and merge records PR #57** (the Operator). PR #57 carries ADR 0022 (the shutdown check contract), the lexicon's Shutdown check definition, the two superseded prep-shutdown items, `merge-pr-56` ticked and the backs' ledger entries; `task devhost:verify` passes. Added 2026-10-22.
+- [ ] **consumers-shutdown-contract Consumer repos adopt the shutdown check contract** (the Operator). After the devcontainer-cli 1.4.3 release and the bootstrap re-run: the office, DSNP and AOF add `shutdown:check` to their Taskfile where one already exists, and drop any `STOP_CHECK` workaround; `bootstrap/SHUTDOWN.md` says how. Added 2026-10-22.
 
 ## Next
 
