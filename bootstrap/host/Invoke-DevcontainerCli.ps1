@@ -7,7 +7,8 @@
 
 .PARAMETER Subcommand
     @devcontainers/cli subcommand: up, build, exec, read-configuration,
-    features, ...
+    features, ...; or stop, prepshutdown and running, which are not CLI
+    subcommands (see DevcontainerCli.psm1).
 
 .PARAMETER WorkspaceFolder
     Folder containing .devcontainer/ (passed as --workspace-folder where the

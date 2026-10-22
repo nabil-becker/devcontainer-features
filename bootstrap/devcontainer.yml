@@ -31,9 +31,13 @@
 #   DEVCONTAINER_CLI_VERSION   @devcontainers/cli version (default: latest).
 #   DEVCONTAINER_HOMES         host folder for bind-mounted tool state
 #                              (homes task; default ~/.devcontainer-homes).
-#   STOP_CHECK                 command `devcontainer:stop` (and so rebuild) runs
-#                              inside the container before stopping it (default
-#                              devhost-shutdown-check; no single quote in it).
+#   STOP_CHECK                 command `devcontainer:stop` (and so rebuild, and
+#                              devcontainer:prepshutdown) runs inside the
+#                              container before stopping it. Unset = resolve it:
+#                              the repository's `task shutdown:check`, else
+#                              `devhost-shutdown-check`, else none (the stop goes
+#                              ahead). No single quote in it. The contract is in
+#                              bootstrap/SHUTDOWN.md in the collection.
 #   FORCE=1 (task var)         stop/rebuild without running that check.
 #   HOST_SESSION               UUID of the Claude Code session that the claude
 #                              task resumes (HOST_SESSION_<DIR> per sub-folder).
@@ -43,6 +47,8 @@
 #                              lock too (default false).
 #   WORKSPACE_FOLDER           folder containing .devcontainer/ (default: the
 #                              root Taskfile's folder).
+# Shutdown check: see SHUTDOWN.md (what a check is, its exit codes, the
+# resolution order): https://github.com/nabil-becker/devcontainer-features/blob/main/bootstrap/SHUTDOWN.md
 # Tasks: up (alias start) and stop (alias down) are idempotent, so the
 # others require them: exec, shell, pwsh and claude bring the container up
 # first, stop does nothing when none runs, rebuild stops it first (with the
@@ -66,6 +72,13 @@ vars:
   # are prefixed to the command rather than set through `env:` (see above).
   _SH_SETTINGS: >-
     {{if .DEVCONTAINER_DOCKER_PATH}}DEVCONTAINER_DOCKER_PATH='{{.DEVCONTAINER_DOCKER_PATH}}' {{end}}{{if .DEVCONTAINER_NODE_VERSION}}DEVCONTAINER_NODE_VERSION='{{.DEVCONTAINER_NODE_VERSION}}' {{end}}{{if .DEVCONTAINER_CLI_VERSION}}DEVCONTAINER_CLI_VERSION='{{.DEVCONTAINER_CLI_VERSION}}' {{end}}
+  # The shutdown check when STOP_CHECK is unset, run by `bash -lc` inside the
+  # container from the workspace folder (the CLI's exec starts there): the
+  # repository's `task shutdown:check` if its Taskfile defines it, else the
+  # devhost Feature's devhost-shutdown-check, else nothing to check. One line,
+  # no single quote: it travels base64-encoded as CMD and the test
+  # test/bootstrap/shutdown_resolution_test.sh extracts it from here.
+  _SHUTDOWN_CHECK_DEFAULT: 'if command -v task >/dev/null 2>&1 && task --summary shutdown:check >/dev/null 2>&1; then task shutdown:check; elif command -v devhost-shutdown-check >/dev/null 2>&1; then devhost-shutdown-check; else echo "no shutdown check defined; stopping"; fi'
   _BASH_CLI:
     sh: 'f="{{.TASKFILE_DIR}}/host/devcontainer-cli.sh"; if [ -f "$f" ]; then echo "$f"; else echo "{{.TASKFILE_DIR}}/../src/devcontainer-cli/devcontainer-cli.sh"; fi'
   # "1" when Task itself runs inside a container (Docker or Podman marker),
@@ -76,16 +89,16 @@ vars:
 
 tasks:
   cli:
-    desc: 'Internal: run one @devcontainers/cli subcommand. vars: SUBCOMMAND, ARGS (string, shell-split), CMD (exec, and stop for its shutdown check; base64-encoded on the way through), FORCE (stop only).'
+    desc: 'Internal: run one @devcontainers/cli subcommand. vars: SUBCOMMAND, ARGS (string, shell-split), CMD (exec, and stop and prepshutdown for the shutdown check; base64-encoded on the way through), FORCE (stop only).'
     internal: true
     interactive: true
     requires:
       vars: [SUBCOMMAND]
     vars:
       ARGS: '{{.ARGS | default ""}}'
-      # Only exec and stop take a command: a CMD given on the command line of an
+      # Only exec, stop and prepshutdown take a command: a CMD given on the command line of an
       # outer task (task exec CMD=ls) must not reach the up that runs before it.
-      CMD: '{{if or (eq .SUBCOMMAND "exec") (eq .SUBCOMMAND "stop")}}{{.CMD | default ""}}{{end}}'
+      CMD: '{{if or (eq .SUBCOMMAND "exec") (eq .SUBCOMMAND "stop") (eq .SUBCOMMAND "prepshutdown")}}{{.CMD | default ""}}{{end}}'
       FORCE: '{{if eq .SUBCOMMAND "stop"}}{{.FORCE | default ""}}{{end}}'
     cmds:
       - cmd: pwsh -NoLogo -NoProfile -File '{{.TASKFILE_DIR}}/host/Invoke-DevcontainerCli.ps1' -WorkspaceFolder '{{.WORKSPACE_FOLDER}}' {{._PS_SETTINGS}} -Subcommand '{{.SUBCOMMAND}}' -CliArgsB64 '{{.ARGS | splitArgs | toJson | b64enc}}' {{if .CMD}}-CommandB64 '{{.CMD | b64enc}}'{{end}} {{if .FORCE}}-Force{{end}}
@@ -147,10 +160,10 @@ tasks:
 
   stop:
     aliases: [down]
-    desc: 'Stop the devcontainer for {{.WORKSPACE_FOLDER}} through the configured engine; also task devcontainer:down. One host-script command: with no running container it says so and succeeds, without running the check or starting anything. Otherwise runs the shutdown check inside the container first (STOP_CHECK, default devhost-shutdown-check: tree clean and pushed, no back running or pending, no night shift mid-plan); a failing check refuses the stop (its exit code), FORCE=1 stops anyway. Only this route is guarded: stopping the container with the engine directly is not (see the shutdown-devhost skill).'
+    desc: 'Stop the devcontainer for {{.WORKSPACE_FOLDER}} through the configured engine; also task devcontainer:down. One host-script command: with no running container it says so and succeeds, without running the check or starting anything. Otherwise runs the shutdown check inside the container first (STOP_CHECK, else the repository''s `task shutdown:check`, else devhost-shutdown-check, else none and the stop goes ahead; see bootstrap/SHUTDOWN.md); a failing check refuses the stop (its exit code), FORCE=1 stops anyway. Only this route is guarded: stopping the container with the engine directly is not (see the shutdown-devhost skill).'
     vars:
       FORCE: '{{.FORCE | default ""}}'
-      STOP_CHECK: '{{.STOP_CHECK | default "devhost-shutdown-check"}}'
+      STOP_CHECK: '{{.STOP_CHECK | default ._SHUTDOWN_CHECK_DEFAULT}}'
     cmds:
       - cmd: '{{if ._IN_CONTAINER}}echo "devcontainer:stop runs from the host: this Task is inside the container." >&2; exit 1{{else}}:{{end}}'
       - task: cli
@@ -158,6 +171,17 @@ tasks:
           SUBCOMMAND: stop
           CMD: '{{.STOP_CHECK}}'
           FORCE: '{{.FORCE}}'
+
+  prepshutdown:
+    desc: 'Run the shutdown check (STOP_CHECK, else the repository''s `task shutdown:check`, else devhost-shutdown-check, else none) inside the running container without stopping it, to see what a stop would refuse; exits with the check''s code. With no running container it says so and succeeds. See bootstrap/SHUTDOWN.md.'
+    vars:
+      STOP_CHECK: '{{.STOP_CHECK | default ._SHUTDOWN_CHECK_DEFAULT}}'
+    cmds:
+      - cmd: '{{if ._IN_CONTAINER}}echo "devcontainer:prepshutdown runs from the host: this Task is inside the container." >&2; exit 1{{else}}:{{end}}'
+      - task: cli
+        vars:
+          SUBCOMMAND: prepshutdown
+          CMD: '{{.STOP_CHECK}}'
 
   rebuild:
     desc: 'Recreate the devcontainer from scratch (devcontainer up --remove-existing-container --build-no-cache). Stops it first like devcontainer:stop (shutdown check included; FORCE=1 and STOP_CHECK pass through), but continues even when that stop fails: a refusing check or an error prints one line and the rebuild goes on. VS Code windows attached to the old container must reload.'

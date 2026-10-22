@@ -23,3 +23,12 @@ tasks:
     silent: true
     cmds:
       - task --list
+
+  # The shutdown check devcontainer:stop, :rebuild and :prepshutdown run inside
+  # the container (contract: bootstrap/SHUTDOWN.md in the devcontainer-features
+  # collection). Without this task they use devhost-shutdown-check if it exists,
+  # else stop without a check.
+  shutdown:check:
+    desc: 'Shutdown check: refuse a stop while a git operation is in progress or a stash is left behind (report uncommitted and unpushed work). Run by devcontainer:stop and :rebuild inside the container; edit .devcontainer/shutdown-check.sh to add this repository''s own checks.'
+    cmds:
+      - sh .devcontainer/shutdown-check.sh

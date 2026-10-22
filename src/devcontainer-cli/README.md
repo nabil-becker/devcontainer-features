@@ -203,10 +203,18 @@ given, then with the drive letter lowercased, then uppercased (only for an `X:\`
 path). With no running container `stop` prints "already stopped" and succeeds,
 without running the check and without starting anything. Otherwise it runs the
 `STOP_CHECK` command inside the container (task var, environment variable or
-`.devcontainer/.env`; default `devhost-shutdown-check` of the devhost Feature,
-ADR 0015) through the same exec path, without `up`, and when the check fails it
-prints "Not stopping: ..." and exits with the check's code, before stopping
-anything; `FORCE=1` skips the check. The engine's `ps --filter label=...` and
+`.devcontainer/.env`) through the same exec path, without `up`, from the
+workspace folder (the CLI's `exec` starts in the remote workspace folder), and
+when the check fails it prints "Not stopping: ..." and exits with the check's
+code, before stopping anything; exit 127 from it prints that the check is not
+installed in the container. `FORCE=1` skips the check. With `STOP_CHECK` unset
+the task passes one resolution snippet as the command: the repository's
+`task shutdown:check` when its Taskfile defines it, else the devhost Feature's
+`devhost-shutdown-check` (ADR 0015), else the line "no shutdown check defined;
+stopping" and exit 0, so a repository without either stops without a check
+(`bootstrap/SHUTDOWN.md` in the collection is the contract). `prepshutdown`
+(`devcontainer:prepshutdown`) is the same command without the stop: it runs the
+check and exits with its code, or says there is no container and succeeds. The engine's `ps --filter label=...` and
 `stop` are assumed to behave as Docker's; this is not tested against `wslc` or
 Podman. Stopping the container any other way is not guarded.
 

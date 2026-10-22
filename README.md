@@ -142,8 +142,11 @@ curl -fsSL https://raw.githubusercontent.com/nabil-becker/devcontainer-features/
 2. write `Taskfile.yml` (includes the vendored tasks under `devcontainer:`
    with the alias `dc:`), `.devcontainer/devcontainer.json` (go-task,
    devcontainer-cli, git, docker-outside-of-docker, PowerShell) and
-   `.devcontainer/.env.example` from [`bootstrap/`](bootstrap) - only if
-   they do not exist yet - and gitignore `.devcontainer/.env`;
+   `.devcontainer/.env.example` from [`bootstrap/`](bootstrap), plus a
+   starter `.devcontainer/shutdown-check.sh` (the repository's
+   [shutdown check](bootstrap/SHUTDOWN.md)) - only if they do not exist yet -
+   and gitignore `.devcontainer/.env`; when `Taskfile.yml` already exists it
+   prints the `shutdown:check` task to add;
 3. run `task devcontainer:init` (caches the portable Node.js + CLI, reports
    the engine) and `task devcontainer:up`.
 
@@ -191,6 +194,7 @@ Each Feature stores its persistent state (logins, config, transcripts) in a name
 | --- | --- |
 | `devcontainer:init` | Cache portable Node.js + `@devcontainers/cli`, report engine. `FORCE=true` reinstalls the CLI. |
 | `devcontainer:homes NAME=<slug> -- <dir>...` | Create `~/.devcontainer-homes/<slug>/<dir>` on the host, for a repo that bind-mounts a Feature's state target to the host disk instead of the Feature's volume; meant as `initializeCommand` (array form: `["task", "devcontainer:homes", "NAME=myrepo", "--", "claude-code"]`). Also creates `~/.git-dirs` (`%USERPROFILE%\.git-dirs`), the source of the git Feature's one `.git-dirs` mount, when missing. Optional `HOST_GIT_DIR=<path>` also checks that a git dir kept outside the checkout has a HEAD. |
+| `devcontainer:stop` / `prepshutdown` | Stop the container after its [shutdown check](bootstrap/SHUTDOWN.md) (`FORCE=1` skips it; `rebuild` stops first the same way); `prepshutdown` runs the same check inside the running container and stops nothing. The check is `STOP_CHECK` if set, else the repository's `task shutdown:check`, else `devhost-shutdown-check`, else none. |
 | `devcontainer:up` / `rebuild` / `build` | `devcontainer up` (extra flags after `--`), from-scratch rebuild, image build only. |
 | `devcontainer:exec CMD='...'` / `shell` / `pwsh` | Run a command (base64-safe), an interactive bash, or PowerShell in the container. |
 | `devcontainer:claude [DIR=<sub-folder>] [SESSION=<uuid>] [-- <claude args>]` | Start or resume the Claude Code host session inside (needs the `claude-code` Feature): `HOST_SESSION` from `.devcontainer/.env`, `HOST_SESSION_<DIR>` for a sub-folder. Runs directly when already inside the container. |
@@ -231,6 +235,17 @@ reach. It declares no global `env:` on purpose: with Task 3.45 an `env:` key
 in an include claims the name and the `.env` value is discarded for the
 whole project (the bug the first consuming repos worked around with a
 `dc:*` passthrough; that workaround is no longer needed).
+
+### The shutdown check, for consuming repos
+
+A repository that bootstrapped before this contract re-runs the bootstrap
+(it refreshes the vendored tasks and host scripts and, only where absent,
+writes `.devcontainer/shutdown-check.sh`), adds the `shutdown:check` task the
+bootstrap prints when its `Taskfile.yml` already existed, and drops any
+`STOP_CHECK` workaround it set because the default check did not exist there:
+with no `shutdown:check` task and no `devhost-shutdown-check`, a stop now
+goes ahead with the line `no shutdown check defined; stopping`. A configured
+`STOP_CHECK` that is not installed (exit 127) is reported as such.
 
 ### Contributing from a consuming repo
 

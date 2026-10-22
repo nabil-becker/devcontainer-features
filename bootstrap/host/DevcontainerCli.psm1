@@ -237,7 +237,10 @@ function Stop-Devcontainer {
         devcontainer.local_folder label `devcontainer up` puts on it.
         Nothing running = "already stopped", exit 0. Unless -Force, the
         command in -CommandB64 (the shutdown check) first runs inside the
-        container; when it fails, the stop is refused with its exit code.
+        container; when it fails, the stop is refused with its exit code
+        (a check that is not installed, exit 127, gets its own message).
+        -CheckOnly is devcontainer:prepshutdown: run the check, stop nothing,
+        ignore -Force.
     #>
     [CmdletBinding(SupportsShouldProcess)]
     param(
@@ -245,6 +248,7 @@ function Stop-Devcontainer {
         [string]$DockerPath,
         [string]$CommandB64,
         [switch]$Force,
+        [switch]$CheckOnly,
         [string]$NodeVersion,
         [string]$CliVersion
     )
@@ -259,10 +263,11 @@ function Stop-Devcontainer {
         exit 2
     }
     if ($ids.Count -eq 0) {
-        Write-Host "No running devcontainer for ${WorkspaceFolder}: already stopped."
+        if ($CheckOnly) { Write-Host "No running devcontainer for ${WorkspaceFolder}: nothing to check." }
+        else { Write-Host "No running devcontainer for ${WorkspaceFolder}: already stopped." }
         return
     }
-    if ($Force) {
+    if ($Force -and -not $CheckOnly) {
         Write-Host 'FORCE set: skipping the shutdown check.'
     }
     elseif ($CommandB64) {
@@ -271,10 +276,18 @@ function Stop-Devcontainer {
         Invoke-DevcontainerCliProcess -Subcommand exec -WorkspaceFolder $WorkspaceFolder -CommandB64 $CommandB64 `
             -NodeVersion $NodeVersion -CliVersion $CliVersion -DockerPath $DockerPath
         $rc = $script:CliExitCode
+        if ($rc -eq 127) {
+            [Console]::Error.WriteLine("Not stopping: the shutdown check ($check) is not installed in the container (exit 127). Define it, unset STOP_CHECK to use the default resolution, or run again with FORCE=1.")
+            exit $rc
+        }
         if ($rc -ne 0) {
             [Console]::Error.WriteLine("Not stopping: the shutdown check ($check) found the problems above. Fix them (shutdown-devhost skill) or run again with FORCE=1.")
             exit $rc
         }
+    }
+    if ($CheckOnly) {
+        Write-Host 'The shutdown check passed (or none is defined): a stop would go ahead.'
+        return
     }
     Write-Host "Container engine: $engineShown"
     if ($PSCmdlet.ShouldProcess($WorkspaceFolder, "Stop container(s) $($ids -join ' ')")) {
@@ -432,9 +445,10 @@ function Invoke-DevcontainerCli {
 
     # `stop` is not a CLI subcommand: the whole of it (running? check? stop?)
     # is one command here.
-    if ($Subcommand -eq 'stop') {
+    # `prepshutdown` is the same without the stop (-CheckOnly).
+    if ($Subcommand -in 'stop', 'prepshutdown') {
         Stop-Devcontainer -WorkspaceFolder $WorkspaceFolder -DockerPath $DockerPath -CommandB64 $CommandB64 -Force:$Force `
-            -NodeVersion $NodeVersion -CliVersion $CliVersion
+            -CheckOnly:($Subcommand -eq 'prepshutdown') -NodeVersion $NodeVersion -CliVersion $CliVersion
         return
     }
 

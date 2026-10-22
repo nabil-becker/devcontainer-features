@@ -19,7 +19,8 @@
 # What it does: (1) vendors bootstrap/devcontainer.yml, bootstrap/host/* and
 # the devcontainer-cli Feature's devcontainer-cli.sh into ./bootstrap/
 # (always refreshed - re-run to update); (2) writes Taskfile.yml,
-# .devcontainer/devcontainer.json and .devcontainer/.env.example only if they
+# .devcontainer/devcontainer.json, .devcontainer/.env.example and the starter
+# .devcontainer/shutdown-check.sh (see bootstrap/SHUTDOWN.md) only if they
 # don't exist, and gitignores .devcontainer/.env; (3) runs
 # `task devcontainer:init` and `task devcontainer:up`.
 set -euo pipefail
@@ -104,6 +105,7 @@ done <<'EOF'
 bootstrap/Taskfile.yml Taskfile.yml
 bootstrap/devcontainer.json .devcontainer/devcontainer.json
 bootstrap/env.example .devcontainer/.env.example
+bootstrap/shutdown-check.sh .devcontainer/shutdown-check.sh
 EOF
 
 if ! grep -qxF '.devcontainer/.env' "$path/.gitignore" 2>/dev/null; then
@@ -124,6 +126,18 @@ WARNING: Taskfile.yml already exists and does not include the devcontainer tasks
       taskfile: /usr/local/share/go-task/features.yml
       optional: true
       flatten: true
+EOF
+fi
+
+if ! grep -q 'shutdown:check' "$path/Taskfile.yml"; then
+  cat >&2 <<'EOF'
+NOTE: Taskfile.yml has no shutdown:check task, so devcontainer:stop and :rebuild run no check of this
+repository (see bootstrap/SHUTDOWN.md in the collection). To use .devcontainer/shutdown-check.sh, add under tasks:
+
+  shutdown:check:
+    desc: 'Shutdown check run by devcontainer:stop and :rebuild inside the container (edit .devcontainer/shutdown-check.sh).'
+    cmds:
+      - sh .devcontainer/shutdown-check.sh
 EOF
 fi
 
