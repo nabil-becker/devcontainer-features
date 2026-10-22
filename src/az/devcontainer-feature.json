@@ -1,6 +1,6 @@
 {
   "id": "az",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "name": "Azure CLI (az) setup",
   "description": "Brings in the Azure CLI through dependsOn on ghcr.io/devcontainers/features/azure-cli (with installBicep, from Microsoft's signed apt repository) and augments it: owns the login state as a named volume at AZURE_CONFIG_DIR=/var/lib/devcontainer-features/az so `az login` survives rebuilds, and adds a post-create hook (az-setup) that makes that directory usable by the remote user, tells az to use a bicep binary found on PATH (so `az bicep` does not download its own), and reports the az version and whether a login is present. Plus the Feature Taskfile.",
   "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/az",

@@ -26,7 +26,9 @@ if "--head" in args:
     name = args[args.index("--head") + 1]
     print(json.dumps([{{"number": 1, "state": s}} for s in data.get(name, [])]))
 else:
-    print(json.dumps([{{"headRefName": n, "state": s}} for n, states in data.items() for s in states]))
+    # a state is "MERGED" or {{"state": "MERGED", "head": "<commit>"}} (headRefOid)
+    print(json.dumps([{{"headRefName": n, "state": s["state"], "headRefOid": s["head"]}} if isinstance(s, dict)
+                      else {{"headRefName": n, "state": s}} for n, states in data.items() for s in states]))
 """
 
 
@@ -172,6 +174,47 @@ class Branches(h.RepoCase):
         self.assertNotIn("feature/alpha/1", left)
         self.assertTrue({"main", "fix/alpha/2", "docs/alpha/3", "chore/alpha/4", "fix/beta-two/1"} <= left)
         self.assertEqual(h.git(self.root, "ls-remote", "--heads", "origin", "feature/alpha/1").strip(), "")
+
+    def edit_on_main(self, name: str, text: str) -> None:
+        """Main moves on over a line a squash merge brought in."""
+        h.write(self.root / name, text)
+        h.git(self.root, "commit", "-q", "-am", f"main edits {name}")
+        h.git(self.root, "push", "-q", "origin", "main")
+
+    def tip(self, branch: str) -> str:
+        return h.git(self.root, "rev-parse", branch).strip()
+
+    def test_prune_deletes_a_branch_at_its_merged_pr_head_after_main_moved_on(self):
+        self.commit("feature/alpha/1", "a.txt")
+        self.squash_merge("feature/alpha/1")
+        self.edit_on_main("a.txt", "y\n")          # the branch now "still adds" the old line
+        self.set_gh({"feature/alpha/1": [{"state": "MERGED", "head": self.tip("feature/alpha/1")}]})
+        by = {b.name: b for b in self.br.gather(self.root)}
+        self.assertNotEqual(by["feature/alpha/1"].adds, "nothing")
+        self.assertTrue(by["feature/alpha/1"].at_merged_head)
+        out = "\n".join(self.br.prune(self.root))
+        self.assertIn("deleted feature/alpha/1 (local, remote): pull request merged, at its merged pull request's head", out)
+        self.assertNotIn("feature/alpha/1", self.names())
+
+    def test_prune_keeps_a_branch_with_a_commit_after_its_merged_pr(self):
+        self.commit("feature/alpha/1", "a.txt")
+        head = self.tip("feature/alpha/1")
+        self.squash_merge("feature/alpha/1")
+        self.edit_on_main("a.txt", "y\n")
+        self.commit("feature/alpha/1", "later.txt")   # work after the merge
+        self.set_gh({"feature/alpha/1": [{"state": "MERGED", "head": head}]})
+        out = "\n".join(self.br.prune(self.root))
+        self.assertIn("kept feature/alpha/1: it still adds", out)
+        self.assertIn("feature/alpha/1", self.names())
+
+    def test_prune_keeps_a_local_branch_behind_or_beside_its_pushed_merged_head(self):
+        self.commit("feature/alpha/1", "a.txt")
+        self.squash_merge("feature/alpha/1")
+        self.edit_on_main("a.txt", "y\n")
+        self.commit("feature/alpha/1", "local.txt", push=False)  # local differs from the merged remote head
+        self.set_gh({"feature/alpha/1": [{"state": "MERGED", "head": self.tip("origin/feature/alpha/1")}]})
+        out = "\n".join(self.br.prune(self.root))
+        self.assertIn("kept feature/alpha/1: it still adds", out)
 
     def test_prune_removes_the_worktree_of_a_deleted_branch(self):
         self.commit("feature/alpha/1", "a.txt")

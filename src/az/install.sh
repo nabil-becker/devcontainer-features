@@ -32,9 +32,12 @@ if [ -n "$az_bin" ]; then
   # Report the version from a throwaway config dir: az writes logs and a
   # command index into AZURE_CONFIG_DIR on every run, and that must not land
   # in the image under root (it would be copied into the fresh volume).
+  # Telemetry off: az otherwise leaves a background upload writing into that
+  # dir after it returns, and removing the dir raced it ("Directory not
+  # empty"); the cleanup never fails the install either way.
   tmp="$(mktemp -d)"
-  trap 'rm -rf "$tmp"' EXIT
-  echo "az: $(AZURE_CONFIG_DIR="$tmp" "$az_bin" version -o tsv --only-show-errors 2>/dev/null | cut -f1 || echo '(version unknown)') at $az_bin"
+  trap 'rm -rf "$tmp" 2>/dev/null || true' EXIT
+  echo "az: $(AZURE_CONFIG_DIR="$tmp" AZURE_CORE_COLLECT_TELEMETRY=false "$az_bin" version -o tsv --only-show-errors 2>/dev/null | cut -f1 || echo '(version unknown)') at $az_bin"
 else
   echo "az: WARNING - az not found; this Feature's dependsOn on ghcr.io/devcontainers/features/azure-cli:1 should have installed it (check the build log for that Feature). The az-setup hook, dcf-persist and the Taskfile are installed anyway." >&2
 fi

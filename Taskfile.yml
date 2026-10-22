@@ -133,21 +133,40 @@ tasks:
           exit "$rc"
 
   taskfiles:check:
-    desc: 'Fail if a task in a Feature Taskfile (src/<id>/taskfile.yml) does not run in the directory task was started from (dir: ''{{"{{"}}.USER_WORKING_DIR{{"}}"}}''). Included through features.yml, a task otherwise runs in /usr/local/share/go-task/includes.d, not in the consuming repository.'
+    desc: 'Fail if a Feature Taskfile (src/<id>/taskfile.yml) breaks the mechanical rules: every task runs in the directory task was started from (dir: ''{{"{{"}}.USER_WORKING_DIR{{"}}"}}''; included through features.yml it would otherwise run in /usr/local/share/go-task/includes.d), every task has a desc, and the first task is version (NFR-2).'
     silent: true
     cmds:
       - cmd: |
           rc=0
           for f in src/*/taskfile.yml; do
-            missing="$(awk -v q="'" '
-              function flush() { if (task != "" && !ok) print task; task = ""; ok = 0 }
+            found="$(awk -v q="'" '
+              function flush() {
+                if (task != "" && !dir) print "dir " task
+                if (task != "" && !desc) print "desc " task
+                task = ""; dir = 0; desc = 0
+              }
               /^tasks:$/ { in_tasks = 1; next }
-              in_tasks && /^  [A-Za-z0-9:_-]+:$/ { flush(); task = $1; sub(/:$/, "", task); next }
-              in_tasks && $0 == "    dir: " q "{{"{{"}}.USER_WORKING_DIR{{"}}"}}" q { ok = 1 }
+              in_tasks && /^  [A-Za-z0-9:_-]+:$/ {
+                flush(); task = $1; sub(/:$/, "", task)
+                if (!first) { first = task; if (task != "version") print "first " task }
+                next
+              }
+              in_tasks && $0 == "    dir: " q "{{"{{"}}.USER_WORKING_DIR{{"}}"}}" q { dir = 1 }
+              in_tasks && /^    desc: / { desc = 1 }
               END { flush() }' "$f")"
-            for t in $missing; do echo "$f: task $t has no dir: '{{"{{"}}.USER_WORKING_DIR{{"}}"}}'"; rc=1; done
+            while read -r kind t; do
+              case "$kind" in
+                dir) echo "$f: task $t has no dir: '{{"{{"}}.USER_WORKING_DIR{{"}}"}}'" ;;
+                desc) echo "$f: task $t has no desc (NFR-2)" ;;
+                first) echo "$f: the first task is $t, not version (NFR-2)" ;;
+                *) continue ;;
+              esac
+              rc=1
+            done <<EOF
+          $found
+          EOF
           done
-          [ "$rc" -eq 0 ] && echo "every Feature task runs in the caller's directory"
+          [ "$rc" -eq 0 ] && echo "every Feature task runs in the caller's directory, has a desc, and version comes first"
           exit "$rc"
 
   common:sync:

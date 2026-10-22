@@ -9,7 +9,8 @@ return the first finding as a string, or None when the run kept the rules.
 
 The backlog guard: every line of <before> is still in <after>, in the same order, either
 unchanged or ticked (`- [ ]` -> `- [x]`, text kept, a suffix allowed); a suffix on an item's last
-line is allowed, never on a heading or a blank line.
+line is allowed, never on a heading or a blank line. So a close may carry its outcome
+(`Done <date>: <what happened>.`), and the refusal says so, since the secretary reads it.
 
 The docs guard: the snapshot holds the lexicon as `<its basename>` and the ADR directory's
 `*.md` as `adr/` and the model directory's files as `model/` (same relative paths), as they were before the run. Every line of the old lexicon is still there,
@@ -63,8 +64,9 @@ def backlog_guard(before: list[str], after: list[str]) -> str | None:
     lost = lost_line(before, after, same_or_ticked)
     if lost is None:
         return None
-    return (f"rule: an existing line may only be ticked ([ ] to [x], ' Done <date>.' appended), "
-            f"never reworded, removed or reordered; changed or lost: {lost.strip()[:160]}")
+    return (f"rule: an existing line may only be ticked ([ ] to [x], ' Done <date>.' appended; an outcome may follow "
+            f"on the item's last line: ' Done <date>: <what happened>.'), never reworded, removed or reordered; "
+            f"changed or lost: {lost.strip()[:160]}")
 
 
 def rejected_diff(before: list[str], after: list[str], cap: int = 1500) -> str:

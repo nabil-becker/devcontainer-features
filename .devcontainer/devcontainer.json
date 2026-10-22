@@ -5,7 +5,11 @@
   // `task docs` need, plus the collection's own Features so the host
   // session (Claude Code) works here the way every consuming repo does.
   "features": {
-    "ghcr.io/devcontainers/features/powershell:1": {},
+    // Pester for `task lint`'s test:bootstrap; installed in the image, since a
+    // module installed by hand into the user's modules is gone after a rebuild.
+    "ghcr.io/devcontainers/features/powershell:1": {
+      "modules": "Pester"
+    },
     // docker-in-docker rather than -outside-of-: `devcontainer features test`
     // bind-mounts paths from inside this container into the test containers,
     // which only a daemon sharing this filesystem can resolve. moby:false
