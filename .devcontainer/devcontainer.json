@@ -21,7 +21,7 @@
     "ghcr.io/devcontainers-extra/features/shellcheck:1": {},
     "ghcr.io/devcontainers-extra/features/yamllint:2": {},
     // The collection's own Features by local path: `task features:stage`
-    // copies src/<id> into .devcontainer/features/ (gitignored) before every
+    // copies src/<id> and local-features/<id> into .devcontainer/features/ (gitignored) before every
     // start (initializeCommand), so unreleased changes are what runs here.
     "./features/common": {},
     "./features/go-task": {},

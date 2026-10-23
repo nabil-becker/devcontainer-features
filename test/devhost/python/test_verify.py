@@ -89,7 +89,7 @@ class Verify(h.RepoCase):
         """The root cause: an included Taskfile's tasks run in the include's folder, outside the repository."""
         import re
         from pathlib import Path
-        text = (Path(h.__file__).resolve().parents[3] / "src" / "devhost" / "taskfile.yml").read_text(encoding="utf-8")
+        text = (Path(h.__file__).resolve().parents[3] / "local-features" / "devhost" / "taskfile.yml").read_text(encoding="utf-8")
         for name in ("setup", "briefing", "report", "costs", "adr", "verify", "init"):
             block = re.search(rf"^  {name}:\n(.*?)(?=^  \w|\Z)", text, re.S | re.M).group(1)
             self.assertIn("dir: '{{.USER_WORKING_DIR}}'", block, name)
@@ -240,7 +240,7 @@ class Verify(h.RepoCase):
     def test_the_entrypoint_runs_the_source_guards_in_the_devhost_repository(self):
         import subprocess
         entry = h.PYTHON_DIR.parent / "bin" / "entrypoints" / "verify"
-        h.write(self.root / "src" / "devhost" / "share" / "python" / "verify.py", "print('source guards')\n")
+        h.write(self.root / "local-features" / "devhost" / "share" / "python" / "verify.py", "print('source guards')\n")
         done = subprocess.run(["bash", str(entry)], cwd=str(self.root), capture_output=True, text=True)
         self.assertEqual(done.stdout.strip(), "source guards", done.stderr)
 

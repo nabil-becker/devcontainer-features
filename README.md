@@ -15,7 +15,6 @@ installing Node.js, and a one-line bootstrap that wires both into any repo.
 | [`gh`](src/gh) | [GitHub CLI](https://cli.github.com) from GitHub releases, checksum-verified, unless the official Feature installed it; its login (`GH_CONFIG_DIR`) in a volume it owns, git's GitHub credentials taken from it. |
 | [`az`](src/az) | Augments the official `azure-cli` Feature: its login (`AZURE_CONFIG_DIR`) in a volume it owns, `az bicep` using the Bicep on PATH. |
 | [`kube-state`](src/kube-state) | Owns the kubeconfig (`KUBECONFIG`) the Kubernetes tools share, in a volume it owns, so velero and kubectl stop needing a hand-mounted `~/.kube`; installs no binary. |
-| [`devhost`](src/devhost) | The way of working as a Feature: one host Claude Code session per repo, backs that keep the ledger, backlog and docs from Claude Code hooks, the session briefing, cost report, ADR tool, verify guards, and `devhost-init` to scaffold a repo. |
 | [`common`](src/common) | The shared helper behind every Feature's post-create hook (`dcf-persist`: make a state directory usable and say what backs it), for a repo's own scripts too. |
 | [`coder-cli`](src/coder-cli) | [Coder](https://coder.com) CLI from GitHub releases, verified against the release checksums. |
 | [`openbao`](src/openbao) | [OpenBao](https://openbao.org) CLI (`bao`), verified against the release checksums. |
@@ -29,6 +28,14 @@ Every Feature that installs a tool takes a `version` option (`latest` or a
 pinned release) and verifies what it downloads before installing it, with one
 exception: `devcontainer-cli` verifies its private Node.js but not the npm
 package of the CLI itself (see its notes).
+
+### This repository's own devhost
+
+The `devhost` Feature (the way of working: backs, ledger, briefing, verify guards) is local-only. It is
+not part of the published collection and is no longer released; it lives in
+[`local-features/devhost`](local-features/devhost), and `task features:stage` stages it with the
+Features from `src/` into this repository's own devcontainer. The registry keeps its last published
+version, frozen. Its Docker tests run with `task test:devhost:docker`.
 
 ## How the pieces fit
 

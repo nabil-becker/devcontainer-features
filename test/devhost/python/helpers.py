@@ -15,7 +15,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-PYTHON_DIR = HERE.parents[2] / "src" / "devhost" / "share" / "python"
+PYTHON_DIR = HERE.parents[2] / "local-features" / "devhost" / "share" / "python"
 if str(PYTHON_DIR) not in sys.path:
     sys.path.insert(0, str(PYTHON_DIR))
 

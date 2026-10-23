@@ -282,8 +282,8 @@ class Branches(h.RepoCase):
     def test_the_night_shift_skill_names_the_branch_the_rule_accepts(self):
         repo = h.HERE.parents[2]
         for rel in (".claude/skills/night-shift/SKILL.md",
-                    "src/devhost/share/python/templates/claude/skills/night-shift/SKILL.md",
-                    "docs/night-shift/README.md", "src/devhost/share/python/templates/docs/night-shift/README.md"):
+                    "local-features/devhost/share/python/templates/claude/skills/night-shift/SKILL.md",
+                    "docs/night-shift/README.md", "local-features/devhost/share/python/templates/docs/night-shift/README.md"):
             text = (repo / rel).read_text(encoding="utf-8")
             self.assertIn("chore/night-shift/<n>", text, rel)
             self.assertNotIn("chore/night-shift-YYYY", text, rel)

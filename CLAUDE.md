@@ -19,9 +19,9 @@ Delivery OS, whose learnings become a white paper: [docs/iterations.md](docs/ite
 - **Brief a con with a "who you serve" note**: the Operator, through the host, and the persona the
   work is for (an engineer, a consumer's maintainer), as [CONTEXT.md](CONTEXT.md)'s personas say.
 - **Sessions run in the devhost.** `.devcontainer/` is this collection's own
-  devhost, built from the Features in `src/` by local path (`task
-  features:stage` copies them into `.devcontainer/features/` before every
-  start), so what runs here is the unreleased tree. The workstation only
+  devhost, built from the Features in `src/` and `local-features/` (the devhost, used
+  here and not published) by local path (`task features:stage` copies them into
+  `.devcontainer/features/` before every start), so what runs here is the unreleased tree. The workstation only
   bootstraps and launches (`task devcontainer:up`, `task devcontainer:claude`).
   A session on the workstation is an exception, used only when the work needs
   paths outside this checkout.

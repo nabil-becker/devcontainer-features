@@ -54,3 +54,9 @@ The starter sets the agents' commit identity: git run by Claude Code commits as 
 
 The Features' README (`github.com/nabil-becker/devcontainer-features`) lists every Feature, its
 options and its tasks; each Feature has its own README under `src/<id>`.
+
+## The devhost Feature is frozen
+
+The starter's `devhost:1` pin still resolves, to the last published release. `devhost` is no longer
+published from this collection (it is local-only tooling of the collection's own repository), so the
+pin is frozen at that release and takes no further fixes.

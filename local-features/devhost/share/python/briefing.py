@@ -6,7 +6,7 @@ Usage: briefing.py [--json] [--no-refresh]
 Says, in a few sentences: the ledger entries since the last review and whether a review is due
 (`DEVHOST_REVIEW_EVERY`, 25 by default), what the backs left pending, how many backlog items and decisions for the
 Operator are open, a warning when `gh` is not logged in or git has no GitHub credential helper (silent without gh),
-a warning when src/devhost is newer than the installed devhost
+a warning when local-features/devhost (or src/devhost) is newer than the installed devhost
 (`$DEVHOST_SHARE/VERSION`), any night-shift report not yet reviewed, and the month-to-date agent spend
 on this machine. Refreshes this month's cost report (`costs-YYYY-MM-<engineer>.md` in the ledger
 directory) on the way, unless --no-refresh. The SessionStart hook prints it as --json, for the
@@ -137,12 +137,14 @@ def _version(text: str) -> tuple[int, ...] | None:
 
 
 def stale_install(root: Path) -> list[str]:
-    """One line when src/devhost is newer than the installed devhost (the backs run the installed one)."""
+    """One line when local-features/devhost (or src/devhost) is newer than the installed devhost (the backs run the installed one)."""
     share = Path(os.environ.get("DEVHOST_SHARE", "").strip() or DEFAULT_SHARE)
     try:
         installed = (share / "VERSION").read_text(encoding="utf-8").strip()
-        source = str(json.loads((root / "src" / "devhost" / "devcontainer-feature.json").read_text(encoding="utf-8"))["version"])
-    except (OSError, ValueError, KeyError, TypeError):
+        meta = next(p for p in (root / "local-features" / "devhost" / "devcontainer-feature.json",
+                                root / "src" / "devhost" / "devcontainer-feature.json") if p.is_file())
+        source = str(json.loads(meta.read_text(encoding="utf-8"))["version"])
+    except (OSError, ValueError, KeyError, TypeError, StopIteration):
         return []
     have, want = _version(installed), _version(source)
     if have is None or want is None or want <= have:

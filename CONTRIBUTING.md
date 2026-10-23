@@ -60,6 +60,11 @@ it is clearly general.
 
 ## Adding a Feature
 
+A Feature this repository uses but does not publish (today only `devhost`) lives in
+`local-features/<id>/` instead of `src/<id>/`: `task features:stage`, `task lint` and
+`task common:sync` cover it, while releases, `task test`, `task docs` and the CI Features matrix
+do not. Everything below is for a published Feature in `src/`.
+
 Once the proposal is accepted, follow these steps top to bottom. Each names
 the file and a check, and the rules behind it are in "Feature development
 conventions" below. Use an existing Feature as the template: `src/kube-state`

@@ -72,7 +72,7 @@ def group_of(path: str) -> str:
         return "Records"
     if path in ("LEXICON.md", "PROCESS.md", "TODO.md") or name.startswith("CLAUDE") or parts[0] == ".devhost":
         return "Way of working"
-    if path in ("README.md", "CONTRIBUTING.md", "SECURITY.md", "CODE_OF_CONDUCT.md") or parts[0] in ("src", "bootstrap"):
+    if path in ("README.md", "CONTRIBUTING.md", "SECURITY.md", "CODE_OF_CONDUCT.md") or parts[0] in ("src", "local-features", "bootstrap"):
         return "Product"
     return "Other"
 
@@ -222,7 +222,7 @@ def collect(root: Path, with_prs: bool = False) -> dict:
 
     features = []
     for p in sorted(files):
-        m = re.match(r"^src/([^/]+)/devcontainer-feature\.json$", p)
+        m = re.match(r"^(?:src|local-features)/([^/]+)/devcontainer-feature\.json$", p)
         if not m:
             continue
         try:
@@ -232,7 +232,7 @@ def collect(root: Path, with_prs: bool = False) -> dict:
             continue
         features.append({"id": meta.get("id", m.group(1)), "name": meta.get("name", ""), "version": meta.get("version", ""),
                          "description": meta.get("description", ""), "summary": summary_of(meta.get("description", "")),
-                         "docs": [d for d in sorted(files) if d.startswith(f"src/{m.group(1)}/") and d.endswith(".md")]})
+                         "docs": [d for d in sorted(files) if d.startswith((f"src/{m.group(1)}/", f"local-features/{m.group(1)}/")) and d.endswith(".md")]})
 
     adrs = []
     for p in under(adr_prefix, re.compile(r"^(\d{4})-.*\.md$")):
