@@ -117,7 +117,7 @@ class Briefing(h.RepoCase):
         os.environ["DEVHOST_SHARE"] = str(share)
         self.addCleanup(os.environ.pop, "DEVHOST_SHARE", None)
         if source is not None:
-            h.write(self.root / "src" / "devhost" / "devcontainer-feature.json", json.dumps({"id": "devhost", "version": source}))
+            h.write(self.root / "local-features" / "devhost" / "devcontainer-feature.json", json.dumps({"id": "devhost", "version": source}))
         return self.b.briefing(self.root, refresh=False)
 
     def test_a_stale_install_is_warned_about_numerically(self):

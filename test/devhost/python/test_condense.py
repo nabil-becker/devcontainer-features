@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-CONDENSE = Path(__file__).resolve().parents[3] / "src" / "devhost" / "share" / "bin" / "condense.py"
+CONDENSE = Path(__file__).resolve().parents[3] / "local-features" / "devhost" / "share" / "bin" / "condense.py"
 
 
 def condense(records: list[dict], mode: str = "session") -> str:

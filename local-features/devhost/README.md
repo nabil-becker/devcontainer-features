@@ -3,13 +3,14 @@
 
 The way of working of this collection's consumer repositories as an installable Feature: one host Claude Code session per repository (claude-host, from the claude-code Feature), cons (sub-agents) and backs - background agents that run from Claude Code's Stop and SubagentStop hooks after every turn and keep the ledger (scribe), the backlog (secretary) and the lexicon and ADRs (librarian) without the person waiting, plus a model-free tester that runs the suite when code changed. Installs devhost-run-job (the runner), the four jobs with their briefs and guards, the name guard (devhost-redact), the transcript condenser (devhost-condense), the briefing, cost report, ADR, verify and init tools, the site generator (devhost-site: the repository's docs and records as one self-contained HTML page, published by the publish-site skill), a named volume at DEVHOST_STATE (/var/lib/devcontainer-features/devhost) for the jobs' offsets, locks, logs and metrics, a post-create hook (devhost-setup) that makes it usable and reports whether the repository is wired, and the Feature Taskfile (task devhost:init scaffolds a repository). Every path and model is a DEVHOST_* / <JOB>_MODEL variable with a default. Needs python3 (standard library only; installed with apt when missing) and claude on PATH.
 
-## Example Usage
+## Status: local-only
 
-```json
-"features": {
-    "ghcr.io/nabil-becker/devcontainer-features/devhost:1": {}
-}
-```
+This Feature is no longer published. It is this repository's own way-of-working tooling and lives
+here, in `local-features/devhost`, where `task features:stage` copies it into
+`.devcontainer/features/devhost` so the repository's own devcontainer installs it by local path
+(`"./features/devhost"`). The registry keeps the last published version
+(`ghcr.io/nabil-becker/devcontainer-features/devhost:1`, frozen): seeds planted from it keep working,
+but receive no fixes from here. This README is hand-written; `task docs` does not generate it.
 
 ## Options
 
@@ -56,7 +57,7 @@ The hooks a repository puts in `.claude/settings.json` (`task devhost:init` writ
 }
 ```
 
-The briefing (`devhost-briefing`) also warns, in one line, when the repository has `src/devhost/devcontainer-feature.json` whose `version` is newer than the installed devhost (`$DEVHOST_SHARE/VERSION`, default `/usr/local/share/devhost/VERSION`; versions compared numerically): the backs run the installed devhost, so a fix in `src/devhost` is not live until the container is rebuilt. It says nothing when the versions are equal, when either is missing, or in a repository without `src/devhost`. It also warns, in one line, when `gh` is installed (`DEVHOST_GH` overrides the command, as for `devhost-branches`) and `gh auth status` fails or git has no credential helper for github.com (`credential.https://github.com.helper` or `credential.helper`), naming `gh auth login --web --git-protocol https` and `gh auth setup-git`; it says nothing when all is well or gh is absent. The cost report (`devhost-report`, and the briefing's spend line) counts as ledger corrections only the `- **Corrects:**` lines that name an entry; `Corrects: none` is not one. The report is built from a store committed beside it (`costs-YYYY-MM-<engineer>.jsonl`, one line per priced reply or back run, ids and numbers only) merged with this machine's transcripts and `runs.jsonl`, so a rebuild that empties those volumes no longer shrinks the month; a `baseline` line in the store carries figures whose records were lost before the store existed.
+The briefing (`devhost-briefing`) also warns, in one line, when the repository has `local-features/devhost/devcontainer-feature.json` whose `version` is newer than the installed devhost (`$DEVHOST_SHARE/VERSION`, default `/usr/local/share/devhost/VERSION`; versions compared numerically): the backs run the installed devhost, so a fix in `local-features/devhost` is not live until the container is rebuilt. It says nothing when the versions are equal, when either is missing, or in a repository without `local-features/devhost`. It also warns, in one line, when `gh` is installed (`DEVHOST_GH` overrides the command, as for `devhost-branches`) and `gh auth status` fails or git has no credential helper for github.com (`credential.https://github.com.helper` or `credential.helper`), naming `gh auth login --web --git-protocol https` and `gh auth setup-git`; it says nothing when all is well or gh is absent. The cost report (`devhost-report`, and the briefing's spend line) counts as ledger corrections only the `- **Corrects:**` lines that name an entry; `Corrects: none` is not one. The report is built from a store committed beside it (`costs-YYYY-MM-<engineer>.jsonl`, one line per priced reply or back run, ids and numbers only) merged with this machine's transcripts and `runs.jsonl`, so a rebuild that empties those volumes no longer shrinks the month; a `baseline` line in the store carries figures whose records were lost before the store existed.
 
 The runner reads the hook's JSON on stdin (`session_id`, `transcript_path`, `cwd`, `hook_event_name`, and for `SubagentStop` `agent_id`, `agent_transcript_path`, `agent_type`), and prints the quiet notice as `{"hookSpecificOutput": {"hookEventName": ..., "additionalContext": "Back <job> (quiet notice, do not relay unless asked or wrong): ..."}}` only when the back changed something. It exits 0 always: on a workstation (no container marker), inside a back's own `claude` run (`DEVHOST_JOB_CHILD`), when the job's lock is held, when too little is new, or when the job file is missing, it does nothing and says nothing. Sessions on a workstation where the Feature is absent get "command not found" from the hook; wrap the command as `command -v devhost-run-job >/dev/null && devhost-run-job scribe || true` if sessions run there too.
 
@@ -71,7 +72,7 @@ All four: one `claude -p --model <model> --settings '{"disableAllHooks": true}' 
 
 ## Commit-time guards
 
-`devhost-verify` runs the guards listed in the docstring of `share/python/verify.py` (ledger append-only, against the merge base of HEAD and the base ref so a branch behind it is not blamed for the base's new lines, and shape, with `Corrects: none` refused in entries dated 2026-10-19 or later; no merge-conflict marker at the start of a line in a tracked text file; secrets, forbidden words, ADR shape, Taskfile descriptions, skill frontmatter, hook modes, model). In a repository that carries the devhost's own source (`src/devhost/share/python/verify.py`, this collection), `devhost-verify` runs those source guards instead of the installed ones, so the hook, the task and a plain call all check a branch with the guards it changes. `hook_modes` refuses any tracked file in `core.hooksPath` whose index mode is not 100755, naming the file and the fix (`git update-index --chmod=+x <file>` plus `chmod +x`); no hooks path, or an untracked one, passes quietly. `forbidden_words` skips the files listed in `.devhost/name-exceptions.txt` (tracked, one repository-relative path per line, `#` comments): the Operator's approved exceptions, such as a published paper that carries its byline; paths only, never a name. `model` is quiet without `docs/model/ontology.toml`; with it, it checks the TOML, ids, types, relations, theme keys, the lexicon's bold terms against the ids' `term`s, and the Mermaid node ids of `docs/model/*.md` (an id, or `external-*`), each finding naming file:line and the fix.
+`devhost-verify` runs the guards listed in the docstring of `share/python/verify.py` (ledger append-only, against the merge base of HEAD and the base ref so a branch behind it is not blamed for the base's new lines, and shape, with `Corrects: none` refused in entries dated 2026-10-19 or later; no merge-conflict marker at the start of a line in a tracked text file; secrets, forbidden words, ADR shape, Taskfile descriptions, skill frontmatter, hook modes, model). In a repository that carries the devhost's own source (`local-features/devhost/share/python/verify.py`, this collection), `devhost-verify` runs those source guards instead of the installed ones, so the hook, the task and a plain call all check a branch with the guards it changes. `hook_modes` refuses any tracked file in `core.hooksPath` whose index mode is not 100755, naming the file and the fix (`git update-index --chmod=+x <file>` plus `chmod +x`); no hooks path, or an untracked one, passes quietly. `forbidden_words` skips the files listed in `.devhost/name-exceptions.txt` (tracked, one repository-relative path per line, `#` comments): the Operator's approved exceptions, such as a published paper that carries its byline; paths only, never a name. `model` is quiet without `docs/model/ontology.toml`; with it, it checks the TOML, ids, types, relations, theme keys, the lexicon's bold terms against the ids' `term`s, and the Mermaid node ids of `docs/model/*.md` (an id, or `external-*`), each finding naming file:line and the fix.
 
 ## State
 
@@ -118,7 +119,7 @@ Every script reads the same variables; a repository overrides them in `container
 | `DEVHOST_ADR_DIR` | `docs/adr` | Architecture decision records, with `0000-template.md` and an index `README.md` (librarian) |
 | `DEVHOST_MODEL_DIR` | `docs/model` | The ontology (`ontology.toml`), theme labels and C4 views; the `model` guard checks them when `ontology.toml` exists (librarian adds) |
 | `DEVHOST_NIGHT_SHIFT_DIR` | `docs/night-shift` | Night-shift reports (the briefing and report tools) |
-| `DEVHOST_SHARE` | `/usr/local/share/devhost` | The installed devhost (its `VERSION` file is what the briefing compares with `src/devhost`) |
+| `DEVHOST_SHARE` | `/usr/local/share/devhost` | The installed devhost (its `VERSION` file is what the briefing compares with `local-features/devhost`) |
 | `DEVHOST_JOBS_DIR` | `/usr/local/share/devhost/jobs` | Where `devhost-run-job <job>` finds `<job>/job.sh`; a repository's own set, same layout |
 | `DEVHOST_JOB_CHILD` | unset | Set to `1` by the runner for the back's own `claude` and for the test suite, so nothing they start can start a back |
 | `DEVHOST_CONTAINER_MARKERS` | `/.dockerenv /run/.containerenv` | Files whose presence means "inside a container"; the backs act only then |
@@ -147,8 +148,3 @@ Every script reads the same variables; a repository overrides them in `container
 - `ghcr.io/nabil-becker/devcontainer-features/git`: its wrapper keeps `GIT_DIR`/`GIT_WORK_TREE` out of linked worktrees and of test fixtures, so a tester run or a con's worktree never commits onto the main checkout (a mistake the ledger of the original recorded).
 - `ghcr.io/nabil-becker/devcontainer-features/go-task`: `task devhost:*` (version, setup, log, jobs:state, briefing, report, costs, adr, package, verify, shutdown-check, init), and `task test` as the tester's default command.
 - `ghcr.io/devcontainers/features/python` or the base image's `python3` (standard library only; apt installs it when absent).
-
-
----
-
-_Note: This file was auto-generated from the [devcontainer-feature.json](https://github.com/nabil-becker/devcontainer-features/blob/main/src/devhost/devcontainer-feature.json).  Add additional notes to a `NOTES.md`._
