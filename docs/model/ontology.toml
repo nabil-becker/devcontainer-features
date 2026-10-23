@@ -305,6 +305,11 @@ type = "product"
 term = "Release"
 summary = "The manual workflow on `main` that publishes the Features to the registry."
 
+[local-feature]
+type = "product"
+term = "Local Feature"
+summary = "A Feature in `local-features/<id>` that this repository uses but does not publish; the devhost is one."
+
 [feature-taskfile]
 type = "product"
 term = "Feature Taskfile"
@@ -665,6 +670,11 @@ object = "feature"
 [[relation]]
 subject = "devhost"
 predicate = "builds"
+object = "feature"
+
+[[relation]]
+subject = "local-feature"
+predicate = "is-a"
 object = "feature"
 
 [[relation]]
