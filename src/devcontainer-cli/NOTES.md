@@ -142,7 +142,12 @@ and `run` modes for a Linux/macOS host, where it caches a portable Node.js
 under `~/.cache/devcontainer-features` (or just uses a `devcontainer` already
 on PATH when the version is `latest`). Together with the PowerShell flavour
 for Windows it backs the `task devcontainer:*` tasks that
-`bootstrap/bootstrap.ps1` / `bootstrap.sh` vendor into a repo; nothing is
+`bootstrap/bootstrap.ps1` / `bootstrap.sh` vendor into a repo's
+`.devcontainer/cli_bootstrap.ignore/` (git-ignored; `BOOTSTRAP_DIR` picks another
+repo-relative folder, `BOOTSTRAP_GITIGNORE=false` keeps it committable, and the
+root Taskfile include is `optional: true`: a fresh clone runs the bootstrap
+first; the old `./bootstrap/` form keeps working until the bootstrap is re-run,
+see the README); nothing is
 installed globally on any host. Its host settings are
 `DEVCONTAINER_DOCKER_PATH`, `DEVCONTAINER_NODE_VERSION`,
 `DEVCONTAINER_CLI_VERSION`, `HOST_TYPE` and `HOST_TYPE_PRIORITY` (see "Host type").

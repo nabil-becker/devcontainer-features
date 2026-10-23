@@ -1,13 +1,19 @@
 # Reusable devcontainer:* tasks - drive @devcontainers/cli against the
 # including repo's .devcontainer without installing Node.js or the CLI on the
-# host. Vendored into a repo (together with ./host/*) by
+# host. Vendored into a repo (together with ./host/*) into
+# .devcontainer/cli_bootstrap.ignore/ (or the repo-relative BOOTSTRAP_DIR; git-ignored) by
 #   irm  https://raw.githubusercontent.com/nabil-becker/devcontainer-features/main/bootstrap/bootstrap.ps1 | iex   (Windows)
 #   curl -fsSL https://raw.githubusercontent.com/nabil-becker/devcontainer-features/main/bootstrap/bootstrap.sh | bash  (Linux/macOS)
 # and included from the repo's Taskfile.yml as
 #   includes:
 #     devcontainer:
-#       taskfile: ./bootstrap/devcontainer.yml
+#       taskfile: ./.devcontainer/cli_bootstrap.ignore/devcontainer.yml   # or ./<BOOTSTRAP_DIR>/devcontainer.yml
+#       optional: true     # a fresh clone lacks the git-ignored folder until the bootstrap ran
 #       aliases: [dc]      # task dc:up == task devcontainer:up
+# (repositories that vendored into ./bootstrap/ keep working with
+# `taskfile: ./bootstrap/devcontainer.yml`; re-running the bootstrap migrates them.)
+# The host scripts are found next to this file ({{.TASKFILE_DIR}}/host/), so the
+# folder can be anywhere in the repo.
 # It cannot be a *remote* include: the tasks run the scripts next to this
 # file and Task leaves TASKFILE_DIR empty for remote Taskfiles. Re-run the
 # bootstrap to refresh the vendored copy.

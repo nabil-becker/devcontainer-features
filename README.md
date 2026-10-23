@@ -146,10 +146,12 @@ curl -fsSL https://raw.githubusercontent.com/nabil-becker/devcontainer-features/
 
 1. vendor `bootstrap/devcontainer.yml`, `bootstrap/host/*` (the PowerShell
    flavour and the bash twins) and the `devcontainer-cli` Feature's
-   `devcontainer-cli.sh` into the repo's `bootstrap/` folder - always
-   refreshed, so re-running is the update path;
-2. write `Taskfile.yml` (includes the vendored tasks under `devcontainer:`
-   with the alias `dc:`), `.devcontainer/devcontainer.json` (go-task,
+   `devcontainer-cli.sh` into the repo's `.devcontainer/cli_bootstrap.ignore/`
+   folder (`BOOTSTRAP_DIR` changes it; the script prints the folder it used) -
+   always refreshed, so re-running is the update path - and git-ignore that
+   folder (see below);
+2. write `Taskfile.yml` (includes the vendored `devcontainer.yml` under
+   `devcontainer:` with the alias `dc:` and `optional: true`), `.devcontainer/devcontainer.json` (go-task,
    devcontainer-cli, git, docker-outside-of-docker, PowerShell) and
    `.devcontainer/.env.example` from [`bootstrap/`](bootstrap), plus a
    starter `.devcontainer/shutdown-check.sh` (the repository's
@@ -162,6 +164,49 @@ curl -fsSL https://raw.githubusercontent.com/nabil-becker/devcontainer-features/
 That breaks the circular dependency: the repo never needs a checkout of this
 one, and from then on every devcontainer operation goes through
 `task devcontainer:*` (or `task dc:*`).
+
+### Where the bootstrap lives, and git
+
+The vendored files are the launcher, not the repository's own code, so they
+are not committed: the default folder is `.devcontainer/cli_bootstrap.ignore/`
+and the bootstrap git-ignores it by creating `.devcontainer/.gitignore` or
+appending `cli_bootstrap.ignore/` to it (only when that line is absent; other
+lines are never touched, so re-running is safe).
+
+- `BOOTSTRAP_DIR` (`-BootstrapDir` / `--bootstrap-dir`) picks another folder.
+  It must be **relative to the repository root and inside it**: an absolute
+  path or one with `..` is refused with a message. The root `Taskfile.yml` the
+  bootstrap writes includes `./<folder>/devcontainer.yml`; for an existing
+  Taskfile, change the include to the folder the script printed. The host
+  scripts are found next to the vendored `devcontainer.yml`, so any folder works.
+- Outside `.devcontainer/` the ignore line (`/<folder>/`) goes into the
+  **root** `.gitignore`, and the script says so.
+- `BOOTSTRAP_GITIGNORE=false` (`-NoGitignore` / `--no-gitignore`) skips the
+  git-ignore step, for a repository that commits the vendored folder.
+- **A fresh clone has no vendored folder** (it is ignored), so the include in
+  `Taskfile.yml` is `optional: true`: `task` still runs, minus `devcontainer:*`.
+  The first step on a new machine is the bootstrap one-liner above, which
+  restores the folder and brings the devcontainer up.
+- `DEVCONTAINER_BOOTSTRAP_SOURCE` (`--source` / `-Source`) accepts a local
+  checkout of this repository, so the bootstrap can run offline (the tests do).
+
+**Migrating a repository that vendored into `./bootstrap/`.** Nothing breaks if
+it does not re-run the bootstrap: `taskfile: ./bootstrap/devcontainer.yml` keeps
+working as it was. To move, re-run the bootstrap (without `BOOTSTRAP_DIR`). It
+vendors into `.devcontainer/cli_bootstrap.ignore/`, git-ignores it, prints a
+migration note, and, when the root `Taskfile.yml` has an include that is
+exactly `taskfile: ./bootstrap/devcontainer.yml`, rewrites only that value to
+`./.devcontainer/cli_bootstrap.ignore/devcontainer.yml` (to undo, change it
+back; nothing else in the file is touched). Then, by hand: add `optional: true`
+to that include, and delete the old folder once the include points at the new one:
+
+```text
+taskfile: ./.devcontainer/cli_bootstrap.ignore/devcontainer.yml
+optional: true
+git rm -r bootstrap
+```
+
+The bootstrap never deletes `./bootstrap/`.
 
 ### Settings: CLI, `.env`, or environment
 
@@ -186,6 +231,8 @@ run is configured:
 | Source URL base or local checkout | `DEVCONTAINER_BOOTSTRAP_SOURCE` | `-Source` / `--source` |
 | Repo root (default cwd) | `DEVCONTAINER_BOOTSTRAP_PATH` | `-Path` / `--path` |
 | Stop before `up` | `DEVCONTAINER_BOOTSTRAP_NO_UP=true` | `-NoUp` / `--no-up` |
+| Folder to vendor into, repo-relative (default `.devcontainer/cli_bootstrap.ignore`) | `BOOTSTRAP_DIR` | `-BootstrapDir` / `--bootstrap-dir` |
+| Git-ignore that folder (default yes; `false` skips) | `BOOTSTRAP_GITIGNORE` | `-NoGitignore` / `--no-gitignore` |
 
 ```powershell
 $env:DEVCONTAINER_DOCKER_PATH = 'wslc'; irm https://raw.githubusercontent.com/nabil-becker/devcontainer-features/main/bootstrap/bootstrap.ps1 | iex
@@ -217,13 +264,13 @@ All of them also answer to `dc:` (the include's alias in the generated
 Taskfile). Each task dispatches per platform (Task's per-command
 `platforms`):
 
-- **Windows** runs `bootstrap/host/Invoke-DevcontainerCli.ps1`: a pinned
+- **Windows** runs `host/Invoke-DevcontainerCli.ps1` (in the bootstrap folder; `bootstrap/host/` in this repository): a pinned
   portable Node.js is downloaded once (sha256-verified) into
   `%LOCALAPPDATA%\devcontainer-features\devcontainer-node`, the CLI is
   npm-installed next to it, nothing lands on PATH. Needs PowerShell 7.
   `homes` runs `Initialize-DevcontainerHomes.ps1`.
 - **Linux/macOS** run `devcontainer-cli.sh`, the very script that installs
-  the `devcontainer-cli` Feature (vendored as `bootstrap/host/devcontainer-cli.sh`):
+  the `devcontainer-cli` Feature (vendored as `host/devcontainer-cli.sh` in the bootstrap folder):
   `devcontainer` on PATH if present, else the same portable Node.js trick
   under `~/.cache/devcontainer-features`. Needs bash and curl. `homes` runs
   `devcontainer-homes.sh`.
