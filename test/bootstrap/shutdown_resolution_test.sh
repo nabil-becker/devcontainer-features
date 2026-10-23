@@ -150,6 +150,18 @@ case "$out" in 0\|*'devcontainer exec'*) case "$out" in *'docker stop'*) check '
 out="$(run_stop prepshutdown 5)"
 case "$out" in 5\|*) case "$out" in *'docker stop'*) check 'bash prepshutdown: refusing check -> its code' 5 stopped ;; *) check 'bash prepshutdown: refusing check -> its code' 5 5 ;; esac ;; *) check 'bash prepshutdown: refusing check -> its code' 5 "$out" ;; esac
 
+# 4. The in-container probe is overridable (DEVCONTAINER_IN_CONTAINER), so the
+#    "runs from the host" refusal is testable without patching the Taskfile.
+if command -v task >/dev/null 2>&1; then
+  ydir="$(dirname "$yml")"
+  out="$(cd "$ydir" && DEVCONTAINER_IN_CONTAINER=1 task -t "$(basename "$yml")" stop 2>&1)"; rc=$?
+  check 'probe forced in: stop refuses from inside' '1|refused' "$([ $rc -ne 0 ] && case "$out" in *'runs from the host'*) echo "1|refused" ;; *) echo "$rc|$out" ;; esac || echo "$rc|ran")"
+  out="$(cd "$ydir" && DEVCONTAINER_IN_CONTAINER=0 task -n -t "$(basename "$yml")" stop 2>&1)"; rc=$?
+  check 'probe forced out: stop takes the host path' '0|host' "$(case "$out" in *'runs from the host'*) echo "$rc|refused" ;; *'devcontainer-cli'*|*'Invoke-DevcontainerCli'*) echo "$rc|host" ;; *) echo "$rc|?" ;; esac)"
+else
+  echo "skip - no task on PATH for the probe override checks"
+fi
+
 echo
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

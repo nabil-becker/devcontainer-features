@@ -84,8 +84,10 @@ vars:
   # "1" when Task itself runs inside a container (Docker or Podman marker),
   # so tasks that mean "run this inside the devcontainer" can run the
   # command directly instead of through `devcontainer exec`.
+  # DEVCONTAINER_IN_CONTAINER=1 or 0 in the environment overrides the
+  # detection (tests; a container the markers miss).
   _IN_CONTAINER:
-    sh: 'if [ -e /.dockerenv ] || [ -e /run/.containerenv ]; then echo 1; else echo ""; fi'
+    sh: 'case "${DEVCONTAINER_IN_CONTAINER:-}" in 1) echo 1 ;; 0) echo "" ;; *) if [ -e /.dockerenv ] || [ -e /run/.containerenv ]; then echo 1; else echo ""; fi ;; esac'
 
 tasks:
   cli:
