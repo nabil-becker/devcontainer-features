@@ -72,3 +72,4 @@ numbering and a row below.
 | [0021](0021-the-ledger-review-runs-every-75-entries.md) | The ledger review runs every 75 entries | accepted | 2026-10-21 |
 | [0022](0022-the-shutdown-check-is-resolved-in-the-container-from-a-task-contract.md) | The shutdown check is resolved in the container from a task contract | accepted | 2026-10-22 |
 | [0023](0023-the-theme-is-a-bar.md) | The theme is a bar | accepted | 2026-10-23 |
+| [0024](0024-the-host-is-an-adapter-owned-by-devcontainer-cli.md) | The host is an adapter owned by devcontainer-cli | accepted | 2026-10-23 |
