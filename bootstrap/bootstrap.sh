@@ -31,7 +31,7 @@
 # `task devcontainer:init` and `task devcontainer:up`.
 # A repository that vendored into ./bootstrap/ keeps working untouched; a
 # re-run vendors into the new folder, prints a migration note and repoints a
-# root Taskfile include of exactly ./bootstrap/devcontainer.yml.
+# root Taskfile include of exactly ./bootstrap/devcontainer.yml (adding optional: true to that include when it has none).
 set -euo pipefail
 
 ref='' path='' source='' docker_path='' no_up='' bootstrap_dir='' no_gitignore=''
@@ -179,11 +179,28 @@ if ! $explicit_dir && [ "$bdir" != bootstrap ] && [ -f "$path/bootstrap/devconta
     sed -E "s#^([[:space:]]*taskfile:[[:space:]]*['\"]?)\./bootstrap/devcontainer\.yml#\1$new_include#" "$path/Taskfile.yml" > "$path/Taskfile.yml.tmp" \
       && cat "$path/Taskfile.yml.tmp" > "$path/Taskfile.yml" && rm -f "$path/Taskfile.yml.tmp"
     echo "  repointed Taskfile.yml: taskfile: $old_include -> $new_include (only that value; to undo, change it back)"
+    # The vendored folder is git-ignored, so a fresh clone lacks it until the bootstrap ran: the include
+    # must be optional. Add `optional: true` to that include block unless the block already has an optional key.
+    awk -v target="$new_include" '
+      { line[NR] = $0 }
+      END {
+        for (t = 1; t <= NR; t++) if (line[t] ~ /^[ \t]*taskfile:/ && index(line[t], target) > 0) break
+        if (t > NR) { for (i = 1; i <= NR; i++) print line[i]; exit }
+        match(line[t], /^[ \t]*/); ind = RLENGTH; pad = substr(line[t], 1, ind)
+        has = 0
+        for (i = t - 1; i >= 1; i--) { if (line[i] ~ /^[ \t]*(#.*)?$/) continue; match(line[i], /^[ \t]*/); if (RLENGTH < ind) break; if (line[i] ~ /^[ \t]*optional:/) has = 1 }
+        for (i = t + 1; i <= NR; i++) { if (line[i] ~ /^[ \t]*(#.*)?$/) continue; match(line[i], /^[ \t]*/); if (RLENGTH < ind) break; if (line[i] ~ /^[ \t]*optional:/) has = 1 }
+        for (i = 1; i <= NR; i++) { print line[i]; if (i == t && !has) { print pad "optional: true"; added = 1 } }
+        if (added) print "ADDED" > "/dev/stderr"
+      }' "$path/Taskfile.yml" > "$path/Taskfile.yml.tmp" 2> "$path/Taskfile.yml.added" || true
+    [ -s "$path/Taskfile.yml.tmp" ] && cat "$path/Taskfile.yml.tmp" > "$path/Taskfile.yml"
+    if grep -q ADDED "$path/Taskfile.yml.added"; then echo "  added     optional: true to that include (the folder is git-ignored; a fresh clone lacks it until the bootstrap ran)"; fi
+    rm -f "$path/Taskfile.yml.tmp" "$path/Taskfile.yml.added"
   fi
   cat <<EOF
 MIGRATION: this repository vendored the bootstrap into ./bootstrap/ before; this run vendored into $bdir/.
-  - The include in Taskfile.yml should be:  taskfile: $new_include   (add optional: true: the folder is git-ignored,
-    so a fresh clone lacks it until this bootstrap runs).
+  - The include in Taskfile.yml should be:  taskfile: $new_include   with optional: true (the folder is git-ignored,
+    so a fresh clone lacks it until this bootstrap runs; added above when the include block had no such line).
   - Once the include points at $bdir/, ./bootstrap/ is unused and can be deleted (git rm -r bootstrap).
     Nothing was deleted here, and while the include still names ./bootstrap/devcontainer.yml it keeps working as it was.
 EOF

@@ -90,6 +90,7 @@ tasks:
       - task: test:shutdown
       - task: test:host-type
       - task: test:bootstrap-dir
+      - task: test:host-mounts
 
   test:git-unit:
     desc: 'Docker-free tests of the git Feature''s wrapper, git-setup and .git-dirs mapping, run from src/git against temp folders (never the checkout''s own git dir or global config); part of lint.'
@@ -106,8 +107,13 @@ tasks:
     cmds:
       - bash test/bootstrap/host_type_test.sh
 
+  test:host-mounts:
+    desc: 'Docker-free bash tests of the host mounts the bash twin (src/devcontainer-cli/devcontainer-cli.sh) adds to `up`: the --mount argument per host type (linux, macos, windows-wsl-docker), the source folder created, a mount skipped when the repository''s devcontainer.json already declares its target (JSONC comments, trailing commas, object form, --config), HOST_MOUNTS=false, none for build/exec/read-configuration, and what `host` lists; a stub devcontainer records its arguments; part of lint. The PowerShell twin is in test:bootstrap.'
+    cmds:
+      - bash test/bootstrap/host_mounts_test.sh
+
   test:bootstrap-dir:
-    desc: 'Docker-free, offline bash tests of where bootstrap/bootstrap.sh vendors: the default .devcontainer/cli_bootstrap.ignore, BOOTSTRAP_DIR and its rejections (absolute, ..), the .gitignore created, appended once, other lines kept, BOOTSTRAP_GITIGNORE=false, the Taskfile template''s optional include of the chosen path, and the old ./bootstrap form (kept, migration note, include repointed); against a temp repo with this checkout as --source and a fake task; part of lint. The PowerShell twin is in test:bootstrap.'
+    desc: 'Docker-free, offline bash tests of where bootstrap/bootstrap.sh vendors: the default .devcontainer/cli_bootstrap.ignore, BOOTSTRAP_DIR and its rejections (absolute, ..), the .gitignore created, appended once, other lines kept, BOOTSTRAP_GITIGNORE=false, the Taskfile template''s optional include of the chosen path, and the old ./bootstrap form (kept, migration note, include repointed, optional: true added when absent); against a temp repo with this checkout as --source and a fake task; part of lint. The PowerShell twin is in test:bootstrap.'
     cmds:
       - bash test/bootstrap/bootstrap_dir_test.sh
 

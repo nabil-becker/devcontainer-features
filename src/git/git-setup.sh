@@ -63,7 +63,7 @@ case "${GIT_DIR:-}" in
       # shellcheck disable=SC1090  # installed by install.sh
       . "$gitdirs_lib"
       dcf_gitdirs_resolve "$top"
-      mount_line="\"source=\${localEnv:USERPROFILE}/.git-dirs,target=$DCF_GITDIRS_ROOT,type=bind\""
+      mount_line="\"source=\${localEnv:DCF_HOST_HOME}/.git-dirs,target=$DCF_GITDIRS_ROOT,type=bind\""
       case "$DCF_GITDIRS_STATE" in
         mapped)
           echo "git dir: $DCF_GITDIRS_POINTER -> $DCF_GITDIRS_PATH (through $DCF_GITDIRS_ROOT)"
@@ -72,9 +72,9 @@ case "${GIT_DIR:-}" in
           recorded=1
           ;;
         missing)
-          echo "git dir: NOT MOUNTED - $top/.git points to $DCF_GITDIRS_POINTER, expected at $DCF_GITDIRS_PATH; add to devcontainer.json \"mounts\": [$mount_line] and rebuild" ;;
+          echo "git dir: NOT MOUNTED - $top/.git points to $DCF_GITDIRS_POINTER, expected at $DCF_GITDIRS_PATH; the launcher adds the mount when started through the bootstrap tasks (task devcontainer:up), else add to devcontainer.json \"mounts\": [$mount_line] and rebuild" ;;
         outside)
-          echo "git dir: OUTSIDE .git-dirs - $top/.git points to $DCF_GITDIRS_POINTER, which the container cannot reach; keep the git dir under %USERPROFILE%\\.git-dirs\\<owner>\\<repo> (update the pointer) and add to devcontainer.json \"mounts\": [$mount_line]" ;;
+          echo "git dir: OUTSIDE .git-dirs - $top/.git points to $DCF_GITDIRS_POINTER, which the container cannot reach; keep the git dir under %USERPROFILE%\\.git-dirs\\<owner>\\<repo> (update the pointer); the launcher adds the mount when started through the bootstrap tasks (task devcontainer:up), else add to devcontainer.json \"mounts\": [$mount_line]" ;;
       esac
     fi
     ;;

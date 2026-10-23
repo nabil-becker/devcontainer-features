@@ -116,10 +116,14 @@ check 'up passes DEVCONTAINER_DOCKER_PATH as --docker-path' 1 "$(grep -c -- "--d
 out="$(host linux HOST_TYPE=solaris -- run running --workspace-folder "$T/ws")"
 check 'running ignores the host type' '' "$(grep -c "HOST_TYPE" <<<"$out" | sed 's/^0$//')"
 
-# The starter devcontainer.json: the .git-dirs mount source comes from DCF_HOST_HOME
-# (git-dirs-posix-line: no per-OS line), and the three variables are mapped with containerEnv.
+# The starter devcontainer.json: the launcher adds the .git-dirs mount (host-mounts), so no live
+# mount line may use DCF_HOST_HOME (empty when VS Code bypasses the launcher); the commented
+# fallback names the variables VS Code sees; and the three variables are mapped with containerEnv.
 tpl="${TEMPLATE:-$here/../../bootstrap/devcontainer.json}"
-check 'template: every .git-dirs mount line uses DCF_HOST_HOME' 1 "$(grep -F '.git-dirs,target=/git-dirs' "$tpl" | grep -vc 'localEnv:DCF_HOST_HOME}/.git-dirs' | sed 's/^0$/1/;t;s/.*/0/')"
+check 'template: no .git-dirs mount line uses DCF_HOST_HOME' 0 "$(grep -F '.git-dirs,target=/git-dirs' "$tpl" | grep -c 'DCF_HOST_HOME')"
+check 'template: the .git-dirs fallback is commented out' 0 "$(grep -F '.git-dirs,target=/git-dirs' "$tpl" | grep -vc '^[[:space:]]*//')"
+check 'template: the fallback uses USERPROFILE (Windows host)' 1 "$(grep -F '.git-dirs,target=/git-dirs' "$tpl" | grep -c 'localEnv:USERPROFILE')"
+check 'template: says plainly DCF_HOST_HOME is empty without the launcher and names HOME' 2 "$(grep -c -e 'leaves DCF_HOST_HOME empty' -e 'localEnv:HOME}' "$tpl")"
 for v in DCF_HOST_TYPE DCF_HOST_HOME DCF_HOST_SSH_AGENT; do
   check "template: containerEnv maps $v" 1 "$(grep -c "^    \"$v\": \"\${localEnv:$v}\"" "$tpl")"
 done

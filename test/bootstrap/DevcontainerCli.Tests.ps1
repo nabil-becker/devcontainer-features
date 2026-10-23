@@ -399,3 +399,210 @@ Describe 'Host type (HOST_TYPE, HOST_TYPE_PRIORITY, DCF_HOST_*)' {
         $t.Why | Should -Match 'DEVCONTAINER_DOCKER_PATH'
     }
 }
+
+Describe 'Host mounts (HOST_MOUNTS, --mount on up)' {
+    # Same evidence as the host type tests: the OS, the engine, mocked inside the module.
+    BeforeAll {
+        $script:EnvNames = 'HOST_TYPE', 'HOST_TYPE_PRIORITY', 'HOST_MOUNTS', 'DEVCONTAINER_DOCKER_PATH', 'DCF_HOST_TYPE', 'DCF_HOST_HOME', 'DCF_HOST_SSH_AGENT', 'USERPROFILE', 'HOME'
+        $script:SavedEnv = @{}
+        foreach ($n in $script:EnvNames) { $script:SavedEnv[$n] = [Environment]::GetEnvironmentVariable($n) }
+        $script:SavedPath = $env:PATH
+        function Initialize-MountEvidence {
+            param([string]$Os, [bool]$Docker = $true, [string]$Wslc = '')
+            $script:ev = @{ Os = $Os; Docker = $Docker; Wslc = $Wslc }
+            Mock -ModuleName DevcontainerCli Get-HostPlatform { $script:ev.Os }
+            Mock -ModuleName DevcontainerCli Test-DockerResponding { $script:ev.Docker }
+            Mock -ModuleName DevcontainerCli Test-WslDockerResponding { $false }
+            Mock -ModuleName DevcontainerCli Get-WslcPath { if ($script:ev.Wslc) { $script:ev.Wslc } else { $null } }
+            Mock -ModuleName DevcontainerCli Get-WslHome { '/home/wsluser' }
+            Mock -ModuleName DevcontainerCli Get-Command { if ($script:ev.Docker) { [pscustomobject]@{ Source = '/fake/docker' } } } -ParameterFilter { $Name -eq 'docker' }
+            # The tests that pass a Windows-style home must not create folders on the test machine.
+            Mock -ModuleName DevcontainerCli Initialize-HostMountSource { }
+        }
+        # A workspace whose .devcontainer/devcontainer.json holds $Json (JSONC).
+        function Get-MountWorkspace {
+            param([string]$Json)
+            $ws = Join-Path $TestDrive ('ws-' + [guid]::NewGuid().ToString('N'))
+            New-Item -ItemType Directory -Path (Join-Path $ws '.devcontainer') -Force | Out-Null
+            if ($Json) { [System.IO.File]::WriteAllText((Join-Path $ws '.devcontainer/devcontainer.json'), $Json) }
+            $ws
+        }
+        $script:OwnMount = @'
+{
+  // the repository's own line, as this collection's devcontainer.json has it
+  "mounts": [
+    "source=${localEnv:USERPROFILE}/.git-dirs,target=/git-dirs,type=bind", // trailing comma follows
+  ],
+  "name": "https://example.invalid/not-a-comment"
+}
+'@
+    }
+    BeforeEach {
+        foreach ($n in $script:EnvNames) { [Environment]::SetEnvironmentVariable($n, $null) }
+        [Environment]::SetEnvironmentVariable('USERPROFILE', 'C:\Users\test')
+        [Environment]::SetEnvironmentVariable('HOME', '/home/test')
+        Clear-HostProfileCache
+    }
+    AfterAll {
+        foreach ($n in $script:EnvNames) { [Environment]::SetEnvironmentVariable($n, $script:SavedEnv[$n]) }
+        $env:PATH = $script:SavedPath
+    }
+
+    It 'lists the .git-dirs mount of the home for <Id>, and nothing when the home is unknown' -ForEach @(
+        @{ Id = 'windows-docker' }, @{ Id = 'windows-wsl-docker' }, @{ Id = 'windows-wslc' }, @{ Id = 'linux' }, @{ Id = 'macos' }
+    ) {
+        $m = @(Get-HostMount -Type $Id -HostHome '/h/u')
+        $m.Count | Should -Be 1
+        $m[0].Name | Should -Be 'git-dirs'
+        $m[0].Source | Should -Be '/h/u/.git-dirs'
+        $m[0].Target | Should -Be '/git-dirs'
+        ConvertTo-MountArgument -Mount $m[0] | Should -Be 'type=bind,source=/h/u/.git-dirs,target=/git-dirs'
+        @(Get-HostMount -Type $Id -HostHome '').Count | Should -Be 0
+    }
+
+    It 'passes --mount for <Id> with the home of that host type' -ForEach @(
+        @{ Os = 'windows'; Id = 'windows-docker'; Source = 'C:\Users\test/.git-dirs' }
+        @{ Os = 'windows'; Id = 'windows-wslc'; Source = 'C:\Users\test/.git-dirs' }
+        @{ Os = 'windows'; Id = 'windows-wsl-docker'; Source = '/home/wsluser/.git-dirs' }
+        @{ Os = 'linux'; Id = 'linux'; Source = '/home/test/.git-dirs' }
+    ) {
+        Initialize-MountEvidence -Os $Os -Wslc 'C:\wslc.exe'
+        $env:HOST_TYPE = $Id
+        $ws = Get-MountWorkspace '{ "name": "plain" }'
+        $a = @(Get-HostMountArgument -WorkspaceFolder $ws)
+        $a | Should -HaveCount 2
+        $a[0] | Should -Be '--mount'
+        $a[1] | Should -Be "type=bind,source=$Source,target=/git-dirs"
+        Should -Invoke -ModuleName DevcontainerCli Initialize-HostMountSource -Times 1 -Exactly
+    }
+
+    It 'skips a mount whose target devcontainer.json already declares, and says so in one line' {
+        Initialize-MountEvidence -Os windows -Wslc 'C:\wslc.exe'
+        $env:HOST_TYPE = 'windows-wslc'
+        $ws = Get-MountWorkspace $script:OwnMount
+        $out = @(Get-HostMountArgument -WorkspaceFolder $ws 6>&1)
+        @($out | Where-Object { $_ -is [string] -and $_ -eq '--mount' }).Count | Should -Be 0
+        $lines = @($out | Where-Object { $_ -is [System.Management.Automation.InformationRecord] } | ForEach-Object { $_.MessageData.Message })
+        $lines | Should -HaveCount 1
+        $lines[0] | Should -Be "host mount skipped: /git-dirs is already mounted by this repository's devcontainer.json"
+        Should -Invoke -ModuleName DevcontainerCli Initialize-HostMountSource -Times 0 -Exactly
+    }
+
+    It 'reads targets from strings, objects and --config, ignores comments and other targets' {
+        $ws = Get-MountWorkspace @'
+{
+  "mounts": [
+    // "source=a,target=/commented-out,type=bind"
+    { "type": "volume", "source": "v", "target": "/from-object" },
+    "source=b,target=/from-string/,type=bind"
+  ],
+  "containerEnv": { "X": "target=/not-a-mount" }
+}
+'@
+        @(Get-ConfiguredMountTarget -WorkspaceFolder $ws) | Sort-Object | Should -Be @('/from-object', '/from-string')
+        $other = Join-Path $ws 'other.json'
+        [System.IO.File]::WriteAllText($other, '{ "mounts": ["source=a,target=/from-config,type=bind"] }')
+        @(Get-ConfiguredMountTarget -WorkspaceFolder $ws -Arguments @('--config', $other)) | Should -Be @('/from-config')
+        @(Get-ConfiguredMountTarget -WorkspaceFolder $ws -Arguments @("--config=$other")) | Should -Be @('/from-config')
+        @(Get-ConfiguredMountTarget -WorkspaceFolder (Get-MountWorkspace)) | Should -HaveCount 0
+    }
+
+    It 'does not skip when the repository mounts some other target' {
+        Initialize-MountEvidence -Os linux
+        $env:HOST_TYPE = 'linux'
+        $ws = Get-MountWorkspace '{ "mounts": ["source=a,target=/git-dirs-other,type=bind"] }'
+        @(Get-HostMountArgument -WorkspaceFolder $ws) | Should -HaveCount 2
+    }
+
+    It 'HOST_MOUNTS=<Value> turns the launcher mounts off' -ForEach @(
+        @{ Value = 'false' }, @{ Value = '0' }, @{ Value = 'no' }
+    ) {
+        Initialize-MountEvidence -Os linux
+        $env:HOST_TYPE = 'linux'
+        $env:HOST_MOUNTS = $Value
+        $ws = Get-MountWorkspace '{ }'
+        @(Get-HostMountArgument -WorkspaceFolder $ws) | Should -HaveCount 0
+        Should -Invoke -ModuleName DevcontainerCli Initialize-HostMountSource -Times 0 -Exactly
+        $env:HOST_MOUNTS = 'true'
+        @(Get-HostMountArgument -WorkspaceFolder $ws) | Should -HaveCount 2
+    }
+
+    It 'host lists what it would add, what it would skip, and off' {
+        Initialize-MountEvidence -Os windows -Wslc 'C:\wslc.exe'
+        $env:HOST_TYPE = 'windows-wslc'
+        $text = { param($ws) (Show-HostProfile -WorkspaceFolder $ws 6>&1 | ForEach-Object { $_.MessageData.Message }) -join "`n" }
+        & $text (Get-MountWorkspace '{ }') | Should -Match 'host mount \(add\)\s+: git-dirs: type=bind,source=C:\\Users\\test/\.git-dirs,target=/git-dirs'
+        & $text (Get-MountWorkspace $script:OwnMount) | Should -Match 'host mount \(skip\)\s+: git-dirs: /git-dirs is already mounted by devcontainer\.json'
+        $env:HOST_MOUNTS = 'false'
+        & $text (Get-MountWorkspace '{ }') | Should -Match 'host mounts\s+: off \(HOST_MOUNTS=false\)'
+    }
+}
+
+# The argument list of the real CLI call: a stub `devcontainer` first on PATH records its
+# arguments (the Windows branch runs the portable node.exe instead, so these run on Linux/macOS).
+Describe 'The up argument list carries the host mounts' -Skip:$IsWindows {
+    BeforeAll {
+        $script:EnvNames = 'HOST_TYPE', 'HOST_MOUNTS', 'DEVCONTAINER_DOCKER_PATH', 'HOME', 'DCF_HOST_TYPE', 'DCF_HOST_HOME', 'DCF_HOST_SSH_AGENT'
+        $script:SavedEnv = @{}
+        foreach ($n in $script:EnvNames) { $script:SavedEnv[$n] = [Environment]::GetEnvironmentVariable($n) }
+        $script:SavedPath = $env:PATH
+        $script:Bin = Join-Path $TestDrive 'bin'
+        New-Item -ItemType Directory -Path $script:Bin | Out-Null
+        $script:Rec = Join-Path $TestDrive 'args.txt'
+        Set-Content (Join-Path $script:Bin 'devcontainer') "#!/bin/sh`nfor a in `"`$@`"; do echo `"`$a`"; done > '$($script:Rec)'"
+        chmod +x (Join-Path $script:Bin 'devcontainer')
+        Set-Content (Join-Path $script:Bin 'docker') "#!/bin/sh`nexit 0"
+        chmod +x (Join-Path $script:Bin 'docker')
+        function Invoke-Recorded {
+            param([string]$Subcommand, [string]$Json = '{ }')
+            $ws = Join-Path $TestDrive ('ws-' + [guid]::NewGuid().ToString('N'))
+            New-Item -ItemType Directory -Path (Join-Path $ws '.devcontainer') -Force | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $ws '.devcontainer/devcontainer.json'), $Json)
+            Remove-Item $script:Rec -ErrorAction SilentlyContinue
+            Invoke-DevcontainerCliProcess -Subcommand $Subcommand -WorkspaceFolder $ws 6>$null
+            @(Get-Content $script:Rec)
+        }
+    }
+    BeforeEach {
+        foreach ($n in $script:EnvNames) { [Environment]::SetEnvironmentVariable($n, $null) }
+        $env:PATH = $script:Bin + [System.IO.Path]::PathSeparator + $script:SavedPath
+        $env:HOME = Join-Path $TestDrive 'home'
+        $env:HOST_TYPE = 'linux'
+        Clear-HostProfileCache
+    }
+    AfterAll {
+        foreach ($n in $script:EnvNames) { [Environment]::SetEnvironmentVariable($n, $script:SavedEnv[$n]) }
+        $env:PATH = $script:SavedPath
+    }
+
+    It 'up gets --mount for the .git-dirs of the home, and the folder exists' {
+        $a = Invoke-Recorded -Subcommand up
+        $i = [array]::IndexOf($a, '--mount')
+        $i | Should -BeGreaterThan 0
+        $a[$i + 1] | Should -Be "type=bind,source=$($env:HOME)/.git-dirs,target=/git-dirs"
+        Test-Path (Join-Path $env:HOME '.git-dirs') | Should -BeTrue
+    }
+
+    It 'Initialize-HostMountSource creates the source folder, and is idempotent' {
+        $dir = Join-Path $TestDrive 'fresh/.git-dirs'
+        $m = [pscustomobject]@{ Name = 'git-dirs'; Source = $dir; Target = '/git-dirs'; Type = 'bind' }
+        Initialize-HostMountSource -Mount $m -Type linux
+        Test-Path $dir -PathType Container | Should -BeTrue
+        { Initialize-HostMountSource -Mount $m -Type linux } | Should -Not -Throw
+    }
+
+    It 'up passes no --mount when devcontainer.json already mounts /git-dirs' {
+        $a = Invoke-Recorded -Subcommand up -Json '{ "mounts": ["source=${localEnv:HOME}/.git-dirs,target=/git-dirs,type=bind"] }'
+        $a | Should -Not -Contain '--mount'
+        $a[0] | Should -Be 'up'
+    }
+
+    It 'up passes no --mount with HOST_MOUNTS=false' {
+        $env:HOST_MOUNTS = 'false'
+        (Invoke-Recorded -Subcommand up) | Should -Not -Contain '--mount'
+    }
+
+    It '<Sub> never gets --mount' -ForEach @(@{ Sub = 'build' }, @{ Sub = 'exec' }, @{ Sub = 'read-configuration' }) {
+        (Invoke-Recorded -Subcommand $Sub) | Should -Not -Contain '--mount'
+    }
+}

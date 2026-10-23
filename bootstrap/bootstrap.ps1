@@ -67,7 +67,8 @@
     ..). Env: BOOTSTRAP_DIR. Default: .devcontainer/cli_bootstrap.ignore.
     A repository that vendored into ./bootstrap/ keeps working untouched; a
     re-run vendors into the new folder, prints a migration note and repoints
-    a root Taskfile include of exactly ./bootstrap/devcontainer.yml.
+    a root Taskfile include of exactly ./bootstrap/devcontainer.yml (adding
+    optional: true to that include when it has none).
 
 .PARAMETER NoGitignore
     Do not git-ignore the vendored folder. Env: BOOTSTRAP_GITIGNORE=false.
@@ -249,11 +250,37 @@ if (-not $ExplicitDir -and $BootstrapDir -ne 'bootstrap' -and (Test-Path (Join-P
     if ($text -match $pattern) {
         [System.IO.File]::WriteAllText($taskfile, [regex]::Replace($text, $pattern, { param($m) $m.Groups[1].Value + $newInclude }))
         Write-Host "  repointed Taskfile.yml: taskfile: $oldInclude -> $newInclude (only that value; to undo, change it back)"
+        # The vendored folder is git-ignored, so a fresh clone lacks it until the bootstrap ran: the include
+        # must be optional. Add `optional: true` to that include block unless the block already has an optional key.
+        $lines = [regex]::Split([System.IO.File]::ReadAllText($taskfile), '(?<=\n)')
+        $isTarget = { param($l) $l -match '^[ \t]*taskfile:' -and $l.Contains($newInclude) }
+        $t = -1
+        for ($i = 0; $i -lt $lines.Count; $i++) { if (& $isTarget $lines[$i]) { $t = $i; break } }
+        if ($t -ge 0) {
+            $ind = ([regex]::Match($lines[$t], '^[ \t]*')).Value
+            $has = $false
+            foreach ($range in @(($t - 1)..0), (($t + 1)..($lines.Count - 1))) {
+                foreach ($i in $range) {
+                    if ($i -lt 0 -or $i -ge $lines.Count) { break }
+                    $l = $lines[$i].TrimEnd("`r", "`n")
+                    if ($l -match '^[ \t]*(#.*)?$') { continue }
+                    if (([regex]::Match($l, '^[ \t]*')).Length -lt $ind.Length) { break }
+                    if ($l -match '^[ \t]*optional:') { $has = $true }
+                }
+            }
+            if (-not $has) {
+                $eol = if ($lines[$t].EndsWith("`r`n")) { "`r`n" } else { "`n" }
+                $head = if ($lines[$t].EndsWith("`n")) { $lines[$t] } else { $lines[$t] + $eol }
+                $lines[$t] = $head + $ind + 'optional: true' + $eol
+                [System.IO.File]::WriteAllText($taskfile, ($lines -join ''))
+                Write-Host '  added     optional: true to that include (the folder is git-ignored; a fresh clone lacks it until the bootstrap ran)'
+            }
+        }
     }
     Write-Host @"
 MIGRATION: this repository vendored the bootstrap into ./bootstrap/ before; this run vendored into $BootstrapDir/.
-  - The include in Taskfile.yml should be:  taskfile: $newInclude   (add optional: true: the folder is git-ignored,
-    so a fresh clone lacks it until this bootstrap runs).
+  - The include in Taskfile.yml should be:  taskfile: $newInclude   with optional: true (the folder is git-ignored,
+    so a fresh clone lacks it until this bootstrap runs; added above when the include block had no such line).
   - Once the include points at $BootstrapDir/, ./bootstrap/ is unused and can be deleted (git rm -r bootstrap).
     Nothing was deleted here, and while the include still names ./bootstrap/devcontainer.yml it keeps working as it was.
 "@

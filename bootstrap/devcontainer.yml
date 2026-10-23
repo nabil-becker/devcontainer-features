@@ -47,6 +47,13 @@
 #                              Default: windows-docker,windows-wsl-docker,windows-wslc
 #                              on Windows; windows-wsl-docker inside a WSL distro;
 #                              linux; macos.
+#   HOST_MOUNTS                false = the launcher adds no host mounts. By default `up`
+#                              (so rebuild) passes the mounts the host type needs as
+#                              `--mount type=bind,source=..,target=..`: today the host
+#                              home's .git-dirs at /git-dirs, so a repository needs no
+#                              mount line of its own; one it already has (same target in
+#                              its devcontainer.json) is kept and the launcher's skipped.
+#                              `task devcontainer:host` lists what would be added.
 #   DEVCONTAINER_NODE_VERSION  portable Node.js version (default in the scripts).
 #   DEVCONTAINER_CLI_VERSION   @devcontainers/cli version (default: latest).
 #   DEVCONTAINER_HOMES         host folder for bind-mounted tool state
@@ -89,13 +96,14 @@ vars:
   DEVCONTAINER_CLI_VERSION: '{{.DEVCONTAINER_CLI_VERSION | default ""}}'
   HOST_TYPE: '{{.HOST_TYPE | default ""}}'
   HOST_TYPE_PRIORITY: '{{.HOST_TYPE_PRIORITY | default ""}}'
+  HOST_MOUNTS: '{{.HOST_MOUNTS | default ""}}'
   _PS_SETTINGS: -DockerPath '{{.DEVCONTAINER_DOCKER_PATH}}' -NodeVersion '{{.DEVCONTAINER_NODE_VERSION}}' -CliVersion '{{.DEVCONTAINER_CLI_VERSION}}'
-  # Only the tasks that run the CLI (and `host`) take the host type.
-  _PS_HOST_SETTINGS: -HostType '{{.HOST_TYPE}}' -HostTypePriority '{{.HOST_TYPE_PRIORITY}}'
+  # Only the tasks that run the CLI (and `host`) take the host type and the host mounts switch.
+  _PS_HOST_SETTINGS: -HostType '{{.HOST_TYPE}}' -HostTypePriority '{{.HOST_TYPE_PRIORITY}}' -HostMounts '{{.HOST_MOUNTS}}'
   # Linux/macOS: the bash script reads the environment. The resolved values
   # are prefixed to the command rather than set through `env:` (see above).
   _SH_SETTINGS: >-
-    {{if .DEVCONTAINER_DOCKER_PATH}}DEVCONTAINER_DOCKER_PATH='{{.DEVCONTAINER_DOCKER_PATH}}' {{end}}{{if .DEVCONTAINER_NODE_VERSION}}DEVCONTAINER_NODE_VERSION='{{.DEVCONTAINER_NODE_VERSION}}' {{end}}{{if .DEVCONTAINER_CLI_VERSION}}DEVCONTAINER_CLI_VERSION='{{.DEVCONTAINER_CLI_VERSION}}' {{end}}{{if .HOST_TYPE}}HOST_TYPE='{{.HOST_TYPE}}' {{end}}{{if .HOST_TYPE_PRIORITY}}HOST_TYPE_PRIORITY='{{.HOST_TYPE_PRIORITY}}' {{end}}
+    {{if .DEVCONTAINER_DOCKER_PATH}}DEVCONTAINER_DOCKER_PATH='{{.DEVCONTAINER_DOCKER_PATH}}' {{end}}{{if .DEVCONTAINER_NODE_VERSION}}DEVCONTAINER_NODE_VERSION='{{.DEVCONTAINER_NODE_VERSION}}' {{end}}{{if .DEVCONTAINER_CLI_VERSION}}DEVCONTAINER_CLI_VERSION='{{.DEVCONTAINER_CLI_VERSION}}' {{end}}{{if .HOST_TYPE}}HOST_TYPE='{{.HOST_TYPE}}' {{end}}{{if .HOST_TYPE_PRIORITY}}HOST_TYPE_PRIORITY='{{.HOST_TYPE_PRIORITY}}' {{end}}{{if .HOST_MOUNTS}}HOST_MOUNTS='{{.HOST_MOUNTS}}' {{end}}
   # The shutdown check when STOP_CHECK is unset, run by `bash -lc` inside the
   # container from the workspace folder (the CLI's exec starts there): the
   # repository's `task shutdown:check` if its Taskfile defines it, else the
@@ -133,7 +141,7 @@ tasks:
         platforms: [linux, darwin]
 
   host:
-    desc: 'Show the host profile without starting anything: HOST_TYPE as resolved and why, the HOST_TYPE_PRIORITY list used, the engine command, and the DCF_HOST_TYPE, DCF_HOST_HOME and DCF_HOST_SSH_AGENT values the launcher sets before it runs the CLI. HOST_TYPE=<id> or HOST_TYPE_PRIORITY=<ids> on the command line try other choices.'
+    desc: 'Show the host profile without starting anything: HOST_TYPE as resolved and why, the HOST_TYPE_PRIORITY list used, the engine command, the DCF_HOST_TYPE, DCF_HOST_HOME and DCF_HOST_SSH_AGENT values the launcher sets before it runs the CLI, and the host mounts `up` would add (and those it would skip because devcontainer.json already mounts the target; HOST_MOUNTS=false turns them off). HOST_TYPE=<id> or HOST_TYPE_PRIORITY=<ids> on the command line try other choices.'
     cmds:
       - task: cli
         vars:
@@ -177,7 +185,7 @@ tasks:
 
   up:
     aliases: [start]
-    desc: 'Build (if needed) and start the devcontainer for {{.WORKSPACE_FOLDER}}; also task devcontainer:start. Idempotent: starts a stopped container, does nothing to a running one, so other tasks can require it. Extra `devcontainer up` flags after --, e.g. task devcontainer:up -- --remove-existing-container.'
+    desc: 'Build (if needed) and start the devcontainer for {{.WORKSPACE_FOLDER}}, adding the host mounts of the host type (HOST_MOUNTS=false: none); also task devcontainer:start. Idempotent: starts a stopped container, does nothing to a running one, so other tasks can require it. Extra `devcontainer up` flags after --, e.g. task devcontainer:up -- --remove-existing-container.'
     cmds:
       - task: cli
         vars:

@@ -67,7 +67,8 @@ gap to close here (see [Contributing from a consuming repo](#contributing-from-a
   `initializeCommand` guarantees the host folder exists. Examples spell the
   host path with `${localEnv:USERPROFILE}` (Windows); on Linux/macOS use
   `${localEnv:HOME}`, or `${localEnv:DCF_HOST_HOME}` (set by the launcher on every host type,
-  see "Host type" in the devcontainer-cli notes) for the same line everywhere. Never
+  see "Host type" in the devcontainer-cli notes) for the same line everywhere (empty when VS Code
+  starts the container without the launcher: use `${localEnv:USERPROFILE}` or `${localEnv:HOME}` there). Never
   concatenate the two: both can be set on Windows. Caches and
   worktrees stay out of the checkout too (`PYTHONPYCACHEPREFIX`, a volume
   over `.claude/worktrees`), or a synced checkout carries every build
@@ -223,6 +224,7 @@ run is configured:
 | Docker-compatible CLI for `--docker-path` (`docker`, `wslc`, `podman`, `nerdctl`, `finch`, or a path). Unset: the engine of the host type (`docker`, or `wslc.exe` for `windows-wslc`). Always wins over the host type. | `DEVCONTAINER_DOCKER_PATH` | `-DockerPath` / `--docker-path` |
 | Kind of host: `auto` (default) or `windows-docker`, `windows-wsl-docker`, `windows-wslc`, `linux`, `macos`; an id skips detection. The launcher sets `DCF_HOST_TYPE`, `DCF_HOST_HOME`, `DCF_HOST_SSH_AGENT` from it (`task devcontainer:host` shows them). | `HOST_TYPE` | `HOST_TYPE=` var |
 | Ordered, comma-separated host types `auto` tries (default per OS: Windows `windows-docker,windows-wsl-docker,windows-wslc`, inside WSL `windows-wsl-docker`, `linux`, `macos`) | `HOST_TYPE_PRIORITY` | `HOST_TYPE_PRIORITY=` var |
+| `false` (or `0`, `no`): the launcher adds no host mounts to `up`. By default it adds the host home's `.git-dirs` at `/git-dirs` (skipped when the repository's `devcontainer.json` already mounts that target), so a repository declares no mount line; `task devcontainer:host` lists them. | `HOST_MOUNTS` | `HOST_MOUNTS=` var |
 | Portable Node.js version | `DEVCONTAINER_NODE_VERSION` | - |
 | `@devcontainers/cli` version (default `latest`) | `DEVCONTAINER_CLI_VERSION` | - |
 | Root of the host-side tool-state folders (`devcontainer:homes`; default `~/.devcontainer-homes`) | `DEVCONTAINER_HOMES` | - |
@@ -253,12 +255,20 @@ Each Feature stores its persistent state (logins, config, transcripts) in a name
 | `devcontainer:init` | Cache portable Node.js + `@devcontainers/cli`, report engine. `FORCE=true` reinstalls the CLI. |
 | `devcontainer:homes NAME=<slug> -- <dir>...` | Create `~/.devcontainer-homes/<slug>/<dir>` on the host, for a repo that bind-mounts a Feature's state target to the host disk instead of the Feature's volume; meant as `initializeCommand` (array form: `["task", "devcontainer:homes", "NAME=myrepo", "--", "claude-code"]`). Also creates `~/.git-dirs` (`%USERPROFILE%\.git-dirs`), the source of the git Feature's one `.git-dirs` mount, when missing. Optional `HOST_GIT_DIR=<path>` also checks that a git dir kept outside the checkout has a HEAD. |
 | `devcontainer:stop` / `prepshutdown` | Stop the container after its [shutdown check](bootstrap/SHUTDOWN.md) (`FORCE=1` skips it; `rebuild` stops first the same way and rebuilds nothing when the stop is refused); `prepshutdown` runs the same check inside the running container and stops nothing. The check is `STOP_CHECK` if set, else the repository's `task shutdown:check`, else `devhost-shutdown-check`, else none. |
-| `devcontainer:up` / `rebuild` / `build` | `devcontainer up` (extra flags after `--`), from-scratch rebuild, image build only. |
+| `devcontainer:up` / `rebuild` / `build` | `devcontainer up` (extra flags after `--`), from-scratch rebuild, image build only. `up` and `rebuild` add the host mounts of the host type (`--mount`; today the home's `.git-dirs` at `/git-dirs`, skipped when `devcontainer.json` already mounts it; `HOST_MOUNTS=false` turns them off); `build` and `exec` add none. |
+| `devcontainer:host` | Print the host profile (`HOST_TYPE` and why, engine, `DCF_HOST_*`) and the host mounts `up` would add or skip; starts nothing. |
 | `devcontainer:exec CMD='...'` / `shell` / `pwsh` | Run a command (base64-safe), an interactive bash, or PowerShell in the container. |
 | `devcontainer:claude [DIR=<sub-folder>] [SESSION=<uuid>] [-- <claude args>]` | Start or resume the Claude Code host session inside (needs the `claude-code` Feature): `HOST_SESSION` from `.devcontainer/.env`, `HOST_SESSION_<DIR>` for a sub-folder. Runs directly when already inside the container. |
 | `devcontainer:config` | Resolved configuration. |
 | `devcontainer:<anything>` | Passthrough to that CLI subcommand, args after `--`. |
 | `devcontainer:reset-storage` | wslc.exe only: reset WSL Containers' storage after a read-only BuildKit error. |
+
+**For a consuming repository (devcontainer-cli 1.7.0, git 1.4.2):** once you start through these tasks, delete the
+`source=${localEnv:USERPROFILE}/.git-dirs,target=/git-dirs,type=bind` line from your `devcontainer.json`: `up` and
+`rebuild` mount it for you on every host type. Keeping it is harmless, the launcher sees the target and skips its own
+(one line says so). Keep it only if you also open the folder straight in VS Code (Reopen in Container), which
+skips the launcher; there use `${localEnv:USERPROFILE}` (Windows host) or `${localEnv:HOME}`, never `DCF_HOST_HOME`,
+which is empty without the launcher. Re-run the bootstrap to refresh the vendored launcher.
 
 All of them also answer to `dc:` (the include's alias in the generated
 Taskfile). Each task dispatches per platform (Task's per-command
