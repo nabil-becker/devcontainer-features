@@ -179,7 +179,7 @@ The domain words of the project itself are not here; they live with the project'
   `devhost-shutdown-check`, else none (the stop goes ahead); `STOP_CHECK` overrides
   (`bootstrap/SHUTDOWN.md`, ADR-0022). Here it is `devhost-shutdown-check`, which says whether
   the devhost can be stopped without losing work: tree clean and pushed, backs idle with locks
-  free, no stretch waiting, no tester run, no night shift mid-plan; it lists stash and untracked
+  free, no stretch waiting (one untouched for over 24 hours is only a note), no tester run, no night shift mid-plan; it lists stash and untracked
   files. Also run by the `shutdown-devhost` skill (ADR-0015).
 - **Shutdown and restart** (`shutdown-devhost`, `restart-devhost`): the skill pair that closes the
   devhost cleanly and brings it back where it was; both ship in the seed (ADR-0015).

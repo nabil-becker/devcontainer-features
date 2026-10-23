@@ -2,12 +2,12 @@
 
 One file per night the Operator leaves a host session working an agreed list of `TODO.md` items
 alone: `YYYY-MM-DD.md`, the plan and the report in one, committed on the night's branch
-(`chore/night-shift-YYYY-MM-DD`). The `night-shift` skill holds the rules; the shape is:
+(`chore/night-shift/<n>`, the standing item `night-shift` and the next unused number). The `night-shift` skill holds the rules; the shape is:
 
 ```
 # Night shift YYYY-MM-DD
 
-Plan: <n> items · Cap $<cap> · Stop <time> · Started <UTC time> at $<starting figure> · Branch chore/night-shift-YYYY-MM-DD
+Plan: <n> items · Cap $<cap> · Stop <time> · Started <UTC time> at $<starting figure> · Branch chore/night-shift/<n>
 Result: Done <n> · Skipped <n> · Undone <n> · Cost about $<x> of $<cap> · Ended <time>, <why>
 
 ## Items

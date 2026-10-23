@@ -150,6 +150,51 @@ case "$out" in 0\|*'devcontainer exec'*) case "$out" in *'docker stop'*) check '
 out="$(run_stop prepshutdown 5)"
 case "$out" in 5\|*) case "$out" in *'docker stop'*) check 'bash prepshutdown: refusing check -> its code' 5 stopped ;; *) check 'bash prepshutdown: refusing check -> its code' 5 5 ;; esac ;; *) check 'bash prepshutdown: refusing check -> its code' 5 "$out" ;; esac
 
+# 4. The in-container probe is overridable (DEVCONTAINER_IN_CONTAINER), so the
+#    "runs from the host" refusal is testable without patching the Taskfile.
+if command -v task >/dev/null 2>&1; then
+  ydir="$(dirname "$yml")"
+  out="$(cd "$ydir" && DEVCONTAINER_IN_CONTAINER=1 task -t "$(basename "$yml")" stop 2>&1)"; rc=$?
+  check 'probe forced in: stop refuses from inside' '1|refused' "$([ $rc -ne 0 ] && case "$out" in *'runs from the host'*) echo "1|refused" ;; *) echo "$rc|$out" ;; esac || echo "$rc|ran")"
+  out="$(cd "$ydir" && DEVCONTAINER_IN_CONTAINER=0 task -n -t "$(basename "$yml")" stop 2>&1)"; rc=$?
+  check 'probe forced out: stop takes the host path' '0|host' "$(case "$out" in *'runs from the host'*) echo "$rc|refused" ;; *'devcontainer-cli'*|*'Invoke-DevcontainerCli'*) echo "$rc|host" ;; *) echo "$rc|?" ;; esac)"
+else
+  echo "skip - no task on PATH for the probe override checks"
+fi
+
+# 5. rebuild stops like stop: a refused stop rebuilds nothing; FORCE=1 skips the
+#    check. A copy of devcontainer.yml beside a stub launcher (host/devcontainer-cli.sh
+#    is what _BASH_CLI prefers) that logs each subcommand and refuses a stop
+#    without --force when STUB_STOP_RC is set.
+if command -v task >/dev/null 2>&1; then
+  rb="$T/rebuild"
+  mkdir -p "$rb/host"
+  cp "$yml" "$rb/devcontainer.yml"
+  # rebuild runs `task <namespace>:stop`, so it needs a root Taskfile like a repo's.
+  printf "version: '3'\nincludes:\n  devcontainer:\n    taskfile: ./devcontainer.yml\n" > "$rb/Taskfile.yml"
+  cat > "$rb/host/devcontainer-cli.sh" <<'STUB'
+#!/usr/bin/env bash
+echo "$2" >> "$STUB_LOG"
+if [ "$2" = stop ]; then
+  case " $* " in *" --force "*) exit 0 ;; esac
+  exit "${STUB_STOP_RC:-0}"
+fi
+exit 0
+STUB
+  rebuild_run() { # <stop rc> [FORCE=1] -> "<rc>|<subcommands run>"
+    : > "$T/stub.log"
+    (cd "$rb" && STUB_LOG="$T/stub.log" STUB_STOP_RC="$1" DEVCONTAINER_IN_CONTAINER=0 \
+      task devcontainer:rebuild ${2:+"$2"} >/dev/null 2>&1)
+    echo "$?|$(paste -sd, "$T/stub.log")"
+  }
+  out="$(rebuild_run 3)"
+  check 'rebuild: a refused stop fails and rebuilds nothing' 'failed|stop' "$(case "$out" in 0\|*) echo "$out" ;; *) echo "failed|${out#*|}" ;; esac)"
+  check 'rebuild: FORCE=1 skips the check and rebuilds' '0|stop,up' "$(rebuild_run 3 FORCE=1)"
+  check 'rebuild: a passing stop rebuilds' '0|stop,up' "$(rebuild_run 0)"
+else
+  echo "skip - no task on PATH for the rebuild checks"
+fi
+
 echo
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

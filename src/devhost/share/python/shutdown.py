@@ -11,7 +11,9 @@ The rules (ADR-0015), each a function returning finding strings:
 - `locks`: no back's lock is held (`$DEVHOST_STATE/<job>/lock`, taken with flock and tested without
   blocking). A held tester lock is reported as a test run in progress.
 - `pending`: no back has a stretch waiting to be logged: a non-empty `$DEVHOST_STATE/<job>/pending-<session>`
-  file (the scribe writes what it held back there).
+  file (the scribe writes what it held back there). A pending file untouched for STALE_HOURS (24) is a
+  note, not a finding: its session ended (a finished subagent never runs again), so no back run will
+  ever clear it, and refusing a stop for it would refuse every stop.
 - `branches`: no branch has commits that add to main and no pull request ("unfinished work"; needs a
   logged-in `gh`, else skipped). A branch whose pull request merged and still exists is a note.
 - `night_shift`: the newest report in the night-shift directory is not mid-plan. Mid-plan means its
@@ -25,6 +27,7 @@ from __future__ import annotations
 
 import re
 import sys
+import time
 from pathlib import Path
 
 try:
@@ -100,10 +103,21 @@ def locks(root: Path) -> list[str]:
     return findings
 
 
+STALE_HOURS = 24
+
+
+def _waiting(job: Path) -> list[Path]:
+    return [p for p in sorted(job.glob("pending-*")) if p.is_file() and p.stat().st_size > 0]
+
+
+def _stale(p: Path, now: float | None = None) -> bool:
+    return ((now if now is not None else time.time()) - p.stat().st_mtime) > STALE_HOURS * 3600
+
+
 def pending(root: Path) -> list[str]:
     findings = []
     for job in _jobs(state_dir()):
-        waiting = [p for p in sorted(job.glob("pending-*")) if p.is_file() and p.stat().st_size > 0]
+        waiting = [p for p in _waiting(job) if not _stale(p)]
         if waiting:
             findings.append(f"the {job.name} back has {len(waiting)} stretch(es) waiting to be logged "
                             f"({', '.join(p.name for p in waiting[:3])})")
@@ -147,6 +161,11 @@ def notes(root: Path) -> list[str]:
     stashes = [s for s in (git(root, "stash", "list") or "").splitlines() if s.strip()]
     if stashes:
         out.append(f"{len(stashes)} stash(es): {_listed(stashes)}")
+    for job in _jobs(state_dir()):
+        stale = [p for p in _waiting(job) if _stale(p)]
+        if stale:
+            out.append(f"the {job.name} back has {len(stale)} stretch(es) untouched for over {STALE_HOURS} h, "
+                       f"not counted (a finished session; delete them to clear: {', '.join(p.name for p in stale[:3])})")
     return out
 
 

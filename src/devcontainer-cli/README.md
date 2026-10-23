@@ -173,7 +173,8 @@ installed globally on any host. Its host settings are
 container and leaves a running one alone. `exec`, `shell`, `pwsh` and `claude`
 run `up` first; `rebuild` runs `stop` first (shutdown check included; `FORCE=1` and
 `STOP_CHECK` pass through) and then recreates the container; a stop that fails
-(the check refuses, or any error) prints one line and the rebuild continues.
+(the check refuses, or any error) stops the rebuild too, so `FORCE=1` is the
+one way to rebuild past a refusing check, as for `stop`.
 `build` and `config` touch no container.
 
 One build at a time. `up` (so `rebuild` too) and `build` hold a host-wide lock

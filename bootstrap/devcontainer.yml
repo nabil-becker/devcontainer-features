@@ -84,8 +84,10 @@ vars:
   # "1" when Task itself runs inside a container (Docker or Podman marker),
   # so tasks that mean "run this inside the devcontainer" can run the
   # command directly instead of through `devcontainer exec`.
+  # DEVCONTAINER_IN_CONTAINER=1 or 0 in the environment overrides the
+  # detection (tests; a container the markers miss).
   _IN_CONTAINER:
-    sh: 'if [ -e /.dockerenv ] || [ -e /run/.containerenv ]; then echo 1; else echo ""; fi'
+    sh: 'case "${DEVCONTAINER_IN_CONTAINER:-}" in 1) echo 1 ;; 0) echo "" ;; *) if [ -e /.dockerenv ] || [ -e /run/.containerenv ]; then echo 1; else echo ""; fi ;; esac'
 
 tasks:
   cli:
@@ -184,9 +186,9 @@ tasks:
           CMD: '{{.STOP_CHECK}}'
 
   rebuild:
-    desc: 'Recreate the devcontainer from scratch (devcontainer up --remove-existing-container --build-no-cache). Stops it first like devcontainer:stop (shutdown check included; FORCE=1 and STOP_CHECK pass through), but continues even when that stop fails: a refusing check or an error prints one line and the rebuild goes on. VS Code windows attached to the old container must reload.'
+    desc: 'Recreate the devcontainer from scratch (devcontainer up --remove-existing-container --build-no-cache). Stops it first exactly like devcontainer:stop (shutdown check included; STOP_CHECK passes through): when that stop is refused or fails, nothing is rebuilt; FORCE=1 skips the check, as for stop. VS Code windows attached to the old container must reload.'
     cmds:
-      - cmd: 'task {{regexReplaceAll ":[^:]+$" .TASK ""}}:stop {{if .FORCE}}FORCE=''{{.FORCE}}'' {{end}}{{if .STOP_CHECK}}STOP_CHECK=''{{.STOP_CHECK}}'' {{end}}|| echo "The stop did not complete cleanly (see above): rebuilding anyway." >&2'
+      - cmd: 'task {{regexReplaceAll ":[^:]+$" .TASK ""}}:stop {{if .FORCE}}FORCE=''{{.FORCE}}'' {{end}}{{if .STOP_CHECK}}STOP_CHECK=''{{.STOP_CHECK}}'' {{end}}|| { echo "Not rebuilding: the stop above did not complete. Fix what it names, or run again with FORCE=1." >&2; exit 1; }'
       - task: cli
         vars:
           SUBCOMMAND: up

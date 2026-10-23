@@ -16,6 +16,7 @@ BACKLOG = """# Backlog
 
 - [ ] **alpha Alpha thing** (host). Open.
 - [x] **beta-two Beta thing** (host). Done.
+- [ ] **night-shift Night-shift branches** (host). The standing item.
 """
 
 FAKE_GH = """#!{python}
@@ -91,7 +92,8 @@ class Branches(h.RepoCase):
             self.assertIsNone(self.br.parse(bad), bad)
 
     def test_items_are_the_ids_ticked_or_not(self):
-        self.assertEqual(self.br.items(self.root), {"alpha": "Alpha thing", "beta-two": "Beta thing"})
+        self.assertEqual(self.br.items(self.root), {"alpha": "Alpha thing", "beta-two": "Beta thing",
+                                                    "night-shift": "Night-shift branches"})
 
     def test_next_free_n_counts_every_type_and_remote_names(self):
         self.assertEqual(self.br.next_n([], "alpha"), 1)
@@ -269,6 +271,22 @@ class Branches(h.RepoCase):
         self.assertEqual(self.check(f"refs/heads/feature/alpha/1 {sha} refs/heads/feature/alpha/1 {'0' * 40}"), [])
         self.assertEqual(self.check(f"refs/heads/main {sha} refs/heads/main {sha}"), [])
         self.assertEqual(self.check(f"refs/tags/v1 {sha} refs/tags/v1 {'0' * 40}"), [])
+
+    def test_a_night_shift_branch_is_named_with_the_standing_item(self):
+        sha = "a" * 40
+        self.assertEqual(self.check(f"refs/heads/chore/night-shift/3 {sha} refs/heads/chore/night-shift/3 {'0' * 40}"), [])
+        dated = self.check(f"refs/heads/chore/night-shift-2026-10-23 {sha} refs/heads/chore/night-shift-2026-10-23 {'0' * 40}")
+        self.assertEqual(len(dated), 1)
+        self.assertIn("breaks the rule", dated[0])
+
+    def test_the_night_shift_skill_names_the_branch_the_rule_accepts(self):
+        repo = h.HERE.parents[2]
+        for rel in (".claude/skills/night-shift/SKILL.md",
+                    "src/devhost/share/python/templates/claude/skills/night-shift/SKILL.md",
+                    "docs/night-shift/README.md", "src/devhost/share/python/templates/docs/night-shift/README.md"):
+            text = (repo / rel).read_text(encoding="utf-8")
+            self.assertIn("chore/night-shift/<n>", text, rel)
+            self.assertNotIn("chore/night-shift-YYYY", text, rel)
 
     def test_push_check_refuses_a_name_that_breaks_the_rule(self):
         sha = "a" * 40
