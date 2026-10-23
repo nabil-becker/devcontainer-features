@@ -2,7 +2,9 @@
 night shift) and the entrypoint's exit status and lines."""
 from __future__ import annotations
 
+import os
 import sys
+import time
 import unittest
 from pathlib import Path
 
@@ -113,6 +115,22 @@ class Shutdown(h.RepoCase):
         self.assertEqual(len(found), 1)
         self.assertIn("pending-bbb", found[0])
         self.assertEqual(h.run(["shutdown"], self.root, self.env).returncode, 1)
+
+    def test_a_stale_pending_file_is_a_note_not_a_finding(self):
+        job = self.state / "scribe"
+        job.mkdir(parents=True)
+        old = job / "pending-finished-subagent"
+        old.write_text("a stretch from a session that ended")
+        day_and_more = time.time() - (self.sd.STALE_HOURS + 1) * 3600
+        os.utime(old, (day_and_more, day_and_more))
+        self.assertEqual(self.sd.pending(self.root), [])
+        self.assertTrue(any("pending-finished-subagent" in n and "not counted" in n for n in self.sd.notes(self.root)))
+        fresh = job / "pending-live"
+        fresh.write_text("a stretch from this session")
+        found = self.sd.pending(self.root)
+        self.assertEqual(len(found), 1)
+        self.assertIn("pending-live", found[0])
+        self.assertNotIn("pending-finished-subagent", found[0])
 
     def test_night_shift(self):
         folder = self.root / "docs" / "night-shift"
