@@ -144,8 +144,8 @@ on PATH when the version is `latest`). Together with the PowerShell flavour
 for Windows it backs the `task devcontainer:*` tasks that
 `bootstrap/bootstrap.ps1` / `bootstrap.sh` vendor into a repo; nothing is
 installed globally on any host. Its host settings are
-`DEVCONTAINER_DOCKER_PATH`, `DEVCONTAINER_NODE_VERSION` and
-`DEVCONTAINER_CLI_VERSION`.
+`DEVCONTAINER_DOCKER_PATH`, `DEVCONTAINER_NODE_VERSION`,
+`DEVCONTAINER_CLI_VERSION`, `HOST_TYPE` and `HOST_TYPE_PRIORITY` (see "Host type").
 
 `task devcontainer:up` (alias `start`) and `task devcontainer:stop` (alias
 `down`) are idempotent, so other tasks can require them. `up` starts a stopped
@@ -211,6 +211,48 @@ devcontainer for <folder>. Start it with: task dc:start`, exit 1); or the
 engine could not be reached (its own error plus `the container engine (<path>)
 could not be reached`, exit 2). Other subcommands keep their generic failure
 message.
+
+## Host type
+
+The launcher (the PowerShell flavour and the bash twin, the same rules in both)
+knows what kind of host it runs on, so a repository writes nothing host-specific.
+`HOST_TYPE` names it; the design is in `docs/proposals/host-profile.md` and ADR 0024.
+
+| `HOST_TYPE` | Detected by | Engine | `DCF_HOST_HOME` |
+| --- | --- | --- | --- |
+| `windows-docker` | launcher on Windows; `docker` on PATH answers `docker info` | `docker` | `%USERPROFILE%` |
+| `windows-wsl-docker` | inside a WSL distro (`WSL_DISTRO_NAME`, or `/proc/version` names Microsoft); or, from Windows, `wsl -e docker info` answers | `docker` | the distro's `$HOME` (asked through `wsl.exe` from Windows) |
+| `windows-wslc` | launcher on Windows; `wslc.exe` on PATH or in `C:\Program Files\WSL` | `wslc` | `%USERPROFILE%` |
+| `linux` | `uname -s` is Linux and not WSL | `docker` | `$HOME` |
+| `macos` | `uname -s` is Darwin | `docker` | `$HOME` |
+
+- `HOST_TYPE` defaults to `auto`; an explicit id skips detection (and must fit the launcher's OS: the
+  bash twin runs on Linux, macOS and inside WSL, so it takes `linux`, `macos` and `windows-wsl-docker`;
+  the Windows ids belong to the PowerShell launcher). An unknown id is an error that lists the valid ones.
+- `HOST_TYPE_PRIORITY` is the ordered, comma-separated list `auto` walks, taking the first id whose
+  detection passes. Default per OS the launcher runs on: Windows `windows-docker,windows-wsl-docker,windows-wslc`;
+  inside a WSL distro `windows-wsl-docker`; Linux `linux`; macOS `macos`. An organisation that wants Docker in
+  WSL first writes `HOST_TYPE_PRIORITY=windows-wsl-docker,windows-docker,windows-wslc` in `.devcontainer/.env`.
+- `DEVCONTAINER_DOCKER_PATH` still names the engine and always wins, whatever the host type (podman, a full path).
+  In the PowerShell launcher, with `HOST_TYPE=auto`, nothing passing and `DEVCONTAINER_DOCKER_PATH` set, the first id of
+  the priority list that fits the OS is taken, because the engine is given. Unset, the engine follows the host type, so on Windows
+  `docker` that is on PATH but whose daemon is down no longer wins over an installed `wslc.exe`.
+- Before it runs the CLI (`up`, `build`, `exec` and the other subcommands that take `--docker-path`) the launcher sets
+  `DCF_HOST_TYPE` (the resolved id), `DCF_HOST_HOME` (the host user's home) and `DCF_HOST_SSH_AGENT`
+  (`none` on every id for now; the ssh-agent Feature fills it) in its own environment. A repository maps them into the
+  container itself with `containerEnv`, `"DCF_HOST_TYPE": "${localEnv:DCF_HOST_TYPE}"` and so on (the bootstrap's
+  `devcontainer.json` template does), and writes the git-dirs mount as
+  `source=${localEnv:DCF_HOST_HOME}/.git-dirs,target=/git-dirs,type=bind`, the same line on every host. Opening the
+  folder straight in VS Code skips the launcher: the variables are then empty.
+- `task devcontainer:host` prints the result without starting anything: `HOST_TYPE` as resolved and why, the priority list
+  used, the engine command and the three `DCF_HOST_*` values. `HOST_TYPE=<id>` or `HOST_TYPE_PRIORITY=<ids>` on the
+  command line try other choices.
+
+Not verified on real hosts: `wsl -e docker info` answering for the default distro; the WSL markers on every WSL version
+(a container on a WSL 2 kernel also reads as WSL); `windows-wsl-docker` driven from Windows, where `--docker-path` takes
+one executable, so it needs a `docker` on PATH that reaches the distro or `DEVCONTAINER_DOCKER_PATH`; and Docker
+Desktop's context. The evidence is replaceable: the bash twin reads `DCF_HOST_UNAME` and `DCF_HOST_PROC_VERSION`
+instead of `uname -s` and `/proc/version`, and an explicit `HOST_TYPE` skips detection altogether.
 
 ## Why this one exists
 

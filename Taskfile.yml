@@ -88,6 +88,7 @@ tasks:
       - task: test:git-unit
       - task: test:bootstrap
       - task: test:shutdown
+      - task: test:host-type
 
   test:git-unit:
     desc: 'Docker-free tests of the git Feature''s wrapper, git-setup and .git-dirs mapping, run from src/git against temp folders (never the checkout''s own git dir or global config); part of lint.'
@@ -99,8 +100,13 @@ tasks:
     cmds:
       - bash test/bootstrap/shutdown_resolution_test.sh
 
+  test:host-type:
+    desc: 'Docker-free bash tests of HOST_TYPE resolution in the bash twin (src/devcontainer-cli/devcontainer-cli.sh): explicit id, unknown id, auto and HOST_TYPE_PRIORITY (default and an organisation list), the DCF_HOST_* variables handed to the CLI, DEVCONTAINER_DOCKER_PATH still naming the engine; evidence faked with DCF_HOST_UNAME, DCF_HOST_PROC_VERSION and fake docker and devcontainer commands; part of lint. The PowerShell twin is covered by test:bootstrap.'
+    cmds:
+      - bash test/bootstrap/host_type_test.sh
+
   test:bootstrap:
-    desc: 'Pester tests of the Windows host launcher (bootstrap/host/DevcontainerCli.psm1): the build lock that serialises devcontainer up/build across repositories. Needs pwsh with Pester 5 or later (Install-Module Pester -Scope CurrentUser); runs on any host, so it is part of lint.'
+    desc: 'Pester tests of the Windows host launcher (bootstrap/host/DevcontainerCli.psm1): the build lock that serialises devcontainer up/build across repositories, the stop check, and HOST_TYPE resolution and the DCF_HOST_* variables (evidence mocked). Needs pwsh with Pester 5 or later (Install-Module Pester -Scope CurrentUser); runs on any host, so it is part of lint.'
     cmds:
       - pwsh -NoLogo -NoProfile -Command "Import-Module Pester -MinimumVersion 5.0; Invoke-Pester -Path '{{.ROOT_DIR}}/test/bootstrap' -Output Detailed -CI"
 

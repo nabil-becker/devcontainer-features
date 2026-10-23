@@ -66,7 +66,9 @@ gap to close here (see [Contributing from a consuming repo](#contributing-from-a
   same target, its mount wins, and `task devcontainer:homes` as
   `initializeCommand` guarantees the host folder exists. Examples spell the
   host path with `${localEnv:USERPROFILE}` (Windows); on Linux/macOS use
-  `${localEnv:HOME}`. Never concatenate the two: both can be set on Windows. Caches and
+  `${localEnv:HOME}`, or `${localEnv:DCF_HOST_HOME}` (set by the launcher on every host type,
+  see "Host type" in the devcontainer-cli notes) for the same line everywhere. Never
+  concatenate the two: both can be set on Windows. Caches and
   worktrees stay out of the checkout too (`PYTHONPYCACHEPREFIX`, a volume
   over `.claude/worktrees`), or a synced checkout carries every build
   artefact.
@@ -173,7 +175,9 @@ run is configured:
 
 | Setting | Env var | Parameter |
 | --- | --- | --- |
-| Docker-compatible CLI for `--docker-path` (`docker`, `wslc`, `podman`, `nerdctl`, `finch`, or a path). Unset: `docker` on PATH, else `wslc.exe` on Windows. | `DEVCONTAINER_DOCKER_PATH` | `-DockerPath` / `--docker-path` |
+| Docker-compatible CLI for `--docker-path` (`docker`, `wslc`, `podman`, `nerdctl`, `finch`, or a path). Unset: the engine of the host type (`docker`, or `wslc.exe` for `windows-wslc`). Always wins over the host type. | `DEVCONTAINER_DOCKER_PATH` | `-DockerPath` / `--docker-path` |
+| Kind of host: `auto` (default) or `windows-docker`, `windows-wsl-docker`, `windows-wslc`, `linux`, `macos`; an id skips detection. The launcher sets `DCF_HOST_TYPE`, `DCF_HOST_HOME`, `DCF_HOST_SSH_AGENT` from it (`task devcontainer:host` shows them). | `HOST_TYPE` | `HOST_TYPE=` var |
+| Ordered, comma-separated host types `auto` tries (default per OS: Windows `windows-docker,windows-wsl-docker,windows-wslc`, inside WSL `windows-wsl-docker`, `linux`, `macos`) | `HOST_TYPE_PRIORITY` | `HOST_TYPE_PRIORITY=` var |
 | Portable Node.js version | `DEVCONTAINER_NODE_VERSION` | - |
 | `@devcontainers/cli` version (default `latest`) | `DEVCONTAINER_CLI_VERSION` | - |
 | Root of the host-side tool-state folders (`devcontainer:homes`; default `~/.devcontainer-homes`) | `DEVCONTAINER_HOMES` | - |

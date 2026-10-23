@@ -7,7 +7,7 @@
 
 .PARAMETER Subcommand
     @devcontainers/cli subcommand: up, build, exec, read-configuration,
-    features, ...; or stop, prepshutdown and running, which are not CLI
+    features, ...; or stop, prepshutdown, running and host, which are not CLI
     subcommands (see DevcontainerCli.psm1).
 
 .PARAMETER WorkspaceFolder
@@ -31,6 +31,14 @@
     Empty = $env:DEVCONTAINER_DOCKER_PATH, else auto-detect (docker, then
     wslc.exe on Windows).
 
+.PARAMETER HostType
+    HOST_TYPE: auto, or one of windows-docker, windows-wsl-docker, windows-wslc,
+    linux, macos. Empty = $env:HOST_TYPE, else auto.
+
+.PARAMETER HostTypePriority
+    HOST_TYPE_PRIORITY: ordered, comma-separated ids that auto tries. Empty =
+    $env:HOST_TYPE_PRIORITY, else the default for the OS.
+
 .PARAMETER NodeVersion
     Portable Node.js version (Windows). Empty = $env:DEVCONTAINER_NODE_VERSION
     or the module default.
@@ -46,6 +54,8 @@ param(
     [string]$CliArgsB64,
     [string]$CommandB64,
     [string]$DockerPath,
+    [string]$HostType,
+    [string]$HostTypePriority,
     [string]$NodeVersion,
     [string]$CliVersion,
     [switch]$Force
@@ -53,6 +63,9 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'DevcontainerCli.psm1') -Force
+# The module reads them as environment variables (a .env file can drive it too).
+if ($HostType) { $env:HOST_TYPE = $HostType }
+if ($HostTypePriority) { $env:HOST_TYPE_PRIORITY = $HostTypePriority }
 
 $params = @{
     Subcommand      = $Subcommand

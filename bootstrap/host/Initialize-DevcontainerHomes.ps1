@@ -20,7 +20,7 @@
     It also creates %USERPROFILE%\.git-dirs (~/.git-dirs off Windows) when
     missing: a checkout kept in OneDrive has its git dir there, and every
     devcontainer bind-mounts that one folder for the git Feature
-      source=${localEnv:USERPROFILE}/.git-dirs,target=/git-dirs,type=bind
+      source=${localEnv:DCF_HOST_HOME}/.git-dirs,target=/git-dirs,type=bind
     so a machine without it must not fail the start.
 
 .PARAMETER Name

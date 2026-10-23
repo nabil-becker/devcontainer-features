@@ -265,3 +265,137 @@ Stop-Devcontainer $($args2 -join ' ')
         }
     }
 }
+
+Describe 'Host type (HOST_TYPE, HOST_TYPE_PRIORITY, DCF_HOST_*)' {
+    # The detection evidence is mocked inside the module: the OS the launcher runs
+    # on, whether docker / `wsl -e docker` answer, whether wslc.exe exists.
+    BeforeAll {
+        $script:EnvNames = 'HOST_TYPE', 'HOST_TYPE_PRIORITY', 'DEVCONTAINER_DOCKER_PATH', 'DCF_HOST_TYPE', 'DCF_HOST_HOME', 'DCF_HOST_SSH_AGENT', 'USERPROFILE', 'HOME'
+        $script:SavedEnv = @{}
+        foreach ($n in $script:EnvNames) { $script:SavedEnv[$n] = [Environment]::GetEnvironmentVariable($n) }
+        function Initialize-Evidence {
+            param([string]$Os, [bool]$Docker = $false, [bool]$WslDocker = $false, [string]$Wslc = '')
+            $script:ev = @{ Os = $Os; Docker = $Docker; WslDocker = $WslDocker; Wslc = $Wslc }
+            Mock -ModuleName DevcontainerCli Get-HostPlatform { $script:ev.Os }
+            Mock -ModuleName DevcontainerCli Test-DockerResponding { $script:ev.Docker }
+            Mock -ModuleName DevcontainerCli Test-WslDockerResponding { $script:ev.WslDocker }
+            Mock -ModuleName DevcontainerCli Get-WslcPath { if ($script:ev.Wslc) { $script:ev.Wslc } else { $null } }
+            Mock -ModuleName DevcontainerCli Get-WslHome { '/home/wsluser' }
+            # `docker` is on PATH exactly when the evidence says so (the engine lookup uses Get-Command).
+            Mock -ModuleName DevcontainerCli Get-Command { if ($script:ev.Docker) { [pscustomobject]@{ Source = '/fake/docker' } } } -ParameterFilter { $Name -eq 'docker' }
+        }
+    }
+    BeforeEach {
+        foreach ($n in $script:EnvNames) { [Environment]::SetEnvironmentVariable($n, $null) }
+        [Environment]::SetEnvironmentVariable('USERPROFILE', 'C:\Users\test')
+        [Environment]::SetEnvironmentVariable('HOME', '/home/test')
+        Clear-HostProfileCache
+    }
+    AfterAll { foreach ($n in $script:EnvNames) { [Environment]::SetEnvironmentVariable($n, $script:SavedEnv[$n]) } }
+
+    It 'takes an explicit id without running any detection' {
+        Initialize-Evidence -Os windows   # nothing answers: auto would fail
+        $env:HOST_TYPE = 'windows-wslc'
+        $t = Resolve-HostType
+        $t.Type | Should -Be 'windows-wslc'
+        $t.Why | Should -Match 'explicitly'
+        Should -Invoke -ModuleName DevcontainerCli Test-DockerResponding -Times 0 -Exactly
+        Should -Invoke -ModuleName DevcontainerCli Get-WslcPath -Times 0 -Exactly
+    }
+
+    It 'rejects an unknown HOST_TYPE and lists the known ids' {
+        Initialize-Evidence -Os windows
+        $env:HOST_TYPE = 'solaris'
+        { Resolve-HostType } | Should -Throw "*'solaris' is unknown*windows-docker, windows-wsl-docker, windows-wslc, linux, macos*"
+    }
+
+    It 'rejects an unknown id in HOST_TYPE_PRIORITY' {
+        Initialize-Evidence -Os windows
+        $env:HOST_TYPE_PRIORITY = 'windows-docker,bogus'
+        { Resolve-HostType } | Should -Throw "*HOST_TYPE_PRIORITY*'bogus'*Known ids*"
+    }
+
+    It 'auto takes the first id of the default Windows priority that passes' {
+        Initialize-Evidence -Os windows -Docker $false -WslDocker $true -Wslc 'C:\wslc.exe'
+        $t = Resolve-HostType
+        $t.Type | Should -Be 'windows-wsl-docker'
+        ($t.Priority -join ',') | Should -Be 'windows-docker,windows-wsl-docker,windows-wslc'
+    }
+
+    It 'auto falls through to windows-wslc when only wslc.exe exists' {
+        Initialize-Evidence -Os windows -Wslc 'C:\wslc.exe'
+        (Resolve-HostType).Type | Should -Be 'windows-wslc'
+    }
+
+    It 'an organisation priority list overrides the default order' {
+        # Both docker and WSL docker answer: the default picks windows-docker, the org list windows-wsl-docker.
+        Initialize-Evidence -Os windows -Docker $true -WslDocker $true
+        (Resolve-HostType).Type | Should -Be 'windows-docker'
+        $env:HOST_TYPE_PRIORITY = 'windows-wsl-docker, windows-docker,windows-wslc'
+        $t = Resolve-HostType
+        $t.Type | Should -Be 'windows-wsl-docker'
+        ($t.Priority -join ',') | Should -Be 'windows-wsl-docker,windows-docker,windows-wslc'
+    }
+
+    It 'auto names every failed check when nothing passes' {
+        Initialize-Evidence -Os windows
+        { Resolve-HostType } | Should -Throw '*no host type*windows-docker*windows-wsl-docker*windows-wslc*'
+    }
+
+    It 'defaults per OS: inside WSL, Linux and macOS' {
+        Initialize-Evidence -Os wsl
+        (Resolve-HostType).Type | Should -Be 'windows-wsl-docker'
+        Initialize-Evidence -Os linux
+        (Resolve-HostType).Type | Should -Be 'linux'
+        Initialize-Evidence -Os macos
+        (Resolve-HostType).Type | Should -Be 'macos'
+    }
+
+    It 'refuses an explicit id the launcher cannot be' {
+        Initialize-Evidence -Os linux
+        $env:HOST_TYPE = 'windows-docker'
+        { Resolve-HostType } | Should -Throw '*cannot run from a launcher on linux*'
+    }
+
+    It 'sets DCF_HOST_TYPE, DCF_HOST_HOME and DCF_HOST_SSH_AGENT per id' -ForEach @(
+        @{ Os = 'windows'; Id = 'windows-docker'; HostHome = 'C:\Users\test'; Docker = $true }
+        @{ Os = 'windows'; Id = 'windows-wslc'; HostHome = 'C:\Users\test'; Docker = $false }
+        @{ Os = 'windows'; Id = 'windows-wsl-docker'; HostHome = '/home/wsluser'; Docker = $true }
+        @{ Os = 'wsl'; Id = 'windows-wsl-docker'; HostHome = '/home/test'; Docker = $true }
+        @{ Os = 'linux'; Id = 'linux'; HostHome = '/home/test'; Docker = $true }
+        @{ Os = 'macos'; Id = 'macos'; HostHome = '/home/test'; Docker = $true }
+    ) {
+        Initialize-Evidence -Os $Os -Docker $Docker -Wslc 'C:\wslc.exe'
+        $env:HOST_TYPE = $Id
+        $p = Initialize-HostEnvironment
+        $env:DCF_HOST_TYPE | Should -Be $Id
+        $env:DCF_HOST_HOME | Should -Be $HostHome
+        $env:DCF_HOST_SSH_AGENT | Should -Be 'none'
+        $p.Type | Should -Be $Id
+    }
+
+    It 'engine follows the host type: wslc for windows-wslc, docker for windows-docker' {
+        Initialize-Evidence -Os windows -Docker $true -Wslc 'C:\wslc.exe'
+        $env:HOST_TYPE = 'windows-wslc'
+        Resolve-DockerPath | Should -Be 'C:\wslc.exe'
+        Clear-HostProfileCache
+        $env:HOST_TYPE = 'windows-docker'
+        Resolve-DockerPath | Should -BeNullOrEmpty
+    }
+
+    It 'DEVCONTAINER_DOCKER_PATH still wins for the engine, whatever the host type' {
+        Initialize-Evidence -Os windows -Docker $true -Wslc 'C:\wslc.exe'
+        $env:HOST_TYPE = 'windows-wslc'
+        $env:DEVCONTAINER_DOCKER_PATH = $PSCommandPath    # an existing file stands for "a full path"
+        Resolve-DockerPath | Should -Be (Resolve-Path $PSCommandPath).Path
+        (Resolve-HostProfile).Engine | Should -Be (Resolve-Path $PSCommandPath).Path
+    }
+
+    It 'with DEVCONTAINER_DOCKER_PATH set and nothing detected, auto takes the first id that fits the OS' {
+        Initialize-Evidence -Os windows
+        $env:DEVCONTAINER_DOCKER_PATH = $PSCommandPath
+        $t = Resolve-HostType
+        $t.Type | Should -Be 'windows-docker'
+        $t.Why | Should -Match 'DEVCONTAINER_DOCKER_PATH'
+    }
+}

@@ -23,6 +23,8 @@
 #       stops nothing (devcontainer:prepshutdown).
 #       `running` is not one either: silent, exit 0 when such a container runs,
 #       1 when none does, 2 when the engine cannot be asked.
+#       `host` is not one either: it prints the resolved host type, the engine
+#       command and the DCF_HOST_* values, and starts nothing (devcontainer:host).
 #       A failed `exec` says which of three things failed: the command (its
 #       exit code is passed on), no running container (1), the engine (2).
 #
@@ -33,6 +35,9 @@
 #   DEVCONTAINER_CLI_VERSION   @devcontainers/cli version (default latest).
 #                              Pinning it forces the cached install even if a
 #                              `devcontainer` is on PATH.
+#   HOST_TYPE, HOST_TYPE_PRIORITY  the host type (see "host type" below); the
+#                              launcher sets DCF_HOST_TYPE, DCF_HOST_HOME and
+#                              DCF_HOST_SSH_AGENT before it runs the CLI.
 #   DEVCONTAINER_BUILD_LOCK    0 = do not serialise image builds (below).
 #   DEVCONTAINER_BUILD_LOCK_FEATURES_TEST  true = `features test` takes the
 #                              lock too (default false).
@@ -189,6 +194,124 @@ host_cli_command() {
   printf '%s\n%s' "$node_dir/bin/node" "$entry"
 }
 
+# ------------------------------------------------------------ host type ----
+# HOST_TYPE says what kind of host the launcher runs on (docs/proposals/host-profile.md,
+# ADR 0024); the PowerShell twin (bootstrap/host/DevcontainerCli.psm1) does the same.
+#   HOST_TYPE            auto (default) or one id; an explicit id skips detection.
+#   HOST_TYPE_PRIORITY   ordered comma list `auto` walks; default per OS below.
+# Ids: windows-docker, windows-wsl-docker, windows-wslc, linux, macos. This
+# script runs on Linux, macOS and inside a WSL distro, so only linux, macos and
+# windows-wsl-docker can be chosen here; the Windows ids belong to the
+# PowerShell launcher. The engine is not chosen by the host type here: docker
+# on PATH, or DEVCONTAINER_DOCKER_PATH, which always wins.
+# Evidence can be replaced for tests and odd hosts: DCF_HOST_UNAME (instead of
+# `uname -s`), DCF_HOST_PROC_VERSION (file read instead of /proc/version).
+host_type_ids='windows-docker, windows-wsl-docker, windows-wslc, linux, macos'
+
+# host_os: prints linux, wsl (a WSL distro), macos or windows (Git Bash and kin).
+host_os() {
+  local u="${DCF_HOST_UNAME:-$(uname -s)}"
+  case "$u" in
+    Darwin) echo macos ;;
+    MINGW* | MSYS* | CYGWIN*) echo windows ;;
+    *)
+      # UNVERIFIED on every WSL version: WSL_DISTRO_NAME set, or the kernel
+      # string in /proc/version naming Microsoft.
+      if [ -n "${WSL_DISTRO_NAME:-}" ] || grep -qi microsoft "${DCF_HOST_PROC_VERSION:-/proc/version}" 2>/dev/null; then echo wsl
+      else echo linux; fi ;;
+  esac
+}
+
+host_type_default_priority() {
+  case "$(host_os)" in
+    wsl) echo windows-wsl-docker ;;
+    macos) echo macos ;;
+    windows) echo 'windows-docker,windows-wsl-docker,windows-wslc' ;;
+    *) echo linux ;;
+  esac
+}
+
+# host_type_fits <id>: can a launcher on this OS act as that host type at all.
+host_type_fits() {
+  local os; os="$(host_os)"
+  case "$1" in
+    linux) [ "$os" = linux ] || [ "$os" = wsl ] ;;
+    windows-wsl-docker) [ "$os" = wsl ] ;;
+    macos) [ "$os" = macos ] ;;
+    *) return 1 ;;
+  esac
+}
+
+host_type_known() {
+  case "$1" in windows-docker | windows-wsl-docker | windows-wslc | linux | macos) return 0 ;; esac
+  return 1
+}
+
+# resolve_host_type: sets HT_TYPE, HT_WHY, HT_PRIORITY (comma list). Same rules as
+# the PowerShell Resolve-HostType: an explicit id skips detection; auto takes the
+# first id of the priority list that passes; an unknown id is an error naming the
+# valid ones. (Detection here is only "does this OS fit", so unlike the PowerShell
+# launcher there is no DEVCONTAINER_DOCKER_PATH fallback for "nothing passed".)
+resolve_host_type() {
+  local want="${HOST_TYPE:-auto}" prio="${HOST_TYPE_PRIORITY:-}" source=HOST_TYPE_PRIORITY id notes=''
+  if [ -z "$prio" ]; then prio="$(host_type_default_priority)"; source='default for this OS'; fi
+  local -a ids=()
+  local IFS=,
+  # shellcheck disable=SC2206  # split on commas on purpose
+  ids=($prio)
+  IFS=$' \t\n'
+  local -a clean=()
+  for id in "${ids[@]}"; do
+    id="${id//[[:space:]]/}"
+    [ -n "$id" ] || continue
+    host_type_known "$id" || die "HOST_TYPE_PRIORITY has an unknown host type '$id'. Known ids: $host_type_ids."
+    clean+=("$id")
+  done
+  HT_PRIORITY="$(IFS=,; echo "${clean[*]}")"
+  if [ "$want" != auto ]; then
+    host_type_known "$want" || die "HOST_TYPE '$want' is unknown. Known ids: auto, $host_type_ids."
+    host_type_fits "$want" || die "HOST_TYPE '$want' cannot run from this launcher ($(host_os)); use the PowerShell launcher on Windows. Known ids: $host_type_ids."
+    HT_TYPE="$want"; HT_WHY='HOST_TYPE set explicitly (detection skipped)'
+    return 0
+  fi
+  for id in "${clean[@]}"; do
+    if host_type_fits "$id"; then
+      HT_TYPE="$id"; HT_WHY="auto: first in $source to pass ($id on $(host_os))"
+      return 0
+    fi
+    notes="$notes${notes:+; }$id: the launcher runs on $(host_os)"
+  done
+  die "HOST_TYPE=auto: no host type in [$HT_PRIORITY] passed. $notes. Set HOST_TYPE=<id> ($host_type_ids), or HOST_TYPE_PRIORITY."
+}
+
+# resolve_host_profile: HT_* plus HT_HOME and HT_SSH_AGENT (slice 1: none; slice 4 fills it).
+resolve_host_profile() {
+  resolve_host_type
+  HT_HOME="${HOME:-}"
+  HT_SSH_AGENT=none
+}
+
+# export_host_env: DCF_HOST_* into this process's environment, which the CLI inherits;
+# a repository maps them into the container with containerEnv.
+export_host_env() {
+  resolve_host_profile
+  export DCF_HOST_TYPE="$HT_TYPE" DCF_HOST_HOME="$HT_HOME" DCF_HOST_SSH_AGENT="$HT_SSH_AGENT"
+}
+
+# mode_host: `task devcontainer:host`, prints the profile and starts nothing.
+mode_host() {
+  local engine
+  resolve_host_profile
+  engine="$(resolve_docker_path 2>&1)" || engine="(none: ${engine#devcontainer-cli: })"
+  echo "HOST_TYPE          : $HT_TYPE"
+  echo "why                : $HT_WHY"
+  echo "priority list      : $HT_PRIORITY"
+  echo "engine command     : ${engine:-${DEVCONTAINER_DOCKER_PATH:-docker}}"
+  echo "DCF_HOST_TYPE      : $HT_TYPE"
+  echo "DCF_HOST_HOME      : $HT_HOME"
+  echo "DCF_HOST_SSH_AGENT : $HT_SSH_AGENT"
+}
+
 mode_init() {
   local engine
   [ "${1:-}" = --force ] && rm -rf "$cache_root/devcontainers-cli"
@@ -305,7 +428,8 @@ run_cli() {
       if [ -n "$engine" ]; then
         echo "Container engine: $engine" >&2
         args+=(--docker-path "$engine")
-      fi ;;
+      fi
+      export_host_env ;;
   esac
   if [ -n "$cmd_b64" ]; then
     [ "$subcommand" = exec ] || die '--cmd-b64 is only meaningful with exec'
@@ -373,6 +497,8 @@ mode_run() {
       *) break ;;
     esac
   done
+
+  [ "$subcommand" != host ] || { mode_host; return; }
 
   case "$subcommand" in
     stop | prepshutdown | running)
