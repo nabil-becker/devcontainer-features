@@ -190,6 +190,7 @@ stays. Ids are short descriptive slugs (two to four kebab-case words naming the 
 - [ ] **stash-leftover-clear Clear the one leftover stash** (the Operator). The stash list still holds one stash of the Operator's; `git stash clear` once nothing in it is needed. Added 2026-10-23.
 - [ ] **release-devhost-1-8-6 Release devhost 1.8.6 after the night's PR merges** (the Operator). The night of 2026-10-23 holds items 1 and 2 (the night-shift branch name, and the shutdown check's note for a stale pending stretch); item 3 (the in-container probe override) reaches consumers through the bootstrap. Run the release once the Operator has reviewed the night's PR, then rebuild the devhost here. The host does not start the release. Added 2026-10-23.
 - [x] **rebuild-respects-check The rebuild stops like stop** (host). `devcontainer:rebuild` went on rebuilding when its stop was refused ("rebuilding anyway"); the Operator wants it to behave like `devcontainer:stop`: a refused stop rebuilds nothing and `FORCE=1` is the way past. Added 2026-10-23. Done 2026-10-23 (branch `fix/rebuild-respects-check/1`).
+- [x] **bar-theme The theme is a bar** (host). The Operator did not like the King Arthur theme and chose a bar (2026-10-23): `docs/model/themes/bar.toml` replaces `arthurian.toml` (the landlord, the bartender, runners, barbacks, the tab book, the chalkboard, the cash-up, the lock-in, the bouncers), ADR 0023 supersedes ADR 0004, and the site reads "Dashboard" instead of "Court". Added 2026-10-23. Done 2026-10-23 (branch `docs/bar-theme/1`).
 
 ## Next
 

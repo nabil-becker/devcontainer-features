@@ -9,7 +9,7 @@ way of working (roles, records, mechanisms) are where the Features are built.
 |---|---|
 | `ontology.toml` | The canonical model: the closed `types` and `predicates`, one `[id]` table per base name (`type`, `term`, `summary`), and the `[[relation]]` triples (subject, predicate, object). |
 | `../../LEXICON.md` | The same names explained in prose for people. |
-| `themes/*.toml` | Label files, `id = "label"`, one per theme (`arthurian.toml`). They change no process; no committed output speaks in them (ADR 0004). |
+| `themes/*.toml` | Label files, `id = "label"`, one per theme (`bar.toml`; ADR 0023). They change no process; no committed output speaks in them (ADR 0004). |
 | `c4-context.md`, `c4-container.md` | C4 views as Mermaid flowcharts of the ids. |
 
 ## Rules

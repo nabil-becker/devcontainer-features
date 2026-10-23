@@ -183,7 +183,7 @@ class Site(h.RepoCase):
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertIn("index.html", done.stdout)
         frag = (out / "index.html").read_text(encoding="utf-8")
-        self.assertTrue(frag.startswith("<title>Court Dashboard</title>\n<style>"))
+        self.assertTrue(frag.startswith("<title>Dashboard</title>\n<style>"))
         for tag in ("<!doctype", "<html", "<head", "<body"):
             self.assertNotIn(tag, frag.lower())
         self.assertNotIn(site.PLACEHOLDER, frag)

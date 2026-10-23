@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The court's homepage (`devhost-site`): one self-contained HTML page built from the tracked docs and records.
+"""The repository's homepage (`devhost-site`): one self-contained HTML page built from the tracked docs and records.
 
 Usage: site.py [--out DIR] [--standalone] [--prs] [--root DIR]
 
@@ -334,7 +334,7 @@ def render(data: dict, standalone: bool = False) -> str:
 
 
 def main(argv: list[str]) -> int:
-    ap = argparse.ArgumentParser(prog="devhost-site", description="Build the court's homepage: one self-contained HTML page.")
+    ap = argparse.ArgumentParser(prog="devhost-site", description="Build the repository's homepage: one self-contained HTML page.")
     ap.add_argument("--out", help="output folder (default: .devhost/site/ at the repository root)")
     ap.add_argument("--standalone", action="store_true", help="a full HTML document, for a host that does not wrap the page")
     ap.add_argument("--prs", action="store_true", help="add the open pull requests (needs gh)")
