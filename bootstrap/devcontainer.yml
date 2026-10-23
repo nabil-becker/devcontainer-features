@@ -27,6 +27,20 @@
 #                              on PATH (docker, wslc, podman, nerdctl, finch)
 #                              or a full path. Unset = docker on PATH, else
 #                              wslc.exe on Windows.
+#   HOST_TYPE                  the kind of host: auto (default), windows-docker,
+#                              windows-wsl-docker, windows-wslc, linux or macos.
+#                              An explicit id skips detection. Before it runs the
+#                              CLI the launcher sets DCF_HOST_TYPE, DCF_HOST_HOME
+#                              and DCF_HOST_SSH_AGENT in its environment; a repo
+#                              maps them with containerEnv (see devcontainer.json
+#                              in the bootstrap). `task devcontainer:host` shows
+#                              the result. DEVCONTAINER_DOCKER_PATH, when set,
+#                              still names the engine whatever the host type.
+#   HOST_TYPE_PRIORITY         ordered, comma-separated ids that auto tries (an
+#                              organisation sets its own, e.g. in .devcontainer/.env).
+#                              Default: windows-docker,windows-wsl-docker,windows-wslc
+#                              on Windows; windows-wsl-docker inside a WSL distro;
+#                              linux; macos.
 #   DEVCONTAINER_NODE_VERSION  portable Node.js version (default in the scripts).
 #   DEVCONTAINER_CLI_VERSION   @devcontainers/cli version (default: latest).
 #   DEVCONTAINER_HOMES         host folder for bind-mounted tool state
@@ -67,11 +81,15 @@ vars:
   DEVCONTAINER_DOCKER_PATH: '{{.DEVCONTAINER_DOCKER_PATH | default ""}}'
   DEVCONTAINER_NODE_VERSION: '{{.DEVCONTAINER_NODE_VERSION | default ""}}'
   DEVCONTAINER_CLI_VERSION: '{{.DEVCONTAINER_CLI_VERSION | default ""}}'
+  HOST_TYPE: '{{.HOST_TYPE | default ""}}'
+  HOST_TYPE_PRIORITY: '{{.HOST_TYPE_PRIORITY | default ""}}'
   _PS_SETTINGS: -DockerPath '{{.DEVCONTAINER_DOCKER_PATH}}' -NodeVersion '{{.DEVCONTAINER_NODE_VERSION}}' -CliVersion '{{.DEVCONTAINER_CLI_VERSION}}'
+  # Only the tasks that run the CLI (and `host`) take the host type.
+  _PS_HOST_SETTINGS: -HostType '{{.HOST_TYPE}}' -HostTypePriority '{{.HOST_TYPE_PRIORITY}}'
   # Linux/macOS: the bash script reads the environment. The resolved values
   # are prefixed to the command rather than set through `env:` (see above).
   _SH_SETTINGS: >-
-    {{if .DEVCONTAINER_DOCKER_PATH}}DEVCONTAINER_DOCKER_PATH='{{.DEVCONTAINER_DOCKER_PATH}}' {{end}}{{if .DEVCONTAINER_NODE_VERSION}}DEVCONTAINER_NODE_VERSION='{{.DEVCONTAINER_NODE_VERSION}}' {{end}}{{if .DEVCONTAINER_CLI_VERSION}}DEVCONTAINER_CLI_VERSION='{{.DEVCONTAINER_CLI_VERSION}}' {{end}}
+    {{if .DEVCONTAINER_DOCKER_PATH}}DEVCONTAINER_DOCKER_PATH='{{.DEVCONTAINER_DOCKER_PATH}}' {{end}}{{if .DEVCONTAINER_NODE_VERSION}}DEVCONTAINER_NODE_VERSION='{{.DEVCONTAINER_NODE_VERSION}}' {{end}}{{if .DEVCONTAINER_CLI_VERSION}}DEVCONTAINER_CLI_VERSION='{{.DEVCONTAINER_CLI_VERSION}}' {{end}}{{if .HOST_TYPE}}HOST_TYPE='{{.HOST_TYPE}}' {{end}}{{if .HOST_TYPE_PRIORITY}}HOST_TYPE_PRIORITY='{{.HOST_TYPE_PRIORITY}}' {{end}}
   # The shutdown check when STOP_CHECK is unset, run by `bash -lc` inside the
   # container from the workspace folder (the CLI's exec starts there): the
   # repository's `task shutdown:check` if its Taskfile defines it, else the
@@ -103,10 +121,17 @@ tasks:
       CMD: '{{if or (eq .SUBCOMMAND "exec") (eq .SUBCOMMAND "stop") (eq .SUBCOMMAND "prepshutdown")}}{{.CMD | default ""}}{{end}}'
       FORCE: '{{if eq .SUBCOMMAND "stop"}}{{.FORCE | default ""}}{{end}}'
     cmds:
-      - cmd: pwsh -NoLogo -NoProfile -File '{{.TASKFILE_DIR}}/host/Invoke-DevcontainerCli.ps1' -WorkspaceFolder '{{.WORKSPACE_FOLDER}}' {{._PS_SETTINGS}} -Subcommand '{{.SUBCOMMAND}}' -CliArgsB64 '{{.ARGS | splitArgs | toJson | b64enc}}' {{if .CMD}}-CommandB64 '{{.CMD | b64enc}}'{{end}} {{if .FORCE}}-Force{{end}}
+      - cmd: pwsh -NoLogo -NoProfile -File '{{.TASKFILE_DIR}}/host/Invoke-DevcontainerCli.ps1' -WorkspaceFolder '{{.WORKSPACE_FOLDER}}' {{._PS_SETTINGS}} {{._PS_HOST_SETTINGS}} -Subcommand '{{.SUBCOMMAND}}' -CliArgsB64 '{{.ARGS | splitArgs | toJson | b64enc}}' {{if .CMD}}-CommandB64 '{{.CMD | b64enc}}'{{end}} {{if .FORCE}}-Force{{end}}
         platforms: [windows]
       - cmd: '{{._SH_SETTINGS}} bash ''{{._BASH_CLI}}'' run ''{{.SUBCOMMAND}}'' --workspace-folder ''{{.WORKSPACE_FOLDER}}'' {{if .CMD}}--cmd-b64 ''{{.CMD | b64enc}}''{{end}} {{if .FORCE}}--force{{end}} -- {{.ARGS}}'
         platforms: [linux, darwin]
+
+  host:
+    desc: 'Show the host profile without starting anything: HOST_TYPE as resolved and why, the HOST_TYPE_PRIORITY list used, the engine command, and the DCF_HOST_TYPE, DCF_HOST_HOME and DCF_HOST_SSH_AGENT values the launcher sets before it runs the CLI. HOST_TYPE=<id> or HOST_TYPE_PRIORITY=<ids> on the command line try other choices.'
+    cmds:
+      - task: cli
+        vars:
+          SUBCOMMAND: host
 
   run:
     desc: 'Internal: run CMD inside the devcontainer - directly when Task already runs inside it, through the exec task (which starts the container first) from the host. What claude and similar "inside" tasks use.'

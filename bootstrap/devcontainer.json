@@ -17,12 +17,26 @@
     // config, transcripts) in a named volume it mounts itself and makes
     // usable at post-create; nothing to configure. git: worktree-aware
     // wrapper, safe.directory and core.hooksPath; a checkout whose git dir
-    // lives in %USERPROFILE%\.git-dirs (OneDrive) needs only the .git-dirs
+    // lives in the host home's .git-dirs (OneDrive) needs only the .git-dirs
     // mount below (git 1.4.0 or later).
     "ghcr.io/nabil-becker/devcontainer-features/git:1": {},
     // "ghcr.io/nabil-becker/devcontainer-features/gh:1": {},
     // "ghcr.io/nabil-becker/devcontainer-features/claude-code:1": {},
     "ghcr.io/devcontainers/features/powershell:1": {}
+  },
+  // The host, as the launcher (task devcontainer:up) found it: it sets these in its
+  // own environment before it runs the devcontainer CLI, and ${localEnv} passes them
+  // on. Features read them (unset = an unknown host, they use defaults); nothing in
+  // this file needs to know the host. Opening the folder straight in VS Code skips the
+  // launcher, so they expand to empty strings there (and the .git-dirs mount line below needs
+  // DCF_HOST_HOME: start through the tasks).
+  "containerEnv": {
+    // windows-docker, windows-wsl-docker, windows-wslc, linux or macos
+    "DCF_HOST_TYPE": "${localEnv:DCF_HOST_TYPE}",
+    // The host user's home: %USERPROFILE% on Windows, $HOME elsewhere
+    "DCF_HOST_HOME": "${localEnv:DCF_HOST_HOME}",
+    // socket, key or none (none for now)
+    "DCF_HOST_SSH_AGENT": "${localEnv:DCF_HOST_SSH_AGENT}"
   },
   // To keep a Feature's state on the host disk instead of its volume
   // (survives container-engine resets, stays outside a synced checkout),
@@ -34,9 +48,9 @@
   //   "mounts": [
   //     "source=${localEnv:USERPROFILE}/.devcontainer-homes/myrepo/claude-code,target=/var/lib/devcontainer-features/claude-code,type=bind",
   //     "source=${localEnv:USERPROFILE}/.devcontainer-homes/myrepo/gh,target=/var/lib/devcontainer-features/gh,type=bind",
-  //     // The checkout's git dir under %USERPROFILE%\.git-dirs (the same line in every repo;
-  //     // devcontainer:homes creates the folder when missing):
-  //     "source=${localEnv:USERPROFILE}/.git-dirs,target=/git-dirs,type=bind"
+  //     // The checkout's git dir under %USERPROFILE%\.git-dirs (the same line in every
+  //     // repo, on every host type; devcontainer:homes creates the folder when missing):
+  //     "source=${localEnv:DCF_HOST_HOME}/.git-dirs,target=/git-dirs,type=bind"
   //   ],
   "remoteUser": "vscode"
 }

@@ -6,8 +6,13 @@ dir does not: the checkout's `.git` is a pointer file,
 in the container. Every consuming repo adds the same line, and nothing else:
 
 ```jsonc
-"mounts": ["source=${localEnv:USERPROFILE}/.git-dirs,target=/git-dirs,type=bind"]
+"mounts": ["source=${localEnv:DCF_HOST_HOME}/.git-dirs,target=/git-dirs,type=bind"]
 ```
+
+`DCF_HOST_HOME` is the host user's home (`%USERPROFILE%` on Windows, `$HOME` on Linux and
+macOS), set by the launcher (`task devcontainer:up`, devcontainer-cli 1.5.0 or later) before it
+runs the devcontainer CLI, so the same line works on every host type. The older form
+`source=${localEnv:USERPROFILE}/.git-dirs,...` keeps working on Windows.
 
 The wrapper then maps the pointer for each git call. When `GIT_DIR` is not
 set (or is Claude Code's placeholder, below) and the nearest `.git` above the
@@ -81,9 +86,10 @@ container path in `<git dir>/worktrees/<name>/gitdir` (outside `config`), as
 it did with the per-repo form; git on Windows sees those worktrees as
 prunable.
 
-Limits: `${localEnv:USERPROFILE}` is empty on a Linux or macOS host, so there
-the line needs `source=${localEnv:HOME}/.git-dirs`; a checkout whose git dir
-is a plain `.git` folder needs none of this.
+Limits: `${localEnv:USERPROFILE}` is empty on a Linux or macOS host, which is why the
+line uses `${localEnv:DCF_HOST_HOME}`; it is empty too when the folder is opened straight
+in VS Code (the launcher did not run), so start through `task devcontainer:up`. A checkout
+whose git dir is a plain `.git` folder needs none of this.
 
 ## Why a wrapper
 

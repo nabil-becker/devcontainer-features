@@ -21,10 +21,17 @@
     unset, `docker` on PATH is used, else wslc.exe (WSL Containers, WSL >=
     2.9.3) on Windows.
 
+    Host type: HOST_TYPE (default auto) names the kind of host - windows-docker,
+    windows-wsl-docker, windows-wslc, linux, macos - and HOST_TYPE_PRIORITY
+    (ordered comma list) says which `auto` tries first. The engine follows the
+    host type unless DEVCONTAINER_DOCKER_PATH is set, which always wins. Before
+    the CLI runs, DCF_HOST_TYPE, DCF_HOST_HOME and DCF_HOST_SSH_AGENT are set in
+    this process (see Resolve-HostProfile; `host` prints them).
+
     Every setting here is read from an environment variable so a .env file
     (loaded by Task's dotenv: or by bootstrap.ps1) can drive it:
       DEVCONTAINER_DOCKER_PATH, DEVCONTAINER_NODE_VERSION,
-      DEVCONTAINER_CLI_VERSION. Explicit parameters win over the environment.
+      DEVCONTAINER_CLI_VERSION, HOST_TYPE, HOST_TYPE_PRIORITY. Explicit parameters win over the environment.
 
     Image builds are serialised host-wide: `up` and `build` hold the named
     mutex Global\devcontainer-features-build while they run (see
@@ -170,14 +177,244 @@ function Resolve-DockerPath {
         throw "DEVCONTAINER_DOCKER_PATH / -DockerPath '$spec' is neither a file nor a command on PATH."
     }
 
-    if (Get-Command docker -ErrorAction SilentlyContinue) { return $null }
-    if ($IsWindows) {
-        $wslc = Get-Command wslc.exe -ErrorAction SilentlyContinue
-        if ($wslc) { return $wslc.Source }
-        if (Test-Path $wslcFallback) { return $wslcFallback }
-        throw 'No container engine found: install Docker Desktop (docker on PATH), WSL >= 2.9.3 for wslc.exe, or set DEVCONTAINER_DOCKER_PATH.'
+    # No explicit command: the engine follows the host type (HOST_TYPE, see Resolve-HostType).
+    return (Resolve-EngineForHostType -Type (Get-CachedHostType).Type)
+}
+
+# ------------------------------------------------------------ host type ----
+# HOST_TYPE says what kind of host the launcher runs on (docs/proposals/host-profile.md,
+# ADR 0024). The bash twin (src/devcontainer-cli/devcontainer-cli.sh) does the same;
+# keep the two in step (test/bootstrap/host_type_test.sh and DevcontainerCli.Tests.ps1).
+$script:HostTypeIds = @('windows-docker', 'windows-wsl-docker', 'windows-wslc', 'linux', 'macos')
+$script:HostProfileCache = @{}
+
+function Clear-HostProfileCache { <# .SYNOPSIS Forgets the resolved host profile (tests; the cache lives one launcher run). #> $script:HostProfileCache = @{} }
+
+# --- evidence, one small function each so a test can replace it -------------
+function Get-HostPlatform {
+    <# .SYNOPSIS 'windows', 'macos', 'wsl' (pwsh inside a WSL distro) or 'linux'. #>
+    if ($IsWindows) { return 'windows' }
+    if ($IsMacOS) { return 'macos' }
+    if (Test-InsideWsl) { return 'wsl' }
+    return 'linux'
+}
+function Test-InsideWsl {
+    if ($env:WSL_DISTRO_NAME) { return $true }
+    # Unverified here: the WSL kernel string names Microsoft in /proc/version.
+    if (Test-Path -LiteralPath '/proc/version') { return [bool](Select-String -Path '/proc/version' -Pattern 'microsoft' -Quiet) }
+    return $false
+}
+function Test-DockerResponding {
+    <# .SYNOPSIS $true when `docker` is on PATH and `docker info` exits 0 (a stopped daemon fails it). #>
+    if (-not (Get-Command docker -ErrorAction SilentlyContinue)) { return $false }
+    & docker info *> $null
+    return ($LASTEXITCODE -eq 0)
+}
+function Test-WslDockerResponding {
+    <# .SYNOPSIS $true when `wsl -e docker info` answers: Docker Engine in the default WSL distro. UNVERIFIED on a real Windows host: assumes the default distro and wsl.exe on PATH. #>
+    if (-not (Get-Command wsl.exe -ErrorAction SilentlyContinue)) { return $false }
+    & wsl.exe -e docker info *> $null
+    return ($LASTEXITCODE -eq 0)
+}
+function Get-WslcPath {
+    <# .SYNOPSIS wslc.exe from PATH, else C:\Program Files\WSL\wslc.exe, else $null (as Resolve-DockerPath did). #>
+    $wslc = Get-Command wslc.exe -ErrorAction SilentlyContinue
+    if ($wslc) { return $wslc.Source }
+    if (Test-Path 'C:\Program Files\WSL\wslc.exe') { return 'C:\Program Files\WSL\wslc.exe' }
+    return $null
+}
+function Get-WslHome {
+    <# .SYNOPSIS The default WSL distro's $HOME, asked through wsl.exe (windows-wsl-docker from Windows). #>
+    $h = (& wsl.exe -e sh -c 'printf %s "$HOME"') -join ''
+    if ($LASTEXITCODE -ne 0 -or -not $h) { throw 'windows-wsl-docker: could not read $HOME of the default WSL distro (wsl -e sh -c ...).' }
+    return $h
+}
+
+function Get-HostTypeId { <# .SYNOPSIS The known HOST_TYPE ids. #> return , $script:HostTypeIds }
+
+function Get-DefaultHostTypePriority {
+    <# .SYNOPSIS The default HOST_TYPE_PRIORITY for the OS the launcher runs on (proposal section 3). #>
+    switch (Get-HostPlatform) {
+        'windows' { return @('windows-docker', 'windows-wsl-docker', 'windows-wslc') }
+        'wsl' { return @('windows-wsl-docker') }
+        'macos' { return @('macos') }
+        default { return @('linux') }
     }
-    throw 'docker is not on PATH; install a Docker-compatible engine or set DEVCONTAINER_DOCKER_PATH.'
+}
+
+function ConvertTo-HostTypeList {
+    <# .SYNOPSIS Splits an ordered comma list, rejecting an unknown id with the list of valid ones. #>
+    param([string]$Text, [string]$Setting)
+    $ids = @($Text -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    foreach ($id in $ids) {
+        if ($id -notin $script:HostTypeIds) {
+            throw "$Setting has an unknown host type '$id'. Known ids: $($script:HostTypeIds -join ', ')."
+        }
+    }
+    return , $ids
+}
+
+function Test-HostTypeFitsPlatform {
+    <# .SYNOPSIS $true when a launcher on this OS can act as that host type at all (no engine questions). #>
+    param([Parameter(Mandatory)][string]$Id)
+    switch ($Id) {
+        'windows-docker' { return (Get-HostPlatform) -eq 'windows' }
+        'windows-wslc' { return (Get-HostPlatform) -eq 'windows' }
+        'windows-wsl-docker' { return (Get-HostPlatform) -in 'windows', 'wsl' }
+        'linux' { return (Get-HostPlatform) -in 'linux', 'wsl' }
+        'macos' { return (Get-HostPlatform) -eq 'macos' }
+    }
+    return $false
+}
+
+function Test-HostTypeDetection {
+    <# .SYNOPSIS Detection of one id, with what was found. Returns @{ Ok; Note }. The checks are the ones the proposal names. #>
+    param([Parameter(Mandatory)][string]$Id)
+    if (-not (Test-HostTypeFitsPlatform -Id $Id)) { return @{ Ok = $false; Note = "the launcher runs on $(Get-HostPlatform), not a host for $Id" } }
+    switch ($Id) {
+        'windows-docker' {
+            if (Test-DockerResponding) { return @{ Ok = $true; Note = '`docker info` answers' } }
+            return @{ Ok = $false; Note = '`docker` is not on PATH or `docker info` fails' }
+        }
+        'windows-wsl-docker' {
+            if ((Get-HostPlatform) -eq 'wsl') { return @{ Ok = $true; Note = 'running inside a WSL distro' } }
+            if (Test-WslDockerResponding) { return @{ Ok = $true; Note = '`wsl -e docker info` answers' } }
+            return @{ Ok = $false; Note = '`wsl -e docker info` does not answer' }
+        }
+        'windows-wslc' {
+            $p = Get-WslcPath
+            if ($p) { return @{ Ok = $true; Note = "wslc.exe found ($p)" } }
+            return @{ Ok = $false; Note = 'wslc.exe is not on PATH nor in C:\Program Files\WSL' }
+        }
+        'linux' { return @{ Ok = $true; Note = 'Linux, not WSL' } }
+        'macos' { return @{ Ok = $true; Note = 'macOS' } }
+    }
+}
+
+function Resolve-HostType {
+    <#
+    .SYNOPSIS
+        The host type: HOST_TYPE (default auto; an explicit id skips detection),
+        else the first id of HOST_TYPE_PRIORITY (default per OS) whose
+        detection passes. Returns @{ Type; Why; Priority }. An unknown id is an
+        error listing the valid ones.
+
+    .DESCRIPTION
+        DEVCONTAINER_DOCKER_PATH set and no id passing: the engine is given, so
+        the first id of the priority list that fits this OS is taken (Why says so).
+        Nothing passing and no DEVCONTAINER_DOCKER_PATH: an error naming each check.
+    #>
+    [CmdletBinding()]
+    param([string]$HostType, [string]$Priority)
+
+    $HostType = Get-SettingOrEnv $HostType 'HOST_TYPE' 'auto'
+    $priorityText = Get-SettingOrEnv $Priority 'HOST_TYPE_PRIORITY'
+    $source = 'HOST_TYPE_PRIORITY'
+    $list = if ($priorityText) { ConvertTo-HostTypeList -Text $priorityText -Setting 'HOST_TYPE_PRIORITY' }
+    else { $source = 'default for this OS'; @(Get-DefaultHostTypePriority) }
+
+    if ($HostType -ne 'auto') {
+        if ($HostType -notin $script:HostTypeIds) {
+            throw "HOST_TYPE '$HostType' is unknown. Known ids: auto, $($script:HostTypeIds -join ', ')."
+        }
+        if (-not (Test-HostTypeFitsPlatform -Id $HostType)) {
+            throw "HOST_TYPE '$HostType' cannot run from a launcher on $(Get-HostPlatform). Known ids: $($script:HostTypeIds -join ', ')."
+        }
+        return @{ Type = $HostType; Why = 'HOST_TYPE set explicitly (detection skipped)'; Priority = $list }
+    }
+
+    $notes = @()
+    foreach ($id in $list) {
+        $d = Test-HostTypeDetection -Id $id
+        if ($d.Ok) { return @{ Type = $id; Why = "auto: first in $source to pass (${id}: $($d.Note))"; Priority = $list } }
+        $notes += "$id`: $($d.Note)"
+    }
+    if (Get-SettingOrEnv '' 'DEVCONTAINER_DOCKER_PATH') {
+        $fit = $list | Where-Object { Test-HostTypeFitsPlatform -Id $_ } | Select-Object -First 1
+        if ($fit) { return @{ Type = $fit; Why = "auto: no check passed, DEVCONTAINER_DOCKER_PATH names the engine, so the first id in $source that fits this OS ($($notes -join '; '))"; Priority = $list } }
+    }
+    throw "HOST_TYPE=auto: no host type in [$($list -join ', ')] passed. $($notes -join '; '). Set HOST_TYPE=<id> ($($script:HostTypeIds -join ', ')), or HOST_TYPE_PRIORITY, or DEVCONTAINER_DOCKER_PATH."
+}
+
+function Get-CachedHostType {
+    $key = "$env:HOST_TYPE|$env:HOST_TYPE_PRIORITY|$env:DEVCONTAINER_DOCKER_PATH"
+    if (-not $script:HostProfileCache.ContainsKey($key)) { $script:HostProfileCache[$key] = Resolve-HostType }
+    return $script:HostProfileCache[$key]
+}
+
+function Resolve-EngineForHostType {
+    <# .SYNOPSIS The engine for a host type when DEVCONTAINER_DOCKER_PATH is unset: $null = `docker` on PATH (the CLI's default), else a full path. #>
+    param([Parameter(Mandatory)][string]$Type)
+    switch ($Type) {
+        'windows-wslc' {
+            $p = Get-WslcPath
+            if ($p) { return $p }
+            throw 'HOST_TYPE windows-wslc: wslc.exe not found (WSL >= 2.9.3), or set DEVCONTAINER_DOCKER_PATH.'
+        }
+        'windows-wsl-docker' {
+            if (Get-Command docker -ErrorAction SilentlyContinue) { return $null }
+            # --docker-path takes one executable, so `wsl -e docker` cannot be passed from Windows.
+            throw 'HOST_TYPE windows-wsl-docker from Windows needs a single command for --docker-path: put a docker CLI on PATH that talks to the distro, or set DEVCONTAINER_DOCKER_PATH.'
+        }
+        default {
+            if (Get-Command docker -ErrorAction SilentlyContinue) { return $null }
+            if ($Type -eq 'windows-docker') { throw 'HOST_TYPE windows-docker: docker is not on PATH; install Docker Desktop or set DEVCONTAINER_DOCKER_PATH.' }
+            throw 'docker is not on PATH; install a Docker-compatible engine or set DEVCONTAINER_DOCKER_PATH.'
+        }
+    }
+}
+
+function Resolve-HostProfile {
+    <#
+    .SYNOPSIS
+        Everything the launcher knows about the host: Type, Why, Priority, Engine
+        (the command shown), EnginePath ($null = docker on PATH), and the three
+        DCF_HOST_* values: Home, SshAgent (slice 1: always none; slice 4 fills it).
+    #>
+    [CmdletBinding()]
+    param([string]$DockerPath)
+    $t = Get-CachedHostType
+    $spec = Get-SettingOrEnv $DockerPath 'DEVCONTAINER_DOCKER_PATH'
+    # An engine problem is shown by `host`, not thrown from here: the CLI path throws it itself.
+    $engineError = $null
+    try { $enginePath = Resolve-DockerPath -DockerPath $DockerPath } catch { $enginePath = $null; $engineError = $_.Exception.Message }
+    $engine = if ($engineError) { "(none: $engineError)" } elseif ($enginePath) { $enginePath } elseif ($spec) { $spec } else { 'docker' }
+    $hostHome = switch ($t.Type) {
+        'windows-docker' { $env:USERPROFILE }
+        'windows-wslc' { $env:USERPROFILE }
+        'windows-wsl-docker' { if ((Get-HostPlatform) -eq 'windows') { Get-WslHome } else { $env:HOME } }
+        default { $env:HOME }
+    }
+    return [pscustomobject]@{
+        Type = $t.Type; Why = $t.Why; Priority = $t.Priority
+        Engine = $engine; EnginePath = $enginePath
+        Home = $hostHome; SshAgent = 'none'
+    }
+}
+
+function Initialize-HostEnvironment {
+    <# .SYNOPSIS Sets DCF_HOST_TYPE, DCF_HOST_HOME and DCF_HOST_SSH_AGENT in this process, so the devcontainer CLI (and ${localEnv:...} in a repo's devcontainer.json) sees them. Returns the profile. #>
+    [CmdletBinding()]
+    param([string]$DockerPath)
+    $p = Resolve-HostProfile -DockerPath $DockerPath
+    [Environment]::SetEnvironmentVariable('DCF_HOST_TYPE', $p.Type)
+    [Environment]::SetEnvironmentVariable('DCF_HOST_HOME', $p.Home)
+    [Environment]::SetEnvironmentVariable('DCF_HOST_SSH_AGENT', $p.SshAgent)
+    return $p
+}
+
+function Show-HostProfile {
+    <# .SYNOPSIS `task devcontainer:host`: prints the resolved host profile; starts nothing. #>
+    [CmdletBinding()]
+    param([string]$DockerPath)
+    $p = Resolve-HostProfile -DockerPath $DockerPath
+    Write-Host "HOST_TYPE          : $($p.Type)"
+    Write-Host "why                : $($p.Why)"
+    Write-Host "priority list      : $($p.Priority -join ',')"
+    Write-Host "engine command     : $($p.Engine)"
+    Write-Host "DCF_HOST_TYPE      : $($p.Type)"
+    Write-Host "DCF_HOST_HOME      : $($p.Home)"
+    Write-Host "DCF_HOST_SSH_AGENT : $($p.SshAgent)"
 }
 
 function Get-WorkspaceFolderVariant {
@@ -413,6 +650,9 @@ function Invoke-DevcontainerCliProcess {
             Write-Host "Container engine: $engine"
             $cliArgs += @('--docker-path', $engine)
         }
+        # DCF_HOST_* go into this process's environment, which the CLI inherits;
+        # a repository maps them into the container with containerEnv.
+        [void](Initialize-HostEnvironment -DockerPath $DockerPath)
     }
 
     if ($CommandB64) {
@@ -451,6 +691,9 @@ function Invoke-DevcontainerCli {
             -CheckOnly:($Subcommand -eq 'prepshutdown') -NodeVersion $NodeVersion -CliVersion $CliVersion
         return
     }
+
+    # `host` is not a CLI subcommand: it prints the resolved host profile and starts nothing.
+    if ($Subcommand -eq 'host') { Show-HostProfile -DockerPath $DockerPath; return }
 
     # `running` is not a CLI subcommand either: exit 0 when a container of the
     # workspace runs, 1 when none does, 2 when the engine cannot be asked.
@@ -496,4 +739,4 @@ function Invoke-DevcontainerCli {
     exit $rc
 }
 
-Export-ModuleMember -Function Get-SettingOrEnv, ConvertFrom-TaskCliArgString, Get-PortableNodeDir, Get-DevcontainersCliEntrypoint, Remove-DevcontainersCli, Resolve-DockerPath, Get-WorkspaceFolderVariant, Get-RunningDevcontainerId, Stop-Devcontainer, Test-BuildSubcommand, Enter-DevcontainerBuildLock, Exit-DevcontainerBuildLock, Invoke-DevcontainerCliProcess, Invoke-DevcontainerCli
+Export-ModuleMember -Function Get-HostTypeId, Get-DefaultHostTypePriority, Resolve-HostType, Resolve-HostProfile, Initialize-HostEnvironment, Show-HostProfile, Clear-HostProfileCache, Get-SettingOrEnv, ConvertFrom-TaskCliArgString, Get-PortableNodeDir, Get-DevcontainersCliEntrypoint, Remove-DevcontainersCli, Resolve-DockerPath, Get-WorkspaceFolderVariant, Get-RunningDevcontainerId, Stop-Devcontainer, Test-BuildSubcommand, Enter-DevcontainerBuildLock, Exit-DevcontainerBuildLock, Invoke-DevcontainerCliProcess, Invoke-DevcontainerCli

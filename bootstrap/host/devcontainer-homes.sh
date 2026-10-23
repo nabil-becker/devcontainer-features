@@ -18,7 +18,7 @@
 #
 # It also creates ~/.git-dirs when missing: the source of the one bind mount
 # every devcontainer declares for the git Feature
-# (source=${localEnv:USERPROFILE}/.git-dirs,target=/git-dirs,type=bind), so a
+# (source=${localEnv:DCF_HOST_HOME}/.git-dirs,target=/git-dirs,type=bind), so a
 # machine without it must not fail the start.
 set -euo pipefail
 
