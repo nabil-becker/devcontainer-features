@@ -18,6 +18,9 @@ The domain words of the project itself are not here; they live with the project'
 - **Feature registry**: where released Features are published and pulled from: GHCR, listed on
   containers.dev.
 - **Release**: the manual workflow on `main` that publishes the Features to the registry.
+- **Local Feature**: a Feature in `local-features/<id>` that this repository uses but does not
+  publish; `task features:stage` stages it with the `src/` Features and releases skip it. The
+  devhost is one (ADR-0025).
 - **Feature Taskfile**: the Taskfile a Feature ships for its tool, registered at build time.
 - **Feature state**: what a Feature keeps outside the checkout: a named volume under
   `/var/lib/devcontainer-features/<id>` or host disk.
