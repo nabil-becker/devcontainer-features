@@ -1,14 +1,18 @@
 version: '3'
 
-# devcontainer:* tasks come from bootstrap/devcontainer.yml, vendored by
+# devcontainer:* tasks come from {{BOOTSTRAP_DIR}}/devcontainer.yml, vendored by
 # bootstrap.ps1 / bootstrap.sh from github.com/nabil-becker/devcontainer-features.
+# That folder is git-ignored (so it is not committed): on a fresh clone run the
+# bootstrap one-liner first (see the README, "Bootstrap a repo"); until then the
+# include below is skipped (optional: true) and only the other tasks exist.
 # Re-run the bootstrap to refresh it. Settings (DEVCONTAINER_DOCKER_PATH, ...)
 # can live in .devcontainer/.env - see .devcontainer/.env.example.
 dotenv: ['.env', '.devcontainer/.env']
 
 includes:
   devcontainer:
-    taskfile: ./bootstrap/devcontainer.yml
+    taskfile: './{{BOOTSTRAP_DIR}}/devcontainer.yml'
+    optional: true
     aliases: [dc]   # task dc:up == task devcontainer:up
   # Tasks contributed by the Features installed in the devcontainer (dsc:*,
   # velero:*, ...). The file only exists inside the container; on the host it

@@ -89,6 +89,7 @@ tasks:
       - task: test:bootstrap
       - task: test:shutdown
       - task: test:host-type
+      - task: test:bootstrap-dir
 
   test:git-unit:
     desc: 'Docker-free tests of the git Feature''s wrapper, git-setup and .git-dirs mapping, run from src/git against temp folders (never the checkout''s own git dir or global config); part of lint.'
@@ -105,8 +106,13 @@ tasks:
     cmds:
       - bash test/bootstrap/host_type_test.sh
 
+  test:bootstrap-dir:
+    desc: 'Docker-free, offline bash tests of where bootstrap/bootstrap.sh vendors: the default .devcontainer/cli_bootstrap.ignore, BOOTSTRAP_DIR and its rejections (absolute, ..), the .gitignore created, appended once, other lines kept, BOOTSTRAP_GITIGNORE=false, the Taskfile template''s optional include of the chosen path, and the old ./bootstrap form (kept, migration note, include repointed); against a temp repo with this checkout as --source and a fake task; part of lint. The PowerShell twin is in test:bootstrap.'
+    cmds:
+      - bash test/bootstrap/bootstrap_dir_test.sh
+
   test:bootstrap:
-    desc: 'Pester tests of the Windows host launcher (bootstrap/host/DevcontainerCli.psm1): the build lock that serialises devcontainer up/build across repositories, the stop check, and HOST_TYPE resolution and the DCF_HOST_* variables (evidence mocked). Needs pwsh with Pester 5 or later (Install-Module Pester -Scope CurrentUser); runs on any host, so it is part of lint.'
+    desc: 'Pester tests of the Windows host launcher (bootstrap/host/DevcontainerCli.psm1) and of bootstrap/bootstrap.ps1 (vendoring folder, BOOTSTRAP_DIR, git-ignore, Taskfile template, old form): the build lock that serialises devcontainer up/build across repositories, the stop check, and HOST_TYPE resolution and the DCF_HOST_* variables (evidence mocked). Needs pwsh with Pester 5 or later (Install-Module Pester -Scope CurrentUser); runs on any host, so it is part of lint.'
     cmds:
       - pwsh -NoLogo -NoProfile -Command "Import-Module Pester -MinimumVersion 5.0; Invoke-Pester -Path '{{.ROOT_DIR}}/test/bootstrap' -Output Detailed -CI"
 

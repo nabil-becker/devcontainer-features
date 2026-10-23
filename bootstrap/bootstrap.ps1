@@ -25,10 +25,14 @@
 
       1. Vendors bootstrap/devcontainer.yml, bootstrap/host/* (the PowerShell
          flavour) and the devcontainer-cli Feature's devcontainer-cli.sh (the
-         bash flavour) into ./bootstrap/ - always refreshed, so re-running
-         the bootstrap is how you update them.
-      2. Writes a starter Taskfile.yml (includes the vendored tasks and the
-         Feature-Taskfile registry, loads .env files),
+         bash flavour) into the bootstrap folder (default
+         .devcontainer/cli_bootstrap.ignore/, see -BootstrapDir) - always
+         refreshed, so re-running the bootstrap is how you update them - and
+         git-ignores that folder (.devcontainer/.gitignore when it is under
+         .devcontainer/, else the root .gitignore; created or appended, a line
+         is never duplicated; -NoGitignore skips).
+      2. Writes a starter Taskfile.yml (includes the vendored tasks with
+         optional: true, and the Feature-Taskfile registry, loads .env files),
          .devcontainer/devcontainer.json (go-task, devcontainer-cli,
          git, docker-outside-of-docker, PowerShell) and
          .devcontainer/.env.example and the starter
@@ -58,6 +62,16 @@
     into the environment for the tasks this script runs.
     Env: DEVCONTAINER_DOCKER_PATH. Default: docker on PATH, else wslc.exe.
 
+.PARAMETER BootstrapDir
+    Folder to vendor into, relative to the repo root (no absolute path, no
+    ..). Env: BOOTSTRAP_DIR. Default: .devcontainer/cli_bootstrap.ignore.
+    A repository that vendored into ./bootstrap/ keeps working untouched; a
+    re-run vendors into the new folder, prints a migration note and repoints
+    a root Taskfile include of exactly ./bootstrap/devcontainer.yml.
+
+.PARAMETER NoGitignore
+    Do not git-ignore the vendored folder. Env: BOOTSTRAP_GITIGNORE=false.
+
 .PARAMETER NoUp
     Vendor files and write templates only; do not build/start the container.
     Env: DEVCONTAINER_BOOTSTRAP_NO_UP=true.
@@ -68,6 +82,8 @@ param(
     [string]$Path,
     [string]$Source,
     [string]$DockerPath,
+    [string]$BootstrapDir,
+    [switch]$NoGitignore,
     [switch]$NoUp
 )
 
@@ -107,6 +123,20 @@ $DockerPath = Resolve-Setting $DockerPath 'DEVCONTAINER_DOCKER_PATH' ''
 if (-not $NoUp -and (Resolve-Setting '' 'DEVCONTAINER_BOOTSTRAP_NO_UP' '') -match '^(1|true|yes)$') { $NoUp = $true }
 if ($DockerPath) { $env:DEVCONTAINER_DOCKER_PATH = $DockerPath }
 
+# Vendoring folder: repo-relative, inside the repo, forward slashes, no trailing slash.
+$DefaultBootstrapDir = '.devcontainer/cli_bootstrap.ignore'
+$ExplicitDir = [bool](Resolve-Setting $BootstrapDir 'BOOTSTRAP_DIR' '')
+$BootstrapDir = Resolve-Setting $BootstrapDir 'BOOTSTRAP_DIR' $DefaultBootstrapDir
+function Invoke-BadBootstrapDir([string]$Why) {
+    throw "bootstrap: BOOTSTRAP_DIR '$BootstrapDir' $Why; give a path relative to the repository root, inside it (for example $DefaultBootstrapDir)."
+}
+$BootstrapDir = $BootstrapDir -replace '\\', '/'
+if ($BootstrapDir -match '^(/|[A-Za-z]:)') { Invoke-BadBootstrapDir 'is an absolute path' }
+while ($BootstrapDir -match '^\./' -or $BootstrapDir -match '/$') { $BootstrapDir = $BootstrapDir -replace '^\./', '' -replace '/$', '' }
+if ($BootstrapDir -in @('', '.', '.devcontainer')) { Invoke-BadBootstrapDir 'would vendor into the repository root or all of .devcontainer' }
+if (($BootstrapDir -split '/') -contains '..') { Invoke-BadBootstrapDir 'escapes the repository (..)' }
+$GitignoreBootstrap = -not $NoGitignore -and ((Resolve-Setting '' 'BOOTSTRAP_GITIGNORE' '') -notmatch '^(false|0|no)$')
+
 function Get-SourceFile([string]$RelativePath, [string]$Destination) {
     New-Item -ItemType Directory -Path (Split-Path $Destination -Parent) -Force | Out-Null
     if ($Source -match '^https?://') {
@@ -118,24 +148,58 @@ function Get-SourceFile([string]$RelativePath, [string]$Destination) {
 }
 
 Write-Host "Bootstrapping $Path from $Source"
+Write-Host "  folder    $BootstrapDir/ (vendored launcher and tasks; BOOTSTRAP_DIR overrides)"
 if ($DockerPath) { Write-Host "  engine    DEVCONTAINER_DOCKER_PATH=$DockerPath" }
 
 # 1. Vendor the devcontainer tasks (always refreshed). Source path in the
 #    collection repo -> destination in this repo. The bash flavour is the
 #    devcontainer-cli Feature's own script, vendored next to the PowerShell.
 $vendored = [ordered]@{
-    'bootstrap/devcontainer.yml'                   = 'bootstrap/devcontainer.yml'
-    'bootstrap/host/DevcontainerCli.psm1'          = 'bootstrap/host/DevcontainerCli.psm1'
-    'bootstrap/host/Invoke-DevcontainerCli.ps1'    = 'bootstrap/host/Invoke-DevcontainerCli.ps1'
-    'bootstrap/host/Initialize-DevcontainerCli.ps1' = 'bootstrap/host/Initialize-DevcontainerCli.ps1'
-    'bootstrap/host/Reset-WslcStorage.ps1'         = 'bootstrap/host/Reset-WslcStorage.ps1'
-    'bootstrap/host/Initialize-DevcontainerHomes.ps1' = 'bootstrap/host/Initialize-DevcontainerHomes.ps1'
-    'bootstrap/host/devcontainer-homes.sh'         = 'bootstrap/host/devcontainer-homes.sh'
-    'src/devcontainer-cli/devcontainer-cli.sh'     = 'bootstrap/host/devcontainer-cli.sh'
+    'bootstrap/devcontainer.yml'                   = '{BD}/devcontainer.yml'
+    'bootstrap/host/DevcontainerCli.psm1'          = '{BD}/host/DevcontainerCli.psm1'
+    'bootstrap/host/Invoke-DevcontainerCli.ps1'    = '{BD}/host/Invoke-DevcontainerCli.ps1'
+    'bootstrap/host/Initialize-DevcontainerCli.ps1' = '{BD}/host/Initialize-DevcontainerCli.ps1'
+    'bootstrap/host/Reset-WslcStorage.ps1'         = '{BD}/host/Reset-WslcStorage.ps1'
+    'bootstrap/host/Initialize-DevcontainerHomes.ps1' = '{BD}/host/Initialize-DevcontainerHomes.ps1'
+    'bootstrap/host/devcontainer-homes.sh'         = '{BD}/host/devcontainer-homes.sh'
+    'src/devcontainer-cli/devcontainer-cli.sh'     = '{BD}/host/devcontainer-cli.sh'
 }
 foreach ($entry in $vendored.GetEnumerator()) {
-    Get-SourceFile -RelativePath $entry.Key -Destination (Join-Path $Path $entry.Value)
-    Write-Host "  vendored  $($entry.Value)"
+    $dest = $entry.Value.Replace('{BD}', $BootstrapDir)
+    Get-SourceFile -RelativePath $entry.Key -Destination (Join-Path $Path $dest)
+    Write-Host "  vendored  $dest"
+}
+
+# Git-ignore the vendored folder (BOOTSTRAP_GITIGNORE=false / -NoGitignore skips):
+# a line in .devcontainer/.gitignore when the folder is under .devcontainer/, else
+# in the repository's root .gitignore. Created if missing, the line appended only
+# when absent (with or without the trailing or a leading slash), nothing else touched.
+function Add-IgnoreLine([string]$File, [string]$Line) {
+    $bare = $Line.TrimEnd('/')
+    $rel = [System.IO.Path]::GetRelativePath($Path, $File).Replace('\', '/')
+    New-Item -ItemType Directory -Path (Split-Path $File -Parent) -Force | Out-Null
+    if (Test-Path -LiteralPath $File) {
+        $existing = @(Get-Content -LiteralPath $File)
+        if ($existing | Where-Object { $_ -in @($Line, $bare, "/$Line", "/$bare") }) {
+            Write-Host "  kept      $rel (already ignores $Line)"
+            return
+        }
+        $raw = Get-Content -LiteralPath $File -Raw
+        if ($raw -and -not $raw.EndsWith("`n")) { Add-Content -LiteralPath $File -Value '' }
+    }
+    Add-Content -LiteralPath $File -Value $Line
+    Write-Host "  gitignored $Line in $rel"
+}
+if ($GitignoreBootstrap) {
+    if ($BootstrapDir.StartsWith('.devcontainer/')) {
+        Add-IgnoreLine (Join-Path $Path '.devcontainer/.gitignore') ($BootstrapDir.Substring('.devcontainer/'.Length) + '/')
+    }
+    else {
+        Add-IgnoreLine (Join-Path $Path '.gitignore') "/$BootstrapDir/"
+    }
+}
+else {
+    Write-Host "  skipped   git-ignoring $BootstrapDir/ (BOOTSTRAP_GITIGNORE=false)"
 }
 
 # 2. Templates, only where nothing exists yet.
@@ -155,6 +219,11 @@ foreach ($entry in $templates.GetEnumerator()) {
         continue
     }
     Get-SourceFile -RelativePath $entry.Key -Destination $dest
+    if ($entry.Value -eq 'Taskfile.yml') {
+        # the include names the chosen folder
+        $text = (Get-Content -LiteralPath $dest -Raw).Replace('{{BOOTSTRAP_DIR}}', $BootstrapDir)
+        [System.IO.File]::WriteAllText($dest, $text)
+    }
     Write-Host "  wrote     $($entry.Value)"
     if ($entry.Value -eq '.devcontainer/devcontainer.json') {
         Write-Host "             (see the host-disk override block for Feature state on the host disk)"
@@ -169,14 +238,38 @@ if (-not (Test-Path $gitignore) -or -not ((Get-Content $gitignore) -contains $ig
 }
 
 $taskfile = Join-Path $Path 'Taskfile.yml'
-if ((Get-Content $taskfile -Raw) -notmatch 'bootstrap/devcontainer\.yml') {
+
+# Old form: a repository that vendored into ./bootstrap/ keeps working untouched
+# until it re-runs the bootstrap; this run vendored into the new folder.
+if (-not $ExplicitDir -and $BootstrapDir -ne 'bootstrap' -and (Test-Path (Join-Path $Path 'bootstrap/devcontainer.yml'))) {
+    $oldInclude = './bootstrap/devcontainer.yml'
+    $newInclude = "./$BootstrapDir/devcontainer.yml"
+    $pattern = '(?m)^([ \t]*taskfile:[ \t]*[''"]?)\./bootstrap/devcontainer\.yml(?=[''"]?[ \t]*(#.*)?\r?$)'
+    $text = Get-Content $taskfile -Raw
+    if ($text -match $pattern) {
+        [System.IO.File]::WriteAllText($taskfile, [regex]::Replace($text, $pattern, { param($m) $m.Groups[1].Value + $newInclude }))
+        Write-Host "  repointed Taskfile.yml: taskfile: $oldInclude -> $newInclude (only that value; to undo, change it back)"
+    }
+    Write-Host @"
+MIGRATION: this repository vendored the bootstrap into ./bootstrap/ before; this run vendored into $BootstrapDir/.
+  - The include in Taskfile.yml should be:  taskfile: $newInclude   (add optional: true: the folder is git-ignored,
+    so a fresh clone lacks it until this bootstrap runs).
+  - Once the include points at $BootstrapDir/, ./bootstrap/ is unused and can be deleted (git rm -r bootstrap).
+    Nothing was deleted here, and while the include still names ./bootstrap/devcontainer.yml it keeps working as it was.
+"@
+}
+
+$taskfileText = Get-Content $taskfile -Raw
+if (($taskfileText -notmatch [regex]::Escape("$BootstrapDir/devcontainer.yml")) -and ($taskfileText -notmatch 'bootstrap/devcontainer\.yml')) {
     Write-Warning @"
-Taskfile.yml already exists and does not include the devcontainer tasks. Add:
+Taskfile.yml already exists and does not include the devcontainer tasks. Add (the first run on a fresh
+clone is the bootstrap one-liner, because $BootstrapDir/ is git-ignored):
 
   dotenv: ['.env', '.devcontainer/.env']
   includes:
     devcontainer:
-      taskfile: ./bootstrap/devcontainer.yml
+      taskfile: ./$BootstrapDir/devcontainer.yml
+      optional: true
       aliases: [dc]
     features:
       taskfile: /usr/local/share/go-task/features.yml
