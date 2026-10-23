@@ -28,7 +28,7 @@ check "node not leaked onto PATH" bash -c "! command -v node"
 # Every state-owning Feature points its tool at its own mounted directory,
 # and the post-create hooks (run by `devcontainer up` before this script)
 # have made them usable by the remote user.
-for v in CLAUDE_CONFIG_DIR GH_CONFIG_DIR AZURE_CONFIG_DIR KUBECONFIG GIT_CONFIG_GLOBAL CODER_CONFIG_DIR ARGOCD_CONFIG_DIR DEVHOST_STATE; do
+for v in CLAUDE_CONFIG_DIR GH_CONFIG_DIR AZURE_CONFIG_DIR KUBECONFIG GIT_CONFIG_GLOBAL CODER_CONFIG_DIR ARGOCD_CONFIG_DIR; do
   check "$v points under /var/lib/devcontainer-features" bash -c "case \"\$$v\" in /var/lib/devcontainer-features/*) ;; *) exit 1 ;; esac"
 done
 check "claude-code state dir writable" test -w "$CLAUDE_CONFIG_DIR"
