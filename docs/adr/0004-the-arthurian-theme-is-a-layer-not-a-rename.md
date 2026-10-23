@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | accepted |
+| **Status** | superseded by ADR-0023 |
 | **Date** | 2026-10-16 |
 | **Deciders** | the Operator; proposed by the host |
 

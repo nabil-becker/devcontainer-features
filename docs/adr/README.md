@@ -52,7 +52,7 @@ numbering and a row below.
 | [0001](0001-agent-git-identity-through-containerenv.md) | Agent git identity is set through containerEnv | superseded by 0012 | 2026-10-16 |
 | [0002](0002-agent-co-author-trailers-use-unclaimable-addresses.md) | Agent co-author trailers use unclaimable per-model addresses | accepted | 2026-10-16 |
 | [0003](0003-backs-only-add-so-change-stakes-become-amend-items.md) | Backs only add, so a stake that asks for a change becomes an amend item | accepted | 2026-10-16 |
-| [0004](0004-the-arthurian-theme-is-a-layer-not-a-rename.md) | The Arthurian theme is a layer over the plain words, not a rename | accepted | 2026-10-16 |
+| [0004](0004-the-arthurian-theme-is-a-layer-not-a-rename.md) | The Arthurian theme is a layer over the plain words, not a rename | superseded by ADR-0023 | 2026-10-16 |
 | [0005](0005-the-ontology-is-the-canonical-model-and-a-guard-keeps-the-rest-in-line.md) | The ontology is the canonical model, and a guard keeps the rest in line | accepted | 2026-10-16 |
 | [0006](0006-the-docs-site-is-built-by-a-script-and-hosting-is-a-swappable-skill.md) | The docs site is built by a script, and hosting is a swappable skill | accepted | 2026-10-16 |
 | [0007](0007-the-life-theme-is-a-shared-layer-above-each-projects-own.md) | The life theme is a shared layer above each project's own theme | accepted | 2026-10-16 |
@@ -71,3 +71,4 @@ numbering and a row below.
 | [0020](0020-consuming-repos-mount-the-whole-git-dirs-folder-and-the-git-wrapper-maps-the-pointer.md) | Consuming repos mount the whole git-dirs folder, and the git wrapper maps the pointer | accepted | 2026-10-21 |
 | [0021](0021-the-ledger-review-runs-every-75-entries.md) | The ledger review runs every 75 entries | accepted | 2026-10-21 |
 | [0022](0022-the-shutdown-check-is-resolved-in-the-container-from-a-task-contract.md) | The shutdown check is resolved in the container from a task contract | accepted | 2026-10-22 |
+| [0023](0023-the-theme-is-a-bar.md) | The theme is a bar | accepted | 2026-10-23 |
