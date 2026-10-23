@@ -186,9 +186,9 @@ tasks:
           CMD: '{{.STOP_CHECK}}'
 
   rebuild:
-    desc: 'Recreate the devcontainer from scratch (devcontainer up --remove-existing-container --build-no-cache). Stops it first like devcontainer:stop (shutdown check included; FORCE=1 and STOP_CHECK pass through), but continues even when that stop fails: a refusing check or an error prints one line and the rebuild goes on. VS Code windows attached to the old container must reload.'
+    desc: 'Recreate the devcontainer from scratch (devcontainer up --remove-existing-container --build-no-cache). Stops it first exactly like devcontainer:stop (shutdown check included; STOP_CHECK passes through): when that stop is refused or fails, nothing is rebuilt; FORCE=1 skips the check, as for stop. VS Code windows attached to the old container must reload.'
     cmds:
-      - cmd: 'task {{regexReplaceAll ":[^:]+$" .TASK ""}}:stop {{if .FORCE}}FORCE=''{{.FORCE}}'' {{end}}{{if .STOP_CHECK}}STOP_CHECK=''{{.STOP_CHECK}}'' {{end}}|| echo "The stop did not complete cleanly (see above): rebuilding anyway." >&2'
+      - cmd: 'task {{regexReplaceAll ":[^:]+$" .TASK ""}}:stop {{if .FORCE}}FORCE=''{{.FORCE}}'' {{end}}{{if .STOP_CHECK}}STOP_CHECK=''{{.STOP_CHECK}}'' {{end}}|| { echo "Not rebuilding: the stop above did not complete. Fix what it names, or run again with FORCE=1." >&2; exit 1; }'
       - task: cli
         vars:
           SUBCOMMAND: up
