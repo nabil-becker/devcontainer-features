@@ -1,6 +1,6 @@
 # Proposal: a King Arthur theme for the way of working
 
-Status: accepted 2026-10-16 as option A, a layer, trimmed to ten names (LEXICON.md, "The Arthurian layer"); no committed output speaks in the voice: the journal stays in plain words because it is part of the project's iterations (the Operator, 2026-10-16). No name in the repository has changed.
+Status: superseded 2026-10-23 by the bar theme (ADR 0023); kept as history. Was accepted 2026-10-16 as option A, a layer, trimmed to ten names (LEXICON.md, "The Arthurian layer"); no committed output speaks in the voice: the journal stays in plain words because it is part of the project's iterations (the Operator, 2026-10-16). No name in the repository has changed.
 
 The office generation was themed as an office; this devhost generation has its own words (LEXICON.md). The next generation is themed on King Arthur. This page maps the words, costs two ways of adopting it, and recommends one.
 

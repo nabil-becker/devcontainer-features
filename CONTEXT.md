@@ -119,7 +119,7 @@ framing the Operator gave (interview-4 answer 10) is a court:
   and one a collaborator's, must read the same rules.
 - **The shared required workflow** is the process that every engineer follows.
 - **Personalization** is how each person has that language explained and how they like to interact
-  with it: the Operator's Arthurian layer and diagrams, for example. The foundation stays the same
+  with it: the Operator's bar layer and diagrams, for example. The foundation stays the same
   for everyone; the inters translate it for the person they serve.
 
 ## Tooling

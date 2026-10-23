@@ -120,7 +120,7 @@ tasks:
 
   site:
     dir: '{{.USER_WORKING_DIR}}'
-    desc: 'Build the court''s homepage: one self-contained HTML page of the backlog, ledger, Features, records and every tracked doc, into OUT (default .devhost/site/index.html); PRS=1 adds the open pull requests. Publishing it is the publish-site skill.'
+    desc: 'Build the repository''s homepage: one self-contained HTML page of the backlog, ledger, Features, records and every tracked doc, into OUT (default .devhost/site/index.html); PRS=1 adds the open pull requests. Publishing it is the publish-site skill.'
     vars:
       OUT: '{{.OUT | default ""}}'
       PRS: '{{.PRS | default ""}}'

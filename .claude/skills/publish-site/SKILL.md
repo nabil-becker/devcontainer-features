@@ -1,6 +1,6 @@
 ---
 name: publish-site
-description: "Build the court's homepage (backlog, ledger, Features, records and every doc in one page) and publish it as a private Claude artifact, or refresh the one already published. Use it when the Operator asks to publish, refresh or update the site, the dashboard or the homepage, or says they want to read the repository without the terminal. Outward-facing: only on the Operator's ask, never during a night shift."
+description: "Build the repository's homepage (backlog, ledger, Features, records and every doc in one page) and publish it as a private Claude artifact, or refresh the one already published. Use it when the Operator asks to publish, refresh or update the site, the dashboard or the homepage, or says they want to read the repository without the terminal. Outward-facing: only on the Operator's ask, never during a night shift."
 ---
 
 # Publish the site
@@ -26,7 +26,7 @@ same file (`task devhost:site OUT=...`, and `devhost-site --standalone` for a fu
 2. **Publish with the Artifact tool**, file `.devhost/site/index.html` (a fragment: the artifact
    host wraps it).
    - **First time** (no `.devhost/site-url`): publish with `icon: "home"` and a one-sentence
-     `description` ("The court's dashboard: what needs the Operator, the backlog, the ledger, the
+     `description` ("The repository's dashboard: what needs the Operator, the backlog, the ledger, the
      Features and every doc."). Then write the artifact URL from the result into
      `.devhost/site-url` (one line; the file is ignored by git).
    - **Afterwards:** read the URL from `.devhost/site-url` and publish the same file with that

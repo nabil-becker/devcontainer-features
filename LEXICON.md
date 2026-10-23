@@ -237,9 +237,13 @@ The domain words of the project itself are not here; they live with the project'
   item touching a Feature must meet, or else record a backlog item or a written exception in the
   Feature's NOTES (`docs/principles/non-functional-requirements.md`).
 
-## The Arthurian layer
+## The bar layer
 
-A voice over the plain words, not a rename (accepted 2026-10-16, `docs/proposals/king-arthur-theme.md`).
+A voice over the plain words, not a rename (ADR 0004; the theme has been a bar since 2026-10-23,
+ADR 0023, replacing the Arthurian one). The landlord is the Operator, the bartender the host, a
+runner a con, the barbacks the backs, the tab book the ledger, the chalkboard the backlog, the
+cash-up the ledger review, the lock-in the night shift, the bouncers the guards; the labels are in
+`docs/model/themes/bar.toml`.
 Themes are label files under `docs/model/themes/`, keyed by the ontology ids of
 `docs/model/ontology.toml`; they change no process, and no committed output speaks in them
 (ADR 0004). The plain word stays in every id, path, command, field name and guard.
@@ -248,7 +252,7 @@ The journal is a record of the project's iterations and stays in plain words (de
 ## The life layer
 
 A second voice over the plain words, for the whole series of projects, shared by every project
-and sitting above each repository's own theme (the Arthurian layer here), not replacing it
+and sitting above each repository's own theme (the bar layer here), not replacing it
 (decided 2026-10-16, ADR-0007, `docs/proposals/iteration-package.md`). Labels and story only:
 the plain word stays in every id, path, command, field name and guard, and nothing committed is
 renamed. Each project is a tree growing in its own ground.

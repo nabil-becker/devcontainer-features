@@ -1,4 +1,4 @@
-<title>Court Dashboard</title>
+<title>Dashboard</title>
 <style>
 :root{
   --bg:#ffffff;--surface:#f6f8fa;--fg:#1b1f24;--muted:#57606a;--line:#d0d7de;--accent:#0b5fd0;--code-bg:#eef1f4;
@@ -92,7 +92,7 @@ input.filter{width:100%;max-width:420px;min-height:40px;padding:6px 10px;font:in
 <!--SITE-DATA-->
 <div id="top">
   <div class="bar">
-    <a class="brand" id="brand" href="#home">Court</a>
+    <a class="brand" id="brand" href="#home">Dashboard</a>
     <div class="search"><input id="q" type="search" placeholder="Search every doc" aria-label="Search every doc" autocomplete="off"></div>
   </div>
   <nav id="nav" aria-label="Sections"></nav>
@@ -162,7 +162,7 @@ var STATUS_KIND = function (s) {
 };
 
 /* ---------- header ---------- */
-document.getElementById("brand").textContent = M.repo || "Court";
+document.getElementById("brand").textContent = M.repo || "Dashboard";
 var navEl = document.getElementById("nav");
 NAV.forEach(function (n) { navEl.appendChild(el("a", { href: "#" + n[0], "data-r": n[0] }, n[1])); });
 (function () {
@@ -520,7 +520,7 @@ function viewSearch(q) {
 function show(node, title, keepScroll) {
   app.textContent = "";
   app.appendChild(node);
-  document.title = (title ? title + " - " : "") + (M.repo || "Court");
+  document.title = (title ? title + " - " : "") + (M.repo || "Dashboard");
   if (!keepScroll) window.scrollTo(0, 0);
 }
 function render() {

@@ -1,0 +1,13 @@
+# The bar layer: labels over ontology ids (accepted 2026-10-23, ADR 0023; it replaced the
+# Arthurian layer of ADR 0004). Keys are ontology ids. A label is for what a person reads in
+# chat; no committed output speaks in it, and it changes no id, path, command, field name or guard.
+operator = "the landlord: owns the place, calls last orders (committed text still says \"the Operator\")"
+host = "the bartender: takes the order and runs the bar, never owns it"
+con = "a runner on one order, back with one report"
+back = "the barbacks: restock, keep the tabs, never serve"
+ledger = "the tab book"
+backlog = "the chalkboard"
+ledger-review = "the cash-up: the night counted together, the landlord still decides"
+night-shift = "the lock-in"
+guards = "the bouncers (devhost-verify and the guards): the door turns away what breaks the rules"
+journalist = "the regular who tells the stories (a name only; its pieces are written in plain words)"

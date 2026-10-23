@@ -4,7 +4,7 @@ Drafts the Operator decides on. A proposal is never in force until the Operator 
 
 | Proposal | Status |
 |---|---|
-| [King Arthur theme](king-arthur-theme.md) | accepted 2026-10-16: a layer, ten names in LEXICON.md, used in conversation only; no committed output speaks in it |
+| [King Arthur theme](king-arthur-theme.md) | superseded 2026-10-23 by the bar (ADR 0023); was accepted 2026-10-16: a layer, ten names in LEXICON.md, used in conversation only; no committed output speaks in it |
 | [Journalist back](journalist-back.md) | decided 2026-10-20 (ADR 0009 superseded by ADR 0014): a brief (`drop-a-seed/journalist.md`) a writing subagent follows during `drop-a-seed`; not a back, not a skill of its own (decided 2026-10-17: a skill, not a back); earlier, accepted 2026-10-16: it writes the iteration's white paper (docs/iterations.md), in plain words, when the Operator calls the iteration; the hand-run journal piece was a trial |
 | [Personalization](personalization.md) | open |
 | [Feature principles](feature-principles.md) | accepted 2026-10-19; now the non-functional requirements NFR-1 to NFR-10 in `docs/principles/non-functional-requirements.md` (ADR 0011); MCP none for now |
