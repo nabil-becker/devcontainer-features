@@ -27,6 +27,11 @@ The domain words of the project itself are not here; they live with the project'
 - **Git dirs mount**: the one line every consuming repo adds to bind the workstation's `.git-dirs`
   folder at `/git-dirs` (the `GIT_DIRS_ROOT` default); the git Feature's wrapper maps a checkout's
   `.git` pointer onto it, so no repo sets `GIT_DIR` or `GIT_WORK_TREE` (ADR-0020).
+- **Host type**: the kind of workstation the launcher runs on: `windows-docker`,
+  `windows-wsl-docker`, `windows-wslc`, `linux` or `macos`. `HOST_TYPE` picks it (default `auto`,
+  detected in the order of `HOST_TYPE_PRIORITY`); the launcher then sets `DCF_HOST_TYPE`,
+  `DCF_HOST_HOME` and `DCF_HOST_SSH_AGENT`, which a repo maps into the container with
+  `containerEnv` (ADR-0024).
 
 ## People and agents
 

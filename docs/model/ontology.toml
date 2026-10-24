@@ -856,3 +856,13 @@ summary = "The one line a consuming repo adds to bind the workstation's .git-dir
 subject = "devcontainer"
 predicate = "uses"
 object = "git-dirs-mount"
+
+[host-type]
+type = "product"
+term = "Host type"
+summary = "The kind of workstation the launcher runs on (windows-docker, windows-wsl-docker, windows-wslc, linux, macos); HOST_TYPE picks it and the launcher exposes it as DCF_HOST_* variables."
+
+[[relation]]
+subject = "devcontainer"
+predicate = "uses"
+object = "host-type"
