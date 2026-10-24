@@ -67,6 +67,14 @@ if [ "$1" = agents ]; then echo "VIEW" >> "$FAKE_LOG"; exit 0; fi
 echo "claude $* | cwd=$(pwd -P) | HOST_SESSION=${HOST_SESSION:-}" >> "$FAKE_LOG"
 FAKE
 chmod +x "$bin/claude"
+# fake ps: `ps -o tty= -p <pid>` answers "pts/<pid>" (the real ps must never be reached)
+cat > "$bin/ps" <<'FAKE'
+#!/bin/sh
+[ "$1" = -o ] && [ "$2" = tty= ] && [ "$3" = -p ] && { echo "pts/$4"; exit 0; }
+echo "fake ps: unexpected call: $*" >&2; exit 1
+FAKE
+chmod +x "$bin/ps"
+check 'the fake ps is the one on PATH and executable' "$bin/ps" "$(PATH="$bin:$PATH" command -v ps; [ -x "$bin/ps" ] || echo notexec)"
 # the fake is what runs: first on PATH, executable (a real claude must never be reached)
 check 'the fake claude is the one on PATH and executable' "$bin/claude" "$(PATH="$bin:$PATH" command -v claude; [ -x "$bin/claude" ] || echo notexec)"
 
@@ -82,15 +90,16 @@ transcript() { mkdir -p "$T/cfg/projects/$(slug "$1")"; : > "$T/cfg/projects/$(s
 
 # agents <id:cwd[@pid]>...: write the fixture the fake claude answers with (pretty-printed as Claude Code does).
 # pid defaults to 1; @none leaves the field out, @null and @0 are the other shapes of an ended session.
-# A trailing #<ms> sets startedAt (default 1). agents_to <file> writes elsewhere (the fake's N-th answer).
+# A trailing #<ms> sets startedAt (default 1); a trailing %<kind> the kind (default interactive; background
+# is what `claude attach` works for). agents_to <file> writes elsewhere (the fake's N-th answer).
 agents_to() {
-  local out="$1" first=1 e rest id cwd pid pidline st; shift
+  local out="$1" first=1 e rest id cwd pid pidline st kind; shift
   { echo '['; for e in "$@"; do
       [ "$first" = 1 ] || echo '  ,'; first=0
-      id="${e%%:*}"; rest="${e#*:}"; st=1; case "$rest" in *'#'*) st="${rest##*#}"; rest="${rest%%#*}" ;; esac
+      id="${e%%:*}"; rest="${e#*:}"; st=1; kind=interactive; case "$rest" in *'%'*) kind="${rest##*%}"; rest="${rest%%%*}" ;; esac; case "$rest" in *'#'*) st="${rest##*#}"; rest="${rest%%#*}" ;; esac
       cwd="${rest%@*}"; pid=1; [ "$rest" != "$cwd" ] && pid="${rest##*@}"
       case "$pid" in none) pidline='' ;; *) pidline="    \"pid\": $pid,"$'\n' ;; esac
-      printf '  {\n%s    "cwd": "%s",\n    "kind": "interactive",\n    "startedAt": %s,\n    "sessionId": "%s",\n    "name": "x, y",\n    "status": "busy"\n  }\n' "$pidline" "$cwd" "$st" "$id"
+      printf '  {\n%s    "cwd": "%s",\n    "kind": "%s",\n    "startedAt": %s,\n    "sessionId": "%s",\n    "name": "x, y",\n    "status": "busy"\n  }\n' "$pidline" "$cwd" "$kind" "$st" "$id"
     done; echo ']'; } > "$out"
 }
 agents() { agents_to "$T/agents.json" "$@"; }
@@ -108,7 +117,7 @@ host() {
 # ---------------------------------------------------------------- claude-host
 echo "# claude-host"
 rm -rf "$T/cfg/projects"; transcript "$work" "$A"
-agents "$B:$work@4242"
+agents "$B:$work@4242%background"
 host "$work" HOST_SESSION=$A -- --model x
 check 'live session (after /clear): starts nothing' '' "$log"
 check 'live session: exit 1' 1 "$rc"
@@ -124,10 +133,24 @@ host "$work" HOST_SESSION=$A --
 check 'the pinned id is the live one: still refused' "|1" "$log|$rc"
 contains 'the pinned id is live: pid named' "$out" "session $A (pid 77)"
 lacks 'the pinned id is live: no stale warning' "$out" 'stale'
-agents "$B:$work@10" "$C:$work@11"
+agents "$B:$work@10%background" "$C:$work@11%background"
 host "$work" HOST_SESSION=$A -- 
 contains 'two live: an attach command for each (first)' "$out" "claude attach $B"
 contains 'two live: an attach command for each (second)' "$out" "claude attach $C"
+
+# interactive vs background advice: claude attach only works for background jobs
+agents "$B:$work@4242"
+host "$work" HOST_SESSION=$A -- 
+lacks 'interactive session: no claude attach command' "$out" "claude attach $B"
+contains 'interactive session: names the pid' "$out" "session $B (pid 4242)"
+contains 'interactive session: names the terminal (from ps)' "$out" 'held by a terminal (pts/4242)'
+contains 'interactive session: says to switch to that terminal' "$out" 'switch to that terminal'
+contains 'interactive session: mentions Remote Control' "$out" 'Remote Control'
+agents "$B:$work@10" "$C:$work@11%background"
+host "$work" HOST_SESSION=$A -- 
+lacks 'mixed: no attach for the interactive one' "$out" "claude attach $B"
+contains 'mixed: attach for the background one' "$out" "claude attach $C"
+contains 'mixed: terminal for the interactive one' "$out" 'held by a terminal (pts/10)'
 
 host "$work" HOST_SESSION=$A CLAUDE_HOST_ALLOW_SECOND=1 -- 
 check 'ALLOW_SECOND: today'"'"'s rule (transcript exists: resume)' "claude --resume $A | cwd=$work | HOST_SESSION=$A" "$log"
@@ -217,7 +240,7 @@ check 'update pin: CLAUDE_HOST_PIN_VAR picks the line, quotes kept' "$(printf 'H
 rm -f "$envf"; rmdir "$repo/.devcontainer"
 host "$repo/rooms/solis" HOST_SESSION=$A CLAUDE_HOST_UPDATE_PIN=1 -- 
 check 'update pin: no .env, nothing created' no "$([ -e "$repo/.devcontainer" ] && echo yes || echo no)"
-contains 'update pin: no .env, says so' "$out" 'no .devcontainer/.env found'
+contains 'update pin: no .env, says so' "$out" 'no .env or .devcontainer/.env found'
 
 # HOST_SESSION in the environment that .env does not hold: warn which was used
 mkdir -p "$T/stale/.devcontainer"; printf 'HOST_SESSION=%s\nHOST_SESSION_SOLIS=%s\n' "$C" "$D" > "$T/stale/.devcontainer/.env"
@@ -276,6 +299,72 @@ printf '{"session_id":"%s","cwd":"%s"}' "$B" "$hk" | (cd "$hk" && PATH="$bin:$PA
 body; cp "$henv" "$T/hk.keep"
 hook "$hk" "not-a-uuid" clear
 check 'hook: an invalid id leaves the file alone' "$(cksum < "$T/hk.keep")" "$(cksum < "$henv")"
+
+# the root .env (Task's dotenv: ['.env', '.devcontainer/.env']; the first file defining a variable wins)
+mkdir -p "$T/rt/.devcontainer" "$T/rt/rooms/solis"
+rt="$T/rt"; renv="$rt/.env"; denv="$rt/.devcontainer/.env"
+printf 'DEVCONTAINER_DOCKER_PATH=x\nHOST_SESSION=%s # root\n' "$A" > "$renv"
+printf 'OTHER=1\n' > "$denv"
+hook "$rt" "$B" clear
+check 'root .env: the hook writes HOST_SESSION into the root .env' "HOST_SESSION=$B # root" "$(grep '^HOST_SESSION=' "$renv")"
+check 'root .env: .devcontainer/.env untouched' 'OTHER=1' "$(cat "$denv")"
+contains 'root .env: the note names the file' "$hout" "in $renv"
+hook "$rt/rooms/solis" "$B" clear
+lacks 'root .env: no line for the sub-folder variable, nothing appended' "$(cat "$renv" "$denv")" HOST_SESSION_SOLIS
+hook "$rt/rooms/solis" "$B" clear CLAUDE_HOST_PIN_CREATE=1
+check 'root .env: PIN_CREATE appends to .devcontainer/.env, the documented home' "HOST_SESSION_SOLIS=$B" "$(tail -n 1 "$denv")"
+check 'root .env: PIN_CREATE leaves the root .env alone' "$(printf 'DEVCONTAINER_DOCKER_PATH=x\nHOST_SESSION=%s # root' "$B")" "$(cat "$renv")"
+# .devcontainer/.env alone still works
+rm -f "$renv"; printf 'HOST_SESSION=%s\n' "$A" > "$denv"
+hook "$rt" "$B" clear
+check '.devcontainer/.env alone: still written' "HOST_SESSION=$B" "$(cat "$denv")"
+check '.devcontainer/.env alone: no root .env created' no "$([ -e "$renv" ] && echo yes || echo no)"
+# both define it: the root wins, like Task; .devcontainer/.env is left alone
+printf 'HOST_SESSION=%s\n' "$A" > "$renv"; printf 'HOST_SESSION=%s\n' "$C" > "$denv"
+hook "$rt" "$B" clear
+check 'both define it: the root .env is written' "HOST_SESSION=$B" "$(cat "$renv")"
+check 'both define it: .devcontainer/.env untouched' "HOST_SESSION=$C" "$(cat "$denv")"
+# only .devcontainer/.env defines it while the root .env exists without it
+printf 'X=1\n' > "$renv"
+hook "$rt" "$B" clear
+check 'root .env without the variable: .devcontainer/.env line written' "HOST_SESSION=$B" "$(cat "$denv")"
+check 'root .env without the variable: root .env untouched' 'X=1' "$(cat "$renv")"
+# a root .env alone, no .devcontainer/.env file
+rm -f "$denv"; printf 'HOST_SESSION=%s\n' "$A" > "$renv"
+hook "$rt" "$B" clear
+check 'root .env alone (empty .devcontainer): written' "HOST_SESSION=$B" "$(cat "$renv")"
+# CLAUDE_HOST_ENV_FILE still overrides the search
+printf 'HOST_SESSION=%s\n' "$A" > "$renv"; printf 'HOST_SESSION=%s\n' "$C" > "$denv"
+hook "$rt" "$B" clear CLAUDE_HOST_ENV_FILE="$denv"
+check 'CLAUDE_HOST_ENV_FILE: the named file is written' "HOST_SESSION=$B" "$(cat "$denv")"
+check 'CLAUDE_HOST_ENV_FILE: the root .env untouched' "HOST_SESSION=$A" "$(cat "$renv")"
+
+# --replace uses the same lookup (run from inside the repo, as claude-host does)
+replace() { (cd "$1" && env -u CLAUDE_HOST_PIN_VAR -u CLAUDE_HOST_ENV_FILE PATH="$bin:$PATH" claude-host-pin --replace "$2" "$3" 2>&1); }
+printf 'HOST_SESSION=%s\n' "$A" > "$renv"; printf 'HOST_SESSION_SOLIS=%s\n' "$A" > "$denv"
+rout="$(replace "$rt/rooms/solis" "$A" "$B")"; rrc=$?
+check '--replace: both files hold the id, the root (first) is changed' "HOST_SESSION=$B" "$(cat "$renv")"
+check '--replace: the second file is not' "HOST_SESSION_SOLIS=$A" "$(cat "$denv")"
+contains '--replace: says which file' "$rout" "updated $renv"
+printf 'X=1\n' > "$renv"; printf 'HOST_SESSION=%s\n' "$A" > "$denv"
+replace "$rt" "$A" "$B" > /dev/null
+check '--replace: only .devcontainer/.env holds it: that one is changed' "HOST_SESSION=$B" "$(cat "$denv")"
+printf 'HOST_SESSION=%s\n' "$A" > "$renv"; rm -f "$denv"
+replace "$rt" "$A" "$B" > /dev/null
+check '--replace: only the root .env: changed' "HOST_SESSION=$B" "$(cat "$renv")"
+rout="$(replace "$rt" "$A" "$C")"; rrc=$?
+check '--replace: no line holds the id: exit 1' 1 "$rrc"
+# claude-host through UPDATE_PIN with the pin in the root .env
+printf 'HOST_SESSION=%s\n' "$A" > "$renv"
+agents "$B:$rt@8"
+host "$rt" HOST_SESSION=$A CLAUDE_HOST_UPDATE_PIN=1 -- 
+check 'update pin: the root .env pin is replaced through claude-host' "HOST_SESSION=$B" "$(cat "$renv")"
+host "$rt" HOST_SESSION=$A -- 
+contains 'stale pin message names both files' "$out" '.env or .devcontainer/.env'
+# claude-host: the differs-warning reads the root .env
+printf 'HOST_SESSION=%s\n' "$C" > "$renv"; agents
+host "$rt" HOST_SESSION=$A -- 
+contains 'env differs from the root .env: warns, naming it' "$out" "differs from HOST_SESSION in $renv ($C)"
 
 # after /clear end to end: the hook writes the new id, the next claude-host resolves to it (nothing live)
 body; rm -rf "$T/cfg/projects"; transcript "$hk" "$B"
@@ -354,6 +443,13 @@ printf 'HOST_SESSION_A=\nHOST_SESSION_B=%s\n' "$B" > "$fl/.devcontainer/.env"
 fleet HOST_SESSION_A=$D -- --plan
 contains 'an empty .env line still wins over the environment' "$out" 'alpha: skipped, HOST_SESSION_A is not set'
 printf 'HOST_SESSION_A=%s\nHOST_SESSION_B=%s\n' "$A" "$B" > "$fl/.devcontainer/.env"
+# the root .env is read first (Task's dotenv order): it wins over .devcontainer/.env, and holds ids .devcontainer/.env lacks
+printf 'HOST_SESSION_A=%s\nHOST_SESSION_C=%s\n' "$C" "$D" > "$fl/.env"
+fleet -- --plan
+contains 'root .env wins over .devcontainer/.env' "$out" "HOST_SESSION=$C claude-host --bg --model sonnet"
+contains 'root .env holds a variable the other file lacks' "$out" "gamma: would start: cd $fl/c && HOST_SESSION=$D"
+contains 'a variable only .devcontainer/.env holds is still read' "$out" "HOST_SESSION=$B claude-host"
+rm -f "$fl/.env"
 
 for shape in none null 0; do
   agents "$A:$fl/a@$shape" "$C:$fl/a@$shape" "$B:$fl/b@$shape"

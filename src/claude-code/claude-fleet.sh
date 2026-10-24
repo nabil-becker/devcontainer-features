@@ -16,9 +16,10 @@
 # (no quoting) and handed to claude-host after --bg. Blank lines and lines
 # starting with # are skipped.
 #
-# A variable's value comes from .devcontainer/.env (found upwards from the
-# current directory, or CLAUDE_HOST_ENV_FILE) FIRST, and from the environment only
-# when .env has no line for that variable: inside a session the environment keeps
+# A variable's value comes from the .env files FIRST (the root .env, then
+# .devcontainer/.env, as Task's dotenv reads them: the first file with a line for the
+# variable wins; found upwards from the current directory, or CLAUDE_HOST_ENV_FILE), and
+# from the environment only when no .env has a line for that variable: inside a session the environment keeps
 # the id the session started with, which after a /clear or a fork is stale, while
 # the claude-host-pin hook keeps .env current.
 #
@@ -93,24 +94,34 @@ live() {
   done < <(printf '%s' "$out" | sed 's/}[[:space:]]*,[[:space:]]*{/}\n{/g')
 }
 
-envfile="${CLAUDE_HOST_ENV_FILE:-}"
-if [ -z "$envfile" ]; then
+# the .env files in Task's dotenv order (the first file defining a variable wins): the root .env,
+# then .devcontainer/.env, the root being the nearest folder at or above here holding .devcontainer;
+# CLAUDE_HOST_ENV_FILE overrides. Same lookup as claude-host and claude-host-pin.
+envfiles=()
+if [ -n "${CLAUDE_HOST_ENV_FILE:-}" ]; then
+  envfiles=("$CLAUDE_HOST_ENV_FILE")
+else
   d="$here"
   while :; do
-    [ -f "$d/.devcontainer/.env" ] && { envfile="$d/.devcontainer/.env"; break; }
+    if [ -d "$d/.devcontainer" ]; then
+      for f in "$d/.env" "$d/.devcontainer/.env"; do [ -f "$f" ] && envfiles+=("$f"); done
+      break
+    fi
     [ "$d" = / ] && break
     d="$(dirname "$d")"
   done
 fi
 
-# value_of <variable>: the .env file first (last assignment wins), the environment only when
-# the file has no line for the variable. Why: inside a session the environment keeps the id
+# value_of <variable>: the first .env file with a line for it (last assignment in that file wins),
+# the environment only when no file has one. Why: inside a session the environment keeps the id
 # the session started with, stale after a /clear or a fork; .env is kept current by the pin hook.
 value_of() {
-  local v=''
-  if [ -n "$envfile" ] && [ -f "$envfile" ] &&
-    grep -q "^[[:space:]]*\(export[[:space:]]\{1,\}\)\{0,1\}$1=" "$envfile"; then
-    v="$(sed -n "s/^[[:space:]]*\(export[[:space:]]\{1,\}\)\{0,1\}$1=[[:space:]]*//p" "$envfile" | tail -n 1 | tr -d '\r' |
+  local v='' f found=''
+  for f in "${envfiles[@]}"; do
+    [ -f "$f" ] && grep -q "^[[:space:]]*\(export[[:space:]]\{1,\}\)\{0,1\}$1=" "$f" && { found="$f"; break; }
+  done
+  if [ -n "$found" ]; then
+    v="$(sed -n "s/^[[:space:]]*\(export[[:space:]]\{1,\}\)\{0,1\}$1=[[:space:]]*//p" "$found" | tail -n 1 | tr -d '\r' |
       sed "s/^[\"']//; s/[\"'][[:space:]]*\$//; s/[[:space:]]\{1,\}#.*\$//; s/[[:space:]]*\$//")"
   else
     v="${!1:-}"
@@ -195,7 +206,7 @@ while IFS='|' read -r name var dir args || [ -n "${name:-}" ]; do
   fi
   id="$(value_of "$var")"
   if [ -z "$id" ]; then
-    echo "$name: skipped, $var is not set (environment or .devcontainer/.env)"; continue
+    echo "$name: skipped, $var is not set (environment, .env or .devcontainer/.env)"; continue
   fi
   if ! [[ "$id" =~ $uuid ]]; then
     echo "$name: skipped, $var is not a UUID" >&2; rc=1; continue
