@@ -11,7 +11,7 @@ tasks:
 
   check:
     dir: '{{.USER_WORKING_DIR}}'
-    desc: 'Plain verdict on the SSH agent (ssh-add -l): reachable with N keys, reachable with no keys, or not reachable and why, from the DCF_HOST_TYPE and DCF_HOST_SSH_AGENT values the launcher passed in. Exit 0 when an agent answers, 1 when not.'
+    desc: 'Plain verdict on the SSH agent (ssh-add -l): reachable with N keys, reachable with no keys, or not reachable and why, from the DCF_HOST_TYPE and DCF_HOST_SSH_AGENT values the launcher passed in; also warns about keys of the key volume with a default name (id_ed25519 and the like) or older than SSH_KEY_MAX_AGE_DAYS (default 365), and in socket mode prints the rotation steps for host-held keys. Exit 0 when an agent answers, 1 when not.'
     cmds:
       - ssh-agent-setup check
 
@@ -43,10 +43,10 @@ tasks:
 
   key:new:
     dir: '{{.USER_WORKING_DIR}}'
-    desc: 'Key mode only, opt-in: generate a dedicated ed25519 signing key NAME (default signing) in the key volume, load it and print the public key to add to GitHub as a signing key. Asks for a passphrase unless EMPTY_PASSPHRASE=1. COMMENT sets the key comment. The private key is never printed.'
+    desc: 'Key mode only, opt-in: generate a dedicated ed25519 signing key NAME (default <repo>-<container>-sign) in the key volume, load it and print the public key to register at GitHub as a SIGNING key (not an authentication key). Asks for a passphrase unless EMPTY_PASSPHRASE=1. COMMENT sets the key comment. The private key is never printed.'
     interactive: true
     vars:
-      NAME: '{{.NAME | default "signing"}}'
+      NAME: '{{.NAME | default ""}}'
       COMMENT: '{{.COMMENT | default ""}}'
       EMPTY_PASSPHRASE: '{{.EMPTY_PASSPHRASE | default ""}}'
     cmds:
@@ -61,6 +61,35 @@ tasks:
       DELETE: '{{.DELETE | default ""}}'
     cmds:
       - ssh-agent-setup key-remove '{{.NAME}}' '{{.DELETE}}'
+
+  key:rotate:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Key mode only: rotate a signing key in four steps, stopping at the first failure and removing nothing old until the new key is proven. (1) make NEW (default <NAME without a date suffix>-YYYYMMDD) in the key volume and load it, the old stays loaded; (2) register it at GitHub as a SIGNING key through gh (gh installed and logged in), else print the public key and STOP with exit 1: register it by hand, then run again with NEW=<name> to resume; (3) point git at it (SCOPE=global or repo, as git:signing) and run git:verify, putting git back on a failure; (4) retire the old key: unload it, append it dated to the allowed_signers.history file in the key volume (point gpg.ssh.allowedSignersFile at it so old signatures verify), delete its private key; it stays registered at GitHub unless REVOKE=1 removes it. NAME is optional with exactly one key. EMPTY_PASSPHRASE=1 skips the passphrase prompt. `task ssh-agent:key:rotate -- --plan` prints the steps and keys and changes nothing.'
+    interactive: true
+    vars:
+      NAME: '{{.NAME | default ""}}'
+      NEW: '{{.NEW | default ""}}'
+      REVOKE: '{{.REVOKE | default ""}}'
+      SCOPE: '{{.SCOPE | default ""}}'
+      EMPTY_PASSPHRASE: '{{.EMPTY_PASSPHRASE | default ""}}'
+    cmds:
+      - ssh-agent-setup key-rotate --name '{{.NAME}}' --new '{{.NEW}}' --revoke '{{.REVOKE}}' --scope '{{.SCOPE}}' --empty '{{.EMPTY_PASSPHRASE}}' {{.CLI_ARGS}}
+
+  key:retire:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Key mode only: retire the key NAME=<file name in the key volume> (the last step of key:rotate on its own): unload it from the agent, append its public key dated to the allowed_signers.history file in the key volume, delete its private key; it stays registered at GitHub unless REVOKE=1 also removes it (gh ssh-key delete, the id found by matching the public key). `-- --plan` prints the steps and changes nothing.'
+    requires:
+      vars: [NAME]
+    vars:
+      REVOKE: '{{.REVOKE | default ""}}'
+    cmds:
+      - ssh-agent-setup key-retire --name '{{.NAME}}' --revoke '{{.REVOKE}}' {{.CLI_ARGS}}
+
+  key:age:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'List each private key of the key volume with its creation date (recorded at creation or import; the file date for older ones), its age in days and its fingerprint. task ssh-agent:check warns about keys older than SSH_KEY_MAX_AGE_DAYS (default 365).'
+    cmds:
+      - ssh-agent-setup key-age
 
   git:signing:
     dir: '{{.USER_WORKING_DIR}}'

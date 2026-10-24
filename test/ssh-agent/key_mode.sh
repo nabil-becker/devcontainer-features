@@ -35,4 +35,13 @@ check "task git:signing by public key file" bash -c "task -t $registry ssh-agent
 check "task git:verify signs and verifies through the in-container agent" bash -c "task -t $registry ssh-agent:git:verify | grep -F 'ok:'"
 check "task key:remove DELETE=1 removes it from the volume" bash -c "task -t $registry ssh-agent:key:remove NAME=sign DELETE=1 && [ ! -e $keys/sign ]"
 
+# key:age, and rotation without gh (the image has none; DCF_GH makes that certain): it stops after the new key is
+# made, prints the resume message, and removes nothing old.
+check "task key:age lists the key with a date, an age and a fingerprint" bash -c "task -t $registry ssh-agent:key:age | grep -E 'handmade: created [0-9]{4}-[0-9]{2}-[0-9]{2}, [0-9]+ day\\(s\\) old, SHA256:'"
+new="handmade-$(date +%Y%m%d)"
+check "task key:rotate -- --plan prints the steps and changes nothing" bash -c "task -t $registry ssh-agent:key:rotate NAME=handmade -- --plan | grep -F 'nothing was changed' && [ ! -e $keys/$new ]"
+check "task key:rotate without gh stops after step 1 with the resume message" bash -c "DCF_GH=/nonexistent/gh task -t $registry ssh-agent:key:rotate NAME=handmade EMPTY_PASSPHRASE=1 > '$tmp/rotate.out' 2>&1; [ \$? -ne 0 ] && grep -F 'finish by registering it, then run key:rotate again with NEW=$new' '$tmp/rotate.out' && ! grep -F 'PRIVATE KEY' '$tmp/rotate.out'"
+check "the old key is untouched and still loaded; the new one exists" bash -c "[ -f $keys/handmade ] && ssh-add -l | grep -F handmade && [ -f $keys/$new ] && [ -f $keys/$new.meta ]"
+check "task key:retire removes a key and logs it in the allowed_signers history" bash -c "task -t $registry ssh-agent:key:retire NAME=$new && [ ! -e $keys/$new ] && grep -F 'valid-before=' $keys/allowed_signers.history"
+
 reportResults

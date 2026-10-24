@@ -879,6 +879,66 @@ function Invoke-DevcontainerCliProcess {
     $script:CliExitCode = $LASTEXITCODE
 }
 
+function Write-GeneralPurposeKeyWarning {
+    <#
+    .SYNOPSIS
+        Warnings (never a refusal) when the key about to be imported looks like a general-purpose key.
+    .DESCRIPTION
+        A default file name (id_ed25519, id_rsa, ...), or a public key that also opens something on
+        this host: listed in ~/.ssh/authorized_keys, or the same as another ~/.ssh/*.pub. The public
+        half is FILE.pub, or derived with `ssh-keygen -y` only for a key with no passphrase (a wrong
+        passphrase is given, so a protected key fails instead of prompting, and is skipped). Prints
+        fingerprints, never key material.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$KeyFile)
+    $name = Split-Path -Leaf $KeyFile
+    if ($name -in 'id_ed25519', 'id_ecdsa', 'id_rsa', 'id_dsa', 'id_ed25519_sk', 'id_ecdsa_sk') {
+        Write-Warning "ssh-key-import: $name is the default name of a general-purpose key. Import only a dedicated signing key (one key per purpose and per container, named <repo>-<container>-sign) that opens nothing else; task ssh-agent:key:new inside the container makes one that never leaves it."
+    }
+    $keygen = Get-Command ssh-keygen -ErrorAction SilentlyContinue
+    $pub = $null
+    if (Test-Path -LiteralPath "$KeyFile.pub" -PathType Leaf) { $pub = Get-Content -LiteralPath "$KeyFile.pub" -TotalCount 1 }
+    elseif ($keygen) {
+        $derived = $null | & $keygen.Source -y -P 'not-the-passphrase' -f $KeyFile 2>$null
+        if ($LASTEXITCODE -eq 0 -and $derived) { $pub = @($derived)[0] }
+    }
+    $blob = if ($pub) { @(([string]$pub) -split '\s+')[1] } else { $null }
+    if (-not $blob) { return }
+    $fp = ''
+    if ($keygen) {
+        $tmp = [System.IO.Path]::GetTempFileName()
+        try {
+            [System.IO.File]::WriteAllText($tmp, "$pub`n")
+            $l = & $keygen.Source -l -f $tmp 2>$null
+            if ($LASTEXITCODE -eq 0 -and $l) { $fp = (@(([string]@($l)[0]) -split '\s+'))[1] }
+        }
+        finally { Remove-Item -LiteralPath $tmp -ErrorAction SilentlyContinue }
+    }
+    $userHome = if ($env:HOME) { $env:HOME } else { $env:USERPROFILE }
+    if (-not $userHome) { return }
+    $sshDir = Join-Path $userHome '.ssh'
+    $hit = $null
+    $authorized = Join-Path $sshDir 'authorized_keys'
+    if (Test-Path -LiteralPath $authorized -PathType Leaf) {
+        foreach ($line in Get-Content -LiteralPath $authorized) {
+            if (@($line -split '\s+') -contains $blob) { $hit = 'appears in ~/.ssh/authorized_keys (it logs in to this host)'; break }
+        }
+    }
+    if (-not $hit -and (Test-Path -LiteralPath $sshDir -PathType Container)) {
+        $own = if (Test-Path -LiteralPath "$KeyFile.pub") { (Resolve-Path -LiteralPath "$KeyFile.pub").Path } else { $null }
+        foreach ($p in Get-ChildItem -LiteralPath $sshDir -Filter '*.pub' -File) {
+            if ($own -and $p.FullName -eq $own) { continue }
+            $other = @(((Get-Content -LiteralPath $p.FullName -TotalCount 1) -split '\s+'))[1]
+            if ($other -eq $blob) { $hit = "is the same key as ~/.ssh/$($p.Name)"; break }
+        }
+    }
+    if ($hit) {
+        $shown = if ($fp) { " ($fp)" } else { '' }
+        Write-Warning "ssh-key-import: the public key of $name$shown $hit, so it is a general-purpose key. A key that also opens GitHub, servers or other repos must not live in a container volume: import a dedicated signing key instead (registered at GitHub as a signing key only)."
+    }
+}
+
 function Import-SshKey {
     <#
     .SYNOPSIS
@@ -902,6 +962,7 @@ function Import-SshKey {
     if (-not $KeyFile -or -not (Test-Path -LiteralPath $KeyFile -PathType Leaf)) {
         throw "ssh-key-import: FILE=<path of a private key on this host> is required, and '$KeyFile' is not a file."
     }
+    Write-GeneralPurposeKeyWarning -KeyFile $KeyFile
     $folder = (Resolve-Path $WorkspaceFolder).Path
     $ids = @(Get-RunningDevcontainerId -WorkspaceFolder $folder -DockerPath $DockerPath)
     if ($ids.Count -eq 0) { throw "No running devcontainer for $folder. Start it with: task dc:start" }

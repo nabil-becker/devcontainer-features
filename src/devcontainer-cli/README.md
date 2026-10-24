@@ -311,7 +311,11 @@ the host type needs; ADR 0024 decides it, `docs/proposals/host-profile.md` is th
   FILE=<private key on the host>` is the opt-in key mode's import: the file goes to the running container through
   `devcontainer exec` on stdin (never an argument), into the ssh-agent Feature's key volume with mode 0600 and its `.pub`
   beside it, then the Feature loads it; it refuses when the container is not running, key mode is off there, or FILE is
-  missing, and prints the fingerprint, never the key. Both are one-shot commands; nothing stays running on the host.
+  missing, and prints the fingerprint, never the key. Since 1.10.0 it also warns, on the host and never blocking, when FILE has
+  a default name (`id_ed25519` and the like) or its public key (`FILE.pub`, or derived with `ssh-keygen -y` only when the key
+  has no passphrase) is also in `~/.ssh/authorized_keys` or the same as another `~/.ssh/*.pub`: such a key is
+  general-purpose and should not live in a container volume (it prints fingerprints, never key material).
+  Both are one-shot commands; nothing stays running on the host.
   Not verified on a real host: `devcontainer exec` forwarding its stdin on every platform (the tests use a stub).
 - **Several Claude sessions (1.9.0).** `task devcontainer:claude:fleet` passes `SESSIONS` (set by the including Taskfile)
   and its arguments to the claude-code Feature's `claude-fleet` in the container (through `exec`, or directly inside); see

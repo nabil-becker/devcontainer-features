@@ -13,7 +13,7 @@ installing Node.js, and a one-line bootstrap that wires both into any repo.
 | [`claude-code`](src/claude-code) | [Claude Code](https://code.claude.com/docs): the native release binary (no Node.js, version pinnable) unless a `claude` is already there (the official Anthropic Feature), plus the `claude-host` launcher (a running session of the folder is never started twice), `claude-host-pin` (opt-in SessionStart hook keeping the pin current), `claude-fleet` (several sessions in one terminal) and the state (`CLAUDE_CONFIG_DIR`) in a volume it owns. |
 | [`git`](src/git) | git augmented for the container: a worktree-aware wrapper that scopes `GIT_DIR` to the checkout and maps a `.git` pointer under the host's `.git-dirs` onto one shared mount, `safe.directory` and `core.hooksPath` at post-create, the global config in a volume it owns. |
 | [`gh`](src/gh) | [GitHub CLI](https://cli.github.com) from GitHub releases, checksum-verified, unless the official Feature installed it; its login (`GH_CONFIG_DIR`) in a volume it owns, git's GitHub credentials taken from it. |
-| [`ssh-agent`](src/ssh-agent) | `SSH_AUTH_SOCK` at a fixed path in every process, so git commits can be signed with an SSH key: the launcher mounts the host's agent socket (linux, macOS, a WSL distro), the private key never entering the container; the Windows engines get a plain explanation and an opt-in, temporary key mode; `ssh-agent:*` tasks for keys and git signing setup. |
+| [`ssh-agent`](src/ssh-agent) | `SSH_AUTH_SOCK` at a fixed path in every process, so git commits can be signed with an SSH key: the launcher mounts the host's agent socket (linux, macOS, a WSL distro), the private key never entering the container; the Windows engines get a plain explanation and an opt-in, temporary key mode; `ssh-agent:*` tasks for keys, dedicated-key warnings, rotation and retirement (`key:rotate`, `key:retire`, `key:age`) and git signing setup. |
 | [`az`](src/az) | Augments the official `azure-cli` Feature: its login (`AZURE_CONFIG_DIR`) in a volume it owns, `az bicep` using the Bicep on PATH. |
 | [`kube-state`](src/kube-state) | Owns the kubeconfig (`KUBECONFIG`) the Kubernetes tools share, in a volume it owns, so velero and kubectl stop needing a hand-mounted `~/.kube`; installs no binary. |
 | [`common`](src/common) | The shared helper behind every Feature's post-create hook (`dcf-persist`: make a state directory usable and say what backs it), for a repo's own scripts too. |
@@ -263,7 +263,7 @@ Each Feature stores its persistent state (logins, config, transcripts) in a name
 | `devcontainer:stop` / `prepshutdown` | Stop the container after its [shutdown check](bootstrap/SHUTDOWN.md) (`FORCE=1` skips it; `rebuild` stops first the same way and rebuilds nothing when the stop is refused); `prepshutdown` runs the same check inside the running container and stops nothing. The check is `STOP_CHECK` if set, else the repository's `task shutdown:check`, else `devhost-shutdown-check`, else none. |
 | `devcontainer:up` / `rebuild` / `build` | `devcontainer up` (extra flags after `--`), from-scratch rebuild, image build only. `up` and `rebuild` add the host mounts of the host type (`--mount`: the home's `.git-dirs` at `/git-dirs` and the SSH agent socket, each skipped when `devcontainer.json` already mounts it; `HOST_MOUNTS=false` turns them off); `build` and `exec` add none. |
 | `devcontainer:ssh-add [-- <args>]` | Run the host's `ssh-add` once (no arguments: `-l`) to load a key into the host agent that the `ssh-agent` Feature's socket mode forwards (linux, macos, windows-wsl-docker); on Windows it says the container cannot reach that agent and points to `ssh-key-import`. Host only. |
-| `devcontainer:ssh-key-import FILE=<host path>` | Opt-in key mode: stream a private key file of the host (and its `.pub`) into the running container's `ssh-agent` key volume through `devcontainer exec` on stdin (never an argument), mode 0600, then load it; prints the fingerprint, never the key. Refuses when FILE is missing, no container runs, or key mode is off there. Host only. |
+| `devcontainer:ssh-key-import FILE=<host path>` | Opt-in key mode: stream a private key file of the host (and its `.pub`) into the running container's `ssh-agent` key volume through `devcontainer exec` on stdin (never an argument), mode 0600, then load it; prints the fingerprint, never the key; warns (never blocks) when FILE has a default name or its public key also opens this host. Refuses when FILE is missing, no container runs, or key mode is off there. Host only. |
 | `devcontainer:host` | Print the host profile (`HOST_TYPE` and why, engine, `DCF_HOST_*`) and the host mounts `up` would add or skip; starts nothing. |
 | `devcontainer:exec CMD='...'` / `shell` / `pwsh` | Run a command (base64-safe), an interactive bash, or PowerShell in the container. |
 | `devcontainer:claude [DIR=<sub-folder>] [SESSION=<uuid>] [-- <claude args>]` | Start or resume the Claude Code host session inside (needs the `claude-code` Feature): `HOST_SESSION` from `.devcontainer/.env`, `HOST_SESSION_<DIR>` for a sub-folder. Runs directly when already inside the container. |
@@ -279,7 +279,7 @@ Each Feature stores its persistent state (logins, config, transcripts) in a name
 skips the launcher; there use `${localEnv:USERPROFILE}` (Windows host) or `${localEnv:HOME}`, never `DCF_HOST_HOME`,
 which is empty without the launcher. Re-run the bootstrap to refresh the vendored launcher.
 
-**SSH commit signing from `devcontainer exec` and `claude` sessions (`ssh-agent` 1.0.0, devcontainer-cli 1.8.0):** add
+**SSH commit signing from `devcontainer exec` and `claude` sessions (`ssh-agent` 1.1.0, devcontainer-cli 1.10.0):** add
 `ghcr.io/nabil-becker/devcontainer-features/ssh-agent:1` to the `features` and map the host variables with
 `containerEnv` (the bootstrap's template does: `"DCF_HOST_TYPE": "${localEnv:DCF_HOST_TYPE}"`, `"DCF_HOST_SSH_AGENT":
 "${localEnv:DCF_HOST_SSH_AGENT}"`). On linux, macos and windows-wsl-docker (launcher inside the distro) nothing else:
@@ -288,7 +288,9 @@ the key with `task dc:ssh-add -- <key>`. On the Windows engines (windows-docker,
 named pipe and no process of ours runs on the host, so there is none: use a VS Code terminal (its own forwarding), or
 opt into the temporary key mode (`SSH_AGENT_MODE=key` at `task dc:up`, or the Feature's `keyMode: true`), which keeps a
 signing key in the container's volume and so breaks "the key never enters the container" for you: load it with
-`task dc:ssh-key-import FILE=<key>`. Then `task ssh-agent:git:signing` and `task ssh-agent:git:verify`.
+`task dc:ssh-key-import FILE=<key>` (a dedicated key, one per container, registered at GitHub as a signing key only;
+`task ssh-agent:key:new` makes one inside the container). Then `task ssh-agent:git:signing` and `task ssh-agent:git:verify`;
+`task ssh-agent:key:rotate` replaces the key in four steps and `key:retire` / `key:age` retire it and show its age.
 
 All of them also answer to `dc:` (the include's alias in the generated
 Taskfile). Each task dispatches per platform (Task's per-command
