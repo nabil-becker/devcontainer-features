@@ -4,7 +4,8 @@
 # stale-pin warning, CLAUDE_HOST_UPDATE_PIN, CLAUDE_HOST_ALLOW_SECOND, ended sessions
 # never count, `claude agents --json` missing), of the SessionStart hook claude-host-pin and
 # of claude-fleet (running by id, running by dir, unset variable, start with --bg in
-# the dir, --plan, --no-view, the environment beating .env). A fake `claude` on PATH
+# the dir, --plan, --no-view, .env beating the environment, the settle wait for restored
+# sessions, duplicates reported and stopped with `claude stop`, never `claude rm`). A fake `claude` on PATH
 # answers `agents --json` from a fixture and records every other call; the scripts
 # under test are copied to a temp bin as claude-host and claude-fleet. Part of `task lint`
 # (`task test:claude-unit`). CLAUDE_HOST_SH and CLAUDE_FLEET_SH point the tests at
@@ -41,16 +42,33 @@ cp "$pin_sh" "$bin/claude-host-pin"; chmod +x "$bin/claude-host-pin"
 cat > "$bin/claude" <<'FAKE'
 #!/bin/sh
 # fake claude: `agents --json` answers from $FAKE_AGENTS (a file; FAKE_AGENTS_FAIL=1 fails,
-# FAKE_AGENTS_GARBAGE=1 prints text); everything else is recorded in $FAKE_LOG.
+# FAKE_AGENTS_GARBAGE=1 prints text). FAKE_SEQ=1: the Nth call (counted in $FAKE_COUNT) answers
+# from $FAKE_AGENTS.N when that file exists. FAKE_ROTATE=1: odd calls answer from $FAKE_AGENTS,
+# even ones from $FAKE_AGENTS.alt (a list that never settles). `stop <id>` and `rm <id>` are
+# recorded (STOP / RM); stop then copies $FAKE_AGENTS.afterstop over $FAKE_AGENTS when it exists.
+# Everything else is recorded in $FAKE_LOG. Never reads stdin.
 if [ "$1" = agents ] && [ "$2" = --json ]; then
   [ -n "${FAKE_AGENTS_FAIL:-}" ] && { echo "error: unknown option '--json'" >&2; exit 1; }
   [ -n "${FAKE_AGENTS_GARBAGE:-}" ] && { echo "not json"; exit 0; }
+  if [ -n "${FAKE_SEQ:-}${FAKE_ROTATE:-}" ]; then
+    n=$(( $(cat "$FAKE_COUNT" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FAKE_COUNT"
+    if [ -n "${FAKE_SEQ:-}" ] && [ -f "$FAKE_AGENTS.$n" ]; then cat "$FAKE_AGENTS.$n"; exit 0; fi
+    if [ -n "${FAKE_ROTATE:-}" ] && [ $((n % 2)) = 0 ]; then cat "$FAKE_AGENTS.alt"; exit 0; fi
+  fi
   cat "$FAKE_AGENTS"; exit 0
 fi
+if [ "$1" = stop ]; then
+  echo "STOP $2" >> "$FAKE_LOG"
+  [ -f "$FAKE_AGENTS.afterstop" ] && cp "$FAKE_AGENTS.afterstop" "$FAKE_AGENTS"
+  exit 0
+fi
+if [ "$1" = rm ]; then echo "RM $2" >> "$FAKE_LOG"; exit 0; fi
 if [ "$1" = agents ]; then echo "VIEW" >> "$FAKE_LOG"; exit 0; fi
 echo "claude $* | cwd=$(pwd -P) | HOST_SESSION=${HOST_SESSION:-}" >> "$FAKE_LOG"
 FAKE
 chmod +x "$bin/claude"
+# the fake is what runs: first on PATH, executable (a real claude must never be reached)
+check 'the fake claude is the one on PATH and executable' "$bin/claude" "$(PATH="$bin:$PATH" command -v claude; [ -x "$bin/claude" ] || echo notexec)"
 
 A=11111111-1111-1111-1111-111111111111   # the pinned id
 B=22222222-2222-2222-2222-222222222222   # the live id after /clear
@@ -64,15 +82,18 @@ transcript() { mkdir -p "$T/cfg/projects/$(slug "$1")"; : > "$T/cfg/projects/$(s
 
 # agents <id:cwd[@pid]>...: write the fixture the fake claude answers with (pretty-printed as Claude Code does).
 # pid defaults to 1; @none leaves the field out, @null and @0 are the other shapes of an ended session.
-agents() {
-  local first=1 e rest id cwd pid pidline
+# A trailing #<ms> sets startedAt (default 1). agents_to <file> writes elsewhere (the fake's N-th answer).
+agents_to() {
+  local out="$1" first=1 e rest id cwd pid pidline st; shift
   { echo '['; for e in "$@"; do
       [ "$first" = 1 ] || echo '  ,'; first=0
-      id="${e%%:*}"; rest="${e#*:}"; cwd="${rest%@*}"; pid=1; [ "$rest" != "$cwd" ] && pid="${rest##*@}"
+      id="${e%%:*}"; rest="${e#*:}"; st=1; case "$rest" in *'#'*) st="${rest##*#}"; rest="${rest%%#*}" ;; esac
+      cwd="${rest%@*}"; pid=1; [ "$rest" != "$cwd" ] && pid="${rest##*@}"
       case "$pid" in none) pidline='' ;; *) pidline="    \"pid\": $pid,"$'\n' ;; esac
-      printf '  {\n%s    "cwd": "%s",\n    "kind": "interactive",\n    "startedAt": 1,\n    "sessionId": "%s",\n    "name": "x, y",\n    "status": "busy"\n  }\n' "$pidline" "$cwd" "$id"
-    done; echo ']'; } > "$T/agents.json"
+      printf '  {\n%s    "cwd": "%s",\n    "kind": "interactive",\n    "startedAt": %s,\n    "sessionId": "%s",\n    "name": "x, y",\n    "status": "busy"\n  }\n' "$pidline" "$cwd" "$st" "$id"
+    done; echo ']'; } > "$out"
 }
+agents() { agents_to "$T/agents.json" "$@"; }
 
 # host <dir> [VAR=value ...] -- args: run claude-host in <dir>; output in $out (stderr too), stdout in $so, status in $rc.
 host() {
@@ -92,7 +113,7 @@ host "$work" HOST_SESSION=$A -- --model x
 check 'live session (after /clear): starts nothing' '' "$log"
 check 'live session: exit 1' 1 "$rc"
 contains 'live session: names the running id' "$out" "session $B (pid 4242)"
-contains 'live session: says how to attach' "$out" "'claude agents'"
+contains 'live session: names the exact attach command' "$out" "claude attach $B"
 contains 'stale pin: says the pin is stale' "$out" "pinned $A"
 contains 'stale pin: says how to update it' "$out" 'CLAUDE_HOST_UPDATE_PIN=1'
 host "$work" HOST_SESSION=$A CLAUDE_HOST_PRINT_FLAG=1 --
@@ -103,6 +124,10 @@ host "$work" HOST_SESSION=$A --
 check 'the pinned id is the live one: still refused' "|1" "$log|$rc"
 contains 'the pinned id is live: pid named' "$out" "session $A (pid 77)"
 lacks 'the pinned id is live: no stale warning' "$out" 'stale'
+agents "$B:$work@10" "$C:$work@11"
+host "$work" HOST_SESSION=$A -- 
+contains 'two live: an attach command for each (first)' "$out" "claude attach $B"
+contains 'two live: an attach command for each (second)' "$out" "claude attach $C"
 
 host "$work" HOST_SESSION=$A CLAUDE_HOST_ALLOW_SECOND=1 -- 
 check 'ALLOW_SECOND: today'"'"'s rule (transcript exists: resume)' "claude --resume $A | cwd=$work | HOST_SESSION=$A" "$log"
@@ -194,6 +219,17 @@ host "$repo/rooms/solis" HOST_SESSION=$A CLAUDE_HOST_UPDATE_PIN=1 --
 check 'update pin: no .env, nothing created' no "$([ -e "$repo/.devcontainer" ] && echo yes || echo no)"
 contains 'update pin: no .env, says so' "$out" 'no .devcontainer/.env found'
 
+# HOST_SESSION in the environment that .env does not hold: warn which was used
+mkdir -p "$T/stale/.devcontainer"; printf 'HOST_SESSION=%s\nHOST_SESSION_SOLIS=%s\n' "$C" "$D" > "$T/stale/.devcontainer/.env"
+agents
+host "$T/stale" HOST_SESSION=$A -- 
+contains 'env differs from .env: warns' "$out" "HOST_SESSION in the environment ($A) differs from HOST_SESSION in $T/stale/.devcontainer/.env ($C); using the environment value"
+check 'env differs from .env: the environment value is still used' "claude --session-id $A | cwd=$T/stale | HOST_SESSION=$A" "$log"
+host "$T/stale" HOST_SESSION=$D -- 
+lacks 'id held by another .env line (a per-folder session): no warning' "$out" 'differs'
+host "$T/stale" HOST_SESSION=$C -- 
+lacks 'env equals .env: no warning' "$out" 'differs'
+
 # old guarantees
 host "$work" HOST_SESSION= -- 
 check 'HOST_SESSION unset: plain claude' "claude  | cwd=$work | HOST_SESSION=" "$log"
@@ -258,8 +294,9 @@ rm -rf "$T/cfg/projects"
 fleet() {
   local envs=(); while [ "$1" != -- ]; do envs+=("$1"); shift; done; shift
   : > "$T/log"
-  out="$(cd "$fl" && env -u SESSIONS_B64 -u HOST_SESSION -u HOST_SESSION_A -u HOST_SESSION_B -u HOST_SESSION_C -u CLAUDE_HOST_ENV_FILE \
-    PATH="$bin:$PATH" CLAUDE_CONFIG_DIR="$T/cfg" FAKE_AGENTS="$T/agents.json" FAKE_LOG="$T/log" SESSIONS="$sessions" "${envs[@]}" claude-fleet "$@" 2>&1)"; rc=$?
+  out="$(cd "$fl" && env -u SESSIONS_B64 -u HOST_SESSION -u HOST_SESSION_A -u HOST_SESSION_B -u HOST_SESSION_C -u CLAUDE_HOST_ENV_FILE -u FAKE_SEQ -u FAKE_ROTATE \
+    PATH="$bin:$PATH" CLAUDE_CONFIG_DIR="$T/cfg" FAKE_AGENTS="$T/agents.json" FAKE_LOG="$T/log" FAKE_COUNT="$T/count" \
+    FLEET_SETTLE_INTERVAL=0 SESSIONS="$sessions" "${envs[@]}" claude-fleet "$@" 2>&1)"; rc=$?
   log="$(cat "$T/log")"
 }
 sessions="alpha|HOST_SESSION_A|a|--model sonnet
@@ -287,7 +324,7 @@ lacks '--no-view: the view is not opened' "$log" 'VIEW'
 agents "$C:$fl/a" "$D:$fl/a" "$B:$fl/b"
 fleet -- --no-view
 contains 'two live in one dir: counts as running' "$out" 'alpha: running'
-contains 'two live in one dir: reported' "$out" '2 live sessions work in a'
+contains 'two live in one dir: reported as duplicates' "$out" 'duplicates: 2 live sessions'
 lacks 'two live in one dir: nothing started there' "$log" "cwd=$fl/a"
 lacks 'running by id: no start' "$log" "cwd=$fl/b"
 
@@ -309,8 +346,14 @@ contains 'with a transcript: --resume ... --bg' "$log" "claude --resume $A --bg 
 
 agents
 fleet HOST_SESSION_A=$D -- --plan
-contains 'environment beats .env' "$out" "HOST_SESSION=$D claude-host --bg --model sonnet"
-lacks 'environment beats .env: the .env value is not used' "$out" "HOST_SESSION=$A "
+contains '.env beats a stale environment' "$out" "HOST_SESSION=$A claude-host --bg --model sonnet"
+lacks '.env beats a stale environment: the environment value is not used' "$out" "HOST_SESSION=$D"
+fleet HOST_SESSION_C=$D -- --plan
+contains 'environment is the fallback when .env has no line' "$out" "gamma: would start: cd $fl/c && HOST_SESSION=$D"
+printf 'HOST_SESSION_A=\nHOST_SESSION_B=%s\n' "$B" > "$fl/.devcontainer/.env"
+fleet HOST_SESSION_A=$D -- --plan
+contains 'an empty .env line still wins over the environment' "$out" 'alpha: skipped, HOST_SESSION_A is not set'
+printf 'HOST_SESSION_A=%s\nHOST_SESSION_B=%s\n' "$A" "$B" > "$fl/.devcontainer/.env"
 
 for shape in none null 0; do
   agents "$A:$fl/a@$shape" "$C:$fl/a@$shape" "$B:$fl/b@$shape"
@@ -339,6 +382,80 @@ fleet SESSIONS_B64="$(printf 'alpha|HOST_SESSION_A|a|' | base64 -w0)" SESSIONS= 
 contains 'SESSIONS_B64 is read' "$out" 'alpha: running'
 fleet SESSIONS= -- --plan
 check 'no SESSIONS: exit 2' 2 "$rc"
+
+# ---------------------------------------------- settle wait for restored sessions
+echo "# claude-fleet: settle, duplicates, never rm"
+sessions="alpha|HOST_SESSION_A|a|
+beta|HOST_SESSION_B|b|"
+rm -f "$T"/agents.json.*
+agents_to "$T/agents.json.1"                      # right after the rebuild: nothing yet
+agents_to "$T/agents.json.2" "$A:$fl/a@10"        # the restore brings one back
+agents "$A:$fl/a@10" "$B:$fl/b@11"                # then both
+rm -f "$T/count"
+fleet FAKE_SEQ=1 -- --no-view
+check 'restore on the 2nd poll: nothing is started (no --bg)' 0 "$(printf '%s\n' "$log" | grep -c -- '--bg')"
+check 'restore on the 2nd poll: both agents running' 2 "$(printf '%s\n' "$out" | grep -c ': running')"
+check 'the waiting message is printed once' 1 "$(printf '%s\n' "$out" | grep -c 'waiting for restored sessions')"
+check 'the list was read until two equal reads (4 polls) and once more to reconcile' 5 "$(cat "$T/count")"
+rm -f "$T/count"
+fleet FAKE_SEQ=1 -- --no-view --no-wait
+check '--no-wait: one read only, no waiting message' "1|0" "$(cat "$T/count")|$(printf '%s\n' "$out" | grep -c 'waiting for')"
+check '--no-wait: the early (empty) list is acted on: both started (the race it avoids)' 2 "$(printf '%s\n' "$log" | grep -c -- '--bg')"
+rm -f "$T"/agents.json.*
+agents "$A:$fl/a@10"; agents_to "$T/agents.json.alt"
+rm -f "$T/count"
+fleet FAKE_ROTATE=1 FLEET_SETTLE_TIMEOUT=1 -- --plan
+contains 'a list that never settles: reconciles anyway with a note' "$out" 'still changing after 1s; reconciling anyway'
+contains 'a list that never settles: still reconciles' "$out" 'plan only'
+agents "$A:$fl/a@10" "$B:$fl/b@11"
+rm -f "$T/count"
+fleet FAKE_SEQ=1 -- --no-view
+check 'a stable list: read twice to settle, once to reconcile' 3 "$(cat "$T/count" 2>/dev/null || echo 0)"
+rm -f "$T/count"
+
+# ------------------------------------------------------------------ duplicates
+now_ms=$(( $(date +%s) * 1000 ))
+old_ms=$(( now_ms - 7200000 )); new_ms=$(( now_ms - 300000 ))
+rm -rf "$T/cfg/projects"; transcript "$fl/a" "$A"
+agents "$A:$fl/a@10#$old_ms" "$C:$fl/a@11#$new_ms" "$B:$fl/b@12"
+fleet -- --plan
+contains 'duplicates: reported' "$out" 'alpha: duplicates: 2 live sessions'
+contains 'duplicates: the pinned (live) id is kept even though it is older' "$out" "keep  $A pid 10 age 2h transcript yes"
+contains 'duplicates: the other is an extra, with pid, age and transcript state' "$out" "extra $C pid 11 age 5m transcript no"
+contains '--plan: names the --stop-duplicates hint' "$out" '--stop-duplicates'
+check '--plan: stops and starts nothing' '' "$log"
+fleet -- --no-view
+check 'a normal run reports duplicates and stops nothing' 0 "$(printf '%s\n' "$log" | grep -c 'STOP\|RM')"
+contains 'a normal run prints the --stop-duplicates hint' "$out" 'claude-fleet --stop-duplicates stops the extras'
+fleet -- --plan --stop-duplicates
+check '--plan --stop-duplicates: still stops nothing' '' "$log"
+contains '--plan --stop-duplicates: says what it would stop' "$out" "would stop the extras"
+cp "$T/agents.json" "$T/agents.dup"
+agents "$A:$fl/a@10#$old_ms" "$B:$fl/b@12"; cp "$T/agents.json" "$T/agents.json.afterstop"; cp "$T/agents.dup" "$T/agents.json"
+fleet -- --no-view --stop-duplicates
+check '--stop-duplicates: stops the extra with claude stop, nothing else' "STOP $C" "$log"
+contains '--stop-duplicates: re-reads the list and says the extra is gone' "$out" "the stopped extras are gone ($C)"
+check '--stop-duplicates: exit 0' 0 "$rc"
+check 'a stopped extra is not restarted (no --bg)' 0 "$(printf '%s\n' "$log" | grep -c -- '--bg')"
+rm -f "$T/agents.json.afterstop"; cp "$T/agents.dup" "$T/agents.json"
+fleet -- --no-view --stop-duplicates
+contains 'an extra that is still live after claude stop is reported' "$out" "still live after claude stop: $C"
+check 'an extra still live: exit 1' 1 "$rc"
+# no live pin: the newest is kept; matched by folder
+agents "$D:$fl/a@20#$old_ms" "$C:$fl/a@21#$new_ms" "$B:$fl/b@12"
+fleet -- --plan
+contains 'no live pin: the newest session is kept' "$out" "keep  $C pid 21"
+contains 'no live pin: the older one is an extra' "$out" "extra $D pid 20"
+# an ended duplicate never counts
+agents "$A:$fl/a@10" "$C:$fl/a@none#$new_ms" "$B:$fl/b@12"
+fleet -- --plan
+lacks 'a session without a pid is not a duplicate' "$out" 'duplicates'
+# never rm
+agents "$A:$fl/a@10#$old_ms" "$C:$fl/a@11#$new_ms" "$B:$fl/b@12"
+fleet -- --no-view --stop-duplicates
+lacks 'never rm: the fake saw no rm' "$log" 'RM'
+check 'claude-fleet never invokes rm on a session (guard on the code)' 0 "$(grep -v '^[[:space:]]*#' "$fleet_sh" | grep -cE 'claude[[:space:]]+rm|\brm[[:space:]]+"?\$')"
+rm -f "$T"/agents.json.* "$T/agents.dup" "$T/count"
 
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

@@ -92,9 +92,11 @@
 #                                      SESSIONS: |
 #                                        solis|HOST_SESSION_SOLIS|rooms/solis|--model sonnet
 #                                        atlas|HOST_SESSION_ATLAS|rooms/atlas|
-#                              (variables are read from the container's environment, then
-#                              .devcontainer/.env). `task devcontainer:claude:fleet -- --plan`
-#                              prints what it would do, `-- --no-view` starts without the view.
+#                              (variables are read from .devcontainer/.env first, then the
+#                              container's environment). `task devcontainer:claude:fleet -- --plan`
+#                              prints what it would do (and lists duplicate sessions), `-- --no-view`
+#                              starts without the view, `-- --no-wait` skips the wait for restored
+#                              sessions, `-- --stop-duplicates` stops extra sessions (claude stop).
 #   DEVCONTAINER_BUILD_LOCK    0 = do not serialise `up`/`build` host-wide (default:
 #                              one image build at a time, see README).
 #   DEVCONTAINER_BUILD_LOCK_FEATURES_TEST  true = `features test` takes that
@@ -347,7 +349,7 @@ tasks:
           CMD: '{{if .DIR}}cd ''{{.DIR}}'' && {{end}}HOST_SESSION=''{{.SESSION}}'' claude-host {{.CLI_ARGS}}'
 
   claude:fleet:
-    desc: 'Several Claude Code sessions in one terminal, never a second copy of one (claude-fleet from the claude-code Feature, which needs the claude-code Feature''s claude-host and Claude Code with `claude agents --json`): SESSIONS, set by the including Taskfile (include vars), has one line per session, name|session-variable|dir|extra claude args. A session counts as running when its id (the variable''s value, from the container''s environment or .devcontainer/.env) or its folder is in `claude agents --json`; the others are started in the background with claude-host --bg in their folder; then `claude agents` opens. -- --plan prints what it would do and starts nothing; -- --no-view starts the missing ones without opening the view. Starts the container first; runs directly when already inside it.'
+    desc: 'Several Claude Code sessions in one terminal, never a second copy of one (claude-fleet from the claude-code Feature, which needs the claude-code Feature''s claude-host and Claude Code with `claude agents --json`): SESSIONS, set by the including Taskfile (include vars), has one line per session, name|session-variable|dir|extra claude args. A session counts as running when its id (the variable''s value, from .devcontainer/.env first, then the container''s environment) or its folder is live in `claude agents --json`; the others are started in the background with claude-host --bg in their folder; then `claude agents` opens. It first waits until sessions restored after a rebuild are stable (-- --no-wait skips that). Several live sessions for one agent are reported; -- --stop-duplicates stops the extras with `claude stop` (never rm). -- --plan prints what it would do and starts nothing; -- --no-view starts the missing ones without opening the view. Starts the container first; runs directly when already inside it.'
     interactive: true
     preconditions:
       - sh: '[ -n "{{.SESSIONS | default "" | trim}}" ]'
