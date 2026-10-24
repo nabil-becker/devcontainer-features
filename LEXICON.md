@@ -32,6 +32,10 @@ The domain words of the project itself are not here; they live with the project'
   detected in the order of `HOST_TYPE_PRIORITY`); the launcher then sets `DCF_HOST_TYPE`,
   `DCF_HOST_HOME` and `DCF_HOST_SSH_AGENT`, which a repo maps into the container with
   `containerEnv` (ADR-0024).
+- **Host mount**: a bind mount the launcher adds to `devcontainer up` (and so `rebuild`) with
+  `--mount type=bind,source=...,target=...`, from a per-host-type list; it is skipped when the
+  repository's `devcontainer.json` already mounts the same target, and `HOST_MOUNTS=false` turns
+  the list off. The `.git-dirs` mount is the first entry (ADR-0024).
 
 ## People and agents
 

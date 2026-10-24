@@ -866,3 +866,13 @@ summary = "The kind of workstation the launcher runs on (windows-docker, windows
 subject = "devcontainer"
 predicate = "uses"
 object = "host-type"
+
+[host-mount]
+type = "product"
+term = "Host mount"
+summary = "A bind mount the launcher adds to devcontainer up from a per-host-type list, skipped when the repo already mounts the target; HOST_MOUNTS=false turns it off."
+
+[[relation]]
+subject = "devcontainer"
+predicate = "uses"
+object = "host-mount"

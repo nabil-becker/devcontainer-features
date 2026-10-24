@@ -24,25 +24,69 @@
     "SessionStart": [
       {
         "hooks": [
-          {"type": "command", "command": "devhost-briefing", "timeout": 30}
+          {
+            "type": "command",
+            "command": "devhost-briefing",
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "startup|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if command -v claude-host-pin >/dev/null 2>&1; then claude-host-pin; fi",
+            "timeout": 10
+          }
         ]
       }
     ],
     "Stop": [
       {
         "hooks": [
-          {"type": "command", "command": "devhost-run-job scribe", "async": true, "timeout": 600},
-          {"type": "command", "command": "devhost-run-job librarian", "async": true, "timeout": 600},
-          {"type": "command", "command": "devhost-run-job secretary", "async": true, "timeout": 600},
-          {"type": "command", "command": "devhost-run-job tester", "async": true, "timeout": 600}
+          {
+            "type": "command",
+            "command": "devhost-run-job scribe",
+            "async": true,
+            "timeout": 600
+          },
+          {
+            "type": "command",
+            "command": "devhost-run-job librarian",
+            "async": true,
+            "timeout": 600
+          },
+          {
+            "type": "command",
+            "command": "devhost-run-job secretary",
+            "async": true,
+            "timeout": 600
+          },
+          {
+            "type": "command",
+            "command": "devhost-run-job tester",
+            "async": true,
+            "timeout": 600
+          }
         ]
       }
     ],
     "SubagentStop": [
       {
         "hooks": [
-          {"type": "command", "command": "devhost-run-job scribe", "async": true, "timeout": 600},
-          {"type": "command", "command": "devhost-run-job librarian", "async": true, "timeout": 600}
+          {
+            "type": "command",
+            "command": "devhost-run-job scribe",
+            "async": true,
+            "timeout": 600
+          },
+          {
+            "type": "command",
+            "command": "devhost-run-job librarian",
+            "async": true,
+            "timeout": 600
+          }
         ]
       }
     ]
