@@ -16,6 +16,20 @@ reach anyone who references them. The rules below keep that safe.
    (`.devcontainer/`) gives you every tool the checks need.
    Its `.devcontainer/devcontainer-lock.json` is committed; refresh it with
    `devcontainer upgrade` when a registry Feature there is bumped.
+
+   **CI lints in that same toolchain.** The Lint workflow builds
+   `.devcontainer/ci/devcontainer.json` (the main config without the
+   workstation-only parts: mounts, `initializeCommand`, docker-in-docker, the
+   claude-code, git, gh and devhost Features) with `devcontainers/ci` and runs
+   `task lint` and `task docs:check` in it, so a local `task lint` and CI give
+   the same answer. The tool versions (shellcheck, yamllint, PowerShell, Pester,
+   PSScriptAnalyzer) are pinned in the Feature options of
+   `.devcontainer/devcontainer.json`; Python is Debian 13's, from the pinned
+   base image. **To bump a tool, change its version in both
+   `.devcontainer/devcontainer.json` and `.devcontainer/ci/devcontainer.json`**;
+   `task lint:toolchain` (part of `task lint`) fails when the two differ in the
+   image or any shared Feature entry, or when a tool has no pinned version. Then
+   rebuild the devcontainer and run `task lint`: a newer tool may flag new things.
 2. Make the change; run `task docs` (if the JSON or notes changed),
    `task lint` and, on Linux/macOS or inside the devcontainer,
    `task test FEATURE=<id>`.

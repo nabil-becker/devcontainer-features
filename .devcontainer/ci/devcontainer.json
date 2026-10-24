@@ -1,0 +1,27 @@
+{
+  "name": "devcontainer-features (CI lint)",
+  // What the Lint workflow builds (devcontainers/ci). The same toolchain as
+  // ../devcontainer.json, minus what only a workstation can provide: no
+  // initializeCommand, no .git-dirs mount, no DEVHOST_* env, no docker-in-docker,
+  // no claude-code/git/gh/devhost Features. Do not change a tool entry here
+  // alone: `task lint:toolchain` (part of `task lint`) fails when the image or a
+  // Feature entry below differs from the main file. Bump versions in both.
+  "image": "mcr.microsoft.com/devcontainers/base:2-trixie",
+  "features": {
+    "ghcr.io/devcontainers/features/powershell:1": {
+      "version": "7.6.7",
+      "modules": "Pester==6.2.0,PSScriptAnalyzer==1.25.0"
+    },
+    "ghcr.io/devcontainers-extra/features/shellcheck:1": {
+      "version": "0.11.0"
+    },
+    "ghcr.io/devcontainers-extra/features/yamllint:2": {
+      "version": "1.38.0"
+    },
+    // Local Features, staged by .devcontainer/stage-features.sh before the
+    // build (the CLI only accepts local paths under .devcontainer/, hence ../).
+    "../features/go-task": {},
+    "../features/devcontainer-cli": {}
+  },
+  "remoteUser": "vscode"
+}

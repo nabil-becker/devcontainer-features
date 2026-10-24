@@ -216,6 +216,7 @@ stays. Ids are short descriptive slugs (two to four kebab-case words naming the 
 
 - [x] **dc-host-workstation-try Run task dc:host on the workstation** (the Operator). The first run ran the old bootstrap (the checkout was on a stale records branch), so the host task has not run yet. Run `task dc:host` once the workstation checkout is on current main: it should report `windows-wslc` or `windows-docker`, with the `C:\Users` home folder and the agent as `none`. That is the first real check of the Windows detection. Added 2026-10-23. Done 2026-10-23.
 - [x] **merge-pr-65-bootstrap Review and merge PR #65 (bootstrap move, slice 2)** (the Operator). Slice 2 of host-profile-contract: the bootstrap vendors into `.devcontainer/cli_bootstrap.ignore/` (`BOOTSTRAP_DIR` overrides it), `.devcontainer/.gitignore` is created or appended (`BOOTSTRAP_GITIGNORE=false` skips it), and an old `./bootstrap/` include keeps working and is repointed with a note; devcontainer-cli 1.6.0. Checks pass on the branch. Added 2026-10-23. Done 2026-10-23: merged.
+- [x] **shellcheck-version-parity CI lints inside the devcontainer, with pinned tools** (host). The Lint workflow now runs `task lint` in `.devcontainer/ci/devcontainer.json` (the shared toolchain, no workstation parts) and the tool versions are pinned in the devcontainer config, with `task lint:toolchain` failing when the two configs drift. Added 2026-10-24. Done 2026-10-24 (branch `chore/shellcheck-version-parity/1`).
 
 ## Next
 
