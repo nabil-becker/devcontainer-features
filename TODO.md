@@ -255,6 +255,7 @@ stays. Ids are short descriptive slugs (two to four kebab-case words naming the 
 - [ ] **merge-records-pr-75 Review and merge records PR #75** (the Operator). The backs' records since #74 (ledger, cost report, backlog and the ADR 0029 draft), committed on a branch from current `main` as #75; the checkout is on current `main` with them. Added 2026-10-24.
 - [ ] **release-fleet-lessons Merge #76 and release the fleet lessons** (the Operator). Merge the fleet pull request, then release claude-code 1.6.0 and devcontainer-cli 1.11.0; the host does not start a release. Tell the consuming repository which `.devcontainer` changes to adopt, then rebuild the devhost here. Added 2026-10-24.
 - [ ] **refusal-and-host-check Check the second-terminal refusal and the host mount line** (the Operator). On the workstation, `task dc:claude` from a second terminal should refuse a second copy and name the running session's pid (after #76, the exact `claude attach <id>`); `task dc:host` should show the `.git-dirs` mount as skipped. Run after the rebuild, with `pin-hook-first-clear`. Added 2026-10-24.
+- [ ] **merge-repair-and-records-prs Review and merge the repair and records pull requests** (the Operator). The staging repair on `fix/stage-skips-leftover-dirs/1` (merged with main; an empty leftover folder is skipped with a warning and a duplicate id is refused) and the records branch `chore/records/18` are open; lint and the guards pass locally. Added 2026-10-24.
 
 ## Next
 
