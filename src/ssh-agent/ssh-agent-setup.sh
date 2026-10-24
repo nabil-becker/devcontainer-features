@@ -219,7 +219,10 @@ cmd_key_load() {
 
 cmd_key_add() { # <file>
   local f="${1:-}" name
-  [ -n "$f" ] && [ -f "$f" ] || { warn "usage: ssh-agent-setup key-add <private key file>"; exit 1; }
+  if [ -z "$f" ] || [ ! -f "$f" ]; then
+    warn "usage: ssh-agent-setup key-add <private key file>"
+    exit 1
+  fi
   require_key_mode
   is_private_key "$f" || { warn "${f##*/} does not look like a private key (no -----BEGIN ... PRIVATE KEY----- header)"; exit 1; }
   name="${f##*/}"

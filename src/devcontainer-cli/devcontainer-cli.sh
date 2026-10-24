@@ -645,7 +645,9 @@ explain_exec_failure() { # <exit code> <workspace> <command text>
 # container's lines (a fingerprint), never the key. Nothing is left running on the host.
 mode_ssh_key_import() {
   local workspace="$1" file="${2:-}" name ids rc=0
-  [ -n "$file" ] && [ -f "$file" ] || die "ssh-key-import: FILE=<path of a private key on this host> is required, and '${file}' is not a file."
+  if [ -z "$file" ] || [ ! -f "$file" ]; then
+    die "ssh-key-import: FILE=<path of a private key on this host> is required, and '${file}' is not a file."
+  fi
   name="$(basename "$file")"
   ids="$(running_ids "$workspace")" || { engine_unreachable; exit 2; }
   if [ -z "$ids" ]; then
