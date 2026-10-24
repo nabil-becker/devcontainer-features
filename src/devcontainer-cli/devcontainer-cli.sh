@@ -637,6 +637,41 @@ explain_exec_failure() { # <exit code> <workspace> <command text>
   exit "$rc"
 }
 
+# warn_general_purpose_key <key file on this host>: warnings (never a refusal) when the key about to
+# be imported looks like a general-purpose key: a default file name, or a public key that also opens
+# something on this host (listed in ~/.ssh/authorized_keys, or the same as another ~/.ssh/*.pub). The
+# public half is FILE.pub, or derived with `ssh-keygen -y` only for a key with no passphrase (an empty
+# passphrase is given, so it never prompts; a protected key is skipped). Prints fingerprints, never key
+# material.
+warn_general_purpose_key() {
+  local file="$1" name d pub='' blob fp='' p hit=''
+  name="$(basename "$file")"
+  for d in id_ed25519 id_ecdsa id_rsa id_dsa id_ed25519_sk id_ecdsa_sk; do
+    if [ "$name" = "$d" ]; then
+      echo "ssh-key-import: warning: $name is the default name of a general-purpose key. Import only a dedicated signing key (one key per purpose and per container, named <repo>-<container>-sign) that opens nothing else; task ssh-agent:key:new inside the container makes one that never leaves it." >&2
+    fi
+  done
+  if [ -f "$file.pub" ]; then read -r pub < "$file.pub" || true
+  elif command -v ssh-keygen >/dev/null 2>&1; then pub="$(ssh-keygen -y -P '' -f "$file" 2>/dev/null </dev/null)" || pub=''; fi
+  blob="$(printf '%s\n' "$pub" | awk '{print $2}')" || blob=''
+  [ -n "$blob" ] || return 0
+  if command -v ssh-keygen >/dev/null 2>&1; then fp="$(printf '%s\n' "$pub" | ssh-keygen -l -f - 2>/dev/null | awk '{print $2}')" || fp=''; fi
+  if [ -f "$HOME/.ssh/authorized_keys" ] && awk -v b="$blob" '{ for (i = 1; i <= NF; i++) if ($i == b) f = 1 } END { exit !f }' "$HOME/.ssh/authorized_keys"; then
+    hit="appears in ~/.ssh/authorized_keys (it logs in to this host)"
+  fi
+  if [ -z "$hit" ]; then
+    for p in "$HOME"/.ssh/*.pub; do
+      [ -f "$p" ] || continue
+      [ "$p" -ef "$file.pub" ] && continue
+      if [ "$(awk '{print $2; exit}' "$p" || true)" = "$blob" ]; then hit="is the same key as ~/.ssh/${p##*/}"; break; fi
+    done
+  fi
+  if [ -n "$hit" ]; then
+    echo "ssh-key-import: warning: the public key of $name${fp:+ ($fp)} $hit, so it is a general-purpose key. A key that also opens GitHub, servers or other repos must not live in a container volume: import a dedicated signing key instead (registered at GitHub as a signing key only)." >&2
+  fi
+  return 0
+}
+
 # ssh-key-import <workspace> <key file on this host>: the opt-in key mode's one-shot import
 # (task devcontainer:ssh-key-import). The key bytes go to the running container through
 # `devcontainer exec` on stdin, never as an argument, into the ssh-agent Feature's key volume
@@ -649,6 +684,7 @@ mode_ssh_key_import() {
     die "ssh-key-import: FILE=<path of a private key on this host> is required, and '${file}' is not a file."
   fi
   name="$(basename "$file")"
+  warn_general_purpose_key "$file"
   ids="$(running_ids "$workspace")" || { engine_unreachable; exit 2; }
   if [ -z "$ids" ]; then
     echo "No running devcontainer for $workspace. Start it with: task dc:start" >&2

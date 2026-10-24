@@ -792,4 +792,47 @@ exit 0
         { Import-SshKey -WorkspaceFolder $script:Ws -KeyFile $script:Key 6>$null 2>$null } | Should -Throw '*keyMode: true*'
         Get-CallCount | Should -Be 1
     }
+    Context 'host-side warnings (a default name, a key that also opens something on this host)' {
+        BeforeEach {
+            $env:DCF_TEST_RUNNING = '1'
+            $script:Ssh = Join-Path $env:HOME '.ssh'
+            if (Test-Path $script:Ssh) { Remove-Item $script:Ssh -Recurse -Force }
+            New-Item -ItemType Directory -Path $script:Ssh | Out-Null
+        }
+
+        It 'a dedicated name with an unrelated key gives no warning' {
+            $w = Import-SshKey -WorkspaceFolder $script:Ws -KeyFile $script:Key 3>&1 6>$null | Out-String
+            $w | Should -Not -Match 'warning'
+        }
+
+        It 'a default file name is warned about and still imports' {
+            $dflt = Join-Path $TestDrive 'id_ed25519'
+            Copy-Item $script:NoPub $dflt
+            $w = Import-SshKey -WorkspaceFolder $script:Ws -KeyFile $dflt 3>&1 6>$null | Out-String
+            $w | Should -Match 'id_ed25519 is the default name of a general-purpose key'
+            Get-CallCount | Should -Be 2
+        }
+
+        It 'a public key in authorized_keys or another ~/.ssh/*.pub is warned about, by fingerprint, never printing the key' -Skip:(-not (Get-Command ssh-keygen -ErrorAction SilentlyContinue)) {
+            $gen = Join-Path $TestDrive 'gen'
+            Remove-Item "$gen*" -ErrorAction SilentlyContinue
+            ssh-keygen -q -t ed25519 -N '' -C host-key -f $gen | Out-Null
+            $blob = ((Get-Content "$gen.pub" -Raw) -split '\s+')[1]
+            $body = (Get-Content $gen)[1]
+            $fp = ((ssh-keygen -l -f "$gen.pub") -split '\s+')[1]
+            Set-Content (Join-Path $script:Ssh 'authorized_keys') "no-pty $(Get-Content "$gen.pub" -Raw)"
+            $w = Import-SshKey -WorkspaceFolder $script:Ws -KeyFile $gen 3>&1 6>$null | Out-String
+            $w | Should -Match 'appears in ~/.ssh/authorized_keys'
+            $w | Should -Match ([regex]::Escape($fp))
+            $w | Should -Not -Match ([regex]::Escape($blob))
+            $w | Should -Not -Match ([regex]::Escape($body))
+            Remove-Item (Join-Path $script:Ssh 'authorized_keys')
+            Copy-Item "$gen.pub" (Join-Path $script:Ssh 'id_work.pub')
+            $w = Import-SshKey -WorkspaceFolder $script:Ws -KeyFile $gen 3>&1 6>$null | Out-String
+            $w | Should -Match 'is the same key as ~/.ssh/id_work.pub'
+            Remove-Item (Join-Path $script:Ssh 'id_work.pub')
+            $w = Import-SshKey -WorkspaceFolder $script:Ws -KeyFile $gen 3>&1 6>$null | Out-String
+            $w | Should -Not -Match 'warning'
+        }
+    }
 }

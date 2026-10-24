@@ -13,6 +13,11 @@
 #   ssh-agent-setup key-stdin NAME   the key bytes on stdin into the volume (the host task
 #                                    devcontainer:ssh-key-import feeds this; never on a command line)
 #   ssh-agent-setup key-remove NAME [DELETE]  drop a key from the agent (and the volume with DELETE=1)
+#   ssh-agent-setup key-rotate [--name OLD] [--new NEW] [--revoke 1] [--scope S] [--empty 1] [--plan]
+#                                    new key, registered as a signing key, git pointed at it and
+#                                    verified, and only then the old one retired (steps below)
+#   ssh-agent-setup key-retire --name KEY [--revoke 1] [--plan]  the last step of a rotation alone
+#   ssh-agent-setup key-age          each key of the volume: creation date, age, fingerprint
 # Any mode (needs only the public key the agent lists):
 #   ssh-agent-setup git-signing [KEY] [SCOPE]  configure git to sign with the agent
 #   ssh-agent-setup git-verify       sign and verify a throwaway message, without committing
@@ -22,7 +27,9 @@
 # agent inside the container on it and loads the keys found in the key volume. A forwarded
 # SSH_AUTH_SOCK that some other tool (VS Code) puts in a terminal's own environment is
 # never touched: this script stands down from anything but the fixed path.
-# No key material is ever printed or generated.
+# No key material is ever printed; a key is generated only by key-new and key-rotate.
+# Test hooks (not options): DCF_GH names the gh binary (default gh), DCF_SSH_KEY_TODAY fixes
+# today's date (YYYY-MM-DD).
 set -u
 
 # Defaults baked by install.sh from the Feature options; SSH_AGENT_SETUP_* in the
@@ -33,6 +40,9 @@ key_option="${SSH_AGENT_SETUP_KEY_MODE-${KEYMODE:-false}}"
 # Overridable so the Docker-free unit test can run against temp folders.
 SSH_SOCK="${DCF_SSH_AGENT_SOCK:-/var/lib/devcontainer-features/ssh-agent/agent.sock}"
 KEY_DIR="${DCF_SSH_AGENT_KEY_DIR:-/var/lib/devcontainer-features/ssh-agent-key}"
+gh_bin="${DCF_GH:-gh}"
+KEY_HISTORY="allowed_signers.history"
+default_key_names="id_ed25519 id_ecdsa id_rsa id_dsa id_ed25519_sk id_ecdsa_sk"
 host_type="${DCF_HOST_TYPE:-}"
 mode="${DCF_HOST_SSH_AGENT:-}"
 
@@ -97,6 +107,8 @@ load_keys() { # adds every private key of KEY_DIR; prints one line per refusal, 
   for f in "$KEY_DIR"/*; do
     is_private_key "$f" || continue
     total=$((total + 1))
+    warn_default_name "${f##*/}"
+
     mode_bits="$(stat -c %a "$f" 2>/dev/null || echo 777)"
     if [ $((8#$mode_bits & 8#077)) -ne 0 ]; then
       refused=$((refused + 1))
@@ -199,6 +211,94 @@ safe_name() { # a plain file name, no path parts
 
 fingerprint_of() { ssh-keygen -l -f "$1" 2>/dev/null </dev/null | awk '{print $2}'; }
 
+# --- key hygiene: default names, creation dates, age --------------------------------
+today() { echo "${DCF_SSH_KEY_TODAY:-$(date +%F)}"; }
+epoch_of() { date -d "$1" +%s 2>/dev/null || echo 0; }
+
+warn_default_name() { # <key name>: a general-purpose name is a sign the key is not a dedicated one
+  local d
+  for d in $default_key_names; do
+    if [ "$1" = "$d" ]; then
+      warn "warning: $1 has the default name of a general-purpose key. Import only a dedicated signing key (named <repo>-<container>-sign) that opens nothing else; see 'Dedicated keys' in the Feature's notes, and task ssh-agent:key:rotate to replace it."
+      return 0
+    fi
+  done
+  return 0
+}
+
+list_keys() { # prints the file name of each private key in the key volume
+  local f
+  [ -d "$KEY_DIR" ] || return 0
+  for f in "$KEY_DIR"/*; do is_private_key "$f" && echo "${f##*/}"; done
+  return 0
+}
+
+write_meta() { # <name> <source>: the sidecar that records when the key came to this volume (never overwritten)
+  [ -e "$KEY_DIR/$1.meta" ] && return 0
+  printf 'created=%s\nsource=%s\n' "$(today)" "$2" > "$KEY_DIR/$1.meta" 2>/dev/null || true
+}
+
+key_created() { # <name>: YYYY-MM-DD from the sidecar, else the file's modification date
+  local c=''
+  [ -f "$KEY_DIR/$1.meta" ] && c="$(sed -n 's/^created=//p' "$KEY_DIR/$1.meta" | head -n 1)"
+  [ -n "$c" ] || c="$(date -r "$KEY_DIR/$1" +%F 2>/dev/null || echo 1970-01-01)"
+  echo "$c"
+}
+
+key_age_days() { echo $((($(epoch_of "$(today)") - $(epoch_of "$(key_created "$1")")) / 86400)); }
+
+max_age_days() { case "${SSH_KEY_MAX_AGE_DAYS:-}" in '' | *[!0-9]*) echo 365 ;; *) echo "$SSH_KEY_MAX_AGE_DAYS" ;; esac; }
+
+key_fp() { # <name>: fingerprint of a key of the volume (the .pub when there is one)
+  if [ -f "$KEY_DIR/$1.pub" ]; then fingerprint_of "$KEY_DIR/$1.pub"; else fingerprint_of "$KEY_DIR/$1"; fi
+}
+
+key_hygiene() { # the warnings for what sits in the key volume: default names and old keys
+  local n max
+  max="$(max_age_days)"
+  for n in $(list_keys); do
+    warn_default_name "$n"
+    if [ "$(key_age_days "$n")" -gt "$max" ]; then
+      warn "warning: key $n is older than $max days; task ssh-agent:key:rotate NAME=$n (created $(key_created "$n"))"
+    fi
+  done
+  return 0
+}
+
+host_rotation_guidance() { # keys held by the host's agent (socket mode): the Feature cannot touch them
+  say "keys held by the host's agent are not this Feature's to rotate. To rotate one: (1) make a new dedicated key on the host and add it to the host agent (task devcontainer:ssh-add -- <new key>); (2) register its public key at GitHub as a SIGNING key, not an authentication key; (3) point git at it (task ssh-agent:git:signing KEY=<its .pub>) and run task ssh-agent:git:verify; (4) only then remove the old key from the host agent (ssh-add -d on the host) and from GitHub if you want its old commits unverified (they stay verified while it is registered)."
+}
+
+cmd_key_age() {
+  local n any=0
+  if [ ! -d "$KEY_DIR" ]; then say "no key volume at $KEY_DIR"; return 0; fi
+  for n in $(list_keys); do
+    any=1
+    say "$n: created $(key_created "$n"), $(key_age_days "$n") day(s) old, $(key_fp "$n")"
+  done
+  [ "$any" -eq 1 ] || say "no private key in $KEY_DIR"
+  say "keys older than $(max_age_days) days are flagged by task ssh-agent:check (SSH_KEY_MAX_AGE_DAYS changes the limit); rotate with task ssh-agent:key:rotate."
+  return 0
+}
+
+default_key_name() { # <repo>-<container>-sign, [a-z0-9-] only
+  local top repo host
+  top="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  repo="$(basename "${top:-$PWD}")"
+  host="$(hostname 2>/dev/null || echo container)"
+  printf '%s-%s-sign\n' "$repo" "$host" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9\n' '-' | sed 's/--*/-/g; s/^-//'
+}
+
+generate_key() { # <name> <comment> <empty passphrase>: ed25519 into the volume, sidecar written
+  local name="$1" comment="$2" empty="$3" args
+  [ -n "$comment" ] || comment="$name@$(hostname 2>/dev/null || echo container)"
+  args=(-t ed25519 -f "$KEY_DIR/$name" -C "$comment")
+  case "$empty" in 1 | true | yes) args+=(-N '') ;; esac
+  ssh-keygen "${args[@]}" >/dev/null || { warn "ssh-keygen failed"; return 1; }
+  chmod 0600 "$KEY_DIR/$name"
+  write_meta "$name" generated
+}
+
 cmd_keys() {
   active_sock
   probe "$ACTIVE"
@@ -230,6 +330,7 @@ cmd_key_add() { # <file>
   prepare_key_mode
   install -m 0600 "$f" "$KEY_DIR/$name" || { warn "could not copy $name into $KEY_DIR"; exit 1; }
   [ -f "$f.pub" ] && install -m 0644 "$f.pub" "$KEY_DIR/$name.pub"
+  write_meta "$name" import
   say "key mode: copied $name into $KEY_DIR (mode 0600). This puts a private key in the container's volume; remove it with task ssh-agent:key:remove NAME=$name DELETE=1."
   load_keys
   probe "$SSH_SOCK"
@@ -249,25 +350,25 @@ cmd_key_stdin() { # <name>: key bytes on stdin; the refusal comes before anythin
   if [ -n "$pub" ]; then chmod 0644 "$tmp"; fi
   mv -f "$tmp" "$KEY_DIR/$name"
   if [ -z "$pub" ]; then
+    write_meta "$name" import
+    warn_default_name "$name"
     say "key mode: stored $name in $KEY_DIR (mode 0600), fingerprint $(fingerprint_of "$KEY_DIR/$name")"
   else say "key mode: stored $name in $KEY_DIR"; fi
 }
 
 cmd_key_new() { # [name] [comment] [empty passphrase]
-  local name="${1:-signing}" comment="${2:-}" empty="${3:-}" args
+  local name="${1:-}" comment="${2:-}" empty="${3:-}"
+  [ -n "$name" ] || name="$(default_key_name)"
   safe_name "$name" || exit 1
   require_key_mode
   prepare_key_mode
   [ ! -e "$KEY_DIR/$name" ] || { warn "$KEY_DIR/$name exists; pick another NAME or remove it first (task ssh-agent:key:remove NAME=$name DELETE=1)"; exit 1; }
-  [ -n "$comment" ] || comment="$name@$(hostname 2>/dev/null || echo container)"
-  args=(-t ed25519 -f "$KEY_DIR/$name" -C "$comment")
-  case "$empty" in 1 | true | yes) args+=(-N '') ;; esac
-  ssh-keygen "${args[@]}" >/dev/null || { warn "ssh-keygen failed"; exit 1; }
-  chmod 0600 "$KEY_DIR/$name"
+  generate_key "$name" "$comment" "$empty" || exit 1
   say "key mode: generated $name (ed25519) in $KEY_DIR; the private key stays there."
   load_keys
-  say "public key (add it to GitHub as a signing key, Settings > SSH and GPG keys > New SSH key, type Signing Key):"
+  say "public key: register it at GitHub (Settings > SSH and GPG keys > New SSH key) as a SIGNING key, not an authentication key (key type: Signing Key), titled $name:"
   cat "$KEY_DIR/$name.pub"
+  say "register as a SIGNING key, not an authentication key: a signing-only key cannot log in to anything if it leaks. Replace it later with task ssh-agent:key:rotate."
 }
 
 cmd_key_remove() { # <name> [delete]
@@ -277,7 +378,7 @@ cmd_key_remove() { # <name> [delete]
   if SSH_AUTH_SOCK="$SSH_SOCK" ssh-add -d "$KEY_DIR/$name" >/dev/null 2>&1; then say "removed $name from the agent"
   else say "$name was not in the agent (or no agent answers on $SSH_SOCK)"; fi
   case "$del" in
-    1 | true | yes) rm -f "$KEY_DIR/$name" "$KEY_DIR/$name.pub"; say "deleted $name from $KEY_DIR" ;;
+    1 | true | yes) drop_key_files "$name"; say "deleted $name from $KEY_DIR" ;;
     *) say "$name is still in $KEY_DIR and returns at the next start; DELETE=1 removes it from the volume" ;;
   esac
 }
@@ -285,8 +386,15 @@ cmd_key_remove() { # <name> [delete]
 # --- git signing ----------------------------------------------------------------
 pubkey_lines() { SSH_AUTH_SOCK="$ACTIVE" ssh-add -L 2>/dev/null; }
 
+default_scope() { # sets DEFAULT_SCOPE and DEFAULT_WHY
+  case "${GIT_CONFIG_GLOBAL:-}" in
+    /var/lib/devcontainer-features/*) DEFAULT_SCOPE=global; DEFAULT_WHY="the git Feature keeps the container's own global config in a volume" ;;
+    *) DEFAULT_SCOPE=repo; DEFAULT_WHY="no git Feature volume found" ;;
+  esac
+}
+
 cmd_git_signing() { # [key] [scope]
-  local key="${1:-}" scope="${2:-}" lines n pub line fp want why cfg
+  local key="${1:-}" scope="${2:-}" lines n pub line fp want cfg
   command -v git >/dev/null 2>&1 || { warn "git is not installed in this container"; exit 1; }
   active_sock
   probe "$ACTIVE"
@@ -319,11 +427,9 @@ cmd_git_signing() { # [key] [scope]
   case "$pub" in ssh-* | ecdsa-* | sk-*) ;; *) warn "that does not look like a public key"; exit 1 ;; esac
 
   if [ -z "$scope" ]; then
-    case "${GIT_CONFIG_GLOBAL:-}" in
-      /var/lib/devcontainer-features/*) scope=global; why="the git Feature keeps the container's own global config in a volume" ;;
-      *) scope=repo; why="no git Feature volume found" ;;
-    esac
-    say "SCOPE not given: using $scope ($why)."
+    default_scope
+    scope="$DEFAULT_SCOPE"
+    say "SCOPE not given: using $scope ($DEFAULT_WHY)."
   fi
   case "$scope" in
     global) cfg=(--global) ;;
@@ -376,15 +482,257 @@ cmd_git_verify() {
   fi
 }
 
+# --- rotation and retirement ---------------------------------------------------
+gh_ready() { command -v "$gh_bin" >/dev/null 2>&1 && "$gh_bin" auth status </dev/null >/dev/null 2>&1; }
+
+pub_blob() { awk '{print $2}' "$1" 2>/dev/null | head -n 1; }
+
+gh_key_ids() { # <pub file>: the GitHub ids of the keys registered with that public key
+  local blob
+  blob="$(pub_blob "$1")"
+  [ -n "$blob" ] || return 0
+  "$gh_bin" ssh-key list </dev/null 2>/dev/null | awk -F'\t' -v b="$blob" 'index($0, b) { for (i = 1; i <= NF; i++) if ($i ~ /^[0-9]+$/) { print $i; break } }'
+}
+
+is_true() { case "${1:-}" in 1 | true | yes) return 0 ;; *) return 1 ;; esac; }
+
+key_loaded() { # <name>: the agent on the fixed path holds it
+  local fp
+  fp="$(key_fp "$1")"
+  [ -n "$fp" ] && SSH_AUTH_SOCK="$SSH_SOCK" ssh-add -l 2>/dev/null | grep -qF -- "$fp"
+}
+
+load_one() { # <name>: add it to the agent; the terminal stays available for a passphrase
+  SSH_AUTH_SOCK="$SSH_SOCK" ssh-add "$KEY_DIR/$1" >/dev/null 2>&1
+}
+
+drop_key_files() { # <name>: the private key, its public half and its sidecar leave the volume
+  rm -f "${KEY_DIR:?}/${1:?}" "${KEY_DIR:?}/${1:?}.pub" "${KEY_DIR:?}/${1:?}.meta"
+}
+
+history_append() { # <name>: the retired key's public half, with the date, into the history file
+  local pubf="$KEY_DIR/$1.pub" blob d tmpf=''
+  if [ ! -f "$pubf" ]; then
+    tmpf="$(mktemp "$KEY_DIR/.hist.XXXXXX")" || return 1
+    if ssh-keygen -y -P '' -f "$KEY_DIR/$1" </dev/null > "$tmpf" 2>/dev/null; then pubf="$tmpf"; fi
+  fi
+  if [ ! -s "$pubf" ]; then
+    [ -z "$tmpf" ] || rm -f "$tmpf"
+    warn "no public key for $1 (and its private key needs a passphrase to derive one); nothing was changed"
+    return 1
+  fi
+  blob="$(pub_blob "$pubf")"
+  d="$(today)"
+  if [ -f "$KEY_DIR/$KEY_HISTORY" ] && grep -qF -- "$blob" "$KEY_DIR/$KEY_HISTORY"; then
+    say "$1 is already in $KEY_DIR/$KEY_HISTORY"
+  else
+    printf '* namespaces="git",valid-before="%s" %s %s %s\n' "${d//-/}" "$(awk '{print $1}' "$pubf")" "$blob" "retired:$1:$d" >> "$KEY_DIR/$KEY_HISTORY"
+    say "appended $1 (valid before ${d//-/}) to $KEY_DIR/$KEY_HISTORY, so its old signatures still verify locally (set gpg.ssh.allowedSignersFile to that file)"
+  fi
+  [ -z "$tmpf" ] || rm -f "$tmpf"
+  return 0
+}
+
+retire_plan() { # <name> <revoke>
+  say "plan, retiring $1 ($(key_fp "$1")):"
+  say "  1. append its public key, dated, to $KEY_DIR/$KEY_HISTORY"
+  if is_true "$2"; then say "  2. remove it from GitHub (gh ssh-key delete <id> --yes, id found by its public key); old commits then show unverified at GitHub"
+  else say "  2. keep it registered at GitHub, so old commits keep their verified badge (REVOKE=1 removes it)"; fi
+  say "  3. unload it from the agent, delete the private key and its sidecar from $KEY_DIR"
+  say "nothing was changed."
+}
+
+do_retire() { # <name> <revoke>: the last step; any failure stops before something is removed
+  local name="$1" revoke="$2" ids id pubf eff blob
+  history_append "$name" || return 1
+  pubf="$KEY_DIR/$name.pub"
+  blob="$(pub_blob "$pubf")"
+  eff="$(git config --get user.signingkey 2>/dev/null || true)"
+  if [ -n "$blob" ] && [ -n "$eff" ]; then
+    case "$eff" in *"$blob"*) warn "warning: git still signs with $name (user.signingkey); point it at another key (task ssh-agent:git:signing) or signing will fail" ;; esac
+  fi
+  if is_true "$revoke"; then
+    gh_ready || { warn "REVOKE needs gh installed and logged in (gh auth login); nothing was removed. Without REVOKE=1 the key stays registered at GitHub."; return 1; }
+    [ -f "$pubf" ] || { warn "no $name.pub to find the key on GitHub by; nothing was removed"; return 1; }
+    ids="$(gh_key_ids "$pubf")"
+    if [ -z "$ids" ]; then warn "$name is not in gh ssh-key list; remove it at GitHub by hand if it is registered. Nothing was removed locally."; return 1; fi
+    for id in $ids; do
+      "$gh_bin" ssh-key delete "$id" --yes </dev/null >/dev/null 2>&1 || { warn "gh ssh-key delete $id failed; nothing was removed locally"; return 1; }
+      say "removed $name from GitHub (key id $id)"
+    done
+  else
+    say "$name stays registered at GitHub, so old commits keep their verified badge; remove it there later (Settings > SSH and GPG keys) once nothing needs them verified."
+  fi
+  if [ -f "$pubf" ]; then
+    if SSH_AUTH_SOCK="$SSH_SOCK" ssh-add -d "$pubf" >/dev/null 2>&1; then say "unloaded $name from the agent"; else say "$name was not in the agent"; fi
+  else SSH_AUTH_SOCK="$SSH_SOCK" ssh-add -d "$KEY_DIR/$name" >/dev/null 2>&1 || true; fi
+  drop_key_files "$name"
+  say "retired $name: its private key is deleted from $KEY_DIR"
+}
+
+parse_rotation_args() { # sets A_NAME A_NEW A_REVOKE A_SCOPE A_EMPTY A_PLAN
+  A_NAME='' A_NEW='' A_REVOKE='' A_SCOPE='' A_EMPTY='' A_PLAN=''
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --plan) A_PLAN=1; shift ;;
+      --name) A_NAME="${2:-}"; shift 2 || shift ;;
+      --new) A_NEW="${2:-}"; shift 2 || shift ;;
+      --revoke) A_REVOKE="${2:-}"; shift 2 || shift ;;
+      --scope) A_SCOPE="${2:-}"; shift 2 || shift ;;
+      --empty) A_EMPTY="${2:-}"; shift 2 || shift ;;
+      '') shift ;;
+      *) warn "unknown argument '$1' (use -- --plan to only print the steps)"; exit 1 ;;
+    esac
+  done
+}
+
+one_key_or_name() { # <given name>: sets KEYNAME, or exits 1 when it cannot be told which
+  local n count cands
+  if [ -n "$1" ]; then
+    safe_name "$1" || exit 1
+    [ -f "$KEY_DIR/$1" ] || { warn "no key $1 in $KEY_DIR (task ssh-agent:key:age lists them)"; exit 1; }
+    KEYNAME="$1"; return 0
+  fi
+  # a NEW that already exists (a resumed rotation) is not a candidate for the old key
+  cands="$(list_keys | grep -vxF -- "${A_NEW:-/}" || true)"
+  count="$(printf '%s\n' "$cands" | grep -c .)"
+  if [ "$count" -eq 1 ]; then KEYNAME="$cands"; return 0; fi
+  warn "$count keys in $KEY_DIR; say which with NAME=<key>:"
+  for n in $cands; do warn "  $n"; done
+  exit 1
+}
+
+cmd_key_retire() {
+  parse_rotation_args "$@"
+  require_key_mode
+  one_key_or_name "$A_NAME"
+  if [ -n "$A_PLAN" ]; then retire_plan "$KEYNAME" "$A_REVOKE"; exit 0; fi
+  prepare_key_mode
+  do_retire "$KEYNAME" "$A_REVOKE" || exit 1
+}
+
+stop_rotation() { # <step> <old> <new> <why>
+  warn "rotation stopped at step $1: $4. Nothing of the old key $2 was removed. To finish: fix that, then task ssh-agent:key:rotate NAME=$2 NEW=$3 (it resumes with the new key already made)."
+  exit 1
+}
+
+cfg_flag() { if [ "$1" = global ]; then echo --global; else echo --local; fi; }
+
+# save_cfg <scope>: remember the four signing settings of that scope (SAVED_SET, SAVED_VAL)
+save_cfg() {
+  local k flag
+  flag="$(cfg_flag "$1")"
+  SAVED_SET=() SAVED_VAL=()
+  for k in gpg.format user.signingkey commit.gpgsign tag.gpgsign; do
+    if SAVED_V="$(git config "$flag" --get "$k" 2>/dev/null)"; then SAVED_SET+=(1); SAVED_VAL+=("$SAVED_V")
+    else SAVED_SET+=(0); SAVED_VAL+=(''); fi
+  done
+}
+
+restore_cfg() { # <scope>: the settings saved by save_cfg come back
+  local k flag i=0
+  flag="$(cfg_flag "$1")"
+  for k in gpg.format user.signingkey commit.gpgsign tag.gpgsign; do
+    if [ "${SAVED_SET[$i]}" = 1 ]; then git config "$flag" "$k" "${SAVED_VAL[$i]}" 2>/dev/null
+    else git config "$flag" --unset-all "$k" 2>/dev/null; fi
+    i=$((i + 1))
+  done
+  return 0
+}
+
+cmd_key_rotate() {
+  local old new base resume='' scope pub fp_old fp_new eff
+  parse_rotation_args "$@"
+  require_key_mode
+  one_key_or_name "$A_NAME"
+  old="$KEYNAME"
+  base="${old%-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]}"
+  if [ -n "$A_NEW" ]; then
+    new="$A_NEW"
+    safe_name "$new" || exit 1
+    [ "$new" != "$old" ] || { warn "NEW is the old key's own name"; exit 1; }
+    [ -f "$KEY_DIR/$new" ] && resume=1
+  else
+    new="$base-$(today | tr -d -)"
+    [ "$new" != "$old" ] || { warn "today's name $new is the old key's own; pass NEW=<another name>"; exit 1; }
+    if [ -e "$KEY_DIR/$new" ]; then warn "$new already exists (an earlier rotation stopped?). Resume it with task ssh-agent:key:rotate NAME=$old NEW=$new, or pick another NEW."; exit 1; fi
+  fi
+  scope="$A_SCOPE"
+  if [ -z "$scope" ]; then default_scope; scope="$DEFAULT_SCOPE"; fi
+  case "$scope" in global | repo) ;; *) warn "SCOPE is repo or global, not '$scope'"; exit 1 ;; esac
+  fp_old="$(key_fp "$old")"
+
+  if [ -n "$A_PLAN" ]; then
+    say "plan, rotating $old ($fp_old) into $new$([ -n "$resume" ] && echo ' (already made, resuming)'):"
+    if [ -z "$resume" ]; then say "  1. make the new ed25519 key $new in $KEY_DIR and load it; $old stays loaded"
+    else say "  1. $new exists: load it if it is not loaded; $old stays loaded"; fi
+    if gh_ready; then say "  2. gh is logged in: register $new.pub at GitHub as a SIGNING key (gh ssh-key add --type signing) unless it is registered already"
+    elif [ -n "$resume" ]; then say "  2. gh is not available: take your word that $new is registered as a signing key (you asked to resume)"
+    else say "  2. gh is not available or not logged in: print the public key and the manual step, then STOP (exit 1); register it, then task ssh-agent:key:rotate NAME=$old NEW=$new"; fi
+    say "  3. point git ($scope scope) at $new and run git:verify; a failure puts git back as it was and stops"
+    if is_true "$A_REVOKE"; then say "  4. only then retire $old: unload it, append it dated to $KEY_DIR/$KEY_HISTORY, delete its private key, and remove it from GitHub (REVOKE=1)"
+    else say "  4. only then retire $old: unload it, append it dated to $KEY_DIR/$KEY_HISTORY, delete its private key; it stays registered at GitHub (REVOKE=1 would remove it)"; fi
+    say "nothing was changed."
+    exit 0
+  fi
+
+  prepare_key_mode
+  # step 1: the new key; the old one stays
+  if [ -z "$resume" ]; then
+    say "step 1/4: making $new"
+    generate_key "$new" "" "$A_EMPTY" || stop_rotation 1 "$old" "$new" "ssh-keygen failed"
+  else say "step 1/4: $new exists, resuming"; fi
+  key_loaded "$new" || load_one "$new" || true
+  key_loaded "$new" || stop_rotation 1 "$old" "$new" "$new could not be loaded into the agent (a passphrase needs a terminal: run task ssh-agent:key:load)"
+  pub="$KEY_DIR/$new.pub"
+  fp_new="$(key_fp "$new")"
+  say "step 1/4 done: $new ($fp_new) is loaded next to $old"
+
+  # step 2: register it as a signing key
+  if gh_ready; then
+    if [ -n "$(gh_key_ids "$pub")" ]; then say "step 2/4: $new is already registered at GitHub"
+    else
+      say "step 2/4: registering $new at GitHub as a signing key"
+      "$gh_bin" ssh-key add "$pub" --type signing --title "$new" </dev/null >/dev/null 2>&1 || stop_rotation 2 "$old" "$new" "gh ssh-key add failed (does the gh login have the admin:ssh_signing_key scope? gh auth refresh -s admin:ssh_signing_key)"
+    fi
+  elif [ -n "$resume" ]; then
+    say "step 2/4: gh is not available here; taking your word that $new is registered at GitHub as a SIGNING key"
+  else
+    warn "step 2/4: gh is not installed or not logged in here, so $new cannot be registered from this container. Register this public key at GitHub (Settings > SSH and GPG keys > New SSH key, key type Signing Key, title $new), a SIGNING key and not an authentication key:"
+    cat "$pub"
+    warn "finish by registering it, then run key:rotate again with NEW=$new: task ssh-agent:key:rotate NAME=$old NEW=$new. Nothing of $old was removed; $new stays loaded."
+    exit 1
+  fi
+
+  # step 3: git signs with the new key, and proves it
+  save_cfg "$scope"
+  say "step 3/4: pointing git ($scope scope) at $new and verifying"
+  if ! ( cmd_git_signing "$pub" "$scope" ); then restore_cfg "$scope"; stop_rotation 3 "$old" "$new" "git:signing failed; git's settings are back as they were"; fi
+  eff="$(git config --get user.signingkey 2>/dev/null || true)"
+  case "$eff" in
+    *"$(pub_blob "$pub")"*) ;;
+    *) restore_cfg "$scope"; stop_rotation 3 "$old" "$new" "another git config level still names a different signing key (see git config --show-origin --get user.signingkey); git's settings are back as they were" ;;
+  esac
+  if ! ( cmd_git_verify ); then restore_cfg "$scope"; stop_rotation 3 "$old" "$new" "git:verify did not pass; git's settings are back as they were"; fi
+
+  # step 4: only now the old key goes
+  say "step 4/4: retiring $old"
+  do_retire "$old" "$A_REVOKE" || stop_rotation 4 "$old" "$new" "retiring $old failed (git already signs with $new; task ssh-agent:key:retire NAME=$old finishes it)"
+  say "rotated: $old is retired, git signs with $new ($fp_new). Old signatures verify with gpg.ssh.allowedSignersFile set to $KEY_DIR/$KEY_HISTORY."
+}
+
 cmd="${1:-setup}"
 case "$cmd" in
-  check) verdict; exit $? ;;
+  check) verdict; rc=$?; key_hygiene; [ "$EFF" = socket ] && host_rotation_guidance; exit "$rc" ;;
   keys) cmd_keys; exit 0 ;;
   key-load) cmd_key_load; exit 0 ;;
   key-add) cmd_key_add "${2:-}"; exit 0 ;;
   key-stdin) cmd_key_stdin "${2:-}"; exit 0 ;;
   key-new) cmd_key_new "${2:-}" "${3:-}" "${4:-}"; exit 0 ;;
   key-remove) cmd_key_remove "${2:-}" "${3:-}"; exit 0 ;;
+  key-rotate) cmd_key_rotate "${@:2}"; exit 0 ;;
+  key-retire) cmd_key_retire "${@:2}"; exit 0 ;;
+  key-age) cmd_key_age; exit 0 ;;
   git-signing) cmd_git_signing "${2:-}" "${3:-}"; exit 0 ;;
   git-verify) cmd_git_verify; exit 0 ;;
   setup) ;;

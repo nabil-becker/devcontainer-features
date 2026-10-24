@@ -1,7 +1,7 @@
 
 # SSH agent (ssh-agent)
 
-Makes an SSH agent available to every process in the devcontainer (SSH_AUTH_SOCK=/var/lib/devcontainer-features/ssh-agent/agent.sock, also for `devcontainer exec`) so git commits can be signed with an SSH key: the devcontainer-cli launcher bind-mounts the host's agent socket onto that path where the host type has one (linux, macos, a WSL distro), the private key never entering the container; a post-start hook (ssh-agent-setup) checks it on every start and says plainly what a host type without one can do; the opt-in keyMode starts an agent inside the container and loads keys from its own volume instead, which breaks the no-key rule for whoever turns it on. Plus the Feature Taskfile (check, keys, key tasks, git:signing, git:verify).
+Makes an SSH agent available to every process in the devcontainer (SSH_AUTH_SOCK=/var/lib/devcontainer-features/ssh-agent/agent.sock, also for `devcontainer exec`) so git commits can be signed with an SSH key: the devcontainer-cli launcher bind-mounts the host's agent socket onto that path where the host type has one (linux, macos, a WSL distro), the private key never entering the container; a post-start hook (ssh-agent-setup) checks it on every start and says plainly what a host type without one can do; the opt-in keyMode starts an agent inside the container and loads keys from its own volume instead, which breaks the no-key rule for whoever turns it on. Plus the Feature Taskfile (check, keys, key tasks including key:rotate, key:retire and key:age, git:signing, git:verify).
 
 ## Example Usage
 
@@ -99,7 +99,7 @@ below.
   Inside the container the same job is `task ssh-agent:key:add FILE=<path>`, or
   `task ssh-agent:key:new` to generate a dedicated ed25519 signing key (no passphrase prompt only
   with `EMPTY_PASSPHRASE=1`; the public key is printed so you can add it to GitHub as a signing
-  key; the private key is never printed). `task ssh-agent:key:load` (re)loads every key of the
+  key; the private key is never printed; NAME defaults to `<repo>-<container>-sign`). `task ssh-agent:key:load` (re)loads every key of the
   volume, which is also what the start hook does; a key readable by group or others is refused
   with a message.
 
@@ -112,6 +112,81 @@ the private key enters the container, for whoever opts in.** Use a dedicated sig
 login key; it is offered as temporary, until a Windows answer that needs no host process exists.
 The agent lives only as long as the container runs, and the hook restarts it and reloads the keys at
 every start. Remove a key with `task ssh-agent:key:remove NAME=<file> DELETE=1`.
+
+## Dedicated keys
+
+Key mode puts a private key in a volume, so the key must be worth losing: small blast radius,
+easy rotation.
+
+- **Never import a personal key** that also opens GitHub, servers or other repositories. The
+  host task `devcontainer:ssh-key-import` and the Feature warn (never block) when the file has a
+  default name (`id_ed25519`, `id_ecdsa`, `id_rsa`, `id_dsa`, `id_ed25519_sk`, `id_ecdsa_sk`), or
+  when its public key is also in the host's `~/.ssh/authorized_keys` or the same as another
+  `~/.ssh/*.pub`. They print fingerprints, never key material. The public half is read from
+  `FILE.pub`, or derived with `ssh-keygen -y` only when the key has no passphrase (a protected key
+  is never prompted for; the check is skipped).
+- **One key per purpose and per container**, named `<repo>-<container>-sign` (what `key:new`
+  makes by default: the repository's name, the container's short host name, lower-cased to
+  `[a-z0-9-]`). A leak then costs one container's signatures, not an identity.
+- **Register it only as a signing key** at GitHub (Settings > SSH and GPG keys > New SSH key, key
+  type Signing Key), never as an authentication key: a signing-only key cannot log in to anything.
+- **Retire it** when the container goes away or on suspicion (below): `task ssh-agent:key:retire`.
+- **The Operator's anchor key stays on the host**: the one that proves who you are is not imported
+  into any container. A dedicated key is the thing you rotate; the anchor is what you use to
+  register and remove dedicated keys.
+
+## Rotating and retiring
+
+`task ssh-agent:key:rotate` replaces a signing key in four steps and stops at the first failure,
+removing nothing of the old key until the new one is proven:
+
+1. Make the new key (`NEW`, default the old name without a date suffix plus `-YYYYMMDD`) in the
+   key volume and load it; the old key stays loaded.
+2. If `gh` is installed and logged in, register the public key as a **signing** key
+   (`gh ssh-key add --type signing`). Otherwise print the public key and the manual step and
+   **stop with exit 1**. The login needs the `admin:ssh_signing_key` scope (`gh auth refresh -s
+   admin:ssh_signing_key`; the `gh` Feature keeps the login in its volume).
+3. Point git at the new key (`SCOPE=global|repo`, as `git:signing`) and run `git:verify`; it must
+   pass. On a failure git's settings are put back as they were. A repo-level `user.signingkey` that
+   still names another key also stops the rotation.
+4. Only then retire the old key: unload it from the agent, append its public key, dated, to
+   `allowed_signers.history` in the key volume, delete its private key. By default the old key stays
+   **registered at GitHub**, so its old commits keep their verified badge; `REVOKE=1` also removes it
+   there (`gh ssh-key delete <id> --yes`, the id found by matching the public key), after which old
+   commits show unverified at GitHub.
+
+`task ssh-agent:key:rotate -- --plan` prints the steps and the keys involved and changes nothing.
+`NAME=<old key>` is optional when the volume holds exactly one key. `EMPTY_PASSPHRASE=1` skips the
+passphrase prompt (the task is interactive otherwise).
+
+**Resuming.** If step 2 stopped because `gh` is missing, register the printed public key by hand
+(signing key), then run `task ssh-agent:key:rotate NAME=<old> NEW=<new name>` with the name the
+message gave. A `NEW` that already exists resumes: it is loaded if need be, registration is taken
+on your word when `gh` is unavailable (and checked or done through `gh` when it is available),
+and steps 3 and 4 run. A rotation that stopped later (verify, say) resumes the same way.
+
+`task ssh-agent:key:retire NAME=<key> [REVOKE=1]` is step 4 alone (also with `-- --plan`), for a
+key that needs no replacement. `task ssh-agent:key:age` lists each key with its creation date
+(recorded in a `<name>.meta` sidecar when `key:new` or an import creates it; the file's date for
+older ones), its age and fingerprint, and `task ssh-agent:check` warns when a key is older than
+`SSH_KEY_MAX_AGE_DAYS` (default 365): "older than N days; task ssh-agent:key:rotate".
+
+**Old signatures keep verifying locally.** Point git at the history file:
+
+```sh
+git config --global gpg.ssh.allowedSignersFile /var/lib/devcontainer-features/ssh-agent-key/allowed_signers.history
+```
+
+Each line is `* namespaces="git",valid-before="YYYYMMDD" <key>`: the key is trusted for commits
+made before the day it was retired. Add the current key's line too if you want new commits to
+verify locally. The history file holds public keys only; it lives in the key volume and goes with
+it.
+
+**Keys in the host's agent (socket mode)** are outside this Feature's reach, and `ssh-agent:check`
+prints the same steps for them: make a new dedicated key on the host and add it
+(`task devcontainer:ssh-add -- <new key>`); register it at GitHub as a signing key; point git at it
+(`task ssh-agent:git:signing KEY=<its .pub>`) and run `task ssh-agent:git:verify`; only then remove
+the old key from the host agent (`ssh-add -d`) and, if you want its commits unverified, from GitHub.
 
 ## Signing git commits
 
@@ -145,7 +220,7 @@ verified there.
   the container's tools use, and prefer keys the agent confirms (`ssh-add -c`).
 - **Key mode:** the key is in the container's volume, readable by the remote user, and the agent
   signs for any process in the container. See above; use a dedicated signing key.
-- Nothing here prints key material, and nothing generates a key unless you run `key:new`.
+- Nothing here prints key material, and nothing generates a key unless you run `key:new` or `key:rotate`.
 
 ## Check it works
 
@@ -170,7 +245,7 @@ orders it behind `go-task` and `common-utils`.
 ## Tasks
 
 `task ssh-agent:version`, `check`, `setup`, `keys`, `key:load`, `key:add`, `key:new`, `key:remove`,
-`git:signing`, `git:verify` (all in `ssh-agent`; the host side has `devcontainer:ssh-add` and
+`key:rotate`, `key:retire`, `key:age`, `git:signing`, `git:verify` (all in `ssh-agent`; the host side has `devcontainer:ssh-add` and
 `devcontainer:ssh-key-import`).
 
 ## Limits and troubleshooting
@@ -195,6 +270,12 @@ this collection or of `devcontainers/features` forwards the agent for the CLI; t
 the launcher's mount instead of a process on the host, and is honest where a host type cannot.
 
 ## Version and upgrade
+
+`1.1.0`: dedicated-key guidance and warnings (default names, keys that also open something on the
+host), `key:new`'s default name `<repo>-<container>-sign`, `key:rotate`, `key:retire`, `key:age`
+and the age warning in `check` (`SSH_KEY_MAX_AGE_DAYS`); `devcontainer-cli` 1.10.0 adds the host-side
+warnings to `devcontainer:ssh-key-import`. Nothing in the key volume changes except two additions
+(`<name>.meta` sidecars and `allowed_signers.history`), neither of which is loaded as a key.
 
 `1.0.0`: the first release. The container side is `ssh-agent-setup`; the host side lives in
 `devcontainer-cli` 1.8.0 or later (the socket mount, `SSH_AGENT_MODE`, `devcontainer:ssh-add`,
