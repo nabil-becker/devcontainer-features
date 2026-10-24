@@ -25,7 +25,7 @@ check() { # <name> <expected> <actual>
 }
 
 bin="$T/bin"; mkdir -p "$bin" "$T/cache"
-for tool in uname grep cat dirname mkdir id awk tr sed; do ln -s "$(command -v "$tool")" "$bin/$tool"; done
+for tool in uname grep cat dirname mkdir id awk tr sed env; do ln -s "$(command -v "$tool")" "$bin/$tool"; done
 printf '#!/bin/sh\nexit 0\n' > "$bin/docker"
 # shellcheck disable=SC2016  # the stub's own "$@", not ours
 printf '#!/bin/sh\nfor a in "$@"; do echo "$a"; done > "$DCF_TEST_RECORD"\n' > "$bin/devcontainer"
@@ -121,6 +121,61 @@ ws="$(new_ws "$own")"; run linux "$ws" -- host
 check 'host: lists the mount it would skip' 'host mount (skip)  : git-dirs: /git-dirs is already mounted by devcontainer.json' "$(grep 'host mount (skip)' <<<"$out")"
 ws="$(new_ws "$plain")"; run linux "$ws" HOST_MOUNTS=false -- host
 check 'host: says the mounts are off' 'host mounts        : off (HOST_MOUNTS=false)' "$(grep '^host mounts' <<<"$out")"
+
+# --- the SSH agent mount (slice 4): the ssh-agent Feature's fixed path, per host type
+target=/var/lib/devcontainer-features/ssh-agent/agent.sock
+# A real unix socket file (`-S` is what the launcher tests), bound from inside its folder so the
+# path length limit of a socket address does not matter.
+mkdir -p "$T/agent"
+D="$T/agent" python3 -c 'import os, socket; os.chdir(os.environ["D"]); socket.socket(socket.AF_UNIX).bind("s")'
+sock="$T/agent/s"
+agent_mounts() { grep -c "target=$target" <<<"$args"; }
+agent_env() { grep '^DCF_HOST_SSH_AGENT=' <<<"$1"; }
+for os in linux wsl; do
+  ws="$(new_ws "$plain")"; run "$os" "$ws" SSH_AUTH_SOCK="$sock" -- up
+  check "$os: \$SSH_AUTH_SOCK is mounted at the Feature's path" "type=bind,source=$sock,target=$target" "$(grep -x -- "type=bind,source=$sock,target=$target" <<<"$args")"
+  check "$os: the socket is mounted once and .git-dirs still is" 2 "$(grep -c -x -- '--mount' <<<"$args")"
+  check "$os: the socket is not created as a folder" no "$([ -d "$sock" ] && echo yes || echo no)"
+  check "$os: no complaint about creating the socket source" 0 "$(grep -c 'could not create' <<<"$out")"
+  ws="$(new_ws "$plain")"; run "$os" "$ws" -- up
+  check "$os: no SSH_AUTH_SOCK, no agent mount" 0 "$(agent_mounts)"
+  ws="$(new_ws "$plain")"; run "$os" "$ws" SSH_AUTH_SOCK="$T/missing.sock" -- up
+  check "$os: SSH_AUTH_SOCK naming no socket, no agent mount" 0 "$(agent_mounts)"
+  ws="$(new_ws "$plain")"; run "$os" "$ws" SSH_AUTH_SOCK="$T/agent" -- up
+  check "$os: SSH_AUTH_SOCK naming a folder, no agent mount" 0 "$(agent_mounts)"
+done
+ws="$(new_ws "$plain")"; run macos "$ws" -- up
+check "macos: Docker Desktop's socket is mounted" "type=bind,source=/run/host-services/ssh-auth.sock,target=$target" "$(grep -x -- "type=bind,source=/run/host-services/ssh-auth.sock,target=$target" <<<"$args")"
+check 'macos: nothing is created for the socket source' 0 "$(grep -c 'could not create' <<<"$out")"
+ws="$(new_ws "$plain")"; run linux "$ws" SSH_AUTH_SOCK="$sock" SSH_AGENT_MODE=key -- up
+check 'SSH_AGENT_MODE=key suppresses the socket mount' 0 "$(agent_mounts)"
+check 'SSH_AGENT_MODE=key leaves .git-dirs alone' 1 "$(grep -c -x -- '--mount' <<<"$args")"
+ws="$(new_ws "$plain")"; run macos "$ws" SSH_AGENT_MODE=key -- up
+check 'SSH_AGENT_MODE=key suppresses it on macos too' 0 "$(agent_mounts)"
+ws="$(new_ws "$plain")"; run linux "$ws" SSH_AUTH_SOCK="$sock" HOST_MOUNTS=false -- up
+check 'HOST_MOUNTS=false suppresses the socket mount too' 0 "$(grep -c -x -- '--mount' <<<"$args")"
+# shellcheck disable=SC2016  # ${localEnv:...} is JSON text
+ws="$(new_ws '{ "mounts": ["source=a,target=/var/lib/devcontainer-features/ssh-agent/agent.sock,type=bind"] }')"; run linux "$ws" SSH_AUTH_SOCK="$sock" -- up
+check 'a repository that mounts the target itself: no launcher mount' 0 "$(agent_mounts)"
+check 'and one line says it was skipped' "host mount skipped: $target is already mounted by this repository's devcontainer.json" "$(grep 'host mount skipped' <<<"$out")"
+ws="$(new_ws "$plain")"; run linux "$ws" SSH_AUTH_SOCK="$sock" -- host
+check 'host lists the agent mount' "host mount (add)   : ssh-agent: type=bind,source=$sock,target=$target" "$(grep 'host mount (add)   : ssh-agent' <<<"$out")"
+check 'host shows DCF_HOST_SSH_AGENT: socket' 'DCF_HOST_SSH_AGENT : socket' "$(grep '^DCF_HOST_SSH_AGENT' <<<"$out")"
+ws="$(new_ws "$plain")"; run linux "$ws" -- host
+check 'host shows DCF_HOST_SSH_AGENT: none without a socket' 'DCF_HOST_SSH_AGENT : none' "$(grep '^DCF_HOST_SSH_AGENT' <<<"$out")"
+ws="$(new_ws "$plain")"; run linux "$ws" SSH_AUTH_SOCK="$sock" SSH_AGENT_MODE=key -- host
+check 'host shows DCF_HOST_SSH_AGENT: key' 'DCF_HOST_SSH_AGENT : key' "$(grep '^DCF_HOST_SSH_AGENT' <<<"$out")"
+# what the CLI is handed in its environment
+# shellcheck disable=SC2016  # the stub's own variable
+printf '#!/bin/sh\nenv | grep "^DCF_HOST_SSH_AGENT=" > "$DCF_TEST_RECORD"\n' > "$bin/devcontainer"
+ws="$(new_ws "$plain")"; run linux "$ws" SSH_AUTH_SOCK="$sock" -- up
+check 'the CLI sees DCF_HOST_SSH_AGENT=socket' DCF_HOST_SSH_AGENT=socket "$args"
+ws="$(new_ws "$plain")"; run macos "$ws" -- up
+check 'the CLI sees DCF_HOST_SSH_AGENT=socket on macos' DCF_HOST_SSH_AGENT=socket "$args"
+ws="$(new_ws "$plain")"; run linux "$ws" SSH_AGENT_MODE=key SSH_AUTH_SOCK="$sock" -- up
+check 'the CLI sees DCF_HOST_SSH_AGENT=key' DCF_HOST_SSH_AGENT=key "$args"
+ws="$(new_ws "$plain")"; run linux "$ws" -- up
+check 'the CLI sees DCF_HOST_SSH_AGENT=none' DCF_HOST_SSH_AGENT=none "$args"
 
 echo
 echo "$pass passed, $fail failed"

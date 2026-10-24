@@ -33,6 +33,7 @@ jobs:
           - git
           - common
           - gh
+          - ssh-agent
           - az
           - kube-state
         baseImage:
@@ -71,6 +72,7 @@ jobs:
           - git
           - common
           - gh
+          - ssh-agent
           - az
           - kube-state
     steps:

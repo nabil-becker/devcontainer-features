@@ -41,6 +41,9 @@
 #                              DCF_HOST_SSH_AGENT before it runs the CLI.
 #   HOST_MOUNTS                false (or 0, no) = the launcher adds no host mounts to `up`
 #                              (see "host mounts" below). Default on.
+#   SSH_AGENT_MODE             key = the user opts into a signing key kept in the container
+#                              (the ssh-agent Feature's key mode): DCF_HOST_SSH_AGENT=key and
+#                              no agent socket is mounted. Unset = the host type decides.
 #   DEVCONTAINER_BUILD_LOCK    0 = do not serialise image builds (below).
 #   DEVCONTAINER_BUILD_LOCK_FEATURES_TEST  true = `features test` takes the
 #                              lock too (default false).
@@ -287,11 +290,34 @@ resolve_host_type() {
   die "HOST_TYPE=auto: no host type in [$HT_PRIORITY] passed. $notes. Set HOST_TYPE=<id> ($host_type_ids), or HOST_TYPE_PRIORITY."
 }
 
-# resolve_host_profile: HT_* plus HT_HOME and HT_SSH_AGENT (slice 1: none; slice 4 fills it).
+# The SSH agent (docs/proposals/host-profile.md section 5): DCF_HOST_SSH_AGENT is socket (the
+# launcher mounts a host socket at the ssh-agent Feature's fixed path), none (this host type
+# cannot hand the agent over without a process of ours left running on the host) or key (the
+# user opted into a key in the container: SSH_AGENT_MODE=key, which also suppresses the mount).
+#   linux, windows-wsl-docker  $SSH_AUTH_SOCK of this launcher, when set and a socket
+#   macos                      Docker Desktop's /run/host-services/ssh-auth.sock (a path inside
+#                              its VM, so it cannot be checked from here)
+#   windows-docker, windows-wslc  none: the Windows agent is a named pipe, and bridging it needs a
+#                              host process. (windows-wsl-docker driven from Windows is the
+#                              PowerShell launcher's: none; this script runs inside the distro.)
+ssh_agent_target=/var/lib/devcontainer-features/ssh-agent/agent.sock
+
+# resolve_ssh_agent: sets HT_SSH_AGENT (socket|none|key) and HT_SSH_SOCKET (the source, or empty).
+resolve_ssh_agent() {
+  HT_SSH_AGENT=none; HT_SSH_SOCKET=''
+  if [ "${SSH_AGENT_MODE:-}" = key ]; then HT_SSH_AGENT=key; return 0; fi
+  case "$HT_TYPE" in
+    linux | windows-wsl-docker)
+      if [ -n "${SSH_AUTH_SOCK:-}" ] && [ -S "$SSH_AUTH_SOCK" ]; then HT_SSH_AGENT=socket; HT_SSH_SOCKET="$SSH_AUTH_SOCK"; fi ;;
+    macos) HT_SSH_AGENT=socket; HT_SSH_SOCKET=/run/host-services/ssh-auth.sock ;;
+  esac
+}
+
+# resolve_host_profile: HT_* plus HT_HOME and the SSH agent (HT_SSH_AGENT, HT_SSH_SOCKET).
 resolve_host_profile() {
   resolve_host_type
   HT_HOME="${HOME:-}"
-  HT_SSH_AGENT=none
+  resolve_ssh_agent
 }
 
 # export_host_env: DCF_HOST_* into this process's environment, which the CLI inherits;
@@ -304,19 +330,24 @@ export_host_env() {
 # ---------------------------------------------------------- host mounts ----
 # The mounts the launcher adds to `devcontainer up` (--mount type=bind,source=..,target=..),
 # per host type, so a repository declares none (ADR 0024; the PowerShell twin is
-# Get-HostMount). Slice 3 has one entry, the host home's .git-dirs at /git-dirs; slice 4
-# adds the SSH agent socket where the host type has one: add a line to the case below.
+# Get-HostMount). Two entries: the host home's .git-dirs at /git-dirs (slice 3) and the SSH agent
+# socket at the ssh-agent Feature's fixed path where the host type has one (slice 4).
 # `up` (and so rebuild) only: `build` mounts nothing, `exec` runs in an existing container.
 # A mount whose target the repository's own devcontainer.json already declares is skipped
 # (one line says so); HOST_MOUNTS=false turns all of them off.
 
-# host_mount_specs: prints "name|source|target" lines for HT_TYPE and HT_HOME.
+# host_mount_specs: prints "name|source|target" lines for HT_TYPE, HT_HOME and HT_SSH_SOCKET.
+# The ssh-agent source is a socket (or Docker Desktop's path), never a folder to create.
 host_mount_specs() {
-  [ -n "${HT_HOME:-}" ] || return 0
-  case "$HT_TYPE" in
-    linux | macos | windows-wsl-docker | windows-docker | windows-wslc)
-      printf 'git-dirs|%s/.git-dirs|/git-dirs\n' "$HT_HOME" ;;
-  esac
+  if [ -n "${HT_HOME:-}" ]; then
+    case "$HT_TYPE" in
+      linux | macos | windows-wsl-docker | windows-docker | windows-wslc)
+        printf 'git-dirs|%s/.git-dirs|/git-dirs\n' "$HT_HOME" ;;
+    esac
+  fi
+  if [ "${HT_SSH_AGENT:-none}" = socket ] && [ -n "${HT_SSH_SOCKET:-}" ]; then
+    printf 'ssh-agent|%s|%s\n' "$HT_SSH_SOCKET" "$ssh_agent_target"
+  fi
 }
 
 host_mounts_enabled() { case "${HOST_MOUNTS:-true}" in false | 0 | no) return 1 ;; esac; }
@@ -398,7 +429,9 @@ host_mount_args() {
     case "$source" in
       *,*) echo "host mount $name skipped: the source '$source' contains a comma, which --mount cannot carry." >&2; continue ;;
     esac
-    mkdir -p "$source" 2>/dev/null || echo "host mount: could not create $source" >&2
+    if [ "$name" != ssh-agent ]; then # a socket is not ours to create
+      mkdir -p "$source" 2>/dev/null || echo "host mount: could not create $source" >&2
+    fi
     HM_ARGS+=(--mount "type=bind,source=$source,target=$target")
   done
 }
@@ -604,6 +637,32 @@ explain_exec_failure() { # <exit code> <workspace> <command text>
   exit "$rc"
 }
 
+# ssh-key-import <workspace> <key file on this host>: the opt-in key mode's one-shot import
+# (task devcontainer:ssh-key-import). The key bytes go to the running container through
+# `devcontainer exec` on stdin, never as an argument, into the ssh-agent Feature's key volume
+# (ssh-agent-setup key-stdin; it refuses when key mode is off before reading anything), with
+# the .pub beside the key when there is one; then the Feature loads the keys. Prints the
+# container's lines (a fingerprint), never the key. Nothing is left running on the host.
+mode_ssh_key_import() {
+  local workspace="$1" file="${2:-}" name ids rc=0
+  [ -n "$file" ] && [ -f "$file" ] || die "ssh-key-import: FILE=<path of a private key on this host> is required, and '${file}' is not a file."
+  name="$(basename "$file")"
+  ids="$(running_ids "$workspace")" || { engine_unreachable; exit 2; }
+  if [ -z "$ids" ]; then
+    echo "No running devcontainer for $workspace. Start it with: task dc:start" >&2
+    exit 1
+  fi
+  run_cli exec "$workspace" '' ssh-agent-setup key-stdin "$name" < "$file" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "ssh-key-import: the container refused or failed (exit $rc, see above). Key mode must be on there: Feature option keyMode: true, or SSH_AGENT_MODE=key at task devcontainer:up; ssh-agent-setup also needs to be installed (the ssh-agent Feature)." >&2
+    exit "$rc"
+  fi
+  if [ -f "$file.pub" ]; then
+    run_cli exec "$workspace" '' ssh-agent-setup key-stdin "$name.pub" < "$file.pub" || { echo "ssh-key-import: the .pub could not be stored (the private key was)." >&2; }
+  fi
+  run_cli exec "$workspace" '' ssh-agent-setup key-load || exit $?
+}
+
 mode_run() {
   local subcommand="${1:-}"; shift || true
   [ -n "$subcommand" ] || die 'run: missing subcommand'
@@ -619,6 +678,12 @@ mode_run() {
   done
 
   [ "$subcommand" != host ] || { mode_host "$(resolve_workspace "${workspace:-.}")" "$@"; return; }
+
+  if [ "$subcommand" = ssh-key-import ]; then
+    [ -n "$workspace" ] || die 'run: --workspace-folder is required for ssh-key-import'
+    mode_ssh_key_import "$(resolve_workspace "$workspace")" "${1:-}"
+    return
+  fi
 
   case "$subcommand" in
     stop | prepshutdown | running)

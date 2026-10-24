@@ -1,0 +1,78 @@
+# Tasks contributed by the ssh-agent Feature (namespace: ssh-agent).
+version: '3'
+
+tasks:
+  version:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Show the OpenSSH client version and where the agent socket is (SSH_AUTH_SOCK of this shell and the Feature''s fixed path).'
+    cmds:
+      - ssh -V
+      - 'echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK (fixed path: /var/lib/devcontainer-features/ssh-agent/agent.sock)"'
+
+  check:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Plain verdict on the SSH agent (ssh-add -l): reachable with N keys, reachable with no keys, or not reachable and why, from the DCF_HOST_TYPE and DCF_HOST_SSH_AGENT values the launcher passed in. Exit 0 when an agent answers, 1 when not.'
+    cmds:
+      - ssh-agent-setup check
+
+  setup:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Re-run the post-start hook: check the host agent socket, or in key mode (keyMode: true or DCF_HOST_SSH_AGENT=key) start the in-container agent and load the keys of the key volume. Idempotent, never fatal.'
+    cmds:
+      - ssh-agent-setup
+
+  keys:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'List what the agent holds (ssh-add -l: fingerprints and comments); a plain message when it holds none or cannot be reached.'
+    cmds:
+      - ssh-agent-setup keys
+
+  key:load:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Key mode only: (re)load every private key of the key volume into the in-container agent, what the post-start hook does; use it after copying keys in by hand. Refuses, with the way to turn it on, when key mode is off.'
+    cmds:
+      - ssh-agent-setup key-load
+
+  key:add:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Key mode only, opt-in (puts a private key in the container''s key volume): copy the private key file FILE=<path inside the container> (and its .pub beside it) into the volume with mode 0600, then load it. Refuses, with the way to turn it on, when key mode is off.'
+    requires:
+      vars: [FILE]
+    cmds:
+      - ssh-agent-setup key-add '{{.FILE}}'
+
+  key:new:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Key mode only, opt-in: generate a dedicated ed25519 signing key NAME (default signing) in the key volume, load it and print the public key to add to GitHub as a signing key. Asks for a passphrase unless EMPTY_PASSPHRASE=1. COMMENT sets the key comment. The private key is never printed.'
+    interactive: true
+    vars:
+      NAME: '{{.NAME | default "signing"}}'
+      COMMENT: '{{.COMMENT | default ""}}'
+      EMPTY_PASSPHRASE: '{{.EMPTY_PASSPHRASE | default ""}}'
+    cmds:
+      - ssh-agent-setup key-new '{{.NAME}}' '{{.COMMENT}}' '{{.EMPTY_PASSPHRASE}}'
+
+  key:remove:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Remove the key NAME=<file name in the key volume> from the agent and, with DELETE=1, from the volume too (otherwise it returns at the next start).'
+    requires:
+      vars: [NAME]
+    vars:
+      DELETE: '{{.DELETE | default ""}}'
+    cmds:
+      - ssh-agent-setup key-remove '{{.NAME}}' '{{.DELETE}}'
+
+  git:signing:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Configure git to sign commits and tags with a key of the agent (gpg.format ssh, user.signingkey key::<public key>, commit.gpgsign and tag.gpgsign true); works with a host agent too, it needs only the public key from ssh-add -L. KEY=<fingerprint or .pub path> picks the key (optional with exactly one). SCOPE=global writes the container''s own config (the git Feature''s volume); SCOPE=repo writes the current repository''s config, which can be SHARED with the Windows host through .git-dirs. Default: global when the git Feature''s volume is present, else repo.'
+    vars:
+      KEY: '{{.KEY | default ""}}'
+      SCOPE: '{{.SCOPE | default ""}}'
+    cmds:
+      - ssh-agent-setup git-signing '{{.KEY}}' '{{.SCOPE}}'
+
+  git:verify:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Test signing without committing: sign a throwaway message with the configured git signing key through the agent (ssh-keygen -Y sign) and verify it against a temporary allowed_signers file; prints ok or why not.'
+    cmds:
+      - ssh-agent-setup git-verify

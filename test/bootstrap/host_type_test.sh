@@ -101,13 +101,14 @@ printf '#!/bin/sh\nexit 0\n' > "$T/podman"; chmod +x "$T/podman"
 out="$(host linux DEVCONTAINER_DOCKER_PATH="$T/podman" HOST_TYPE=linux -- run host)"
 check 'DEVCONTAINER_DOCKER_PATH wins for the engine' "$T/podman" "$(field 'engine command' "$out")"
 
-# The launcher exports DCF_HOST_* to the CLI it runs, and --docker-path.
+# The launcher exports DCF_HOST_* to the CLI it runs, and --docker-path. The SSH agent is none
+# without a socket to mount on linux and a WSL distro, socket on macos (Docker Desktop's).
 for os in linux macos wsl; do
-  case "$os" in linux) want=linux ;; macos) want=macos ;; wsl) want=windows-wsl-docker ;; esac
+  case "$os" in linux) want=linux; agent=none ;; macos) want=macos; agent=socket ;; wsl) want=windows-wsl-docker; agent=none ;; esac
   out="$(host "$os" -- run up --workspace-folder "$T/ws")"
   check "$os: CLI sees DCF_HOST_TYPE" "DCF_HOST_TYPE=$want" "$(grep '^DCF_HOST_TYPE=' <<<"$out")"
   check "$os: CLI sees DCF_HOST_HOME" "DCF_HOST_HOME=/home/tester" "$(grep '^DCF_HOST_HOME=' <<<"$out")"
-  check "$os: CLI sees DCF_HOST_SSH_AGENT" "DCF_HOST_SSH_AGENT=none" "$(grep '^DCF_HOST_SSH_AGENT=' <<<"$out")"
+  check "$os: CLI sees DCF_HOST_SSH_AGENT" "DCF_HOST_SSH_AGENT=$agent" "$(grep '^DCF_HOST_SSH_AGENT=' <<<"$out")"
 done
 out="$(host linux DEVCONTAINER_DOCKER_PATH="$T/podman" -- run up --workspace-folder "$T/ws")"
 check 'up passes DEVCONTAINER_DOCKER_PATH as --docker-path' 1 "$(grep -c -- "--docker-path $T/podman" <<<"$out")"

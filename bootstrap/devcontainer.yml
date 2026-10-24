@@ -49,11 +49,19 @@
 #                              linux; macos.
 #   HOST_MOUNTS                false = the launcher adds no host mounts. By default `up`
 #                              (so rebuild) passes the mounts the host type needs as
-#                              `--mount type=bind,source=..,target=..`: today the host
-#                              home's .git-dirs at /git-dirs, so a repository needs no
+#                              `--mount type=bind,source=..,target=..`: the host
+#                              home's .git-dirs at /git-dirs and, where the host type has
+#                              one, the SSH agent socket, so a repository needs no
 #                              mount line of its own; one it already has (same target in
 #                              its devcontainer.json) is kept and the launcher's skipped.
 #                              `task devcontainer:host` lists what would be added.
+#   SSH_AGENT_MODE             key = opt into a signing key kept in the container (the
+#                              ssh-agent Feature's key mode; it breaks "the private key
+#                              never enters the container" for you): DCF_HOST_SSH_AGENT=key
+#                              and no agent socket mounted. Unset = the host type decides:
+#                              the agent socket is mounted on linux, macos and
+#                              windows-wsl-docker from a distro, none on the Windows
+#                              engines (no host process may be left running).
 #   DEVCONTAINER_NODE_VERSION  portable Node.js version (default in the scripts).
 #   DEVCONTAINER_CLI_VERSION   @devcontainers/cli version (default: latest).
 #   DEVCONTAINER_HOMES         host folder for bind-mounted tool state
@@ -97,13 +105,14 @@ vars:
   HOST_TYPE: '{{.HOST_TYPE | default ""}}'
   HOST_TYPE_PRIORITY: '{{.HOST_TYPE_PRIORITY | default ""}}'
   HOST_MOUNTS: '{{.HOST_MOUNTS | default ""}}'
+  SSH_AGENT_MODE: '{{.SSH_AGENT_MODE | default ""}}'
   _PS_SETTINGS: -DockerPath '{{.DEVCONTAINER_DOCKER_PATH}}' -NodeVersion '{{.DEVCONTAINER_NODE_VERSION}}' -CliVersion '{{.DEVCONTAINER_CLI_VERSION}}'
   # Only the tasks that run the CLI (and `host`) take the host type and the host mounts switch.
-  _PS_HOST_SETTINGS: -HostType '{{.HOST_TYPE}}' -HostTypePriority '{{.HOST_TYPE_PRIORITY}}' -HostMounts '{{.HOST_MOUNTS}}'
+  _PS_HOST_SETTINGS: -HostType '{{.HOST_TYPE}}' -HostTypePriority '{{.HOST_TYPE_PRIORITY}}' -HostMounts '{{.HOST_MOUNTS}}' -SshAgentMode '{{.SSH_AGENT_MODE}}'
   # Linux/macOS: the bash script reads the environment. The resolved values
   # are prefixed to the command rather than set through `env:` (see above).
   _SH_SETTINGS: >-
-    {{if .DEVCONTAINER_DOCKER_PATH}}DEVCONTAINER_DOCKER_PATH='{{.DEVCONTAINER_DOCKER_PATH}}' {{end}}{{if .DEVCONTAINER_NODE_VERSION}}DEVCONTAINER_NODE_VERSION='{{.DEVCONTAINER_NODE_VERSION}}' {{end}}{{if .DEVCONTAINER_CLI_VERSION}}DEVCONTAINER_CLI_VERSION='{{.DEVCONTAINER_CLI_VERSION}}' {{end}}{{if .HOST_TYPE}}HOST_TYPE='{{.HOST_TYPE}}' {{end}}{{if .HOST_TYPE_PRIORITY}}HOST_TYPE_PRIORITY='{{.HOST_TYPE_PRIORITY}}' {{end}}{{if .HOST_MOUNTS}}HOST_MOUNTS='{{.HOST_MOUNTS}}' {{end}}
+    {{if .DEVCONTAINER_DOCKER_PATH}}DEVCONTAINER_DOCKER_PATH='{{.DEVCONTAINER_DOCKER_PATH}}' {{end}}{{if .DEVCONTAINER_NODE_VERSION}}DEVCONTAINER_NODE_VERSION='{{.DEVCONTAINER_NODE_VERSION}}' {{end}}{{if .DEVCONTAINER_CLI_VERSION}}DEVCONTAINER_CLI_VERSION='{{.DEVCONTAINER_CLI_VERSION}}' {{end}}{{if .HOST_TYPE}}HOST_TYPE='{{.HOST_TYPE}}' {{end}}{{if .HOST_TYPE_PRIORITY}}HOST_TYPE_PRIORITY='{{.HOST_TYPE_PRIORITY}}' {{end}}{{if .HOST_MOUNTS}}HOST_MOUNTS='{{.HOST_MOUNTS}}' {{end}}{{if .SSH_AGENT_MODE}}SSH_AGENT_MODE='{{.SSH_AGENT_MODE}}' {{end}}
   # The shutdown check when STOP_CHECK is unset, run by `bash -lc` inside the
   # container from the workspace folder (the CLI's exec starts there): the
   # repository's `task shutdown:check` if its Taskfile defines it, else the
@@ -146,6 +155,26 @@ tasks:
       - task: cli
         vars:
           SUBCOMMAND: host
+
+  ssh-add:
+    desc: 'Run the HOST''s ssh-add (a one-shot: it runs and exits, nothing is left running) with the arguments after --, no arguments = ssh-add -l: load a key into the host agent that the ssh-agent Feature''s socket mode forwards (linux, macos, windows-wsl-docker from a distro), e.g. task dc:ssh-add -- ~/.ssh/id_ed25519. On Windows it runs the Windows OpenSSH ssh-add and says that the container cannot reach that agent on this host type; use task devcontainer:ssh-key-import (opt-in key mode) there. Runs from the host only.'
+    interactive: true
+    cmds:
+      - cmd: '{{if ._IN_CONTAINER}}echo "devcontainer:ssh-add runs from the host: this Task is inside the container (use task ssh-agent:keys here)." >&2; exit 1{{else}}:{{end}}'
+      - cmd: 'echo "note: the container cannot reach the Windows OpenSSH agent on this host type (a named pipe, and no process of ours is left running on the host to bridge it). To sign in the container, use task devcontainer:ssh-key-import FILE=<private key> (opt-in key mode), or a VS Code terminal." >&2'
+        platforms: [windows]
+      - cmd: 'ssh-add {{.CLI_ARGS | default "-l"}}'
+
+  ssh-key-import:
+    desc: 'Opt-in key mode (it puts a private key in the container''s key volume, which breaks "the key never enters the container"; mainly for windows-docker and windows-wslc): read the private key file FILE=<path on the host> and stream it into the running container through devcontainer exec on stdin (never as an argument, never into a log or the process list), where the ssh-agent Feature stores it in its key volume with mode 0600 (and the .pub beside it, when there is one), then loads it; prints the fingerprint, never the key. Refuses when FILE is missing, when no container runs (start it with task dc:start), or when key mode is off in the container (Feature option keyMode: true, or SSH_AGENT_MODE=key at task dc:up). Runs from the host only.'
+    requires:
+      vars: [FILE]
+    cmds:
+      - cmd: '{{if ._IN_CONTAINER}}echo "devcontainer:ssh-key-import runs from the host: this Task is inside the container (use task ssh-agent:key:add FILE=<path> here)." >&2; exit 1{{else}}:{{end}}'
+      - task: cli
+        vars:
+          SUBCOMMAND: ssh-key-import
+          ARGS: '{{.FILE | shellQuote}}'
 
   run:
     desc: 'Internal: run CMD inside the devcontainer - directly when Task already runs inside it, through the exec task (which starts the container first) from the host. What claude and similar "inside" tasks use.'
