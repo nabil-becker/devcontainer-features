@@ -1,7 +1,7 @@
 
 # Claude Code (claude-code)
 
-Claude Code (https://code.claude.com/docs) as a member of this collection's ecosystem: installs the sha256-verified native release binary at /usr/local/bin/claude (no Node.js, version pinnable) unless a claude is already in the image - e.g. from the official ghcr.io/anthropics/devcontainer-features/claude-code, which is then augmented instead of replaced - and adds the claude-host launcher (resume one session by UUID via HOST_SESSION), a named volume mounted at CLAUDE_CONFIG_DIR (/var/lib/devcontainer-features/claude-code) so login and sessions survive rebuilds, a post-create hook that makes that directory usable by the remote user, and the Feature Taskfile. The in-app auto-updater is off; a rebuild updates.
+Claude Code (https://code.claude.com/docs) as a member of this collection's ecosystem: installs the sha256-verified native release binary at /usr/local/bin/claude (no Node.js, version pinnable) unless a claude is already in the image - e.g. from the official ghcr.io/anthropics/devcontainer-features/claude-code, which is then augmented instead of replaced - and adds the claude-host launcher (resume one session by UUID via HOST_SESSION, or the live session of the folder after a /clear), the claude-fleet command (several sessions in one terminal, never a second copy), a named volume mounted at CLAUDE_CONFIG_DIR (/var/lib/devcontainer-features/claude-code) so login and sessions survive rebuilds, a post-create hook that makes that directory usable by the remote user, and the Feature Taskfile. The in-app auto-updater is off; a rebuild updates.
 
 ## Example Usage
 
@@ -61,6 +61,61 @@ What the Feature adds in both cases:
   reuses it: `claude remote-control $(CLAUDE_HOST_PRINT_FLAG=1 claude-host)`.
   With `HOST_SESSION` unset it prints nothing and exits 0; an invalid UUID is
   still exit 2. Messages go to stderr.
+- **The live session of the folder wins** (claude-host, 1.5.0). `/clear` gives a session
+  a new id, while the pinned id (`HOST_SESSION...` in `.devcontainer/.env`) keeps its old
+  transcript, so "resume if the transcript exists" would run a second copy of one agent
+  beside the live one. Before resuming, `claude-host` reads `claude agents --json` (it
+  relies on the fields `sessionId` and `cwd`, as seen in Claude Code 2.1.308; the
+  entries of interactive and background sessions both count) and looks for live
+  sessions whose `cwd` is the current folder:
+
+  | Live in this folder | claude-host does |
+  | --- | --- |
+  | nothing | as before: `--resume <pinned>` when its transcript exists, else `--session-id <pinned>` |
+  | the pinned id | `--resume <pinned>` |
+  | one other id | says so, `--resume <that id>`, and warns that the pin is stale |
+  | two or more, none pinned | starts nothing, lists the ids on stderr, exits 1 |
+  | `claude agents --json` missing or failing (older Claude Code) | one-line note, then as before |
+
+  `CLAUDE_HOST_UPDATE_PIN=1` (also under `CLAUDE_HOST_PRINT_FLAG`) rewrites the stale pin:
+  the one `HOST_SESSION...` line of `.devcontainer/.env` (found upwards from the folder,
+  or `CLAUDE_HOST_ENV_FILE`) that holds the old id becomes the live id, quotes kept, no
+  other line touched; it never creates the file, and refuses when not exactly one line
+  holds the old id (`CLAUDE_HOST_PIN_VAR=<name>` names the variable). `CLAUDE_HOST_LIVE_CHECK=0`
+  skips the check. The print-flag output follows the same decision (`--resume <live id>`).
+  The JSON is read with `sed`, not jq or python, which the Feature does not install.
+- **`claude-fleet`: several sessions in one terminal, never a second copy** (1.5.0). Bash
+  like `claude-host`, for the same reason (no jq, no python; the container always has
+  bash), installed beside it, run where `claude agents` runs. `SESSIONS` (environment, or
+  `SESSIONS_B64` base64-encoded) holds one line per session,
+  `name|session-variable|dir|extra claude args` (blank lines and `#` lines skipped; the
+  extra args are split on whitespace, no quoting). Each variable's value (the session's
+  UUID) comes from the environment, else `.devcontainer/.env`, since inside the container
+  only `HOST_SESSION` is in the environment. For each line, against `claude agents --json`:
+  variable unset: said, skipped; its id live, or any live session working in its folder
+  (a `/clear`ed session has a new id there): running, not started (two or more live in
+  one folder are reported); otherwise `cd <dir> && HOST_SESSION=<id> claude-host --bg <args>`
+  (claude-host's own live check is off for these starts, the fleet has made it). Then
+  `exec claude agents`. `-- --plan` prints what it would do and starts nothing; `-- --no-view`
+  starts the missing ones and does not open the view. When the list cannot be read it
+  starts nothing and exits 1. `task claude-code:fleet` runs it inside (SESSIONS in the
+  environment); from the host, `task devcontainer:claude:fleet` (see the README), with
+  `SESSIONS` set where the Taskfile includes `bootstrap/devcontainer.yml`:
+
+  ```yaml
+  includes:
+    devcontainer:
+      taskfile: ./.devcontainer/cli_bootstrap.ignore/devcontainer.yml
+      vars:
+        SESSIONS: |
+          solis|HOST_SESSION_SOLIS|rooms/solis|--model sonnet
+          atlas|HOST_SESSION_ATLAS|rooms/atlas|
+  ```
+
+  A repository that scripted this itself (a `scripts/agents.py` that reads `claude agents
+  --json` and starts the missing sessions) can drop the script and keep only its
+  `SESSIONS` list. Not verified against a real `claude --bg` here: the tests use a fake
+  `claude`; `claude agents --json` output was read from Claude Code 2.1.308.
 - `CLAUDE_CONFIG_DIR=/var/lib/devcontainer-features/claude-code` in
   `containerEnv` and a named volume mounted there, so login and sessions
   survive rebuilds without any configuration (see below).

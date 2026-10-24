@@ -42,6 +42,19 @@ check "claude-host print flag: HOST_SESSION unset prints nothing" bash -c '
 # shellcheck disable=SC2016
 check "claude-host print flag: a non-UUID is still exit 2" bash -c 'HOST_SESSION=not-a-uuid CLAUDE_HOST_PRINT_FLAG=1 claude-host >/dev/null 2>&1; [ "$?" -eq 2 ]'
 
+# claude-fleet: installed beside claude-host; with a fake claude that lists no live session,
+# --plan names what it would start and starts nothing (the logic is covered Docker-free in
+# test/claude-code/unit/live_session_test.sh; this checks the installed command works here).
+check "claude-fleet on PATH" command -v claude-fleet
+# shellcheck disable=SC2016
+check "claude-fleet without SESSIONS exits 2" bash -c 'env -u SESSIONS -u SESSIONS_B64 claude-fleet >/dev/null 2>&1; [ "$?" -eq 2 ]'
+# shellcheck disable=SC2016
+check "claude-fleet --plan starts nothing" bash -c '
+  t=$(mktemp -d); mkdir -p "$t/bin" "$t/w"
+  printf "#!/bin/sh\n[ \"\$1\" = agents ] && [ \"\$2\" = --json ] && { echo \"[]\"; exit 0; }\necho called >> %s/called\n" "$t" > "$t/bin/claude"; chmod +x "$t/bin/claude"
+  out=$(cd "$t/w" && PATH="$t/bin:$PATH" SESSIONS="a|S_A|.|" S_A=11111111-2222-3333-4444-555555555555 claude-fleet --plan 2>&1); rc=$?
+  [ "$rc" -eq 0 ] && [ ! -e "$t/called" ] && printf "%s" "$out" | grep -q "a: would start: .*claude-host --bg"'
+
 check "claude-code-setup on PATH" command -v claude-code-setup
 check "dcf-persist on PATH" command -v dcf-persist
 check "CLAUDE_CONFIG_DIR points at the Feature's state dir" bash -c "[ \"\$CLAUDE_CONFIG_DIR\" = /var/lib/devcontainer-features/claude-code ]"

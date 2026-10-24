@@ -77,7 +77,7 @@ tasks:
           echo "generated READMEs are up to date"
 
   lint:
-    desc: 'shellcheck every shell script, yamllint every YAML file (.yamllint), PSScriptAnalyzer every PowerShell file, the vendored copies of src/common/*.sh (in src/ and local-features/) identical to the canonical ones, and the Docker-free unit tests (devhost tooling, the git Feature''s .git-dirs mapping, the ssh-agent Feature''s setup script, the host launcher) (same checks as CI; the tools must be installed - this repo''s devcontainer has them).'
+    desc: 'shellcheck every shell script, yamllint every YAML file (.yamllint), PSScriptAnalyzer every PowerShell file, the vendored copies of src/common/*.sh (in src/ and local-features/) identical to the canonical ones, and the Docker-free unit tests (devhost tooling, the git Feature''s .git-dirs mapping, the ssh-agent Feature''s setup script, the claude-code Feature''s live-session rule and claude-fleet, the host launcher) (same checks as CI; the tools must be installed - this repo''s devcontainer has them).'
     cmds:
       - shellcheck -x src/*/*.sh local-features/*/*.sh local-features/*/share/bin/*.sh local-features/*/share/jobs/*/*.sh test/*/*.sh test/*/unit/*.sh test/bootstrap/*.sh bootstrap/*.sh bootstrap/host/*.sh .githooks/*
       - yamllint --strict .
@@ -93,6 +93,18 @@ tasks:
       - task: test:host-mounts
       - task: test:ssh-key-import
       - task: test:ssh-agent-unit
+      - task: test:claude-unit
+      - task: test:claude-fleet-task
+
+  test:claude-unit:
+    desc: 'Docker-free tests of the claude-code Feature''s claude-host live-session rule (a live session in the folder wins over a stale pin after /clear, the warning, CLAUDE_HOST_UPDATE_PIN rewriting only that .env line, several live sessions, nothing live, `claude agents --json` unavailable) and of claude-fleet (running by id or by folder, unset variable, start with --bg in the folder, --plan, --no-view, the environment beating .env); a fake claude on PATH answers `agents --json` from a fixture and records the other calls; part of lint.'
+    cmds:
+      - bash test/claude-code/unit/live_session_test.sh
+
+  test:claude-fleet-task:
+    desc: 'Docker-free test of how `task devcontainer:claude:fleet` hands SESSIONS (encoded) and its arguments to claude-fleet, inside the container and through the exec task from the host (--dry), and its refusal without SESSIONS; a fake claude-fleet records what it gets; part of lint.'
+    cmds:
+      - bash test/bootstrap/claude_fleet_task_test.sh
 
   test:git-unit:
     desc: 'Docker-free tests of the git Feature''s wrapper, git-setup and .git-dirs mapping, run from src/git against temp folders (never the checkout''s own git dir or global config); part of lint.'

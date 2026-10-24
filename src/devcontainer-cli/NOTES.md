@@ -292,6 +292,10 @@ the host type needs; ADR 0024 decides it, `docs/proposals/host-profile.md` is th
   beside it, then the Feature loads it; it refuses when the container is not running, key mode is off there, or FILE is
   missing, and prints the fingerprint, never the key. Both are one-shot commands; nothing stays running on the host.
   Not verified on a real host: `devcontainer exec` forwarding its stdin on every platform (the tests use a stub).
+- **Several Claude sessions (1.9.0).** `task devcontainer:claude:fleet` passes `SESSIONS` (set by the including Taskfile)
+  and its arguments to the claude-code Feature's `claude-fleet` in the container (through `exec`, or directly inside); see
+  that Feature's notes. `devcontainer:claude` itself gains nothing: its `claude-host` now prefers a live session of the folder
+  over a stale pinned id.
 - **Which subcommands.** `up` only, and so `rebuild` and `start`. `build` mounts nothing (it builds an image, no container),
   `exec`, `shell`, `pwsh` and `claude` run in a container that exists, and the other subcommands take no mounts. They
   add nothing to the argument list.
