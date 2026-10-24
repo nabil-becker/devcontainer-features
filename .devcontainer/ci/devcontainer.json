@@ -20,7 +20,7 @@
     },
     // Local Features, staged by .devcontainer/stage-features.sh before the
     // build (the CLI only accepts local paths under .devcontainer/, hence ../).
-    "../features/go-task": {},
+    "../features/go-task": { "version": "3.54.0" },
     "../features/devcontainer-cli": {}
   },
   "remoteUser": "vscode"

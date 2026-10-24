@@ -36,7 +36,7 @@
     // copies src/<id> and local-features/<id> into .devcontainer/features/ (gitignored) before every
     // start (initializeCommand), so unreleased changes are what runs here.
     "./features/common": {},
-    "./features/go-task": {},
+    "./features/go-task": { "version": "3.54.0" },
     "./features/devcontainer-cli": {},
     "./features/git": {
       "hooksPath": ".githooks",
