@@ -178,7 +178,7 @@ tasks:
     desc: 'Copy every src/<id> Feature and every local-features/<id> Feature (used here, never published) into .devcontainer/features/<id> (gitignored), so this repo''s own devcontainer references the unpublished Features by local path. The devcontainer runs it as initializeCommand before every start.'
     silent: true
     cmds:
-      - cmd: pwsh -NoLogo -NoProfile -Command 'Remove-Item -Recurse -Force .devcontainer/features -ErrorAction SilentlyContinue; New-Item -ItemType Directory -Force .devcontainer/features | Out-Null; $d = @(Get-ChildItem src, local-features -Directory -ErrorAction SilentlyContinue); $d | ForEach-Object { Copy-Item -Recurse $_.FullName (Join-Path .devcontainer/features $_.Name) }; "staged $($d.Count) Features into .devcontainer/features"'
+      - cmd: pwsh -NoLogo -NoProfile -File .devcontainer/stage-features.ps1
         platforms: [windows]
       - cmd: bash .devcontainer/stage-features.sh
         platforms: [linux, darwin]
