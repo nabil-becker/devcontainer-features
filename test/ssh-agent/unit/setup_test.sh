@@ -9,6 +9,11 @@
 # made here exist. Part of `task lint` (`task test:ssh-agent-unit`). SETUP_SH points the tests
 # at another copy of the script (used to show a test fails when the code it covers is broken).
 set -u
+# Whatever stdin the caller left open (a terminal, or a pipe `task lint` keeps
+# open) would be inherited by every run, and a command that reads it (a failing
+# verify) would wait until the timeout; CI's is closed. Calls that feed a key
+# use their own `<` redirection, so closing it here changes nothing else.
+exec </dev/null
 
 here="$(cd "$(dirname "$0")" && pwd)"
 setup_sh="${SETUP_SH:-$here/../../../src/ssh-agent/ssh-agent-setup.sh}"
