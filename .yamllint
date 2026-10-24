@@ -13,3 +13,5 @@ rules:
 ignore: |
   .task/
   node_modules/
+  # git-ignored local material (*.ignore folders, e.g. material.ignore/) is not ours to lint
+  *.ignore/

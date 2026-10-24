@@ -349,14 +349,15 @@ tasks:
   claude:fleet:
     desc: 'Several Claude Code sessions in one terminal, never a second copy of one (claude-fleet from the claude-code Feature, which needs the claude-code Feature''s claude-host and Claude Code with `claude agents --json`): SESSIONS, set by the including Taskfile (include vars), has one line per session, name|session-variable|dir|extra claude args. A session counts as running when its id (the variable''s value, from the container''s environment or .devcontainer/.env) or its folder is in `claude agents --json`; the others are started in the background with claude-host --bg in their folder; then `claude agents` opens. -- --plan prints what it would do and starts nothing; -- --no-view starts the missing ones without opening the view. Starts the container first; runs directly when already inside it.'
     interactive: true
-    requires:
-      vars: [SESSIONS]
+    preconditions:
+      - sh: '[ -n "{{.SESSIONS | default "" | trim}}" ]'
+        msg: 'devcontainer:claude:fleet needs SESSIONS, the list of sessions to keep running, one per line: name|session-variable|dir|extra claude args. Set it in the vars of your root Taskfile''s devcontainer include, e.g. SESSIONS: "host|HOST_SESSION|.|" (see the claude-code Feature NOTES, "Fleet"). A repository with one session uses task devcontainer:claude instead.'
     cmds:
       # SESSIONS travels base64-encoded: its lines hold | and spaces, and the
       # command is quoted again by exec and the host shell.
       - task: run
         vars:
-          CMD: 'SESSIONS_B64=''{{.SESSIONS | b64enc}}'' claude-fleet {{.CLI_ARGS}}'
+          CMD: 'SESSIONS_B64=''{{.SESSIONS | default "" | b64enc}}'' claude-fleet {{.CLI_ARGS}}'
 
   config:
     desc: 'Print the fully resolved devcontainer configuration (devcontainer read-configuration --include-merged-configuration).'
