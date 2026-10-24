@@ -1,0 +1,29 @@
+{
+  "forwarded_socket": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "go-task": {},
+      "ssh-agent": {}
+    },
+    "remoteUser": "vscode"
+  },
+  "key_mode": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "go-task": {},
+      "ssh-agent": {
+        "keyMode": true
+      }
+    },
+    "remoteUser": "vscode"
+  },
+  "no_taskfile": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "ssh-agent": {
+        "installTaskfile": false
+      }
+    },
+    "remoteUser": "vscode"
+  }
+}

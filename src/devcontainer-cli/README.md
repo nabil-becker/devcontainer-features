@@ -265,7 +265,7 @@ knows what kind of host it runs on, so a repository writes nothing host-specific
   `docker` that is on PATH but whose daemon is down no longer wins over an installed `wslc.exe`.
 - Before it runs the CLI (`up`, `build`, `exec` and the other subcommands that take `--docker-path`) the launcher sets
   `DCF_HOST_TYPE` (the resolved id), `DCF_HOST_HOME` (the host user's home) and `DCF_HOST_SSH_AGENT`
-  (`none` on every id for now; the ssh-agent Feature fills it) in its own environment. A repository maps them into the
+  (`socket`, `none` or `key`, see "The SSH agent" below) in its own environment. A repository maps them into the
   container itself with `containerEnv`, `"DCF_HOST_TYPE": "${localEnv:DCF_HOST_TYPE}"` and so on (the bootstrap's
   `devcontainer.json` template does). It declares no host mount: the launcher adds those (next section). Opening the
   folder straight in VS Code skips the launcher: the variables are then empty.
@@ -285,13 +285,34 @@ A repository should need no host-specific mount line. `devcontainer up` takes `-
 type=bind,source=<host path>,target=<container path>` (repeatable), so the launcher (both flavours) adds the mounts
 the host type needs; ADR 0024 decides it, `docs/proposals/host-profile.md` is the design.
 
-- **What is added.** One entry for now, for every host type: the host home's `.git-dirs` folder at `/git-dirs`
+- **What is added.** Two entries. The first, for every host type: the host home's `.git-dirs` folder at `/git-dirs`
   (source `<DCF_HOST_HOME>/.git-dirs`: `%USERPROFILE%/.git-dirs` on Windows, in the same mixed-slash form
   `${localEnv:USERPROFILE}/.git-dirs` has always produced; the distro's `$HOME/.git-dirs` for `windows-wsl-docker`; `$HOME`
   elsewhere). It is what the git Feature's wrapper maps a `.git` pointer onto, so a checkout whose git dir lives outside
   the checkout (OneDrive) works without a line in `devcontainer.json`. The list is one function per launcher
-  (`Get-HostMount` in `DevcontainerCli.psm1`, `host_mount_specs` in `devcontainer-cli.sh`), keyed by host type, so the
-  next entry (the ssh-agent socket where a host type has one) is a line, not a restructuring.
+  (`Get-HostMount` in `DevcontainerCli.psm1`, `host_mount_specs` in `devcontainer-cli.sh`), keyed by host type. The
+  second is the SSH agent socket where the host type has one (next section).
+- **The SSH agent (slice 4, devcontainer-cli 1.8.0).** The launcher bind-mounts the host's agent socket at
+  `/var/lib/devcontainer-features/ssh-agent/agent.sock`, the fixed path of the `ssh-agent` Feature's `SSH_AUTH_SOCK`,
+  and sets `DCF_HOST_SSH_AGENT` to say what it did: `socket` when it adds the mount, `none` otherwise, `key` when
+  `SSH_AGENT_MODE=key` (the user's opt-in to a key kept in the container, which also suppresses the mount).
+
+  | Host type | Source mounted | `DCF_HOST_SSH_AGENT` |
+  | --- | --- | --- |
+  | `linux` | `$SSH_AUTH_SOCK` of the launcher, only when set and a socket | `socket`, else `none` |
+  | `macos` | `/run/host-services/ssh-auth.sock` (Docker Desktop's, inside its VM; cannot be checked from the host) | `socket` |
+  | `windows-wsl-docker` | the distro's `$SSH_AUTH_SOCK`, only when the launcher (bash twin) runs inside the distro | `socket`, else `none`; always `none` from Windows |
+  | `windows-docker`, `windows-wslc` | none: the Windows agent is a named pipe and a relay would be a process left running on the host | `none` |
+
+  The mount's source is a socket, so the launcher never creates it as a folder. It is skipped like the others when the
+  repository's `devcontainer.json` already mounts that target, and `HOST_MOUNTS=false` removes it. Loading keys:
+  `task devcontainer:ssh-add -- <key>` runs the host's `ssh-add` once (no arguments: `-l`), for the host agent
+  that socket mode forwards; on Windows it says the container cannot reach that agent. `task devcontainer:ssh-key-import
+  FILE=<private key on the host>` is the opt-in key mode's import: the file goes to the running container through
+  `devcontainer exec` on stdin (never an argument), into the ssh-agent Feature's key volume with mode 0600 and its `.pub`
+  beside it, then the Feature loads it; it refuses when the container is not running, key mode is off there, or FILE is
+  missing, and prints the fingerprint, never the key. Both are one-shot commands; nothing stays running on the host.
+  Not verified on a real host: `devcontainer exec` forwarding its stdin on every platform (the tests use a stub).
 - **Which subcommands.** `up` only, and so `rebuild` and `start`. `build` mounts nothing (it builds an image, no container),
   `exec`, `shell`, `pwsh` and `claude` run in a container that exists, and the other subcommands take no mounts. They
   add nothing to the argument list.

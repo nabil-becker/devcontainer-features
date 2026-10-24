@@ -270,12 +270,13 @@ Describe 'Host type (HOST_TYPE, HOST_TYPE_PRIORITY, DCF_HOST_*)' {
     # The detection evidence is mocked inside the module: the OS the launcher runs
     # on, whether docker / `wsl -e docker` answer, whether wslc.exe exists.
     BeforeAll {
-        $script:EnvNames = 'HOST_TYPE', 'HOST_TYPE_PRIORITY', 'DEVCONTAINER_DOCKER_PATH', 'DCF_HOST_TYPE', 'DCF_HOST_HOME', 'DCF_HOST_SSH_AGENT', 'USERPROFILE', 'HOME'
+        $script:EnvNames = 'HOST_TYPE', 'HOST_TYPE_PRIORITY', 'DEVCONTAINER_DOCKER_PATH', 'DCF_HOST_TYPE', 'DCF_HOST_HOME', 'DCF_HOST_SSH_AGENT', 'SSH_AGENT_MODE', 'SSH_AUTH_SOCK', 'USERPROFILE', 'HOME'
         $script:SavedEnv = @{}
         foreach ($n in $script:EnvNames) { $script:SavedEnv[$n] = [Environment]::GetEnvironmentVariable($n) }
         function Initialize-Evidence {
-            param([string]$Os, [bool]$Docker = $false, [bool]$WslDocker = $false, [string]$Wslc = '')
-            $script:ev = @{ Os = $Os; Docker = $Docker; WslDocker = $WslDocker; Wslc = $Wslc }
+            param([string]$Os, [bool]$Docker = $false, [bool]$WslDocker = $false, [string]$Wslc = '', [bool]$Sock = $false)
+            $script:ev = @{ Os = $Os; Docker = $Docker; WslDocker = $WslDocker; Wslc = $Wslc; Sock = $Sock }
+            Mock -ModuleName DevcontainerCli Test-HostSocket { $script:ev.Sock }
             Mock -ModuleName DevcontainerCli Get-HostPlatform { $script:ev.Os }
             Mock -ModuleName DevcontainerCli Test-DockerResponding { $script:ev.Docker }
             Mock -ModuleName DevcontainerCli Test-WslDockerResponding { $script:ev.WslDocker }
@@ -358,20 +359,53 @@ Describe 'Host type (HOST_TYPE, HOST_TYPE_PRIORITY, DCF_HOST_*)' {
     }
 
     It 'sets DCF_HOST_TYPE, DCF_HOST_HOME and DCF_HOST_SSH_AGENT per id' -ForEach @(
-        @{ Os = 'windows'; Id = 'windows-docker'; HostHome = 'C:\Users\test'; Docker = $true }
-        @{ Os = 'windows'; Id = 'windows-wslc'; HostHome = 'C:\Users\test'; Docker = $false }
-        @{ Os = 'windows'; Id = 'windows-wsl-docker'; HostHome = '/home/wsluser'; Docker = $true }
-        @{ Os = 'wsl'; Id = 'windows-wsl-docker'; HostHome = '/home/test'; Docker = $true }
-        @{ Os = 'linux'; Id = 'linux'; HostHome = '/home/test'; Docker = $true }
-        @{ Os = 'macos'; Id = 'macos'; HostHome = '/home/test'; Docker = $true }
+        @{ Os = 'windows'; Id = 'windows-docker'; HostHome = 'C:\Users\test'; Docker = $true; Agent = 'none' }
+        @{ Os = 'windows'; Id = 'windows-wslc'; HostHome = 'C:\Users\test'; Docker = $false; Agent = 'none' }
+        @{ Os = 'windows'; Id = 'windows-wsl-docker'; HostHome = '/home/wsluser'; Docker = $true; Agent = 'none' }
+        @{ Os = 'wsl'; Id = 'windows-wsl-docker'; HostHome = '/home/test'; Docker = $true; Agent = 'none' }
+        @{ Os = 'linux'; Id = 'linux'; HostHome = '/home/test'; Docker = $true; Agent = 'none' }
+        @{ Os = 'macos'; Id = 'macos'; HostHome = '/home/test'; Docker = $true; Agent = 'socket' }
     ) {
         Initialize-Evidence -Os $Os -Docker $Docker -Wslc 'C:\wslc.exe'
         $env:HOST_TYPE = $Id
         $p = Initialize-HostEnvironment
         $env:DCF_HOST_TYPE | Should -Be $Id
         $env:DCF_HOST_HOME | Should -Be $HostHome
-        $env:DCF_HOST_SSH_AGENT | Should -Be 'none'
+        $env:DCF_HOST_SSH_AGENT | Should -Be $Agent
         $p.Type | Should -Be $Id
+    }
+
+    It 'DCF_HOST_SSH_AGENT for <Id> on <Os> with a socket in SSH_AUTH_SOCK is <Agent>' -ForEach @(
+        @{ Os = 'linux'; Id = 'linux'; Agent = 'socket'; Source = '/run/user/1000/agent' }
+        @{ Os = 'wsl'; Id = 'windows-wsl-docker'; Agent = 'socket'; Source = '/run/user/1000/agent' }
+        @{ Os = 'macos'; Id = 'macos'; Agent = 'socket'; Source = '/run/host-services/ssh-auth.sock' }
+        @{ Os = 'windows'; Id = 'windows-wsl-docker'; Agent = 'none'; Source = '' }
+        @{ Os = 'windows'; Id = 'windows-docker'; Agent = 'none'; Source = '' }
+        @{ Os = 'windows'; Id = 'windows-wslc'; Agent = 'none'; Source = '' }
+    ) {
+        Initialize-Evidence -Os $Os -Docker $true -Wslc 'C:\wslc.exe' -Sock $true
+        $env:HOST_TYPE = $Id
+        $env:SSH_AUTH_SOCK = '/run/user/1000/agent'
+        $a = Resolve-SshAgent -Type $Id
+        $a.Mode | Should -Be $Agent
+        $a.Socket | Should -Be $Source
+    }
+
+    It 'SSH_AUTH_SOCK naming no socket gives none on linux and windows-wsl-docker, and SSH_AGENT_MODE=key wins everywhere' {
+        Initialize-Evidence -Os linux -Docker $true -Sock $false
+        $env:SSH_AUTH_SOCK = '/run/user/1000/agent'
+        (Resolve-SshAgent -Type 'linux').Mode | Should -Be 'none'
+        (Resolve-SshAgent -Type 'windows-wsl-docker').Mode | Should -Be 'none'
+        Initialize-Evidence -Os linux -Docker $true -Sock $true
+        $env:SSH_AGENT_MODE = 'key'
+        $k = Resolve-SshAgent -Type 'linux'
+        $k.Mode | Should -Be 'key'
+        $k.Socket | Should -Be ''
+        (Resolve-SshAgent -Type 'macos').Mode | Should -Be 'key'
+        (Resolve-SshAgent -Type 'windows-docker').Mode | Should -Be 'key'
+        $env:HOST_TYPE = 'linux'
+        [void](Initialize-HostEnvironment)
+        $env:DCF_HOST_SSH_AGENT | Should -Be 'key'
     }
 
     It 'engine follows the host type: wslc for windows-wslc, docker for windows-docker' {
@@ -403,13 +437,14 @@ Describe 'Host type (HOST_TYPE, HOST_TYPE_PRIORITY, DCF_HOST_*)' {
 Describe 'Host mounts (HOST_MOUNTS, --mount on up)' {
     # Same evidence as the host type tests: the OS, the engine, mocked inside the module.
     BeforeAll {
-        $script:EnvNames = 'HOST_TYPE', 'HOST_TYPE_PRIORITY', 'HOST_MOUNTS', 'DEVCONTAINER_DOCKER_PATH', 'DCF_HOST_TYPE', 'DCF_HOST_HOME', 'DCF_HOST_SSH_AGENT', 'USERPROFILE', 'HOME'
+        $script:EnvNames = 'HOST_TYPE', 'HOST_TYPE_PRIORITY', 'HOST_MOUNTS', 'DEVCONTAINER_DOCKER_PATH', 'DCF_HOST_TYPE', 'DCF_HOST_HOME', 'DCF_HOST_SSH_AGENT', 'SSH_AGENT_MODE', 'SSH_AUTH_SOCK', 'USERPROFILE', 'HOME'
         $script:SavedEnv = @{}
         foreach ($n in $script:EnvNames) { $script:SavedEnv[$n] = [Environment]::GetEnvironmentVariable($n) }
         $script:SavedPath = $env:PATH
         function Initialize-MountEvidence {
-            param([string]$Os, [bool]$Docker = $true, [string]$Wslc = '')
-            $script:ev = @{ Os = $Os; Docker = $Docker; Wslc = $Wslc }
+            param([string]$Os, [bool]$Docker = $true, [string]$Wslc = '', [bool]$Sock = $false)
+            $script:ev = @{ Os = $Os; Docker = $Docker; Wslc = $Wslc; Sock = $Sock }
+            Mock -ModuleName DevcontainerCli Test-HostSocket { $script:ev.Sock }
             Mock -ModuleName DevcontainerCli Get-HostPlatform { $script:ev.Os }
             Mock -ModuleName DevcontainerCli Test-DockerResponding { $script:ev.Docker }
             Mock -ModuleName DevcontainerCli Test-WslDockerResponding { $false }
@@ -458,6 +493,68 @@ Describe 'Host mounts (HOST_MOUNTS, --mount on up)' {
         $m[0].Target | Should -Be '/git-dirs'
         ConvertTo-MountArgument -Mount $m[0] | Should -Be 'type=bind,source=/h/u/.git-dirs,target=/git-dirs'
         @(Get-HostMount -Type $Id -HostHome '').Count | Should -Be 0
+    }
+
+    It 'lists the ssh-agent mount at the Feature path only for -SshAgent socket with a source' {
+        $t = '/var/lib/devcontainer-features/ssh-agent/agent.sock'
+        $m = @(Get-HostMount -Type 'linux' -HostHome '/h/u' -SshAgent 'socket' -SshSocket '/run/user/1/agent')
+        $m.Count | Should -Be 2
+        $m[1].Name | Should -Be 'ssh-agent'
+        $m[1].Source | Should -Be '/run/user/1/agent'
+        $m[1].Target | Should -Be $t
+        ConvertTo-MountArgument -Mount $m[1] | Should -Be "type=bind,source=/run/user/1/agent,target=$t"
+        @(Get-HostMount -Type 'linux' -HostHome '/h/u' -SshAgent 'none' -SshSocket '/run/user/1/agent').Count | Should -Be 1
+        @(Get-HostMount -Type 'linux' -HostHome '/h/u' -SshAgent 'key' -SshSocket '/run/user/1/agent').Count | Should -Be 1
+        @(Get-HostMount -Type 'linux' -HostHome '/h/u' -SshAgent 'socket' -SshSocket '').Count | Should -Be 1
+        @(Get-HostMount -Type 'linux' -HostHome '' -SshAgent 'socket' -SshSocket '/run/user/1/agent').Count | Should -Be 1
+    }
+
+    It 'passes the agent --mount for <Id> (<Os>) only where the host type has a socket: <Expect>' -ForEach @(
+        @{ Os = 'linux'; Id = 'linux'; Sock = $true; Expect = '/run/user/1000/agent' }
+        @{ Os = 'linux'; Id = 'linux'; Sock = $false; Expect = $null }
+        @{ Os = 'wsl'; Id = 'windows-wsl-docker'; Sock = $true; Expect = '/run/user/1000/agent' }
+        @{ Os = 'macos'; Id = 'macos'; Sock = $false; Expect = '/run/host-services/ssh-auth.sock' }
+        @{ Os = 'windows'; Id = 'windows-docker'; Sock = $true; Expect = $null }
+        @{ Os = 'windows'; Id = 'windows-wslc'; Sock = $true; Expect = $null }
+        @{ Os = 'windows'; Id = 'windows-wsl-docker'; Sock = $true; Expect = $null }
+    ) {
+        Initialize-MountEvidence -Os $Os -Wslc 'C:\wslc.exe' -Sock $Sock
+        $env:HOST_TYPE = $Id
+        $env:SSH_AUTH_SOCK = '/run/user/1000/agent'
+        $ws = Get-MountWorkspace '{ "name": "plain" }'
+        $a = @(Get-HostMountArgument -WorkspaceFolder $ws)
+        $agent = @($a | Where-Object { $_ -like '*target=/var/lib/devcontainer-features/ssh-agent/agent.sock' })
+        if ($Expect) {
+            $agent | Should -HaveCount 1
+            $agent[0] | Should -Be "type=bind,source=$Expect,target=/var/lib/devcontainer-features/ssh-agent/agent.sock"
+        }
+        else { $agent | Should -HaveCount 0 }
+    }
+
+    It 'SSH_AGENT_MODE=key and HOST_MOUNTS=false both suppress the agent mount; a repository mount of the target skips it' {
+        Initialize-MountEvidence -Os linux -Sock $true
+        $env:HOST_TYPE = 'linux'
+        $env:SSH_AUTH_SOCK = '/run/user/1000/agent'
+        $ws = Get-MountWorkspace '{ }'
+        @(Get-HostMountArgument -WorkspaceFolder $ws) | Should -HaveCount 4
+        $env:SSH_AGENT_MODE = 'key'
+        @(Get-HostMountArgument -WorkspaceFolder $ws) | Should -HaveCount 2
+        $env:SSH_AGENT_MODE = $null
+        $env:HOST_MOUNTS = 'false'
+        @(Get-HostMountArgument -WorkspaceFolder $ws) | Should -HaveCount 0
+        $env:HOST_MOUNTS = $null
+        $own = Get-MountWorkspace '{ "mounts": ["source=a,target=/var/lib/devcontainer-features/ssh-agent/agent.sock,type=bind"] }'
+        $out = @(Get-HostMountArgument -WorkspaceFolder $own 6>&1)
+        @($out | Where-Object { $_ -is [string] -and $_ -like '*ssh-agent/agent.sock' }) | Should -HaveCount 0
+        $lines = @($out | Where-Object { $_ -is [System.Management.Automation.InformationRecord] } | ForEach-Object { $_.MessageData.Message })
+        $lines | Should -Contain "host mount skipped: /var/lib/devcontainer-features/ssh-agent/agent.sock is already mounted by this repository's devcontainer.json"
+    }
+
+    It 'Initialize-HostMountSource leaves an ssh-agent source alone (a socket is not ours to create)' {
+        $src = Join-Path $TestDrive 'agent-sock-source'
+        $m = [pscustomobject]@{ Name = 'ssh-agent'; Source = $src; Target = '/x'; Type = 'bind' }
+        Initialize-HostMountSource -Mount $m -Type linux
+        Test-Path $src | Should -BeFalse
     }
 
     It 'passes --mount for <Id> with the home of that host type' -ForEach @(
@@ -542,7 +639,7 @@ Describe 'Host mounts (HOST_MOUNTS, --mount on up)' {
 # arguments (the Windows branch runs the portable node.exe instead, so these run on Linux/macOS).
 Describe 'The up argument list carries the host mounts' -Skip:$IsWindows {
     BeforeAll {
-        $script:EnvNames = 'HOST_TYPE', 'HOST_MOUNTS', 'DEVCONTAINER_DOCKER_PATH', 'HOME', 'DCF_HOST_TYPE', 'DCF_HOST_HOME', 'DCF_HOST_SSH_AGENT'
+        $script:EnvNames = 'HOST_TYPE', 'HOST_MOUNTS', 'DEVCONTAINER_DOCKER_PATH', 'HOME', 'SSH_AUTH_SOCK', 'SSH_AGENT_MODE', 'DCF_HOST_TYPE', 'DCF_HOST_HOME', 'DCF_HOST_SSH_AGENT'
         $script:SavedEnv = @{}
         foreach ($n in $script:EnvNames) { $script:SavedEnv[$n] = [Environment]::GetEnvironmentVariable($n) }
         $script:SavedPath = $env:PATH
@@ -604,5 +701,95 @@ Describe 'The up argument list carries the host mounts' -Skip:$IsWindows {
 
     It '<Sub> never gets --mount' -ForEach @(@{ Sub = 'build' }, @{ Sub = 'exec' }, @{ Sub = 'read-configuration' }) {
         (Invoke-Recorded -Subcommand $Sub) | Should -Not -Contain '--mount'
+    }
+}
+
+# ssh-key-import (task devcontainer:ssh-key-import): the key file reaches `devcontainer exec` on stdin and
+# never in its arguments. A stub `devcontainer` records each call's arguments and stdin; a stub `docker`
+# answers `ps -q` (the Windows branch runs the portable node.exe instead, so these run on Linux/macOS).
+Describe 'ssh-key-import' -Skip:$IsWindows {
+    BeforeAll {
+        $script:EnvNames = 'HOST_TYPE', 'DEVCONTAINER_DOCKER_PATH', 'HOME', 'DCF_TEST_RUNNING', 'DCF_TEST_REFUSE', 'DCF_TEST_CALLS'
+        $script:SavedEnv = @{}
+        foreach ($n in $script:EnvNames) { $script:SavedEnv[$n] = [Environment]::GetEnvironmentVariable($n) }
+        $script:SavedPath = $env:PATH
+        $script:Bin = Join-Path $TestDrive 'bin'
+        $script:Calls = Join-Path $TestDrive 'calls'
+        New-Item -ItemType Directory -Path $script:Bin, $script:Calls | Out-Null
+        $stub = @'
+#!/bin/sh
+n=$(ls "$DCF_TEST_CALLS" | grep -c args)
+for a in "$@"; do echo "$a"; done > "$DCF_TEST_CALLS/$n.args"
+# Only key-stdin reads its input; other calls (key-load) get none, and reading would hang
+# wherever the input is a terminal instead of closed (as in CI).
+case "$*" in *key-stdin*) cat > "$DCF_TEST_CALLS/$n.stdin" ;; *) : > "$DCF_TEST_CALLS/$n.stdin" ;; esac
+case "$*" in *key-stdin*) if [ "$DCF_TEST_REFUSE" = 1 ]; then echo "ssh-agent: key mode is off in this container" >&2; exit 1; fi ;; esac
+exit 0
+'@
+        [System.IO.File]::WriteAllText((Join-Path $script:Bin 'devcontainer'), $stub.Replace("`r`n", "`n"))
+        [System.IO.File]::WriteAllText((Join-Path $script:Bin 'docker'), "#!/bin/sh`n[ `"`$1`" = ps ] && [ `"`$DCF_TEST_RUNNING`" = 1 ] && echo abc123`nexit 0`n")
+        chmod +x (Join-Path $script:Bin 'devcontainer') (Join-Path $script:Bin 'docker')
+        $script:Secret = 'SECRET-KEY-BYTES-0123456789'
+        # The marker lines are built, so no private-key-looking block sits in the repository (the secrets guard).
+        $script:Begin = '-----BEGIN OPENSSH ' + 'PRIVATE KEY-----'
+        $script:End = '-----END OPENSSH ' + 'PRIVATE KEY-----'
+        $script:Key = Join-Path $TestDrive 'id_test'
+        [System.IO.File]::WriteAllText($script:Key, "$($script:Begin)`n$($script:Secret)`n$($script:End)`n")
+        [System.IO.File]::WriteAllText("$($script:Key).pub", "ssh-ed25519 AAAAPUBLIC test`n")
+        $script:NoPub = Join-Path $TestDrive 'id_nopub'
+        [System.IO.File]::WriteAllText($script:NoPub, "$($script:Begin)`n$($script:Secret)`n$($script:End)`n")
+        $script:Ws = Join-Path $TestDrive 'ws'
+        New-Item -ItemType Directory -Path $script:Ws | Out-Null
+        function Get-CallCount { @(Get-ChildItem $script:Calls -Filter '*.args').Count }
+    }
+    BeforeEach {
+        foreach ($n in $script:EnvNames) { [Environment]::SetEnvironmentVariable($n, $null) }
+        $env:PATH = $script:Bin + [System.IO.Path]::PathSeparator + $script:SavedPath
+        $env:HOME = Join-Path $TestDrive 'home'
+        $env:HOST_TYPE = 'linux'
+        $env:DCF_TEST_CALLS = $script:Calls
+        Get-ChildItem $script:Calls | Remove-Item
+        Clear-HostProfileCache
+    }
+    AfterAll {
+        foreach ($n in $script:EnvNames) { [Environment]::SetEnvironmentVariable($n, $script:SavedEnv[$n]) }
+        $env:PATH = $script:SavedPath
+    }
+
+    It 'streams the key and its .pub through stdin, never in an argument, and loads the keys last' {
+        $env:DCF_TEST_RUNNING = '1'
+        Import-SshKey -WorkspaceFolder $script:Ws -KeyFile $script:Key 6>$null
+        Get-CallCount | Should -Be 3
+        (Get-Content (Join-Path $script:Calls '0.args')) -join ' ' | Should -Match 'ssh-agent-setup key-stdin id_test$'
+        (Get-Content (Join-Path $script:Calls '0.stdin') -Raw) | Should -Match ([regex]::Escape($script:Secret))
+        (Get-Content (Join-Path $script:Calls '1.args')) -join ' ' | Should -Match 'ssh-agent-setup key-stdin id_test\.pub$'
+        (Get-Content (Join-Path $script:Calls '1.stdin') -Raw) | Should -Match 'AAAAPUBLIC'
+        (Get-Content (Join-Path $script:Calls '2.args')) -join ' ' | Should -Match 'ssh-agent-setup key-load$'
+        foreach ($f in Get-ChildItem $script:Calls -Filter '*.args') { (Get-Content $f.FullName -Raw) | Should -Not -Match ([regex]::Escape($script:Secret)) }
+    }
+
+    It 'a key with no .pub beside it makes two calls' {
+        $env:DCF_TEST_RUNNING = '1'
+        Import-SshKey -WorkspaceFolder $script:Ws -KeyFile $script:NoPub 6>$null
+        Get-CallCount | Should -Be 2
+    }
+
+    It 'refuses a missing file, naming FILE, and starts nothing' {
+        $env:DCF_TEST_RUNNING = '1'
+        { Import-SshKey -WorkspaceFolder $script:Ws -KeyFile (Join-Path $TestDrive 'missing') 6>$null } | Should -Throw '*FILE=<path of a private key on this host>*'
+        { Import-SshKey -WorkspaceFolder $script:Ws -KeyFile '' 6>$null } | Should -Throw '*FILE=*'
+        Get-CallCount | Should -Be 0
+    }
+
+    It 'refuses when no container runs, says how to start it, and starts nothing' {
+        { Import-SshKey -WorkspaceFolder $script:Ws -KeyFile $script:Key 6>$null } | Should -Throw '*task dc:start*'
+        Get-CallCount | Should -Be 0
+    }
+
+    It 'a container that refuses (key mode off) fails the import and nothing else runs' {
+        $env:DCF_TEST_RUNNING = '1'
+        $env:DCF_TEST_REFUSE = '1'
+        { Import-SshKey -WorkspaceFolder $script:Ws -KeyFile $script:Key 6>$null 2>$null } | Should -Throw '*keyMode: true*'
+        Get-CallCount | Should -Be 1
     }
 }

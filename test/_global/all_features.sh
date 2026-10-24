@@ -20,6 +20,10 @@ check "dsc" dsc --version
 check "dsc resources discoverable" bash -c "dsc resource list | grep -q Microsoft"
 check "git wrapper" bash -c "[ \"\$(command -v git)\" = /usr/local/bin/git ] && git --version"
 check "gh" gh --version
+check "ssh-agent-setup" command -v ssh-agent-setup
+check "ssh-add" command -v ssh-add
+# shellcheck disable=SC2016  # expansion is meant to happen inside the inner bash
+check "SSH_AUTH_SOCK is the Feature's fixed path" bash -c '[ "$SSH_AUTH_SOCK" = /var/lib/devcontainer-features/ssh-agent/agent.sock ]'
 check "az" bash -c "az version -o tsv | cut -f1 | grep -E '^[0-9]'"
 check "kube-state-setup" command -v kube-state-setup
 check "dcf-persist" command -v dcf-persist
@@ -38,11 +42,13 @@ check "kube state dir writable" test -w "$(dirname "$KUBECONFIG")"
 check "git global config dir writable" test -w "$(dirname "$GIT_CONFIG_GLOBAL")"
 check "coder state dir writable" test -w "$CODER_CONFIG_DIR"
 check "argocd state dir writable" test -w "$ARGOCD_CONFIG_DIR"
+check "ssh-agent socket folder writable" test -w /var/lib/devcontainer-features/ssh-agent
+check "ssh-agent key volume present" test -d /var/lib/devcontainer-features/ssh-agent-key
 
 registry=/usr/local/share/go-task/features.yml
 # shellcheck disable=SC2016  # expansion is meant to happen inside the inner bash
-check "registry lists every Feature" bash -c 'for f in common go-task claude-code devcontainer-cli coder-cli openbao velero kustomize kubeconform argocd dsc git gh az kube-state; do grep -q "^  $f:" /usr/local/share/go-task/features.yml || { echo "missing $f"; exit 1; }; done'
-check "feature tasks resolve through the registry" bash -c "task -t $registry --list-all | grep -c -E 'dsc:get|velero:backups|kustomize:build:all|argocd:apps|openbao:status|coder-cli:workspaces|claude-code:host|devcontainer-cli:version|kubeconform:validate:kustomize|go-task:registered|git:setup|gh:status|az:account|kube-state:contexts|common:persist' | grep -qx 15"
+check "registry lists every Feature" bash -c 'for f in common go-task claude-code devcontainer-cli coder-cli openbao velero kustomize kubeconform argocd dsc git gh ssh-agent az kube-state; do grep -q "^  $f:" /usr/local/share/go-task/features.yml || { echo "missing $f"; exit 1; }; done'
+check "feature tasks resolve through the registry" bash -c "task -t $registry --list-all | grep -c -E 'dsc:get|velero:backups|kustomize:build:all|argocd:apps|openbao:status|coder-cli:workspaces|claude-code:host|devcontainer-cli:version|kubeconform:validate:kustomize|go-task:registered|git:setup|gh:status|ssh-agent:check|az:account|kube-state:contexts|common:persist' | grep -qx 16"
 check "feature task runs" task -t "$registry" dsc:version
 check "registered list task" bash -c "task -t $registry go-task:registered | grep -qx dsc"
 

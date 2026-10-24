@@ -1,0 +1,35 @@
+{
+  "id": "ssh-agent",
+  "version": "1.0.0",
+  "name": "SSH agent",
+  "description": "Makes an SSH agent available to every process in the devcontainer (SSH_AUTH_SOCK=/var/lib/devcontainer-features/ssh-agent/agent.sock, also for `devcontainer exec`) so git commits can be signed with an SSH key: the devcontainer-cli launcher bind-mounts the host's agent socket onto that path where the host type has one (linux, macos, a WSL distro), the private key never entering the container; a post-start hook (ssh-agent-setup) checks it on every start and says plainly what a host type without one can do; the opt-in keyMode starts an agent inside the container and loads keys from its own volume instead, which breaks the no-key rule for whoever turns it on. Plus the Feature Taskfile (check, keys, key tasks, git:signing, git:verify).",
+  "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/ssh-agent",
+  "licenseURL": "https://github.com/nabil-becker/devcontainer-features/blob/main/LICENSE",
+  "options": {
+    "installTaskfile": {
+      "type": "boolean",
+      "default": true,
+      "description": "Also install this Feature's Taskfile into /usr/local/share/go-task/includes.d so its tasks appear under the <id>: namespace of a root Taskfile that includes /usr/local/share/go-task/features.yml (see the go-task Feature)."
+    },
+    "keyMode": {
+      "type": "boolean",
+      "default": false,
+      "description": "Opt-in, temporary: when no host agent socket is forwarded, start an ssh-agent inside the container on the fixed socket and load the private keys found in the ssh-agent-key volume. This puts a private key in the container, which breaks the default rule that the key never enters it; use it only where the host type cannot forward its agent (windows-docker, windows-wslc). Override per container with SSH_AGENT_SETUP_KEY_MODE in containerEnv, or per start with SSH_AGENT_MODE=key on the launcher."
+    }
+  },
+  "containerEnv": {
+    "SSH_AUTH_SOCK": "/var/lib/devcontainer-features/ssh-agent/agent.sock"
+  },
+  "mounts": [
+    {
+      "source": "ssh-agent-key-${devcontainerId}",
+      "target": "/var/lib/devcontainer-features/ssh-agent-key",
+      "type": "volume"
+    }
+  ],
+  "postStartCommand": "ssh-agent-setup",
+  "installsAfter": [
+    "ghcr.io/nabil-becker/devcontainer-features/go-task",
+    "ghcr.io/devcontainers/features/common-utils"
+  ]
+}

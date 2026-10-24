@@ -31,12 +31,14 @@
     Every setting here is read from an environment variable so a .env file
     (loaded by Task's dotenv: or by bootstrap.ps1) can drive it:
       DEVCONTAINER_DOCKER_PATH, DEVCONTAINER_NODE_VERSION,
-      DEVCONTAINER_CLI_VERSION, HOST_TYPE, HOST_TYPE_PRIORITY, HOST_MOUNTS. Explicit parameters win over the environment.
+      DEVCONTAINER_CLI_VERSION, HOST_TYPE, HOST_TYPE_PRIORITY, HOST_MOUNTS, SSH_AGENT_MODE. Explicit parameters win over the environment.
 
     Host mounts: `up` (so `rebuild`) adds the mounts the host type needs with
     `--mount type=bind,source=...,target=...` (Get-HostMount; slice 3: the
-    `.git-dirs` folder of the host home at /git-dirs), so a repository declares
-    none. A mount whose target the repository's devcontainer.json already mounts is
+    `.git-dirs` folder of the host home at /git-dirs; slice 4: the SSH agent socket at
+    /var/lib/devcontainer-features/ssh-agent/agent.sock where the host type has one),
+    so a repository declares none. DCF_HOST_SSH_AGENT is socket, none or key
+    (SSH_AGENT_MODE=key, the opt-in to a key in the container, also suppresses the mount). A mount whose target the repository's devcontainer.json already mounts is
     skipped, with one line saying so. HOST_MOUNTS=false turns the launcher's mounts
     off. `build` mounts nothing and `exec` runs in an existing container: neither
     takes them.
@@ -231,6 +233,11 @@ function Get-WslcPath {
     if (Test-Path 'C:\Program Files\WSL\wslc.exe') { return 'C:\Program Files\WSL\wslc.exe' }
     return $null
 }
+function Test-HostSocket {
+    <# .SYNOPSIS $true when the path exists and is not a directory (a unix socket; a test replaces this). #>
+    param([string]$Path)
+    return [bool]$Path -and (Test-Path -LiteralPath $Path) -and -not (Test-Path -LiteralPath $Path -PathType Container)
+}
 function Get-WslHome {
     <# .SYNOPSIS The default WSL distro's $HOME, asked through wsl.exe (windows-wsl-docker from Windows). #>
     $h = (& wsl.exe -e sh -c 'printf %s "$HOME"') -join ''
@@ -372,12 +379,38 @@ function Resolve-EngineForHostType {
     }
 }
 
+function Resolve-SshAgent {
+    <#
+    .SYNOPSIS
+        The SSH agent for a host type (proposal section 5): @{ Mode = socket|none|key; Socket }.
+    .DESCRIPTION
+        SSH_AGENT_MODE=key is the user's opt-in to a signing key kept in the container: Mode key,
+        no socket mounted. Otherwise linux and windows-wsl-docker (from inside the distro) take
+        $env:SSH_AUTH_SOCK when it is set and a socket exists; macos takes Docker Desktop's
+        /run/host-services/ssh-auth.sock (a path in its VM, not checkable here); windows-docker,
+        windows-wslc and windows-wsl-docker driven from Windows are none: the Windows agent is a
+        named pipe and bridging it needs a process of ours left running on the host, which is
+        ruled out. Mode none and key are reported by the container as such.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Type)
+    if ((Get-SettingOrEnv '' 'SSH_AGENT_MODE') -eq 'key') { return @{ Mode = 'key'; Socket = '' } }
+    switch ($Type) {
+        { $_ -in 'linux', 'windows-wsl-docker' } {
+            if ((Get-HostPlatform) -ne 'windows' -and (Test-HostSocket -Path $env:SSH_AUTH_SOCK)) { return @{ Mode = 'socket'; Socket = $env:SSH_AUTH_SOCK } }
+        }
+        'macos' { return @{ Mode = 'socket'; Socket = '/run/host-services/ssh-auth.sock' } }
+    }
+    return @{ Mode = 'none'; Socket = '' }
+}
+
 function Resolve-HostProfile {
     <#
     .SYNOPSIS
         Everything the launcher knows about the host: Type, Why, Priority, Engine
         (the command shown), EnginePath ($null = docker on PATH), and the three
-        DCF_HOST_* values: Home, SshAgent (slice 1: always none; slice 4 fills it).
+        DCF_HOST_* values: Home, SshAgent (socket, none or key), and SshSocket (the host
+        socket the agent mount takes, or empty).
     #>
     [CmdletBinding()]
     param([string]$DockerPath)
@@ -393,10 +426,11 @@ function Resolve-HostProfile {
         'windows-wsl-docker' { if ((Get-HostPlatform) -eq 'windows') { Get-WslHome } else { $env:HOME } }
         default { $env:HOME }
     }
+    $agent = Resolve-SshAgent -Type $t.Type
     return [pscustomobject]@{
         Type = $t.Type; Why = $t.Why; Priority = $t.Priority
         Engine = $engine; EnginePath = $enginePath
-        Home = $hostHome; SshAgent = 'none'
+        Home = $hostHome; SshAgent = $agent.Mode; SshSocket = $agent.Socket
     }
 }
 
@@ -412,26 +446,31 @@ function Initialize-HostEnvironment {
 }
 
 # ---------------------------------------------------------------- host mounts ----
-# The mounts the launcher adds to `devcontainer up` (--mount), per host type. One entry
-# for now (slice 3: .git-dirs); slice 4 adds the SSH agent socket where the host type has one.
+# The mounts the launcher adds to `devcontainer up` (--mount), per host type: the host home's
+# .git-dirs (slice 3) and the SSH agent socket at the ssh-agent Feature's fixed path (slice 4).
 # Add a case to the switch, or an entry to the array of a case: nothing else changes.
+$script:SshAgentTarget = '/var/lib/devcontainer-features/ssh-agent/agent.sock'
 function Get-HostMount {
     <#
     .SYNOPSIS
         The host mounts for a host type: objects with Name, Source, Target and Type.
-        Empty when the home is unknown.
+        git-dirs is empty when the home is unknown; ssh-agent is present only with
+        -SshAgent socket and a -SshSocket source.
     #>
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$Type, [string]$HostHome)
-    if (-not $HostHome) { return @() }
+    param([Parameter(Mandatory)][string]$Type, [string]$HostHome, [string]$SshAgent = 'none', [string]$SshSocket)
     $mounts = @()
-    switch ($Type) {
-        # The same entry on every type today; a type that differs (slice 4) gets its own case.
-        { $_ -in 'windows-docker', 'windows-wsl-docker', 'windows-wslc', 'linux', 'macos' } {
-            # Windows homes are C:\Users\<user>; the engine accepts the mixed form that
-            # ${localEnv:USERPROFILE}/.git-dirs has always produced, so the same is built here.
-            $mounts += [pscustomobject]@{ Name = 'git-dirs'; Source = "$HostHome/.git-dirs"; Target = '/git-dirs'; Type = 'bind' }
+    if ($HostHome) {
+        switch ($Type) {
+            { $_ -in 'windows-docker', 'windows-wsl-docker', 'windows-wslc', 'linux', 'macos' } {
+                # Windows homes are C:\Users\<user>; the engine accepts the mixed form that
+                # ${localEnv:USERPROFILE}/.git-dirs has always produced, so the same is built here.
+                $mounts += [pscustomobject]@{ Name = 'git-dirs'; Source = "$HostHome/.git-dirs"; Target = '/git-dirs'; Type = 'bind' }
+            }
         }
+    }
+    if ($SshAgent -eq 'socket' -and $SshSocket) {
+        $mounts += [pscustomobject]@{ Name = 'ssh-agent'; Source = $SshSocket; Target = $script:SshAgentTarget; Type = 'bind' }
     }
     return $mounts
 }
@@ -522,7 +561,7 @@ function Resolve-HostMount {
     $p = Resolve-HostProfile -DockerPath $DockerPath
     $configured = @(Get-ConfiguredMountTarget -WorkspaceFolder $WorkspaceFolder -Arguments $Arguments)
     $add = @(); $skip = @()
-    foreach ($m in @(Get-HostMount -Type $p.Type -HostHome $p.Home)) {
+    foreach ($m in @(Get-HostMount -Type $p.Type -HostHome $p.Home -SshAgent $p.SshAgent -SshSocket $p.SshSocket)) {
         if ($configured -contains $m.Target) { $skip += $m } else { $add += $m }
     }
     return [pscustomobject]@{ Enabled = $true; Add = $add; Skip = $skip }
@@ -532,6 +571,8 @@ function Initialize-HostMountSource {
     <# .SYNOPSIS Creates the host folder of a bind mount when it is a path this launcher can reach (idempotent), so a start never fails on a missing source. A failure is a warning, never fatal. #>
     [CmdletBinding()]
     param([Parameter(Mandatory)]$Mount, [Parameter(Mandatory)][string]$Type)
+    # A socket is not ours to create.
+    if ($Mount.Name -eq 'ssh-agent') { return }
     # windows-wsl-docker driven from Windows has a distro path (/home/...) that Windows cannot create.
     if ($Type -eq 'windows-wsl-docker' -and (Get-HostPlatform) -eq 'windows') { return }
     try { if (-not (Test-Path -LiteralPath $Mount.Source)) { [void](New-Item -ItemType Directory -Path $Mount.Source -Force) } }
@@ -778,7 +819,8 @@ function Invoke-DevcontainerCliProcess {
         [string]$CommandB64,
         [string]$NodeVersion,
         [string]$CliVersion,
-        [string]$DockerPath
+        [string]$DockerPath,
+        [string]$InputFile
     )
 
     $WorkspaceFolder = (Resolve-Path $WorkspaceFolder).Path
@@ -832,8 +874,49 @@ function Invoke-DevcontainerCliProcess {
 
     # Not returned: the CLI's own output must reach the console (a pipeline
     # would capture it, and Out-Host would take away an interactive terminal).
-    & $exe @cliArgs
+    # -InputFile: the file's text goes to the CLI's stdin (ssh-key-import), never into its arguments.
+    if ($InputFile) { Get-Content -LiteralPath $InputFile -Raw | & $exe @cliArgs } else { & $exe @cliArgs }
     $script:CliExitCode = $LASTEXITCODE
+}
+
+function Import-SshKey {
+    <#
+    .SYNOPSIS
+        The opt-in key mode's one-shot import (task devcontainer:ssh-key-import): streams a
+        private key file of this host into the running container's ssh-agent key volume.
+    .DESCRIPTION
+        The key goes through `devcontainer exec` on stdin (ssh-agent-setup key-stdin), never as an
+        argument, so it is not in a process list or a log; the .pub beside it follows when it
+        exists; then the Feature loads the keys. The container refuses, before reading anything,
+        when key mode is off. Throws with a clear message when the file is missing, no container
+        runs, or the container refuses. Nothing is left running on the host.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$WorkspaceFolder,
+        [string]$KeyFile,
+        [string]$NodeVersion,
+        [string]$CliVersion,
+        [string]$DockerPath
+    )
+    if (-not $KeyFile -or -not (Test-Path -LiteralPath $KeyFile -PathType Leaf)) {
+        throw "ssh-key-import: FILE=<path of a private key on this host> is required, and '$KeyFile' is not a file."
+    }
+    $folder = (Resolve-Path $WorkspaceFolder).Path
+    $ids = @(Get-RunningDevcontainerId -WorkspaceFolder $folder -DockerPath $DockerPath)
+    if ($ids.Count -eq 0) { throw "No running devcontainer for $folder. Start it with: task dc:start" }
+    $name = Split-Path -Leaf $KeyFile
+    $common = @{ Subcommand = 'exec'; WorkspaceFolder = $folder; NodeVersion = $NodeVersion; CliVersion = $CliVersion; DockerPath = $DockerPath }
+    Invoke-DevcontainerCliProcess @common -Arguments @('ssh-agent-setup', 'key-stdin', $name) -InputFile $KeyFile
+    if ($script:CliExitCode -ne 0) {
+        throw "ssh-key-import: the container refused or failed (exit $($script:CliExitCode), see above). Key mode must be on there: Feature option keyMode: true, or SSH_AGENT_MODE=key at task devcontainer:up; the ssh-agent Feature must be installed."
+    }
+    if (Test-Path -LiteralPath "$KeyFile.pub" -PathType Leaf) {
+        Invoke-DevcontainerCliProcess @common -Arguments @('ssh-agent-setup', 'key-stdin', "$name.pub") -InputFile "$KeyFile.pub"
+        if ($script:CliExitCode -ne 0) { Write-Warning 'ssh-key-import: the .pub could not be stored (the private key was).' }
+    }
+    Invoke-DevcontainerCliProcess @common -Arguments @('ssh-agent-setup', 'key-load')
+    if ($script:CliExitCode -ne 0) { throw "ssh-key-import: loading the keys failed (exit $($script:CliExitCode))." }
 }
 
 function Invoke-DevcontainerCli {
@@ -855,6 +938,12 @@ function Invoke-DevcontainerCli {
     if ($Subcommand -in 'stop', 'prepshutdown') {
         Stop-Devcontainer -WorkspaceFolder $WorkspaceFolder -DockerPath $DockerPath -CommandB64 $CommandB64 -Force:$Force `
             -CheckOnly:($Subcommand -eq 'prepshutdown') -NodeVersion $NodeVersion -CliVersion $CliVersion
+        return
+    }
+
+    # `ssh-key-import` is not a CLI subcommand: the key file is Arguments[0].
+    if ($Subcommand -eq 'ssh-key-import') {
+        Import-SshKey -WorkspaceFolder $WorkspaceFolder -KeyFile ($Arguments | Select-Object -First 1) -NodeVersion $NodeVersion -CliVersion $CliVersion -DockerPath $DockerPath
         return
     }
 
@@ -905,4 +994,4 @@ function Invoke-DevcontainerCli {
     exit $rc
 }
 
-Export-ModuleMember -Function Get-HostTypeId, Get-DefaultHostTypePriority, Resolve-HostType, Resolve-HostProfile, Initialize-HostEnvironment, Get-HostMount, ConvertTo-MountArgument, ConvertTo-JsonWithoutComment, Get-ConfiguredMountTarget, Test-HostMountsEnabled, Resolve-HostMount, Initialize-HostMountSource, Get-HostMountArgument, Show-HostProfile, Clear-HostProfileCache, Get-SettingOrEnv, ConvertFrom-TaskCliArgString, Get-PortableNodeDir, Get-DevcontainersCliEntrypoint, Remove-DevcontainersCli, Resolve-DockerPath, Get-WorkspaceFolderVariant, Get-RunningDevcontainerId, Stop-Devcontainer, Test-BuildSubcommand, Enter-DevcontainerBuildLock, Exit-DevcontainerBuildLock, Invoke-DevcontainerCliProcess, Invoke-DevcontainerCli
+Export-ModuleMember -Function Get-HostTypeId, Get-DefaultHostTypePriority, Resolve-HostType, Resolve-SshAgent, Resolve-HostProfile, Initialize-HostEnvironment, Get-HostMount, ConvertTo-MountArgument, ConvertTo-JsonWithoutComment, Get-ConfiguredMountTarget, Test-HostMountsEnabled, Resolve-HostMount, Initialize-HostMountSource, Get-HostMountArgument, Show-HostProfile, Import-SshKey, Clear-HostProfileCache, Get-SettingOrEnv, ConvertFrom-TaskCliArgString, Get-PortableNodeDir, Get-DevcontainersCliEntrypoint, Remove-DevcontainersCli, Resolve-DockerPath, Get-WorkspaceFolderVariant, Get-RunningDevcontainerId, Stop-Devcontainer, Test-BuildSubcommand, Enter-DevcontainerBuildLock, Exit-DevcontainerBuildLock, Invoke-DevcontainerCliProcess, Invoke-DevcontainerCli
