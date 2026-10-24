@@ -13,6 +13,7 @@ installing Node.js, and a one-line bootstrap that wires both into any repo.
 | [`claude-code`](src/claude-code) | [Claude Code](https://code.claude.com/docs): the native release binary (no Node.js, version pinnable) unless a `claude` is already there (the official Anthropic Feature), plus the `claude-host` launcher and its state (`CLAUDE_CONFIG_DIR`) in a volume it owns. |
 | [`git`](src/git) | git augmented for the container: a worktree-aware wrapper that scopes `GIT_DIR` to the checkout and maps a `.git` pointer under the host's `.git-dirs` onto one shared mount, `safe.directory` and `core.hooksPath` at post-create, the global config in a volume it owns. |
 | [`gh`](src/gh) | [GitHub CLI](https://cli.github.com) from GitHub releases, checksum-verified, unless the official Feature installed it; its login (`GH_CONFIG_DIR`) in a volume it owns, git's GitHub credentials taken from it. |
+| [`ssh-agent`](src/ssh-agent) | `SSH_AUTH_SOCK` at a fixed path in every process, so git commits can be signed with an SSH key: the launcher mounts the host's agent socket (linux, macOS, a WSL distro), the private key never entering the container; the Windows engines get a plain explanation and an opt-in, temporary key mode; `ssh-agent:*` tasks for keys and git signing setup. |
 | [`az`](src/az) | Augments the official `azure-cli` Feature: its login (`AZURE_CONFIG_DIR`) in a volume it owns, `az bicep` using the Bicep on PATH. |
 | [`kube-state`](src/kube-state) | Owns the kubeconfig (`KUBECONFIG`) the Kubernetes tools share, in a volume it owns, so velero and kubectl stop needing a hand-mounted `~/.kube`; installs no binary. |
 | [`common`](src/common) | The shared helper behind every Feature's post-create hook (`dcf-persist`: make a state directory usable and say what backs it), for a repo's own scripts too. |
@@ -224,7 +225,8 @@ run is configured:
 | Docker-compatible CLI for `--docker-path` (`docker`, `wslc`, `podman`, `nerdctl`, `finch`, or a path). Unset: the engine of the host type (`docker`, or `wslc.exe` for `windows-wslc`). Always wins over the host type. | `DEVCONTAINER_DOCKER_PATH` | `-DockerPath` / `--docker-path` |
 | Kind of host: `auto` (default) or `windows-docker`, `windows-wsl-docker`, `windows-wslc`, `linux`, `macos`; an id skips detection. The launcher sets `DCF_HOST_TYPE`, `DCF_HOST_HOME`, `DCF_HOST_SSH_AGENT` from it (`task devcontainer:host` shows them). | `HOST_TYPE` | `HOST_TYPE=` var |
 | Ordered, comma-separated host types `auto` tries (default per OS: Windows `windows-docker,windows-wsl-docker,windows-wslc`, inside WSL `windows-wsl-docker`, `linux`, `macos`) | `HOST_TYPE_PRIORITY` | `HOST_TYPE_PRIORITY=` var |
-| `false` (or `0`, `no`): the launcher adds no host mounts to `up`. By default it adds the host home's `.git-dirs` at `/git-dirs` (skipped when the repository's `devcontainer.json` already mounts that target), so a repository declares no mount line; `task devcontainer:host` lists them. | `HOST_MOUNTS` | `HOST_MOUNTS=` var |
+| `false` (or `0`, `no`): the launcher adds no host mounts to `up`. By default it adds the host home's `.git-dirs` at `/git-dirs` and, where the host type has one, the SSH agent socket at the `ssh-agent` Feature's fixed path (each skipped when the repository's `devcontainer.json` already mounts that target), so a repository declares no mount line; `task devcontainer:host` lists them. | `HOST_MOUNTS` | `HOST_MOUNTS=` var |
+| `key`: opt into a signing key kept in the container (the `ssh-agent` Feature's key mode, which breaks "the private key never enters the container" for you): `DCF_HOST_SSH_AGENT=key` and no agent socket mounted. Unset: the host type decides (socket on linux, macos, a WSL distro; none on the Windows engines). | `SSH_AGENT_MODE` | `SSH_AGENT_MODE=` var |
 | Portable Node.js version | `DEVCONTAINER_NODE_VERSION` | - |
 | `@devcontainers/cli` version (default `latest`) | `DEVCONTAINER_CLI_VERSION` | - |
 | Root of the host-side tool-state folders (`devcontainer:homes`; default `~/.devcontainer-homes`) | `DEVCONTAINER_HOMES` | - |
@@ -255,7 +257,9 @@ Each Feature stores its persistent state (logins, config, transcripts) in a name
 | `devcontainer:init` | Cache portable Node.js + `@devcontainers/cli`, report engine. `FORCE=true` reinstalls the CLI. |
 | `devcontainer:homes NAME=<slug> -- <dir>...` | Create `~/.devcontainer-homes/<slug>/<dir>` on the host, for a repo that bind-mounts a Feature's state target to the host disk instead of the Feature's volume; meant as `initializeCommand` (array form: `["task", "devcontainer:homes", "NAME=myrepo", "--", "claude-code"]`). Also creates `~/.git-dirs` (`%USERPROFILE%\.git-dirs`), the source of the git Feature's one `.git-dirs` mount, when missing. Optional `HOST_GIT_DIR=<path>` also checks that a git dir kept outside the checkout has a HEAD. |
 | `devcontainer:stop` / `prepshutdown` | Stop the container after its [shutdown check](bootstrap/SHUTDOWN.md) (`FORCE=1` skips it; `rebuild` stops first the same way and rebuilds nothing when the stop is refused); `prepshutdown` runs the same check inside the running container and stops nothing. The check is `STOP_CHECK` if set, else the repository's `task shutdown:check`, else `devhost-shutdown-check`, else none. |
-| `devcontainer:up` / `rebuild` / `build` | `devcontainer up` (extra flags after `--`), from-scratch rebuild, image build only. `up` and `rebuild` add the host mounts of the host type (`--mount`; today the home's `.git-dirs` at `/git-dirs`, skipped when `devcontainer.json` already mounts it; `HOST_MOUNTS=false` turns them off); `build` and `exec` add none. |
+| `devcontainer:up` / `rebuild` / `build` | `devcontainer up` (extra flags after `--`), from-scratch rebuild, image build only. `up` and `rebuild` add the host mounts of the host type (`--mount`: the home's `.git-dirs` at `/git-dirs` and the SSH agent socket, each skipped when `devcontainer.json` already mounts it; `HOST_MOUNTS=false` turns them off); `build` and `exec` add none. |
+| `devcontainer:ssh-add [-- <args>]` | Run the host's `ssh-add` once (no arguments: `-l`) to load a key into the host agent that the `ssh-agent` Feature's socket mode forwards (linux, macos, windows-wsl-docker); on Windows it says the container cannot reach that agent and points to `ssh-key-import`. Host only. |
+| `devcontainer:ssh-key-import FILE=<host path>` | Opt-in key mode: stream a private key file of the host (and its `.pub`) into the running container's `ssh-agent` key volume through `devcontainer exec` on stdin (never an argument), mode 0600, then load it; prints the fingerprint, never the key. Refuses when FILE is missing, no container runs, or key mode is off there. Host only. |
 | `devcontainer:host` | Print the host profile (`HOST_TYPE` and why, engine, `DCF_HOST_*`) and the host mounts `up` would add or skip; starts nothing. |
 | `devcontainer:exec CMD='...'` / `shell` / `pwsh` | Run a command (base64-safe), an interactive bash, or PowerShell in the container. |
 | `devcontainer:claude [DIR=<sub-folder>] [SESSION=<uuid>] [-- <claude args>]` | Start or resume the Claude Code host session inside (needs the `claude-code` Feature): `HOST_SESSION` from `.devcontainer/.env`, `HOST_SESSION_<DIR>` for a sub-folder. Runs directly when already inside the container. |
@@ -263,12 +267,23 @@ Each Feature stores its persistent state (logins, config, transcripts) in a name
 | `devcontainer:<anything>` | Passthrough to that CLI subcommand, args after `--`. |
 | `devcontainer:reset-storage` | wslc.exe only: reset WSL Containers' storage after a read-only BuildKit error. |
 
-**For a consuming repository (devcontainer-cli 1.7.0, git 1.4.2):** once you start through these tasks, delete the
+**For a consuming repository (devcontainer-cli 1.8.0, git 1.4.3):** once you start through these tasks, delete the
 `source=${localEnv:USERPROFILE}/.git-dirs,target=/git-dirs,type=bind` line from your `devcontainer.json`: `up` and
 `rebuild` mount it for you on every host type. Keeping it is harmless, the launcher sees the target and skips its own
 (one line says so). Keep it only if you also open the folder straight in VS Code (Reopen in Container), which
 skips the launcher; there use `${localEnv:USERPROFILE}` (Windows host) or `${localEnv:HOME}`, never `DCF_HOST_HOME`,
 which is empty without the launcher. Re-run the bootstrap to refresh the vendored launcher.
+
+**SSH commit signing from `devcontainer exec` and `claude` sessions (`ssh-agent` 1.0.0, devcontainer-cli 1.8.0):** add
+`ghcr.io/nabil-becker/devcontainer-features/ssh-agent:1` to the `features` and map the host variables with
+`containerEnv` (the bootstrap's template does: `"DCF_HOST_TYPE": "${localEnv:DCF_HOST_TYPE}"`, `"DCF_HOST_SSH_AGENT":
+"${localEnv:DCF_HOST_SSH_AGENT}"`). On linux, macos and windows-wsl-docker (launcher inside the distro) nothing else:
+the launcher mounts the host's agent socket, the key never enters the container; start the host agent first and add
+the key with `task dc:ssh-add -- <key>`. On the Windows engines (windows-docker, windows-wslc) the Windows agent is a
+named pipe and no process of ours runs on the host, so there is none: use a VS Code terminal (its own forwarding), or
+opt into the temporary key mode (`SSH_AGENT_MODE=key` at `task dc:up`, or the Feature's `keyMode: true`), which keeps a
+signing key in the container's volume and so breaks "the key never enters the container" for you: load it with
+`task dc:ssh-key-import FILE=<key>`. Then `task ssh-agent:git:signing` and `task ssh-agent:git:verify`.
 
 All of them also answer to `dc:` (the include's alias in the generated
 Taskfile). Each task dispatches per platform (Task's per-command

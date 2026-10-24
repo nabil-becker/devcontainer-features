@@ -41,7 +41,12 @@
 
 .PARAMETER HostMounts
     HOST_MOUNTS: false (or 0, no) turns off the mounts the launcher adds to `up`
-    (the `.git-dirs` folder at /git-dirs). Empty = $env:HOST_MOUNTS, else on.
+    (the `.git-dirs` folder at /git-dirs, the SSH agent socket). Empty = $env:HOST_MOUNTS, else on.
+
+.PARAMETER SshAgentMode
+    SSH_AGENT_MODE: key = the opt-in to a signing key kept in the container (no agent
+    socket is mounted, DCF_HOST_SSH_AGENT=key). Empty = $env:SSH_AGENT_MODE, else the
+    host type decides.
 
 .PARAMETER NodeVersion
     Portable Node.js version (Windows). Empty = $env:DEVCONTAINER_NODE_VERSION
@@ -61,6 +66,7 @@ param(
     [string]$HostType,
     [string]$HostTypePriority,
     [string]$HostMounts,
+    [string]$SshAgentMode,
     [string]$NodeVersion,
     [string]$CliVersion,
     [switch]$Force
@@ -72,6 +78,7 @@ Import-Module (Join-Path $PSScriptRoot 'DevcontainerCli.psm1') -Force
 if ($HostType) { $env:HOST_TYPE = $HostType }
 if ($HostTypePriority) { $env:HOST_TYPE_PRIORITY = $HostTypePriority }
 if ($HostMounts) { $env:HOST_MOUNTS = $HostMounts }
+if ($SshAgentMode) { $env:SSH_AGENT_MODE = $SshAgentMode }
 
 $params = @{
     Subcommand      = $Subcommand

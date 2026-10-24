@@ -58,7 +58,10 @@ level (`git rev-parse --show-toplevel`, else the nearest folder with a
   /git-dirs/<owner>/<repo>; the launcher adds the mount when started through
   the bootstrap tasks (task devcontainer:up), else add to devcontainer.json
   "mounts": [...] and rebuild` with the exact mount line
-  (`source=${localEnv:DCF_HOST_HOME}/.git-dirs,target=/git-dirs,type=bind`),
+  (`source=${localEnv:DCF_HOST_HOME}/.git-dirs,target=/git-dirs,type=bind`) followed by the
+  VS Code fallback (when the folder was opened straight in VS Code the launcher did not run, so use
+  `${localEnv:USERPROFILE}` on a Windows host or `${localEnv:HOME}` on Linux, macOS and WSL in place of
+  `${localEnv:DCF_HOST_HOME}`),
   when the pointer is under `.git-dirs` but the folder is not there (no mount,
   VS Code started the container without the launcher, or a folder name that
   differs on the host);

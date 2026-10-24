@@ -77,7 +77,7 @@ tasks:
           echo "generated READMEs are up to date"
 
   lint:
-    desc: 'shellcheck every shell script, yamllint every YAML file (.yamllint), PSScriptAnalyzer every PowerShell file, the vendored copies of src/common/*.sh (in src/ and local-features/) identical to the canonical ones, and the Docker-free unit tests (devhost tooling, the git Feature''s .git-dirs mapping) (CI runs exactly this inside .devcontainer/ci; the tools must be installed - this repo''s devcontainer has them, at the pinned versions).'
+    desc: 'shellcheck every shell script, yamllint every YAML file (.yamllint), PSScriptAnalyzer every PowerShell file, the vendored copies of src/common/*.sh (in src/ and local-features/) identical to the canonical ones, and the Docker-free unit tests (devhost tooling, the git Feature''s .git-dirs mapping, the ssh-agent Feature''s setup script, the host launcher) (CI runs exactly this inside .devcontainer/ci; the tools must be installed - this repo''s devcontainer has them, at the pinned versions).'
     cmds:
       - shellcheck -x src/*/*.sh local-features/*/*.sh local-features/*/share/bin/*.sh local-features/*/share/jobs/*/*.sh test/*/*.sh test/*/unit/*.sh test/bootstrap/*.sh bootstrap/*.sh bootstrap/host/*.sh .githooks/* .devcontainer/*.sh
       - yamllint --strict .
@@ -92,6 +92,8 @@ tasks:
       - task: test:host-type
       - task: test:bootstrap-dir
       - task: test:host-mounts
+      - task: test:ssh-key-import
+      - task: test:ssh-agent-unit
 
   lint:toolchain:
     desc: 'Fail when .devcontainer/ci/devcontainer.json (what the Lint workflow builds) differs from .devcontainer/devcontainer.json in the base image or any Feature it shares (same reference, same options), or when shellcheck, yamllint or powershell has no pinned version; part of lint. Bump a tool version in both files.'
@@ -114,9 +116,19 @@ tasks:
       - bash test/bootstrap/host_type_test.sh
 
   test:host-mounts:
-    desc: 'Docker-free bash tests of the host mounts the bash twin (src/devcontainer-cli/devcontainer-cli.sh) adds to `up`: the --mount argument per host type (linux, macos, windows-wsl-docker), the source folder created, a mount skipped when the repository''s devcontainer.json already declares its target (JSONC comments, trailing commas, object form, --config), HOST_MOUNTS=false, none for build/exec/read-configuration, and what `host` lists; a stub devcontainer records its arguments; part of lint. The PowerShell twin is in test:bootstrap.'
+    desc: 'Docker-free bash tests of the host mounts the bash twin (src/devcontainer-cli/devcontainer-cli.sh) adds to `up`: the --mount argument per host type (linux, macos, windows-wsl-docker), the source folder created, a mount skipped when the repository''s devcontainer.json already declares its target (JSONC comments, trailing commas, object form, --config), HOST_MOUNTS=false, none for build/exec/read-configuration, and the SSH agent socket mount per host type and SSH_AGENT_MODE=key, and what `host` lists; a stub devcontainer records its arguments; part of lint. The PowerShell twin is in test:bootstrap.'
     cmds:
       - bash test/bootstrap/host_mounts_test.sh
+
+  test:ssh-agent-unit:
+    desc: 'Docker-free tests of the ssh-agent Feature''s ssh-agent-setup against temp folders with the real OpenSSH tools and git: the verdict per DCF_HOST_SSH_AGENT (socket, none, key, unknown), key mode (an agent started on the fixed path and reused, a stale socket replaced, a 0600 key loaded and a 0644 one refused, key-new, key-add, key-stdin, key-remove), the refusal when key mode is off, git-signing (KEY by fingerprint or .pub, SCOPE and its default) and a real sign and verify round trip in git-verify; only throwaway keys; part of lint. Needs openssh-client and git.'
+    cmds:
+      - bash test/ssh-agent/unit/setup_test.sh
+
+  test:ssh-key-import:
+    desc: 'Docker-free bash tests of the host task devcontainer:ssh-key-import in the bash twin (src/devcontainer-cli/devcontainer-cli.sh): the key file reaches `devcontainer exec` on stdin and never in an argument, the .pub follows, the key load runs last, and the refusals (no file, no running container, key mode off in the container); stub devcontainer and docker record what they get; part of lint. The PowerShell twin is in test:bootstrap.'
+    cmds:
+      - bash test/bootstrap/ssh_key_import_test.sh
 
   test:bootstrap-dir:
     desc: 'Docker-free, offline bash tests of where bootstrap/bootstrap.sh vendors: the default .devcontainer/cli_bootstrap.ignore, BOOTSTRAP_DIR and its rejections (absolute, ..), the .gitignore created, appended once, other lines kept, BOOTSTRAP_GITIGNORE=false, the Taskfile template''s optional include of the chosen path, and the old ./bootstrap form (kept, migration note, include repointed, optional: true added when absent); against a temp repo with this checkout as --source and a fake task; part of lint. The PowerShell twin is in test:bootstrap.'
