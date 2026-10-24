@@ -77,3 +77,5 @@ numbering and a row below.
 | [0026](0026-a-one-shot-command-run-on-the-host-is-allowed-a-background-process-is-not.md) | A one-shot command run on the host is allowed, a background process is not | accepted | 2026-10-24 |
 | [0027](0027-ci-runs-task-lint-inside-the-devcontainer-and-the-tool-versions-are-pinned.md) | CI runs `task lint` inside the devcontainer, and the tool versions are pinned | accepted | 2026-10-24 |
 | [0028](0028-claude-host-refuses-a-second-live-session-and-a-hook-writes-the-pin-back.md) | claude-host refuses a second live session, and an opt-in hook writes the pin back | accepted | 2026-10-24 |
+| [0029](0029-key-rotation-is-one-command-and-keeps-the-old-key-registered-unless-revoked.md) | Key rotation is one command, and it keeps the old key registered unless revoked | accepted | 2026-10-24 |
+| [0030](0030-claude-fleet-waits-for-restored-sessions-and-stops-extras-but-never-removes-them.md) | claude-fleet waits for restored sessions, and stops extras but never removes them | accepted | 2026-10-24 |
