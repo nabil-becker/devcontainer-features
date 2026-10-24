@@ -34,6 +34,83 @@ What the Feature adds in both cases:
   reuses it: `claude remote-control $(CLAUDE_HOST_PRINT_FLAG=1 claude-host)`.
   With `HOST_SESSION` unset it prints nothing and exits 0; an invalid UUID is
   still exit 2. Messages go to stderr.
+- **A running session is never started a second time** (claude-host, 1.5.0). `claude --resume
+  <id>` on a session that is still running opens a second process on the same transcript,
+  and `/clear` gives a session a new id, so the pinned id (`HOST_SESSION...` in
+  `.devcontainer/.env`) may not even be the running one. Before starting, `claude-host` reads
+  `claude agents --json` (fields `pid`, `sessionId`, `cwd`, as seen in Claude Code 2.1.308) and
+  looks for live sessions whose `cwd` is the current folder. Live means the entry has a
+  `pid`: the list also holds ended sessions, without one (or with `null` or `0`), which never
+  count.
+
+  | Live in this folder | claude-host does |
+  | --- | --- |
+  | nothing | as before: `--resume <pinned>` when its transcript exists, else `--session-id <pinned>` |
+  | one or more (the pinned id included) | starts nothing, prints each running id and pid and how to attach (`claude agents`, select it), exits 1; with `CLAUDE_HOST_PRINT_FLAG` it prints nothing and exits 1, so a wrapper does not start |
+  | any, `CLAUDE_HOST_ALLOW_SECOND=1` | starts by the rule of the first row |
+  | `claude agents --json` missing or failing (older Claude Code) | one-line note, then the first row |
+
+  When the pinned id is not one of the running ids, the refusal also says the pin is stale.
+  `CLAUDE_HOST_UPDATE_PIN=1` (manual path) then rewrites it when exactly one session runs:
+  `claude-host-pin --replace <old> <new>` changes the one `HOST_SESSION...` line holding the old
+  id in `.devcontainer/.env` (found upwards, or `CLAUDE_HOST_ENV_FILE`; `CLAUDE_HOST_PIN_VAR=<name>`
+  restricts the variable), quotes kept, no other line touched, refusing unless exactly one line
+  holds it. `CLAUDE_HOST_LIVE_CHECK=0` skips the check. The JSON is read with `sed`, not jq or
+  python, which the Feature does not install. Deliberately not done: falling back to the newest
+  transcript of the folder when the pin is stale. It is too implicit; the hook below makes it
+  unnecessary.
+- **`claude-host-pin`: keep the pin equal to the running id** (opt-in SessionStart hook, 1.5.0).
+  The Feature manages no Claude Code settings, so a repository registers the hook in its
+  `.claude/settings.json`:
+
+  ```json
+  {"hooks": {"SessionStart": [
+    {"matcher": "startup|clear", "hooks": [{"type": "command", "command": "claude-host-pin"}]}
+  ]}}
+  ```
+
+  Claude Code gives a SessionStart hook its input as JSON on stdin (`session_id`, `cwd`,
+  `source`: `startup`, `resume`, `clear` or `compact`, among others). The hook finds
+  `.devcontainer/.env` upwards from `cwd` (or `CLAUDE_HOST_ENV_FILE`), picks the variable the
+  way `devcontainer:claude` does (the folder holding `.devcontainer` is the root:
+  `HOST_SESSION`; a sub-folder: `HOST_SESSION_<its name, upper-cased, other characters _>`,
+  `rooms/solis` gives `HOST_SESSION_SOLIS`) and writes `session_id` into that line, only when it
+  differs, keeping `export`, quotes, comments and every other byte of the file. A UUID is
+  required. A variable without a line is left alone (never adds one) unless
+  `CLAUDE_HOST_PIN_CREATE=1` appends `VAR=<id>`. It always exits 0, notes go to stderr, so a
+  session never fails because of it. The consumer's own write-back and second-copy check can go.
+- **`claude-fleet`: several sessions in one terminal, never a second copy** (1.5.0). Bash
+  like `claude-host`, for the same reason (no jq, no python; the container always has
+  bash), installed beside it, run where `claude agents` runs. `SESSIONS` (environment, or
+  `SESSIONS_B64` base64-encoded) holds one line per session,
+  `name|session-variable|dir|extra claude args` (blank lines and `#` lines skipped; the
+  extra args are split on whitespace, no quoting). Each variable's value (the session's
+  UUID) comes from the environment, else `.devcontainer/.env`, since inside the container
+  only `HOST_SESSION` is in the environment. For each line, against `claude agents --json`:
+  variable unset: said, skipped; its id live, or any live session working in its folder
+  (a `/clear`ed session has a new id there): running, not started (two or more live in
+  one folder are reported); otherwise `cd <dir> && HOST_SESSION=<id> claude-host --bg <args>`
+  (claude-host's own live check is off for these starts, the fleet has made it; a live session is one with a `pid`, ended entries never count). Then
+  `exec claude agents`. `-- --plan` prints what it would do and starts nothing; `-- --no-view`
+  starts the missing ones and does not open the view. When the list cannot be read it
+  starts nothing and exits 1. `task claude-code:fleet` runs it inside (SESSIONS in the
+  environment); from the host, `task devcontainer:claude:fleet` (see the README), with
+  `SESSIONS` set where the Taskfile includes `bootstrap/devcontainer.yml`:
+
+  ```yaml
+  includes:
+    devcontainer:
+      taskfile: ./.devcontainer/cli_bootstrap.ignore/devcontainer.yml
+      vars:
+        SESSIONS: |
+          solis|HOST_SESSION_SOLIS|rooms/solis|--model sonnet
+          atlas|HOST_SESSION_ATLAS|rooms/atlas|
+  ```
+
+  A repository that scripted this itself (a `scripts/agents.py` that reads `claude agents
+  --json` and starts the missing sessions) can drop the script and keep only its
+  `SESSIONS` list. Not verified against a real `claude --bg` here: the tests use a fake
+  `claude`; `claude agents --json` output was read from Claude Code 2.1.308.
 - `CLAUDE_CONFIG_DIR=/var/lib/devcontainer-features/claude-code` in
   `containerEnv` and a named volume mounted there, so login and sessions
   survive rebuilds without any configuration (see below).

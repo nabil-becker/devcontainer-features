@@ -16,6 +16,13 @@ tasks:
     cmds:
       - claude-host {{.CLI_ARGS}}
 
+  fleet:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Several sessions in one terminal, never a second copy: claude-fleet reads SESSIONS from the environment (one line per session, name|session-variable|dir|extra claude args), starts the ones not running in the background (a session counts as running when its id or its folder is in `claude agents --json`) and opens `claude agents`. -- --plan prints what it would do and starts nothing; -- --no-view leaves the view out. From the host machine use task devcontainer:claude:fleet.'
+    interactive: true
+    cmds:
+      - claude-fleet {{.CLI_ARGS}}
+
   doctor:
     dir: '{{.USER_WORKING_DIR}}'
     desc: 'Run Claude Code''s self-check (installation, auth, config dir).'
