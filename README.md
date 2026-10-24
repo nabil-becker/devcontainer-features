@@ -351,7 +351,7 @@ paths or names, and anything only one repo has ever wanted.
 task test                    # devcontainer features test, all Features
 task test FEATURE=go-task    # one Feature
 task test:global             # combined scenario in test/_global
-task lint                    # shellcheck + PSScriptAnalyzer
+task lint                    # shellcheck, yamllint, PSScriptAnalyzer, Pester, unit tests (what CI runs)
 task docs                    # regenerate src/<id>/README.md (commit the result)
 ```
 
@@ -359,7 +359,10 @@ task docs                    # regenerate src/<id>/README.md (commit the result)
 out to `chmod`/bash), so `task test` is gated to Linux/macOS. The easiest
 place is this repository's own devcontainer (`.devcontainer/`: docker-in-docker,
 shellcheck, PowerShell, and the collection's `go-task` and `devcontainer-cli`
-Features); otherwise let CI do it.
+Features); otherwise let CI do it. CI's Lint job runs `task lint` inside that
+same toolchain (`.devcontainer/ci/devcontainer.json`, tool versions pinned in
+`.devcontainer/devcontainer.json`; see CONTRIBUTING), so both give the same
+answer.
 
 Layout follows [devcontainers/feature-starter](https://github.com/devcontainers/feature-starter):
 `src/<id>/devcontainer-feature.json` + `install.sh` + `NOTES.md`, with

@@ -12,70 +12,31 @@ permissions:
 jobs:
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: "shellcheck"
-        run: shellcheck -x src/*/*.sh local-features/*/*.sh local-features/*/share/bin/*.sh local-features/*/share/jobs/*/*.sh test/*/*.sh test/*/unit/*.sh test/bootstrap/*.sh bootstrap/*.sh bootstrap/host/*.sh .githooks/*
-
-      # Feature folders must be self-contained when published, so the
-      # src/common helpers are vendored into the Features that use them.
-      - name: "Vendored copies of src/common helpers are identical"
-        run: |
-          rc=0
-          for canon in src/common/*.sh; do
-            name="$(basename "$canon")"
-            [ "$name" = install.sh ] && continue
-            for copy in src/*/"$name" local-features/*/"$name"; do
-              [ "$copy" = "$canon" ] && continue
-              cmp -s "$canon" "$copy" || { echo "::error::$copy differs from $canon - run task common:sync"; rc=1; }
-            done
-          done
-          exit "$rc"
-
-      - name: "devhost Python unit tests"
-        run: python3 -m unittest discover -s test/devhost/python -q
-
-      - name: "git Feature .git-dirs mapping tests (no Docker)"
-        run: bash test/git/unit/git_dirs_test.sh
-
-      - name: "shutdown-check contract tests (no Docker)"
-        run: bash test/bootstrap/shutdown_resolution_test.sh
-
-      - name: "yamllint"
-        run: |
-          pip install --quiet yamllint
-          yamllint --strict .
-
-      - name: "PSScriptAnalyzer"
-        shell: pwsh
-        run: |
-          Install-Module PSScriptAnalyzer -Scope CurrentUser -Force
-          ./.github/scripts/Invoke-PSScriptAnalyzer.ps1
-
-      - name: "Pester (host launcher build lock)"
-        shell: pwsh
-        run: |
-          Install-Module Pester -Scope CurrentUser -Force -SkipPublisherCheck -MinimumVersion 5.0
-          Invoke-Pester -Path test/bootstrap -Output Detailed -CI
-
-      - name: "Install devcontainer CLI"
-        run: npm install -g @devcontainers/cli
+      # The checks run inside .devcontainer/ci, the toolchain of this repository's
+      # devcontainer (shellcheck, yamllint, PowerShell, Pester and PSScriptAnalyzer
+      # at pinned versions, in that file and nowhere else), so CI and a local
+      # `task lint` give the same answer. `task lint` is the whole list: shellcheck,
+      # yamllint, PSScriptAnalyzer, Pester, the vendored-helper check, the Docker-free
+      # unit tests and the toolchain-drift check. Nothing is pushed to a registry.
+      - name: "Stage the local Features"
+        run: bash .devcontainer/stage-features.sh
 
       # READMEs are generated from devcontainer-feature.json + NOTES.md and
       # committed by the contributor (`task docs`), so they are reviewed with
       # the change and the release job never has to open a bot PR.
-      - name: "Generated READMEs are up to date"
-        run: |
-          snapshot() { for f in src/*/README.md; do [ -f "$f" ] && printf '%s ' "$f" && sha256sum < "$f"; done; }
-          before="$(snapshot)"
-          devcontainer features generate-docs -p src -n nabil-becker/devcontainer-features --github-owner nabil-becker --github-repo devcontainer-features
-          after="$(snapshot)"
-          if [ "$before" != "$after" ]; then
-            echo '::error::src/<id>/README.md is stale or missing - run `task docs` and commit the result'
-            git status --short -- 'src/*/README.md'; git diff -- 'src/*/README.md' | head -40
-            exit 1
-          fi
+      - name: "task lint and the generated READMEs, in the devcontainer"
+        uses: devcontainers/ci@513af61f4de4f75d37e4438f184ba4358f0fc1ca # v0.3.1900000450
+        with:
+          configFile: .devcontainer/ci/devcontainer.json
+          push: never
+          runCmd: |
+            set -e
+            task lint
+            task docs:check
 
       - name: "Feature folders have tests and NOTES.md"
         run: |

@@ -8,7 +8,7 @@ set -euo pipefail
 
 repo=$(cd "$(dirname "$0")/.." && pwd)
 
-# PSScriptAnalyzer for `task lint` (same as the Lint workflow).
+# PSScriptAnalyzer for `task lint`: the powershell Feature installs the pinned version; this only covers an older image.
 if ! pwsh -NoLogo -NoProfile -Command 'if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) { exit 1 }' >/dev/null 2>&1; then
   pwsh -NoLogo -NoProfile -Command 'Install-Module PSScriptAnalyzer -Scope CurrentUser -Force'
 fi
