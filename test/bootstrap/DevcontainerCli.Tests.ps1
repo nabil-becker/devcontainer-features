@@ -720,7 +720,9 @@ Describe 'ssh-key-import' -Skip:$IsWindows {
 #!/bin/sh
 n=$(ls "$DCF_TEST_CALLS" | grep -c args)
 for a in "$@"; do echo "$a"; done > "$DCF_TEST_CALLS/$n.args"
-cat > "$DCF_TEST_CALLS/$n.stdin"
+# Only key-stdin reads its input; other calls (key-load) get none, and reading would hang
+# wherever the input is a terminal instead of closed (as in CI).
+case "$*" in *key-stdin*) cat > "$DCF_TEST_CALLS/$n.stdin" ;; *) : > "$DCF_TEST_CALLS/$n.stdin" ;; esac
 case "$*" in *key-stdin*) if [ "$DCF_TEST_REFUSE" = 1 ]; then echo "ssh-agent: key mode is off in this container" >&2; exit 1; fi ;; esac
 exit 0
 '@

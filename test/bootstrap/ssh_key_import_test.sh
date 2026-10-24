@@ -29,7 +29,7 @@ for tool in uname grep cat dirname mkdir id awk tr sed basename env ls; do ln -s
 printf '#!/bin/sh\n[ "$1" = ps ] && [ "${DCF_TEST_RUNNING:-}" = 1 ] && echo abc123\nexit 0\n' > "$bin/docker"
 # devcontainer: call N's arguments (one per line) and stdin; exit 1 on the key-stdin call when DCF_TEST_REFUSE=1.
 # shellcheck disable=SC2016
-printf '#!/bin/sh\nn=$(ls "$DCF_TEST_CALLS" | grep -c args)\nfor a in "$@"; do echo "$a"; done > "$DCF_TEST_CALLS/$n.args"\ncat > "$DCF_TEST_CALLS/$n.stdin"\ncase "$*" in *key-stdin*) [ "${DCF_TEST_REFUSE:-}" = 1 ] && { echo "ssh-agent: key mode is off in this container" >&2; exit 1; } ;; esac\nexit 0\n' > "$bin/devcontainer"
+printf '#!/bin/sh\nn=$(ls "$DCF_TEST_CALLS" | grep -c args)\nfor a in "$@"; do echo "$a"; done > "$DCF_TEST_CALLS/$n.args"\ncase "$*" in *key-stdin*) cat > "$DCF_TEST_CALLS/$n.stdin" ;; *) : > "$DCF_TEST_CALLS/$n.stdin" ;; esac\ncase "$*" in *key-stdin*) [ "${DCF_TEST_REFUSE:-}" = 1 ] && { echo "ssh-agent: key mode is off in this container" >&2; exit 1; } ;; esac\nexit 0\n' > "$bin/devcontainer"
 chmod +x "$bin/docker" "$bin/devcontainer"
 echo 'Linux version 6.1.0 (builder@host) (gcc) #1 SMP' > "$T/proc-linux"
 
