@@ -64,6 +64,9 @@ case "${GIT_DIR:-}" in
       . "$gitdirs_lib"
       dcf_gitdirs_resolve "$top"
       mount_line="\"source=\${localEnv:DCF_HOST_HOME}/.git-dirs,target=$DCF_GITDIRS_ROOT,type=bind\""
+      # DCF_HOST_HOME is empty when VS Code opened the folder without the launcher.
+      # shellcheck disable=SC2016  # ${localEnv:...} is text for devcontainer.json, not ours to expand
+      vscode_hint='(opened straight in VS Code, the launcher did not run: use ${localEnv:USERPROFILE} on a Windows host or ${localEnv:HOME} on Linux, macOS and WSL in place of ${localEnv:DCF_HOST_HOME})'
       case "$DCF_GITDIRS_STATE" in
         mapped)
           echo "git dir: $DCF_GITDIRS_POINTER -> $DCF_GITDIRS_PATH (through $DCF_GITDIRS_ROOT)"
@@ -72,9 +75,9 @@ case "${GIT_DIR:-}" in
           recorded=1
           ;;
         missing)
-          echo "git dir: NOT MOUNTED - $top/.git points to $DCF_GITDIRS_POINTER, expected at $DCF_GITDIRS_PATH; the launcher adds the mount when started through the bootstrap tasks (task devcontainer:up), else add to devcontainer.json \"mounts\": [$mount_line] and rebuild" ;;
+          echo "git dir: NOT MOUNTED - $top/.git points to $DCF_GITDIRS_POINTER, expected at $DCF_GITDIRS_PATH; the launcher adds the mount when started through the bootstrap tasks (task devcontainer:up), else add to devcontainer.json \"mounts\": [$mount_line] $vscode_hint and rebuild" ;;
         outside)
-          echo "git dir: OUTSIDE .git-dirs - $top/.git points to $DCF_GITDIRS_POINTER, which the container cannot reach; keep the git dir under %USERPROFILE%\\.git-dirs\\<owner>\\<repo> (update the pointer); the launcher adds the mount when started through the bootstrap tasks (task devcontainer:up), else add to devcontainer.json \"mounts\": [$mount_line]" ;;
+          echo "git dir: OUTSIDE .git-dirs - $top/.git points to $DCF_GITDIRS_POINTER, which the container cannot reach; keep the git dir under %USERPROFILE%\\.git-dirs\\<owner>\\<repo> (update the pointer); the launcher adds the mount when started through the bootstrap tasks (task devcontainer:up), else add to devcontainer.json \"mounts\": [$mount_line] $vscode_hint" ;;
       esac
     fi
     ;;
