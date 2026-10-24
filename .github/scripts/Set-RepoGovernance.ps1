@@ -87,7 +87,7 @@ if ($PSCmdlet.ShouldProcess($Repo, 'Actions permissions')) {
     Invoke-Gh PUT "repos/$Repo/actions/permissions/selected-actions" @{
         github_owned_allowed = $true
         verified_allowed     = $false
-        patterns_allowed     = @('devcontainers/action@*')
+        patterns_allowed     = @('devcontainers/action@*', 'devcontainers/ci@*')
     } | Out-Null
     Invoke-Gh PUT "repos/$Repo/actions/permissions/workflow" @{
         default_workflow_permissions     = 'read'
@@ -95,7 +95,7 @@ if ($PSCmdlet.ShouldProcess($Repo, 'Actions permissions')) {
     } | Out-Null
     # Newer endpoint; tolerate absence on older GitHub versions.
     Invoke-Gh PUT "repos/$Repo/actions/permissions/fork-pr-contributor-approval" @{ approval_policy = 'first_time_contributors' } -IgnoreError | Out-Null
-    Write-Host '  actions: GitHub-owned + devcontainers/action only, read-only token, PR creation allowed'
+    Write-Host '  actions: GitHub-owned + devcontainers/action and devcontainers/ci only, read-only token, PR creation allowed'
 }
 
 if ($PSCmdlet.ShouldProcess($Repo, "environment 'release'")) {
