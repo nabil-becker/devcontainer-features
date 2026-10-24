@@ -1,14 +1,22 @@
 {
   "name": "devcontainer-features",
-  "image": "mcr.microsoft.com/devcontainers/base:debian",
+  // Debian 13 (trixie) pinned by name: python3 (the devhost unit tests) is the
+  // distro's 3.13. Lint's other tools are pinned in "features" below; CI builds
+  // .devcontainer/ci/devcontainer.json, which `task lint:toolchain` keeps
+  // identical to this file in everything listed there.
+  "image": "mcr.microsoft.com/devcontainers/base:2-trixie",
   // The devhost of this collection: everything `task lint`, `task test` and
   // `task docs` need, plus the collection's own Features so the host
   // session (Claude Code) works here the way every consuming repo does.
   "features": {
-    // Pester for `task lint`'s test:bootstrap; installed in the image, since a
+    // The tool versions `task lint` runs with, pinned here and nowhere else (CI
+    // builds the same entries from .devcontainer/ci/devcontainer.json; bump a
+    // version in both, `task lint:toolchain` fails when they differ). Pester
+    // (test:bootstrap) and PSScriptAnalyzer are installed in the image, since a
     // module installed by hand into the user's modules is gone after a rebuild.
     "ghcr.io/devcontainers/features/powershell:1": {
-      "modules": "Pester"
+      "version": "7.6.7",
+      "modules": "Pester==6.2.0,PSScriptAnalyzer==1.25.0"
     },
     // docker-in-docker rather than -outside-of-: `devcontainer features test`
     // bind-mounts paths from inside this container into the test containers,
@@ -18,13 +26,17 @@
     "ghcr.io/devcontainers/features/docker-in-docker:2": {
       "moby": false
     },
-    "ghcr.io/devcontainers-extra/features/shellcheck:1": {},
-    "ghcr.io/devcontainers-extra/features/yamllint:2": {},
+    "ghcr.io/devcontainers-extra/features/shellcheck:1": {
+      "version": "0.11.0"
+    },
+    "ghcr.io/devcontainers-extra/features/yamllint:2": {
+      "version": "1.38.0"
+    },
     // The collection's own Features by local path: `task features:stage`
     // copies src/<id> and local-features/<id> into .devcontainer/features/ (gitignored) before every
     // start (initializeCommand), so unreleased changes are what runs here.
     "./features/common": {},
-    "./features/go-task": {},
+    "./features/go-task": { "version": "3.54.0" },
     "./features/devcontainer-cli": {},
     "./features/git": {
       "hooksPath": ".githooks",

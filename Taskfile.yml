@@ -77,10 +77,11 @@ tasks:
           echo "generated READMEs are up to date"
 
   lint:
-    desc: 'shellcheck every shell script, yamllint every YAML file (.yamllint), PSScriptAnalyzer every PowerShell file, the vendored copies of src/common/*.sh (in src/ and local-features/) identical to the canonical ones, and the Docker-free unit tests (devhost tooling, the git Feature''s .git-dirs mapping, the ssh-agent Feature''s setup script, the host launcher) (same checks as CI; the tools must be installed - this repo''s devcontainer has them).'
+    desc: 'shellcheck every shell script, yamllint every YAML file (.yamllint), PSScriptAnalyzer every PowerShell file, the vendored copies of src/common/*.sh (in src/ and local-features/) identical to the canonical ones, and the Docker-free unit tests (devhost tooling, the git Feature''s .git-dirs mapping, the ssh-agent Feature''s setup script, the host launcher) (CI runs exactly this inside .devcontainer/ci; the tools must be installed - this repo''s devcontainer has them, at the pinned versions).'
     cmds:
-      - shellcheck -x src/*/*.sh local-features/*/*.sh local-features/*/share/bin/*.sh local-features/*/share/jobs/*/*.sh test/*/*.sh test/*/unit/*.sh test/bootstrap/*.sh bootstrap/*.sh bootstrap/host/*.sh .githooks/*
+      - shellcheck -x src/*/*.sh local-features/*/*.sh local-features/*/share/bin/*.sh local-features/*/share/jobs/*/*.sh test/*/*.sh test/*/unit/*.sh test/bootstrap/*.sh bootstrap/*.sh bootstrap/host/*.sh .githooks/* .devcontainer/*.sh
       - yamllint --strict .
+      - task: lint:toolchain
       - pwsh -NoLogo -NoProfile -File '{{.ROOT_DIR}}/.github/scripts/Invoke-PSScriptAnalyzer.ps1'
       - task: common:check
       - task: taskfiles:check
@@ -93,6 +94,11 @@ tasks:
       - task: test:host-mounts
       - task: test:ssh-key-import
       - task: test:ssh-agent-unit
+
+  lint:toolchain:
+    desc: 'Fail when .devcontainer/ci/devcontainer.json (what the Lint workflow builds) differs from .devcontainer/devcontainer.json in the base image or any Feature it shares (same reference, same options), or when shellcheck, yamllint or powershell has no pinned version; part of lint. Bump a tool version in both files.'
+    cmds:
+      - python3 -I '{{.ROOT_DIR}}/.github/scripts/check_toolchain.py'
 
   test:git-unit:
     desc: 'Docker-free tests of the git Feature''s wrapper, git-setup and .git-dirs mapping, run from src/git against temp folders (never the checkout''s own git dir or global config); part of lint.'
@@ -162,7 +168,7 @@ tasks:
     cmds:
       - cmd: pwsh -NoLogo -NoProfile -Command 'Remove-Item -Recurse -Force .devcontainer/features -ErrorAction SilentlyContinue; New-Item -ItemType Directory -Force .devcontainer/features | Out-Null; $d = @(Get-ChildItem src, local-features -Directory -ErrorAction SilentlyContinue); $d | ForEach-Object { Copy-Item -Recurse $_.FullName (Join-Path .devcontainer/features $_.Name) }; "staged $($d.Count) Features into .devcontainer/features"'
         platforms: [windows]
-      - cmd: rm -rf .devcontainer/features && mkdir -p .devcontainer/features && n=0; for d in src/*/ local-features/*/; do [ -d "$d" ] || continue; cp -r "$d" ".devcontainer/features/$(basename "$d")"; n=$((n+1)); done && echo "staged $n Features into .devcontainer/features"
+      - cmd: bash .devcontainer/stage-features.sh
         platforms: [linux, darwin]
 
   common:check:
