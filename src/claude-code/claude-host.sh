@@ -38,8 +38,8 @@
 # the rules above. CLAUDE_HOST_LIVE_CHECK=0 skips the check (claude-fleet does, it
 # has made the same check already).
 # Inside a session HOST_SESSION is the id that session started with, stale after a /clear
-# or a fork; when it is in no line of .devcontainer/.env (found upwards,
-# or CLAUDE_HOST_ENV_FILE; CLAUDE_HOST_PIN_VAR names another variable), claude-host uses the
+# or a fork; when it is in no line of the root .env or .devcontainer/.env (found upwards, in
+# the order Task's dotenv reads them, or CLAUDE_HOST_ENV_FILE; CLAUDE_HOST_PIN_VAR names another variable), claude-host uses the
 # environment value as before and warns which it used (no warning when another line of
 # .env holds the id: a per-folder session).
 # Sessions are referred to by UUID; a session's name is only a label, may
@@ -58,22 +58,35 @@ if ! [[ "$sid" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[
   exit 2
 fi
 here="$(pwd -P)"
-envf="${CLAUDE_HOST_ENV_FILE:-}"
-if [ -z "$envf" ]; then
+# The .env files that hold the pin, in the order Task's `dotenv: ['.env', '.devcontainer/.env']`
+# reads them (the first file that defines a variable wins): the root .env, then
+# .devcontainer/.env, the root being the nearest folder at or above here holding .devcontainer.
+# CLAUDE_HOST_ENV_FILE overrides the search. Same lookup as claude-fleet and claude-host-pin.
+envfiles=()
+if [ -n "${CLAUDE_HOST_ENV_FILE:-}" ]; then
+  envfiles=("$CLAUDE_HOST_ENV_FILE")
+else
   d="$here"
   while :; do
-    [ -f "$d/.devcontainer/.env" ] && { envf="$d/.devcontainer/.env"; break; }
+    if [ -d "$d/.devcontainer" ]; then
+      for f in "$d/.env" "$d/.devcontainer/.env"; do [ -f "$f" ] && envfiles+=("$f"); done
+      break
+    fi
     [ "$d" = / ] && break
     d="$(dirname "$d")"
   done
 fi
-if [ -n "$envf" ] && [ -f "$envf" ]; then
-  pv="${CLAUDE_HOST_PIN_VAR:-HOST_SESSION}"
+pv="${CLAUDE_HOST_PIN_VAR:-HOST_SESSION}"
+envf=''
+for f in "${envfiles[@]}"; do
+  [ -f "$f" ] && grep -q "^[[:space:]]*\(export[[:space:]]\{1,\}\)\{0,1\}$pv=" "$f" && { envf="$f"; break; }
+done
+if [ -n "$envf" ]; then
   fv="$(sed -n "s/^[[:space:]]*\(export[[:space:]]\{1,\}\)\{0,1\}$pv=[[:space:]]*//p" "$envf" | tail -n 1 | tr -d '\r' |
     sed "s/^[\"']//; s/[\"'][[:space:]]*\$//; s/[[:space:]]\{1,\}#.*\$//; s/[[:space:]]*\$//")"
   # a per-folder session (HOST_SESSION_<NAME> in .env) legitimately differs from the root line:
-  # warn only when the id is in no line of .env
-  if [ -n "$fv" ] && ! grep -qiF "$sid" "$envf"; then
+  # warn only when the id is in no line of any of the files
+  if [ -n "$fv" ] && ! grep -qiF "$sid" "${envfiles[@]}" 2>/dev/null; then
     echo "claude-host: warning: HOST_SESSION in the environment ($sid) differs from $pv in $envf ($fv); using the environment value (inside a session it can be stale after a /clear or a fork)." >&2
   fi
 fi
@@ -86,7 +99,7 @@ slug="$(printf '%s' "$here" | sed 's/[^A-Za-z0-9]/-/g')"
 # has a pid: the list also holds ended sessions, without one. Same parser as
 # claude-fleet; keep them in step.
 live_in_dir() {
-  local out entry id cwd pid
+  local out entry id cwd pid kind
   out="$(timeout 30 claude agents --json 2>/dev/null)" || return 1  # timeout: coreutils
   out="$(printf '%s' "$out" | tr -d '\n\r')"
   case "$out" in '['*) ;; *) return 1 ;; esac
@@ -94,9 +107,10 @@ live_in_dir() {
     id="$(printf '%s' "$entry" | sed -n 's/.*"sessionId"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
     cwd="$(printf '%s' "$entry" | sed -n 's/.*"cwd"[[:space:]]*:[[:space:]]*"\(\([^"\\]\|\\.\)*\)".*/\1/p' | sed 's/\\\\/\\/g')"
     pid="$(printf '%s' "$entry" | sed -n 's/.*"pid"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p')"
+    kind="$(printf '%s' "$entry" | sed -n 's/.*"kind"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
     [ -n "$id" ] && [ -n "$cwd" ] && [ "${pid:-0}" -gt 0 ] || continue
     cwd="$( (cd "$cwd" 2>/dev/null && pwd -P) || printf '%s' "${cwd%/}")"
-    [ "$cwd" = "$here" ] && printf '%s %s\n' "$id" "$pid"
+    [ "$cwd" = "$here" ] && printf '%s %s %s\n' "$id" "$pid" "${kind:-unknown}"
   done < <(printf '%s' "$out" | sed 's/}[[:space:]]*,[[:space:]]*{/}\n{/g')
   return 0
 }
@@ -110,10 +124,17 @@ if [ "${CLAUDE_HOST_LIVE_CHECK:-1}" != 0 ]; then
     if [ -n "$live" ] && [ -z "${CLAUDE_HOST_ALLOW_SECOND:-}" ]; then
       {
         echo "claude-host: a session is already running in this folder; starting nothing (a second process on one transcript would be a second copy):"
-        printf '%s\n' "$live" | while read -r lid lpid; do echo "  session $lid (pid $lpid): claude attach $lid"; done
-        echo "claude-host: attach with the command above. CLAUDE_HOST_ALLOW_SECOND=1 starts one anyway."
+        printf '%s\n' "$live" | while read -r lid lpid lkind; do
+          if [ "$lkind" = interactive ]; then
+            ltty="$(ps -o tty= -p "$lpid" 2>/dev/null | tr -d '[:space:]')"
+            echo "  session $lid (pid $lpid): held by a terminal${ltty:+ ($ltty)}; switch to that terminal (or open it through Remote Control). claude attach does not work for it."
+          else
+            echo "  session $lid (pid $lpid): claude attach $lid"
+          fi
+        done
+        echo "claude-host: use the session named above. CLAUDE_HOST_ALLOW_SECOND=1 starts one anyway."
         if ! printf '%s\n' "${live,,}" | cut -d' ' -f1 | grep -qxF "${sid,,}"; then
-          echo "claude-host: the pinned $sid (HOST_SESSION... in .devcontainer/.env) is stale: it is not a running session (a /clear gives a session a new id). CLAUDE_HOST_UPDATE_PIN=1 claude-host updates it with the running id when exactly one runs; the claude-host-pin SessionStart hook keeps it current."
+          echo "claude-host: the pinned $sid (HOST_SESSION... in .env or .devcontainer/.env) is stale: it is not a running session (a /clear gives a session a new id). CLAUDE_HOST_UPDATE_PIN=1 claude-host updates it with the running id when exactly one runs; the claude-host-pin SessionStart hook keeps it current."
         fi
       } >&2
       if [ -n "${CLAUDE_HOST_UPDATE_PIN:-}" ] && [ "$(printf '%s\n' "$live" | wc -l)" -eq 1 ] \

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# claude-host-pin: keep the session id pinned in .devcontainer/.env (HOST_SESSION,
+# claude-host-pin: keep the session id pinned in the repo's .env files (HOST_SESSION,
 # HOST_SESSION_<DIR>) equal to the id Claude Code really runs, which changes on
 # /clear. Installed on PATH by the claude-code Feature next to claude-host; the one
 # place that writes the pin.
@@ -10,13 +10,16 @@
 # .claude/settings.json (the Feature manages no settings):
 #   {"hooks": {"SessionStart": [
 #     {"matcher": "startup|clear", "hooks": [{"type": "command", "command": "claude-host-pin"}]}]}}
-# It finds .devcontainer/.env upwards from cwd (or CLAUDE_HOST_ENV_FILE), picks the
+# It looks at the same files, in the same order, as Task's `dotenv: ['.env',
+# '.devcontainer/.env']` (the first file that defines a variable wins): the root .env, then
+# .devcontainer/.env, the root being the nearest folder at or above cwd holding .devcontainer
+# (CLAUDE_HOST_ENV_FILE overrides: that one file). It picks the
 # variable like devcontainer:claude does (the folder with .devcontainer is the root:
 # HOST_SESSION; a sub-folder DIR: HOST_SESSION_<base of DIR, upper-cased, every other
 # character _>, rooms/solis -> HOST_SESSION_SOLIS) and writes session_id into that
-# line, only when it differs, keeping quotes, comments and every other byte of the
-# file. No such line: nothing is added unless CLAUDE_HOST_PIN_CREATE=1 (then
-# VAR=<id> is appended). A session_id that is not a UUID is ignored. Exit 0 always;
+# line of the first file that holds one, only when it differs, keeping quotes, comments and
+# every other byte of the file. No such line in any file: nothing is added unless
+# CLAUDE_HOST_PIN_CREATE=1 (then VAR=<id> is appended to .devcontainer/.env). A session_id that is not a UUID is ignored. Exit 0 always;
 # notes go to stderr.
 #
 # claude-host-pin --replace <old-id> <new-id>: what claude-host's
@@ -26,15 +29,36 @@
 set -u
 uuid='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
 
-# find_env <dir>: the .devcontainer/.env above <dir>, or CLAUDE_HOST_ENV_FILE.
-find_env() {
-  local d="$1"
-  if [ -n "${CLAUDE_HOST_ENV_FILE:-}" ]; then printf '%s' "$CLAUDE_HOST_ENV_FILE"; return 0; fi
+# env_files <dir>: first line the root (the folder holding .devcontainer), then the .env files
+# that apply above <dir>, one per line, in Task's dotenv order (root .env, then
+# root/.devcontainer/.env; only those that exist), or CLAUDE_HOST_ENV_FILE alone. Returns 1
+# when there is none.
+env_files() {
+  local d="$1" f n=0
+  if [ -n "${CLAUDE_HOST_ENV_FILE:-}" ]; then
+    f="$CLAUDE_HOST_ENV_FILE"; [ -f "$f" ] || return 1
+    d="$(dirname "$f")"
+    case "$d" in */.devcontainer) d="$(dirname "$d")" ;; esac
+    printf '%s\n' "$(cd "$d" 2>/dev/null && pwd -P)" "$f"; return 0
+  fi
   while :; do
-    [ -f "$d/.devcontainer/.env" ] && { printf '%s' "$d/.devcontainer/.env"; return 0; }
+    if [ -d "$d/.devcontainer" ]; then
+      printf '%s\n' "$d"
+      for f in "$d/.env" "$d/.devcontainer/.env"; do [ -f "$f" ] && { printf '%s\n' "$f"; n=1; }; done
+      [ "$n" = 1 ]; return
+    fi
     [ "$d" = / ] && return 1
     d="$(dirname "$d")"
   done
+}
+
+# holder <variable regex> <file>...: the first file with a line for the variable.
+holder() {
+  local name="$1" f; shift
+  for f in "$@"; do
+    [ -f "$f" ] && grep -Eq "^[[:space:]]*(export[[:space:]]+)?${name}=" "$f" && { printf '%s' "$f"; return 0; }
+  done
+  return 1
 }
 
 # set_value <file> <variable regex> <old regex or ''> <new>: replace the value on the
@@ -56,8 +80,15 @@ set_value() {
 if [ "${1:-}" = --replace ]; then
   old="${2:-}" new="${3:-}"
   [[ "$old" =~ $uuid && "$new" =~ $uuid ]] || { echo "claude-host-pin: --replace needs two UUIDs." >&2; exit 1; }
-  f="$(find_env "$(pwd -P)")" && [ -f "$f" ] || { echo "claude-host-pin: no .devcontainer/.env found; nothing updated." >&2; exit 1; }
+  files="$(env_files "$(pwd -P)")" || { echo "claude-host-pin: no .env or .devcontainer/.env found; nothing updated." >&2; exit 1; }
+  files="$(printf '%s\n' "$files" | tail -n +2)"
   name="${CLAUDE_HOST_PIN_VAR:-HOST_SESSION[A-Za-z0-9_]*}"
+  # the first file with a line of the variable holding <old>
+  f=''
+  while IFS= read -r c; do
+    [ -f "$c" ] && grep -Eq "^[[:space:]]*(export[[:space:]]+)?${name}=[\"']?${old}" "$c" && { f="$c"; break; }
+  done <<< "$files"
+  [ -n "$f" ] || { echo "claude-host-pin: no line of $name holds $old in $(printf '%s' "$files" | tr '\n' ' '); nothing updated." >&2; exit 1; }
   if set_value "$f" "$name" "$old" "$new"; then echo "claude-host-pin: updated $f: $old -> $new." >&2; exit 0; fi
   exit 1
 fi
@@ -69,22 +100,28 @@ id="$(field session_id)" cwd="$(field cwd)" source="$(field source)"
 if ! [[ "$id" =~ $uuid ]]; then echo "claude-host-pin: no valid session_id in the hook input; ignored." >&2; exit 0; fi
 [ -n "$cwd" ] && cwd="$( (cd "$cwd" 2>/dev/null && pwd -P) || true)"
 [ -n "$cwd" ] || cwd="$(pwd -P)"
-f="$(find_env "$cwd")" && [ -f "$f" ] || { echo "claude-host-pin: no .devcontainer/.env above $cwd; nothing written." >&2; exit 0; }
-root="$(cd "$(dirname "$f")/.." 2>/dev/null && pwd -P)"
+files="$(env_files "$cwd")" || { echo "claude-host-pin: no .env or .devcontainer/.env above $cwd; nothing written." >&2; exit 0; }
+root="$(printf '%s\n' "$files" | head -n 1)"
+files="$(printf '%s\n' "$files" | tail -n +2)"
 if [ "$cwd" = "$root" ] || [ -z "$root" ]; then
   var=HOST_SESSION
 else
   var="HOST_SESSION_$(basename "$cwd" | tr '[:lower:]' '[:upper:]' | sed 's/[^A-Z0-9]/_/g')"
 fi
-cur="$(sed -n "s/^[[:space:]]*\\(export[[:space:]]\\{1,\\}\\)\\{0,1\\}$var=[\"']\\{0,1\\}\\([^\"'[:space:]#]*\\).*/\\2/p" "$f" | tail -n 1)"
-if grep -Eq "^[[:space:]]*(export[[:space:]]+)?$var=" "$f"; then
+mapfile -t flist <<< "$files"
+f="$(holder "$var" "${flist[@]}")" || f=''
+cur="$([ -n "$f" ] && sed -n "s/^[[:space:]]*\\(export[[:space:]]\\{1,\\}\\)\\{0,1\\}$var=[\"']\\{0,1\\}\\([^\"'[:space:]#]*\\).*/\\2/p" "$f" | tail -n 1)"
+if [ -n "$f" ]; then
   if [ "${cur,,}" = "${id,,}" ]; then exit 0; fi
   set_value "$f" "$var" '' "$id" && echo "claude-host-pin: $var in $f: ${cur:-<empty>} -> $id (source ${source:-?})." >&2
 elif [ -n "${CLAUDE_HOST_PIN_CREATE:-}" ]; then
+  # no file holds the variable: append to .devcontainer/.env, the documented home, else the first file
+  f="${flist[0]}"
+  for c in "${flist[@]}"; do case "$c" in */.devcontainer/.env) f="$c" ;; esac; done
   nl=''; [ -s "$f" ] && [ -n "$(tail -c1 "$f")" ] && nl='\n'
   printf "${nl}%s=%s\n" "$var" "$id" >> "$f"
   echo "claude-host-pin: added $var=$id to $f." >&2
 else
-  echo "claude-host-pin: $f has no $var line; nothing added (CLAUDE_HOST_PIN_CREATE=1 adds it)." >&2
+  echo "claude-host-pin: no $var line in ${flist[*]}; nothing added (CLAUDE_HOST_PIN_CREATE=1 adds it)." >&2
 fi
 exit 0

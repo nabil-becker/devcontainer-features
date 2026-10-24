@@ -73,14 +73,14 @@ What the Feature adds in both cases:
   | Live in this folder | claude-host does |
   | --- | --- |
   | nothing | as before: `--resume <pinned>` when its transcript exists, else `--session-id <pinned>` |
-  | one or more (the pinned id included) | starts nothing, prints each running id and pid and how to attach (`claude agents`, select it), exits 1; with `CLAUDE_HOST_PRINT_FLAG` it prints nothing and exits 1, so a wrapper does not start |
+  | one or more (the pinned id included) | starts nothing, prints each running id and pid and how to reach it (a background session: `claude attach <id>`; an interactive one, which `claude attach` cannot reach: the terminal that holds it, by pid and tty, to switch to, or Remote Control), exits 1; with `CLAUDE_HOST_PRINT_FLAG` it prints nothing and exits 1, so a wrapper does not start |
   | any, `CLAUDE_HOST_ALLOW_SECOND=1` | starts by the rule of the first row |
   | `claude agents --json` missing or failing (older Claude Code) | one-line note, then the first row |
 
   When the pinned id is not one of the running ids, the refusal also says the pin is stale.
   `CLAUDE_HOST_UPDATE_PIN=1` (manual path) then rewrites it when exactly one session runs:
   `claude-host-pin --replace <old> <new>` changes the one `HOST_SESSION...` line holding the old
-  id in `.devcontainer/.env` (found upwards, or `CLAUDE_HOST_ENV_FILE`; `CLAUDE_HOST_PIN_VAR=<name>`
+  id in the first of the root `.env` and `.devcontainer/.env` that holds it (the lookup below; or `CLAUDE_HOST_ENV_FILE`; `CLAUDE_HOST_PIN_VAR=<name>`
   restricts the variable), quotes kept, no other line touched, refusing unless exactly one line
   holds it. `CLAUDE_HOST_LIVE_CHECK=0` skips the check. The JSON is read with `sed`, not jq or
   python, which the Feature does not install. Deliberately not done: falling back to the newest
@@ -98,13 +98,18 @@ What the Feature adds in both cases:
 
   Claude Code gives a SessionStart hook its input as JSON on stdin (`session_id`, `cwd`,
   `source`: `startup`, `resume`, `clear` or `compact`, among others). The hook finds
-  `.devcontainer/.env` upwards from `cwd` (or `CLAUDE_HOST_ENV_FILE`), picks the variable the
+  the repository's `.env` files upwards from `cwd` (or `CLAUDE_HOST_ENV_FILE`), in the order Task's
+  `dotenv: ['.env', '.devcontainer/.env']` reads them (the root, the folder holding `.devcontainer`: its
+  `.env`, then `.devcontainer/.env`; the first file that defines a variable wins, so the hook writes the
+  line in the file that holds it, and `claude-host` and `claude-fleet` read the same way; 1.6.1, before
+  that only `.devcontainer/.env` was looked at and a pin kept in the root `.env` went stale after a
+  `/clear`), picks the variable the
   way `devcontainer:claude` does (the folder holding `.devcontainer` is the root:
   `HOST_SESSION`; a sub-folder: `HOST_SESSION_<its name, upper-cased, other characters _>`,
   `rooms/solis` gives `HOST_SESSION_SOLIS`) and writes `session_id` into that line, only when it
   differs, keeping `export`, quotes, comments and every other byte of the file. A UUID is
   required. A variable without a line is left alone (never adds one) unless
-  `CLAUDE_HOST_PIN_CREATE=1` appends `VAR=<id>`. It always exits 0, notes go to stderr, so a
+  `CLAUDE_HOST_PIN_CREATE=1` appends `VAR=<id>` to `.devcontainer/.env` (no file holds the variable). It always exits 0, notes go to stderr, so a
   session never fails because of it. The consumer's own write-back and second-copy check can go.
 - **`claude-fleet`: several sessions in one terminal, never a second copy** (1.5.0; 1.6.0 below). Bash
   like `claude-host`, for the same reason (no jq, no python; the container always has
@@ -112,8 +117,9 @@ What the Feature adds in both cases:
   `SESSIONS_B64` base64-encoded) holds one line per session,
   `name|session-variable|dir|extra claude args` (blank lines and `#` lines skipped; the
   extra args are split on whitespace, no quoting). Each variable's value (the session's
-  UUID) comes from `.devcontainer/.env` first, and from the environment only when `.env`
-  has no line for that variable (1.6.0 reverses the earlier order: inside a session the
+  UUID) comes from the `.env` files first (root `.env`, then `.devcontainer/.env`; the first file with a
+  line for the variable wins, as in Task), and from the environment only when none
+  has a line for that variable (1.6.0 reverses the earlier order: inside a session the
   environment keeps the id the session started with, stale after a `/clear` or a fork, while
   the `claude-host-pin` hook keeps `.env` current). For each line, against `claude agents --json`:
   variable unset: said, skipped; its id live, or any live session working in its folder
@@ -140,8 +146,11 @@ What the Feature adds in both cases:
     they are gone, and says so. A stopped extra is never restarted: the agent still has its kept
     session. `claude-fleet` never deletes a session (`claude rm` can delete its worktree, which
     is not Claude's to delete in a fleet); a test guards that.
-  - `claude-host`'s refusal now names `claude attach <id>` for each live id, and warns when the
-    `HOST_SESSION` in the environment is in no line of `.devcontainer/.env` (it still uses it). `task claude-code:fleet` runs it inside (SESSIONS in the
+  - `claude-host`'s refusal reads each live session's `kind` from `claude agents --json`: for a
+    background session it names `claude attach <id>`; for an interactive one (`claude attach` fails
+    there with "No job matching") it says a terminal holds it, naming the pid and the tty (`ps -o tty=`), and
+    to switch to that terminal or use Remote Control (1.6.1). It also warns when the
+    `HOST_SESSION` in the environment is in no line of the `.env` files (it still uses it). `task claude-code:fleet` runs it inside (SESSIONS in the
   environment); from the host, `task devcontainer:claude:fleet` (see the README), with
   `SESSIONS` set where the Taskfile includes `bootstrap/devcontainer.yml`:
 
