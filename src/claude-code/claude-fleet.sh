@@ -20,7 +20,7 @@
 # (found upwards from the current directory, or CLAUDE_HOST_ENV_FILE): inside
 # the container only HOST_SESSION is in the environment.
 #
-# Per session, against `claude agents --json` (fields sessionId and cwd):
+# Per session, against `claude agents --json` (fields pid, sessionId and cwd; an entry without a pid is an ended session and never counts):
 #   variable unset              -> say so, skip
 #   its id is live, or a live session works in its dir (/clear gives a session a
 #   new id in the same dir, so the id alone would start a duplicate)
@@ -55,17 +55,19 @@ fi
 
 here="$(pwd -P)"
 
-# live: "id<TAB>cwd" per live session (cwd resolved); returns 1 when the list
+# live: "id<TAB>cwd" per live session (one with a pid) (cwd resolved); returns 1 when the list
 # cannot be read. Same parser as claude-host; keep them in step.
 live() {
-  local out entry id cwd
+  local out entry id cwd pid
   out="$(timeout 30 claude agents --json 2>/dev/null)" || return 1
   out="$(printf '%s' "$out" | tr -d '\n\r')"
   case "$out" in '['*) ;; *) return 1 ;; esac
   while IFS= read -r entry || [ -n "$entry" ]; do
     id="$(printf '%s' "$entry" | sed -n 's/.*"sessionId"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
     cwd="$(printf '%s' "$entry" | sed -n 's/.*"cwd"[[:space:]]*:[[:space:]]*"\(\([^"\\]\|\\.\)*\)".*/\1/p' | sed 's/\\\\/\\/g')"
-    [ -n "$id" ] && [ -n "$cwd" ] || continue
+    pid="$(printf '%s' "$entry" | sed -n 's/.*"pid"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p')"
+    # live = has a pid: the list also holds ended sessions, without one
+    [ -n "$id" ] && [ -n "$cwd" ] && [ "${pid:-0}" -gt 0 ] || continue
     cwd="$( (cd "$cwd" 2>/dev/null && pwd -P) || printf '%s' "${cwd%/}")"
     printf '%s\t%s\n' "$id" "$cwd"
   done < <(printf '%s' "$out" | sed 's/}[[:space:]]*,[[:space:]]*{/}\n{/g')

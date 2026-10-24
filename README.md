@@ -10,7 +10,7 @@ installing Node.js, and a one-line bootstrap that wires both into any repo.
 | --- | --- |
 | [`go-task`](src/go-task) | [Task](https://taskfile.dev) (`task`), sha256-verified from GitHub releases, with bash/zsh completions. |
 | [`devcontainer-cli`](src/devcontainer-cli) | `@devcontainers/cli` as `devcontainer`, on a private Node.js under `/opt/devcontainer-cli` that is never put on PATH. |
-| [`claude-code`](src/claude-code) | [Claude Code](https://code.claude.com/docs): the native release binary (no Node.js, version pinnable) unless a `claude` is already there (the official Anthropic Feature), plus the `claude-host` launcher (the live session of a folder wins over a stale pin), `claude-fleet` (several sessions in one terminal) and the state (`CLAUDE_CONFIG_DIR`) in a volume it owns. |
+| [`claude-code`](src/claude-code) | [Claude Code](https://code.claude.com/docs): the native release binary (no Node.js, version pinnable) unless a `claude` is already there (the official Anthropic Feature), plus the `claude-host` launcher (a running session of the folder is never started twice), `claude-host-pin` (opt-in SessionStart hook keeping the pin current), `claude-fleet` (several sessions in one terminal) and the state (`CLAUDE_CONFIG_DIR`) in a volume it owns. |
 | [`git`](src/git) | git augmented for the container: a worktree-aware wrapper that scopes `GIT_DIR` to the checkout and maps a `.git` pointer under the host's `.git-dirs` onto one shared mount, `safe.directory` and `core.hooksPath` at post-create, the global config in a volume it owns. |
 | [`gh`](src/gh) | [GitHub CLI](https://cli.github.com) from GitHub releases, checksum-verified, unless the official Feature installed it; its login (`GH_CONFIG_DIR`) in a volume it owns, git's GitHub credentials taken from it. |
 | [`ssh-agent`](src/ssh-agent) | `SSH_AUTH_SOCK` at a fixed path in every process, so git commits can be signed with an SSH key: the launcher mounts the host's agent socket (linux, macOS, a WSL distro), the private key never entering the container; the Windows engines get a plain explanation and an opt-in, temporary key mode; `ssh-agent:*` tasks for keys and git signing setup. |
@@ -78,8 +78,9 @@ gap to close here (see [Contributing from a consuming repo](#contributing-from-a
   in `HOST_SESSION` (from `.devcontainer/.env`) wherever it runs;
   `task devcontainer:claude` does it from the host, `task claude-code:host`
   inside, `DIR=<sub-folder>` for a session per sub-folder. A session that is
-  live in the folder (`claude agents --json`) wins over a stale pin, since
-  `/clear` gives a session a new id; several agents in one terminal are
+  running in the folder (`claude agents --json`, an entry with a pid) is never
+  started a second time (claude-host refuses and names it; `/clear` gives a
+  session a new id, which the opt-in `claude-host-pin` SessionStart hook writes back to `.env`); several agents in one terminal are
   `task devcontainer:claude:fleet` (below), never a second copy of one.
 - **Settings are plain variables, three ways.** Command-line var, then the
   `.env` files, then the exported environment, with the same names in the

@@ -46,6 +46,9 @@ check "claude-host print flag: a non-UUID is still exit 2" bash -c 'HOST_SESSION
 # --plan names what it would start and starts nothing (the logic is covered Docker-free in
 # test/claude-code/unit/live_session_test.sh; this checks the installed command works here).
 check "claude-fleet on PATH" command -v claude-fleet
+check "claude-host-pin on PATH" command -v claude-host-pin
+# shellcheck disable=SC2016
+check "claude-host-pin never fails on bad input" bash -c 'echo garbage | claude-host-pin 2>/dev/null'
 # shellcheck disable=SC2016
 check "claude-fleet without SESSIONS exits 2" bash -c 'env -u SESSIONS -u SESSIONS_B64 claude-fleet >/dev/null 2>&1; [ "$?" -eq 2 ]'
 # shellcheck disable=SC2016

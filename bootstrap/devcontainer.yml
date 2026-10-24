@@ -76,10 +76,12 @@
 #   FORCE=1 (task var)         stop/rebuild without running that check.
 #   HOST_SESSION               UUID of the Claude Code session that the claude
 #                              task resumes (HOST_SESSION_<DIR> per sub-folder).
-#                              A session that is live in the folder (`claude agents
-#                              --json`) is resumed instead of a stale pin (after /clear);
-#                              CLAUDE_HOST_UPDATE_PIN=1 in the container's environment
-#                              rewrites the stale line in .devcontainer/.env.
+#                              A session running in the folder (`claude agents --json`,
+#                              an entry with a pid) is never started twice: claude-host
+#                              names it and exits 1 (CLAUDE_HOST_ALLOW_SECOND=1 overrides);
+#                              a stale pin (after /clear) is reported, and the opt-in
+#                              claude-host-pin SessionStart hook (claude-code Feature
+#                              NOTES) keeps the line in .devcontainer/.env current.
 #   SESSIONS                   for `claude:fleet`: one line per session,
 #                              name|session-variable|dir|extra claude args, set where the
 #                              Taskfile includes this file, e.g.

@@ -98,7 +98,7 @@ tasks:
       - task: test:claude-fleet-task
 
   test:claude-unit:
-    desc: 'Docker-free tests of the claude-code Feature''s claude-host live-session rule (a live session in the folder wins over a stale pin after /clear, the warning, CLAUDE_HOST_UPDATE_PIN rewriting only that .env line, several live sessions, nothing live, `claude agents --json` unavailable) and of claude-fleet (running by id or by folder, unset variable, start with --bg in the folder, --plan, --no-view, the environment beating .env); a fake claude on PATH answers `agents --json` from a fixture and records the other calls; part of lint.'
+    desc: 'Docker-free tests of the claude-code Feature''s claude-host live-session rule (a running session, one with a pid, refuses a second copy; ended sessions never count; CLAUDE_HOST_ALLOW_SECOND; the stale-pin warning and CLAUDE_HOST_UPDATE_PIN; `claude agents --json` unavailable), of the claude-host-pin SessionStart hook (the right .env line, every other byte kept, never fails) and of claude-fleet (running by id or by folder, unset variable, start with --bg in the folder, --plan, --no-view, the environment beating .env); a fake claude on PATH answers `agents --json` from a fixture and records the other calls; part of lint.'
     cmds:
       - bash test/claude-code/unit/live_session_test.sh
 

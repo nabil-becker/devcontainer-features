@@ -140,6 +140,9 @@ install -m 0755 "$feature_dir/claude-host.sh" /usr/local/bin/claude-host
 # claude-fleet starts several sessions in the background without a second copy of
 # any, and opens the agent view (SESSIONS, see NOTES.md).
 install -m 0755 "$feature_dir/claude-fleet.sh" /usr/local/bin/claude-fleet
+# claude-host-pin writes the pinned session id (opt-in SessionStart hook, and what
+# claude-host's CLAUDE_HOST_UPDATE_PIN calls).
+install -m 0755 "$feature_dir/claude-host-pin.sh" /usr/local/bin/claude-host-pin
 install -m 0755 "$feature_dir/claude-code-setup.sh" /usr/local/bin/claude-code-setup
 # dcf-persist is the shared state-directory helper the hook calls (verbatim
 # copy of src/common/dcf-persist.sh; every Feature of this collection
