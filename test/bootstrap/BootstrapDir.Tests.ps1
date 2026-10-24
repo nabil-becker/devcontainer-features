@@ -128,8 +128,33 @@ Describe 'bootstrap.ps1 Taskfile template and the old form' {
         $res.Out | Should -Match 'repointed Taskfile\.yml'
         (Get-Content (Join-Path $r 'bootstrap/devcontainer.yml') -Raw).Trim() | Should -Be 'old vendored'
         Test-Path (Join-Path $r '.devcontainer/cli_bootstrap.ignore/devcontainer.yml') | Should -BeTrue
-        $expected = $old.Replace('./bootstrap/devcontainer.yml', './.devcontainer/cli_bootstrap.ignore/devcontainer.yml')
+        $expected = $old.Replace('taskfile: ./bootstrap/devcontainer.yml   # old', "taskfile: ./.devcontainer/cli_bootstrap.ignore/devcontainer.yml   # old`n    optional: true")
         [System.IO.File]::ReadAllText((Join-Path $r 'Taskfile.yml')) | Should -Be $expected
+        $res.Out | Should -Match 'added\s+optional: true'
+        # a second run has nothing left to repoint or add
+        $res2 = Invoke-Bootstrap $r
+        $res2.Out | Should -Not -Match 'repointed|added\s+optional'
+        @(Select-String -Path (Join-Path $r 'Taskfile.yml') -Pattern 'optional: true').Count | Should -Be 1
+    }
+
+    It 'adds no second optional when the include block already has one, before or after the taskfile line' -ForEach @(
+        @{ Name = 'before'; Text = "includes:`n  devcontainer:`n    optional: true`n    taskfile: ./bootstrap/devcontainer.yml`n  other:`n    taskfile: ./other.yml`n" }
+        @{ Name = 'after'; Text = "includes:`n  devcontainer:`n    taskfile: ./bootstrap/devcontainer.yml`n    optional: false`n  other:`n    taskfile: ./other.yml`n" }
+    ) {
+        $r = Get-TempRepo; New-Item -ItemType Directory -Path (Join-Path $r 'bootstrap') | Out-Null
+        Set-Content (Join-Path $r 'bootstrap/devcontainer.yml') 'old vendored'
+        [System.IO.File]::WriteAllText((Join-Path $r 'Taskfile.yml'), $Text)
+        $res = Invoke-Bootstrap $r
+        $res.Out | Should -Not -Match 'added\s+optional'
+        @(Select-String -Path (Join-Path $r 'Taskfile.yml') -Pattern 'optional').Count | Should -Be 1
+    }
+
+    It 'adds optional: true on its own line when the taskfile line ends the file' {
+        $r = Get-TempRepo; New-Item -ItemType Directory -Path (Join-Path $r 'bootstrap') | Out-Null
+        Set-Content (Join-Path $r 'bootstrap/devcontainer.yml') 'old vendored'
+        [System.IO.File]::WriteAllText((Join-Path $r 'Taskfile.yml'), "includes:`n  devcontainer:`n    taskfile: ./bootstrap/devcontainer.yml")
+        $null = Invoke-Bootstrap $r
+        [System.IO.File]::ReadAllText((Join-Path $r 'Taskfile.yml')) | Should -Be "includes:`n  devcontainer:`n    taskfile: ./.devcontainer/cli_bootstrap.ignore/devcontainer.yml`n    optional: true`n"
     }
 
     It 'gives no note and no rewrite when BOOTSTRAP_DIR is set' {

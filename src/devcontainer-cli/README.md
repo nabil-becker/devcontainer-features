@@ -171,7 +171,7 @@ first; the old `./bootstrap/` form keeps working until the bootstrap is re-run,
 see the README); nothing is
 installed globally on any host. Its host settings are
 `DEVCONTAINER_DOCKER_PATH`, `DEVCONTAINER_NODE_VERSION`,
-`DEVCONTAINER_CLI_VERSION`, `HOST_TYPE` and `HOST_TYPE_PRIORITY` (see "Host type").
+`DEVCONTAINER_CLI_VERSION`, `HOST_TYPE`, `HOST_TYPE_PRIORITY` and `HOST_MOUNTS` (see "Host type" and "Host mounts").
 
 `task devcontainer:up` (alias `start`) and `task devcontainer:stop` (alias
 `down`) are idempotent, so other tasks can require them. `up` starts a stopped
@@ -267,18 +267,58 @@ knows what kind of host it runs on, so a repository writes nothing host-specific
   `DCF_HOST_TYPE` (the resolved id), `DCF_HOST_HOME` (the host user's home) and `DCF_HOST_SSH_AGENT`
   (`none` on every id for now; the ssh-agent Feature fills it) in its own environment. A repository maps them into the
   container itself with `containerEnv`, `"DCF_HOST_TYPE": "${localEnv:DCF_HOST_TYPE}"` and so on (the bootstrap's
-  `devcontainer.json` template does), and writes the git-dirs mount as
-  `source=${localEnv:DCF_HOST_HOME}/.git-dirs,target=/git-dirs,type=bind`, the same line on every host. Opening the
+  `devcontainer.json` template does). It declares no host mount: the launcher adds those (next section). Opening the
   folder straight in VS Code skips the launcher: the variables are then empty.
 - `task devcontainer:host` prints the result without starting anything: `HOST_TYPE` as resolved and why, the priority list
-  used, the engine command and the three `DCF_HOST_*` values. `HOST_TYPE=<id>` or `HOST_TYPE_PRIORITY=<ids>` on the
-  command line try other choices.
+  used, the engine command, the three `DCF_HOST_*` values and the host mounts `up` would add or skip (next section).
+  `HOST_TYPE=<id>` or `HOST_TYPE_PRIORITY=<ids>` on the command line try other choices.
 
 Not verified on real hosts: `wsl -e docker info` answering for the default distro; the WSL markers on every WSL version
 (a container on a WSL 2 kernel also reads as WSL); `windows-wsl-docker` driven from Windows, where `--docker-path` takes
 one executable, so it needs a `docker` on PATH that reaches the distro or `DEVCONTAINER_DOCKER_PATH`; and Docker
 Desktop's context. The evidence is replaceable: the bash twin reads `DCF_HOST_UNAME` and `DCF_HOST_PROC_VERSION`
 instead of `uname -s` and `/proc/version`, and an explicit `HOST_TYPE` skips detection altogether.
+
+## Host mounts
+
+A repository should need no host-specific mount line. `devcontainer up` takes `--mount
+type=bind,source=<host path>,target=<container path>` (repeatable), so the launcher (both flavours) adds the mounts
+the host type needs; ADR 0024 decides it, `docs/proposals/host-profile.md` is the design.
+
+- **What is added.** One entry for now, for every host type: the host home's `.git-dirs` folder at `/git-dirs`
+  (source `<DCF_HOST_HOME>/.git-dirs`: `%USERPROFILE%/.git-dirs` on Windows, in the same mixed-slash form
+  `${localEnv:USERPROFILE}/.git-dirs` has always produced; the distro's `$HOME/.git-dirs` for `windows-wsl-docker`; `$HOME`
+  elsewhere). It is what the git Feature's wrapper maps a `.git` pointer onto, so a checkout whose git dir lives outside
+  the checkout (OneDrive) works without a line in `devcontainer.json`. The list is one function per launcher
+  (`Get-HostMount` in `DevcontainerCli.psm1`, `host_mount_specs` in `devcontainer-cli.sh`), keyed by host type, so the
+  next entry (the ssh-agent socket where a host type has one) is a line, not a restructuring.
+- **Which subcommands.** `up` only, and so `rebuild` and `start`. `build` mounts nothing (it builds an image, no container),
+  `exec`, `shell`, `pwsh` and `claude` run in a container that exists, and the other subcommands take no mounts. They
+  add nothing to the argument list.
+- **The source folder exists.** Before `up` the launcher creates `<host home>/.git-dirs` when missing (idempotent), so a
+  start never fails on a missing bind source. (`devcontainer:homes` still does the same for a repository that opens the
+  folder in VS Code directly.) For `windows-wsl-docker` driven from Windows the folder is a distro path Windows cannot
+  create; there the distro's own `devcontainer:homes`, or `mkdir -p`, applies. A home with a comma in it cannot be carried
+  by `--mount` (it separates the fields): the mount is skipped with a warning.
+- **No duplicate mount.** When the repository's `devcontainer.json` already mounts a target the launcher would add (its own
+  `/git-dirs` line, as this collection's own does, because opening it from VS Code bypasses the launcher), the launcher adds
+  nothing for that target and prints one line, `host mount skipped: /git-dirs is already mounted by this repository's
+  devcontainer.json`. So keeping the line is harmless, and a repository can drop it once it starts through the tasks.
+- **How "already mounted" is known.** From the file, not from the CLI: the launcher strips the comments of `--config <file>`,
+  else `.devcontainer/devcontainer.json`, else `.devcontainer.json`, and reads the targets of the `mounts` array (the
+  `source=...,target=/x` strings and objects with `"target"`; a trailing slash does not matter; no JSON parser, so trailing
+  commas and `//` inside strings are fine). Measured: about 8 to 10 ms in either flavour. The alternative,
+  `devcontainer read-configuration`, costs a second Node start (0.23 to 0.47 s here) and asks the engine (`docker ps`), so it fails
+  when the engine is down, which `task devcontainer:host` must survive. The limit: only the repository's own file is read; mounts
+  that Features declare, docker-compose services and a `--mount` the engineer passes themselves are not seen (none of them
+  declares the host mounts).
+- **Off.** `HOST_MOUNTS=false` (also `0`, `no`) as a Task var, `.devcontainer/.env` value or environment variable (PowerShell:
+  `-HostMounts`) turns all of the launcher's mounts off; the repository then declares what it needs.
+- **See it.** `task devcontainer:host` lists `host mount (add)` and `host mount (skip)` lines (or `off`) after the `DCF_HOST_*`
+  values, and starts nothing and creates nothing.
+- **Not covered.** A container started by VS Code's Reopen in Container never passes through the launcher, so it gets the
+  repository's own line only; there `${localEnv:DCF_HOST_HOME}` is empty and the line must use `${localEnv:USERPROFILE}`
+  (Windows host) or `${localEnv:HOME}`.
 
 ## Why this one exists
 

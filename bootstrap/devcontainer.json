@@ -17,8 +17,9 @@
     // config, transcripts) in a named volume it mounts itself and makes
     // usable at post-create; nothing to configure. git: worktree-aware
     // wrapper, safe.directory and core.hooksPath; a checkout whose git dir
-    // lives in the host home's .git-dirs (OneDrive) needs only the .git-dirs
-    // mount below (git 1.4.0 or later).
+    // lives in the host home's .git-dirs (OneDrive) needs no line here when
+    // you start through the tasks: the launcher adds that mount (git 1.4.0 or
+    // later; see "Host mounts" below).
     "ghcr.io/nabil-becker/devcontainer-features/git:1": {},
     // "ghcr.io/nabil-becker/devcontainer-features/gh:1": {},
     // "ghcr.io/nabil-becker/devcontainer-features/claude-code:1": {},
@@ -28,8 +29,7 @@
   // own environment before it runs the devcontainer CLI, and ${localEnv} passes them
   // on. Features read them (unset = an unknown host, they use defaults); nothing in
   // this file needs to know the host. Opening the folder straight in VS Code skips the
-  // launcher, so they expand to empty strings there (and the .git-dirs mount line below needs
-  // DCF_HOST_HOME: start through the tasks).
+  // launcher, so they expand to empty strings there: start through the tasks.
   "containerEnv": {
     // windows-docker, windows-wsl-docker, windows-wslc, linux or macos
     "DCF_HOST_TYPE": "${localEnv:DCF_HOST_TYPE}",
@@ -38,6 +38,16 @@
     // socket, key or none (none for now)
     "DCF_HOST_SSH_AGENT": "${localEnv:DCF_HOST_SSH_AGENT}"
   },
+  // Host mounts: the launcher (task devcontainer:up / rebuild) adds the mounts the host type
+  // needs with `devcontainer up --mount`, today the host home's .git-dirs at /git-dirs (the git
+  // Feature's one mount), so nothing here declares it. HOST_MOUNTS=false turns that off. If you
+  // keep or add the line below, the launcher sees the target and skips its own, so it is harmless.
+  // Only when you also open the folder straight in VS Code (Reopen in Container), which skips the
+  // launcher and leaves DCF_HOST_HOME empty, add the line yourself, with the home variable VS Code
+  // itself sees: ${localEnv:USERPROFILE} on a Windows host, ${localEnv:HOME} on Linux, macOS and WSL
+  // (not DCF_HOST_HOME). Create the folder first with the initializeCommand of the next block:
+  //   "mounts": [ "source=${localEnv:USERPROFILE}/.git-dirs,target=/git-dirs,type=bind" ],
+  //
   // To keep a Feature's state on the host disk instead of its volume
   // (survives container-engine resets, stays outside a synced checkout),
   // bind-mount the same target; the repo's mount wins over the Feature's.
@@ -47,10 +57,7 @@
   //   "initializeCommand": ["task", "devcontainer:homes", "NAME=myrepo", "--", "claude-code", "gh"],
   //   "mounts": [
   //     "source=${localEnv:USERPROFILE}/.devcontainer-homes/myrepo/claude-code,target=/var/lib/devcontainer-features/claude-code,type=bind",
-  //     "source=${localEnv:USERPROFILE}/.devcontainer-homes/myrepo/gh,target=/var/lib/devcontainer-features/gh,type=bind",
-  //     // The checkout's git dir under %USERPROFILE%\.git-dirs (the same line in every
-  //     // repo, on every host type; devcontainer:homes creates the folder when missing):
-  //     "source=${localEnv:DCF_HOST_HOME}/.git-dirs,target=/git-dirs,type=bind"
+  //     "source=${localEnv:USERPROFILE}/.devcontainer-homes/myrepo/gh,target=/var/lib/devcontainer-features/gh,type=bind"
   //   ],
   "remoteUser": "vscode"
 }

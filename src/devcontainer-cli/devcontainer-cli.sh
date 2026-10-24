@@ -24,7 +24,8 @@
 #       `running` is not one either: silent, exit 0 when such a container runs,
 #       1 when none does, 2 when the engine cannot be asked.
 #       `host` is not one either: it prints the resolved host type, the engine
-#       command and the DCF_HOST_* values, and starts nothing (devcontainer:host).
+#       command, the DCF_HOST_* values and the host mounts `up` would add (and
+#       those it would skip), and starts nothing (devcontainer:host).
 #       A failed `exec` says which of three things failed: the command (its
 #       exit code is passed on), no running container (1), the engine (2).
 #
@@ -38,6 +39,8 @@
 #   HOST_TYPE, HOST_TYPE_PRIORITY  the host type (see "host type" below); the
 #                              launcher sets DCF_HOST_TYPE, DCF_HOST_HOME and
 #                              DCF_HOST_SSH_AGENT before it runs the CLI.
+#   HOST_MOUNTS                false (or 0, no) = the launcher adds no host mounts to `up`
+#                              (see "host mounts" below). Default on.
 #   DEVCONTAINER_BUILD_LOCK    0 = do not serialise image builds (below).
 #   DEVCONTAINER_BUILD_LOCK_FEATURES_TEST  true = `features test` takes the
 #                              lock too (default false).
@@ -298,9 +301,112 @@ export_host_env() {
   export DCF_HOST_TYPE="$HT_TYPE" DCF_HOST_HOME="$HT_HOME" DCF_HOST_SSH_AGENT="$HT_SSH_AGENT"
 }
 
+# ---------------------------------------------------------- host mounts ----
+# The mounts the launcher adds to `devcontainer up` (--mount type=bind,source=..,target=..),
+# per host type, so a repository declares none (ADR 0024; the PowerShell twin is
+# Get-HostMount). Slice 3 has one entry, the host home's .git-dirs at /git-dirs; slice 4
+# adds the SSH agent socket where the host type has one: add a line to the case below.
+# `up` (and so rebuild) only: `build` mounts nothing, `exec` runs in an existing container.
+# A mount whose target the repository's own devcontainer.json already declares is skipped
+# (one line says so); HOST_MOUNTS=false turns all of them off.
+
+# host_mount_specs: prints "name|source|target" lines for HT_TYPE and HT_HOME.
+host_mount_specs() {
+  [ -n "${HT_HOME:-}" ] || return 0
+  case "$HT_TYPE" in
+    linux | macos | windows-wsl-docker | windows-docker | windows-wslc)
+      printf 'git-dirs|%s/.git-dirs|/git-dirs\n' "$HT_HOME" ;;
+  esac
+}
+
+host_mounts_enabled() { case "${HOST_MOUNTS:-true}" in false | 0 | no) return 1 ;; esac; }
+
+# strip_jsonc: stdin to stdout without // and /* */ comments (strings untouched).
+strip_jsonc() {
+  awk '{
+    out = ""; n = length($0); i = 1; ins = 0
+    while (i <= n) {
+      c = substr($0, i, 1); d = substr($0, i, 2)
+      if (blk) { if (d == "*/") { blk = 0; i += 2 } else i++; continue }
+      if (ins) {
+        out = out c
+        if (c == "\\") { out = out substr($0, i + 1, 1); i += 2; continue }
+        if (c == "\"") ins = 0
+        i++; continue
+      }
+      if (c == "\"") { ins = 1; out = out c; i++; continue }
+      if (d == "//") break
+      if (d == "/*") { blk = 1; i += 2; continue }
+      out = out c; i++
+    }
+    print out
+  }'
+}
+
+# configured_mount_targets <workspace> [cli args...]: the mount targets the repository's own
+# devcontainer.json declares, one per line: the file --config names, else
+# .devcontainer/devcontainer.json, else .devcontainer.json. Read from the file (comments
+# stripped) rather than with `devcontainer read-configuration`, which costs a second Node
+# start (about 0.25-0.5 s), asks the engine (`docker ps`) and fails when the engine is
+# down. Mounts a Feature declares and docker-compose files are not seen.
+configured_mount_targets() {
+  local ws="$1"; shift
+  local file='' prev='' a
+  for a in "$@"; do
+    case "$a" in --config=*) file="${a#--config=}" ;; *) [ "$prev" != --config ] || file="$a" ;; esac
+    prev="$a"
+  done
+  if [ -z "$file" ]; then
+    for a in .devcontainer/devcontainer.json .devcontainer.json; do
+      if [ -f "$ws/$a" ]; then file="$ws/$a"; break; fi
+    done
+  fi
+  [ -n "$file" ] && [ -f "$file" ] || return 0
+  # No "mounts" is not an error (grep exits 1): the function must not fail under set -e/pipefail.
+  { strip_jsonc < "$file" | tr '\n' ' ' | grep -oE '"mounts"[[:space:]]*:[[:space:]]*\[[^]]*\]' || true; } | {
+    grep -oE '((target|destination|dst)=[^,"[:space:]]+|"(target|destination)"[[:space:]]*:[[:space:]]*"[^"]+")' || true
+  } | sed -E 's/^(target|destination|dst)=//; s/^"(target|destination)"[[:space:]]*:[[:space:]]*"//; s/"$//; s#(.)/+$#\1#'
+}
+
+# resolve_host_mounts <workspace> [cli args...]: sets HM_ADD and HM_SKIP (arrays of
+# "name|source|target"); both empty when HOST_MOUNTS=false (HM_ENABLED=false). Needs HT_*.
+resolve_host_mounts() {
+  local ws="$1"; shift
+  local spec target configured
+  HM_ADD=(); HM_SKIP=(); HM_ENABLED=true
+  host_mounts_enabled || { HM_ENABLED=false; return 0; }
+  configured="$(configured_mount_targets "$ws" "$@")"
+  while IFS= read -r spec; do
+    [ -n "$spec" ] || continue
+    target="${spec##*|}"
+    if printf '%s\n' "$configured" | grep -qxF -- "$target"; then HM_SKIP+=("$spec"); else HM_ADD+=("$spec"); fi
+  done < <(host_mount_specs)
+}
+
+# host_mount_args <workspace> [cli args...]: sets HM_ARGS to the `--mount <spec>` pairs for `up`
+# (one line printed per skipped mount, the source folders created).
+host_mount_args() {
+  local ws="$1"; shift
+  local spec name source target
+  HM_ARGS=()
+  resolve_host_mounts "$ws" "$@"
+  for spec in ${HM_SKIP[@]+"${HM_SKIP[@]}"}; do
+    echo "host mount skipped: ${spec##*|} is already mounted by this repository's devcontainer.json" >&2
+  done
+  for spec in ${HM_ADD[@]+"${HM_ADD[@]}"}; do
+    IFS='|' read -r name source target <<<"$spec"
+    case "$source" in
+      *,*) echo "host mount $name skipped: the source '$source' contains a comma, which --mount cannot carry." >&2; continue ;;
+    esac
+    mkdir -p "$source" 2>/dev/null || echo "host mount: could not create $source" >&2
+    HM_ARGS+=(--mount "type=bind,source=$source,target=$target")
+  done
+}
+
 # mode_host: `task devcontainer:host`, prints the profile and starts nothing.
-mode_host() {
-  local engine
+mode_host() { # [workspace] [cli args...]
+  local engine ws="${1:-$PWD}" spec n src tgt
+  shift || true
   resolve_host_profile
   engine="$(resolve_docker_path 2>&1)" || engine="(none: ${engine#devcontainer-cli: })"
   echo "HOST_TYPE          : $HT_TYPE"
@@ -310,6 +416,15 @@ mode_host() {
   echo "DCF_HOST_TYPE      : $HT_TYPE"
   echo "DCF_HOST_HOME      : $HT_HOME"
   echo "DCF_HOST_SSH_AGENT : $HT_SSH_AGENT"
+  resolve_host_mounts "$ws" "$@"
+  if [ "$HM_ENABLED" = false ]; then echo 'host mounts        : off (HOST_MOUNTS=false)'; return 0; fi
+  if [ $(( ${#HM_ADD[@]} + ${#HM_SKIP[@]} )) -eq 0 ]; then echo 'host mounts        : none'; return 0; fi
+  for spec in ${HM_ADD[@]+"${HM_ADD[@]}"}; do
+    IFS='|' read -r n src tgt <<<"$spec"; echo "host mount (add)   : $n: type=bind,source=$src,target=$tgt"
+  done
+  for spec in ${HM_SKIP[@]+"${HM_SKIP[@]}"}; do
+    echo "host mount (skip)  : ${spec%%|*}: ${spec##*|} is already mounted by devcontainer.json"
+  done
 }
 
 mode_init() {
@@ -431,6 +546,11 @@ run_cli() {
       fi
       export_host_env ;;
   esac
+  # Host mounts: `up` only (and so rebuild); after export_host_env, which resolves the host profile.
+  if [ "$subcommand" = up ]; then
+    host_mount_args "$(resolve_workspace "$workspace")" "$@"
+    args+=(${HM_ARGS[@]+"${HM_ARGS[@]}"})
+  fi
   if [ -n "$cmd_b64" ]; then
     [ "$subcommand" = exec ] || die '--cmd-b64 is only meaningful with exec'
     args+=(bash -lc "$(printf '%s' "$cmd_b64" | base64 -d)")
@@ -498,7 +618,7 @@ mode_run() {
     esac
   done
 
-  [ "$subcommand" != host ] || { mode_host; return; }
+  [ "$subcommand" != host ] || { mode_host "$(resolve_workspace "${workspace:-.}")" "$@"; return; }
 
   case "$subcommand" in
     stop | prepshutdown | running)

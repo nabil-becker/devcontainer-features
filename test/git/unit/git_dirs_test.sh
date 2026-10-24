@@ -172,7 +172,7 @@ out="$(cd "$co" && GIT_DIRS_ROOT="$T/not-mounted" git-setup 2>&1)"
 rc=$?
 check "git-setup (not mounted) exits 0" eq "$rc" 0
 check "git-setup names the missing mount and the line to add" \
-  grep -qF "git dir: NOT MOUNTED - $co/.git points to C:\\Users\\<user>\\.git-dirs\\example-owner\\example-repo, expected at $T/not-mounted/example-owner/example-repo; add to devcontainer.json \"mounts\": [\"source=\${localEnv:USERPROFILE}/.git-dirs,target=$T/not-mounted,type=bind\"]" <<<"$out"
+  grep -qF "git dir: NOT MOUNTED - $co/.git points to C:\\Users\\<user>\\.git-dirs\\example-owner\\example-repo, expected at $T/not-mounted/example-owner/example-repo; the launcher adds the mount when started through the bootstrap tasks (task devcontainer:up), else add to devcontainer.json \"mounts\": [\"source=\${localEnv:DCF_HOST_HOME}/.git-dirs,target=$T/not-mounted,type=bind\"] and rebuild" <<<"$out"
 check "git-setup (not mounted) removes a stale dirs file" test ! -e "$GIT_WRAPPER_DIRS_FILE"
 check "git-setup (not mounted) still manages the global config" grep -qxF "safe.directory: $co (kept)" <<<"$out"
 point 'gitdir: E:/elsewhere/example-repo.git'
@@ -180,6 +180,8 @@ out="$(cd "$co" && git-setup 2>&1)"
 rc=$?
 check "git-setup (outside the root) exits 0" eq "$rc" 0
 check "git-setup says the pointer is outside .git-dirs" grep -qF "git dir: OUTSIDE .git-dirs - $co/.git points to E:/elsewhere/example-repo.git" <<<"$out"
+check "git-setup (outside the root) names the launcher and the line to add" \
+  grep -qF "(update the pointer); the launcher adds the mount when started through the bootstrap tasks (task devcontainer:up), else add to devcontainer.json \"mounts\": [\"source=\${localEnv:DCF_HOST_HOME}/.git-dirs,target=$GIT_DIRS_ROOT,type=bind\"]" <<<"$out"
 point 'gitdir: C:\Users\<user>\.git-dirs\example-owner\example-repo'
 
 # The per-repo form (GIT_DIR and GIT_WORK_TREE in containerEnv) as before.

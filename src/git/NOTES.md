@@ -1,18 +1,30 @@
-## A git dir outside the workspace: one mount line
+## A git dir outside the workspace: one mount, added by the launcher
 
 On this collection's Windows hosts a checkout lives in OneDrive and its git
 dir does not: the checkout's `.git` is a pointer file,
 `gitdir: C:/Users/<user>/.git-dirs/<owner>/<repo>`, a path that means nothing
-in the container. Every consuming repo adds the same line, and nothing else:
+in the container. The one mount that makes it reachable is the host home's
+`.git-dirs` folder at `/git-dirs`. A repository that starts through the
+bootstrap tasks (`task devcontainer:up`, `rebuild`; devcontainer-cli 1.7.0 or
+later) declares nothing: the launcher passes it to `devcontainer up` as
+`--mount type=bind,source=<host home>/.git-dirs,target=/git-dirs` for every host
+type, creates the host folder first, and skips its own when the repository's
+`devcontainer.json` already mounts `/git-dirs` (`HOST_MOUNTS=false` turns the
+launcher's mounts off; see "Host mounts" in the devcontainer-cli notes). The
+line a repository would add itself is:
 
 ```jsonc
 "mounts": ["source=${localEnv:DCF_HOST_HOME}/.git-dirs,target=/git-dirs,type=bind"]
 ```
 
 `DCF_HOST_HOME` is the host user's home (`%USERPROFILE%` on Windows, `$HOME` on Linux and
-macOS), set by the launcher (`task devcontainer:up`, devcontainer-cli 1.5.0 or later) before it
-runs the devcontainer CLI, so the same line works on every host type. The older form
-`source=${localEnv:USERPROFILE}/.git-dirs,...` keeps working on Windows.
+macOS), set by the launcher before it runs the devcontainer CLI (devcontainer-cli 1.5.0 or
+later), so that line works on every host type, but only when the launcher ran. Opening the
+folder straight in VS Code (Reopen in Container) skips the launcher, `DCF_HOST_HOME` is then
+empty, and the line has to name the variable VS Code sees instead:
+`${localEnv:USERPROFILE}` on a Windows host, `${localEnv:HOME}` on Linux, macOS and WSL
+(`source=${localEnv:USERPROFILE}/.git-dirs,...`, the form that has always worked). Keeping
+such a line next to the launcher is harmless: the launcher sees the target and adds none.
 
 The wrapper then maps the pointer for each git call. When `GIT_DIR` is not
 set (or is Claude Code's placeholder, below) and the nearest `.git` above the
@@ -43,13 +55,17 @@ level (`git rev-parse --show-toplevel`, else the nearest folder with a
 `safe.directory`. When it cannot map, it prints one line and goes on:
 
 - `git dir: NOT MOUNTED - <checkout>/.git points to <pointer>, expected at
-  /git-dirs/<owner>/<repo>; add to devcontainer.json "mounts": [...]` with
-  the exact mount line, when the pointer is under `.git-dirs` but the folder
-  is not there (no mount, or a folder name that differs on the host);
+  /git-dirs/<owner>/<repo>; the launcher adds the mount when started through
+  the bootstrap tasks (task devcontainer:up), else add to devcontainer.json
+  "mounts": [...] and rebuild` with the exact mount line
+  (`source=${localEnv:DCF_HOST_HOME}/.git-dirs,target=/git-dirs,type=bind`),
+  when the pointer is under `.git-dirs` but the folder is not there (no mount,
+  VS Code started the container without the launcher, or a folder name that
+  differs on the host);
 - `git dir: OUTSIDE .git-dirs - <checkout>/.git points to <pointer>, which
   the container cannot reach; keep the git dir under
-  %USERPROFILE%\.git-dirs\<owner>\<repo> (update the pointer) and add ...`
-  when the git dir is somewhere else on the host.
+  %USERPROFILE%\.git-dirs\<owner>\<repo> (update the pointer); the launcher
+  adds the mount ...` when the git dir is somewhere else on the host.
 
 **The trade-off, plainly:** the mount exposes *every* git dir under
 `%USERPROFILE%\.git-dirs` to every container that declares it, read-write,
@@ -68,10 +84,12 @@ taken and for tests.
 
 **Migrating from the per-repo mount:** delete the repo's
 `source=.../.git-dirs/<owner>/<repo>,target=/git/<repo>.git` mount and the
-`GIT_DIR` and `GIT_WORK_TREE` entries from `containerEnv`, add the line above,
-and rebuild (git 1.4.0 or later). Keep `task devcontainer:homes` in
-`initializeCommand`: it creates `%USERPROFILE%\.git-dirs` when missing, so the
-bind mount never fails on a fresh machine; `HOST_GIT_DIR` is optional now.
+`GIT_DIR` and `GIT_WORK_TREE` entries from `containerEnv`, start through
+`task devcontainer:up` (or add the line above) and rebuild (git 1.4.0 or later). Keep `task devcontainer:homes` in
+`initializeCommand` if you open the folder in VS Code directly: it creates
+`%USERPROFILE%\.git-dirs` when missing, so the bind mount never fails on a
+fresh machine (the launcher creates it itself for its own mount); `HOST_GIT_DIR`
+is optional now.
 Nothing else changes: the per-repo form (`GIT_DIR` and `GIT_WORK_TREE` in
 `containerEnv`) keeps working exactly as before and wins over the mapping.
 
@@ -87,8 +105,9 @@ it did with the per-repo form; git on Windows sees those worktrees as
 prunable.
 
 Limits: `${localEnv:USERPROFILE}` is empty on a Linux or macOS host, which is why the
-line uses `${localEnv:DCF_HOST_HOME}`; it is empty too when the folder is opened straight
-in VS Code (the launcher did not run), so start through `task devcontainer:up`. A checkout
+repository-side line uses `${localEnv:DCF_HOST_HOME}` when it relies on the launcher;
+`DCF_HOST_HOME` is empty when the folder is opened straight in VS Code (the launcher did not
+run), so start through `task devcontainer:up` or use the `USERPROFILE`/`HOME` form there. A checkout
 whose git dir is a plain `.git` folder needs none of this.
 
 ## Why a wrapper
@@ -216,7 +235,8 @@ without rebuilding the image.
   created before the first start by
   `"initializeCommand": ["task", "devcontainer:homes", "NAME=myrepo", "--", "git"]`.
 - A checkout whose git dir lives under `%USERPROFILE%\.git-dirs`: the one
-  `.git-dirs` mount (top of this page), created by `task devcontainer:homes`.
+  `.git-dirs` mount (top of this page), added by the launcher (`task devcontainer:up`)
+  or by one line in the repository's `devcontainer.json`.
   The older per-repo form still works: the git dir bind-mounted on its own,
   with `GIT_DIR` (the mount target) and `GIT_WORK_TREE`
   (`${containerWorkspaceFolder}`) in `containerEnv`; the wrapper is what

@@ -31,7 +31,15 @@
     Every setting here is read from an environment variable so a .env file
     (loaded by Task's dotenv: or by bootstrap.ps1) can drive it:
       DEVCONTAINER_DOCKER_PATH, DEVCONTAINER_NODE_VERSION,
-      DEVCONTAINER_CLI_VERSION, HOST_TYPE, HOST_TYPE_PRIORITY. Explicit parameters win over the environment.
+      DEVCONTAINER_CLI_VERSION, HOST_TYPE, HOST_TYPE_PRIORITY, HOST_MOUNTS. Explicit parameters win over the environment.
+
+    Host mounts: `up` (so `rebuild`) adds the mounts the host type needs with
+    `--mount type=bind,source=...,target=...` (Get-HostMount; slice 3: the
+    `.git-dirs` folder of the host home at /git-dirs), so a repository declares
+    none. A mount whose target the repository's devcontainer.json already mounts is
+    skipped, with one line saying so. HOST_MOUNTS=false turns the launcher's mounts
+    off. `build` mounts nothing and `exec` runs in an existing container: neither
+    takes them.
 
     Image builds are serialised host-wide: `up` and `build` hold the named
     mutex Global\devcontainer-features-build while they run (see
@@ -403,10 +411,157 @@ function Initialize-HostEnvironment {
     return $p
 }
 
+# ---------------------------------------------------------------- host mounts ----
+# The mounts the launcher adds to `devcontainer up` (--mount), per host type. One entry
+# for now (slice 3: .git-dirs); slice 4 adds the SSH agent socket where the host type has one.
+# Add a case to the switch, or an entry to the array of a case: nothing else changes.
+function Get-HostMount {
+    <#
+    .SYNOPSIS
+        The host mounts for a host type: objects with Name, Source, Target and Type.
+        Empty when the home is unknown.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Type, [string]$HostHome)
+    if (-not $HostHome) { return @() }
+    $mounts = @()
+    switch ($Type) {
+        # The same entry on every type today; a type that differs (slice 4) gets its own case.
+        { $_ -in 'windows-docker', 'windows-wsl-docker', 'windows-wslc', 'linux', 'macos' } {
+            # Windows homes are C:\Users\<user>; the engine accepts the mixed form that
+            # ${localEnv:USERPROFILE}/.git-dirs has always produced, so the same is built here.
+            $mounts += [pscustomobject]@{ Name = 'git-dirs'; Source = "$HostHome/.git-dirs"; Target = '/git-dirs'; Type = 'bind' }
+        }
+    }
+    return $mounts
+}
+
+function ConvertTo-MountArgument {
+    <# .SYNOPSIS The value of one `--mount` option for a host mount. #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$Mount)
+    return "type=$($Mount.Type),source=$($Mount.Source),target=$($Mount.Target)"
+}
+
+function ConvertTo-JsonWithoutComment {
+    <# .SYNOPSIS Strips // and /* */ comments from JSONC text, leaving strings untouched. #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
+    $sb = [System.Text.StringBuilder]::new($Text.Length)
+    $n = $Text.Length; $i = 0
+    while ($i -lt $n) {
+        $c = $Text[$i]
+        $d = if ($i + 1 -lt $n) { $Text.Substring($i, 2) } else { [string]$c }
+        if ($c -eq '"') {
+            [void]$sb.Append($c); $i++
+            while ($i -lt $n) {
+                $c = $Text[$i]; [void]$sb.Append($c); $i++
+                if ($c -eq '\' -and $i -lt $n) { [void]$sb.Append($Text[$i]); $i++ }
+                elseif ($c -eq '"') { break }
+            }
+        }
+        elseif ($d -eq '//') { while ($i -lt $n -and $Text[$i] -ne "`n") { $i++ } }
+        elseif ($d -eq '/*') { $end = $Text.IndexOf('*/', $i + 2); $i = if ($end -lt 0) { $n } else { $end + 2 } }
+        else { [void]$sb.Append($c); $i++ }
+    }
+    return $sb.ToString()
+}
+
+function Get-ConfiguredMountTarget {
+    <#
+    .SYNOPSIS
+        The mount targets the repository's own devcontainer.json declares (strings
+        `source=..,target=/x` and objects with "target"): the file --config names in
+        $Arguments, else .devcontainer/devcontainer.json, else .devcontainer.json.
+    .DESCRIPTION
+        Read straight from the file (comments stripped, no JSON parser, so trailing commas
+        are fine) rather than with `devcontainer read-configuration`: that costs a second
+        Node start (about 0.25-0.5 s), asks the engine (`docker ps`) and fails when the
+        engine is down, which `host` must survive. Mounts that Features declare and
+        docker-compose files are not seen; neither declares the host mounts.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$WorkspaceFolder, [string[]]$Arguments = @())
+    $file = $null
+    for ($i = 0; $i -lt $Arguments.Count; $i++) {
+        if ($Arguments[$i] -eq '--config' -and $i + 1 -lt $Arguments.Count) { $file = $Arguments[$i + 1] }
+        elseif ($Arguments[$i] -like '--config=*') { $file = $Arguments[$i].Substring(9) }
+    }
+    if (-not $file) {
+        foreach ($rel in '.devcontainer/devcontainer.json', '.devcontainer.json') {
+            $candidate = Join-Path $WorkspaceFolder $rel
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) { $file = $candidate; break }
+        }
+    }
+    if (-not $file -or -not (Test-Path -LiteralPath $file -PathType Leaf)) { return @() }
+    $text = ConvertTo-JsonWithoutComment -Text (Get-Content -LiteralPath $file -Raw)
+    $targets = [System.Collections.Generic.List[string]]::new()
+    foreach ($m in [regex]::Matches($text, '"mounts"\s*:\s*\[[^\]]*\]')) {
+        foreach ($t in [regex]::Matches($m.Value, '(?:target|destination|dst)=([^,"\s]+)')) { $targets.Add($t.Groups[1].Value.TrimEnd('/')) }
+        foreach ($t in [regex]::Matches($m.Value, '"(?:target|destination)"\s*:\s*"([^"]+)"')) { $targets.Add($t.Groups[1].Value.TrimEnd('/')) }
+    }
+    return @($targets)
+}
+
+function Test-HostMountsEnabled {
+    <# .SYNOPSIS $false when HOST_MOUNTS is false, 0 or no (environment variable or the parameter the entry script copies into it). #>
+    [CmdletBinding()]
+    param()
+    return (Get-SettingOrEnv '' 'HOST_MOUNTS' 'true') -notin @('false', '0', 'no')
+}
+
+function Resolve-HostMount {
+    <#
+    .SYNOPSIS
+        What the launcher would mount: @{ Enabled; Add = mounts to pass; Skip = mounts the
+        repository already declares }. Starts nothing and creates nothing.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$WorkspaceFolder, [string[]]$Arguments = @(), [string]$DockerPath)
+    if (-not (Test-HostMountsEnabled)) { return [pscustomobject]@{ Enabled = $false; Add = @(); Skip = @() } }
+    $p = Resolve-HostProfile -DockerPath $DockerPath
+    $configured = @(Get-ConfiguredMountTarget -WorkspaceFolder $WorkspaceFolder -Arguments $Arguments)
+    $add = @(); $skip = @()
+    foreach ($m in @(Get-HostMount -Type $p.Type -HostHome $p.Home)) {
+        if ($configured -contains $m.Target) { $skip += $m } else { $add += $m }
+    }
+    return [pscustomobject]@{ Enabled = $true; Add = $add; Skip = $skip }
+}
+
+function Initialize-HostMountSource {
+    <# .SYNOPSIS Creates the host folder of a bind mount when it is a path this launcher can reach (idempotent), so a start never fails on a missing source. A failure is a warning, never fatal. #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$Mount, [Parameter(Mandatory)][string]$Type)
+    # windows-wsl-docker driven from Windows has a distro path (/home/...) that Windows cannot create.
+    if ($Type -eq 'windows-wsl-docker' -and (Get-HostPlatform) -eq 'windows') { return }
+    try { if (-not (Test-Path -LiteralPath $Mount.Source)) { [void](New-Item -ItemType Directory -Path $Mount.Source -Force) } }
+    catch { Write-Warning "host mount: could not create $($Mount.Source): $($_.Exception.Message)" }
+}
+
+function Get-HostMountArgument {
+    <#
+    .SYNOPSIS
+        The `--mount <spec>` arguments for `up`, after printing one line per skipped mount.
+        Creates each source folder. Empty when HOST_MOUNTS=false.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$WorkspaceFolder, [string[]]$Arguments = @(), [string]$DockerPath)
+    $r = Resolve-HostMount -WorkspaceFolder $WorkspaceFolder -Arguments $Arguments -DockerPath $DockerPath
+    $type = (Resolve-HostProfile -DockerPath $DockerPath).Type
+    $out = @()
+    foreach ($m in $r.Skip) { Write-Host "host mount skipped: $($m.Target) is already mounted by this repository's devcontainer.json" }
+    foreach ($m in $r.Add) {
+        if ($m.Source -match ',') { Write-Warning "host mount $($m.Name) skipped: the source '$($m.Source)' contains a comma, which --mount cannot carry."; continue }
+        Initialize-HostMountSource -Mount $m -Type $type
+        $out += @('--mount', (ConvertTo-MountArgument -Mount $m))
+    }
+    return $out
+}
+
 function Show-HostProfile {
     <# .SYNOPSIS `task devcontainer:host`: prints the resolved host profile; starts nothing. #>
     [CmdletBinding()]
-    param([string]$DockerPath)
+    param([string]$DockerPath, [string]$WorkspaceFolder, [string[]]$Arguments = @())
     $p = Resolve-HostProfile -DockerPath $DockerPath
     Write-Host "HOST_TYPE          : $($p.Type)"
     Write-Host "why                : $($p.Why)"
@@ -415,6 +570,12 @@ function Show-HostProfile {
     Write-Host "DCF_HOST_TYPE      : $($p.Type)"
     Write-Host "DCF_HOST_HOME      : $($p.Home)"
     Write-Host "DCF_HOST_SSH_AGENT : $($p.SshAgent)"
+    if (-not $WorkspaceFolder) { $WorkspaceFolder = (Get-Location).Path }
+    $r = Resolve-HostMount -WorkspaceFolder $WorkspaceFolder -Arguments $Arguments -DockerPath $DockerPath
+    if (-not $r.Enabled) { Write-Host 'host mounts        : off (HOST_MOUNTS=false)'; return }
+    if (-not ($r.Add.Count + $r.Skip.Count)) { Write-Host 'host mounts        : none'; return }
+    foreach ($m in $r.Add) { Write-Host "host mount (add)   : $($m.Name): $(ConvertTo-MountArgument -Mount $m)" }
+    foreach ($m in $r.Skip) { Write-Host "host mount (skip)  : $($m.Name): $($m.Target) is already mounted by devcontainer.json" }
 }
 
 function Get-WorkspaceFolderVariant {
@@ -627,6 +788,11 @@ function Invoke-DevcontainerCliProcess {
     if ($Subcommand -in 'up', 'set-up', 'build', 'run-user-commands', 'read-configuration', 'outdated', 'upgrade', 'exec') {
         $cliArgs += @('--workspace-folder', $WorkspaceFolder)
     }
+    # Host mounts go to `up` only (and so to rebuild): `build` mounts nothing and `exec`
+    # runs in a container that exists. Initialize-HostEnvironment below sets DCF_HOST_*.
+    if ($Subcommand -eq 'up') {
+        $cliArgs += @(Get-HostMountArgument -WorkspaceFolder $WorkspaceFolder -Arguments $Arguments -DockerPath $DockerPath)
+    }
 
     if ($IsWindows) {
         $nodeDir = Get-PortableNodeDir -Version $NodeVersion
@@ -693,7 +859,7 @@ function Invoke-DevcontainerCli {
     }
 
     # `host` is not a CLI subcommand: it prints the resolved host profile and starts nothing.
-    if ($Subcommand -eq 'host') { Show-HostProfile -DockerPath $DockerPath; return }
+    if ($Subcommand -eq 'host') { Show-HostProfile -DockerPath $DockerPath -WorkspaceFolder $WorkspaceFolder -Arguments $Arguments; return }
 
     # `running` is not a CLI subcommand either: exit 0 when a container of the
     # workspace runs, 1 when none does, 2 when the engine cannot be asked.
@@ -739,4 +905,4 @@ function Invoke-DevcontainerCli {
     exit $rc
 }
 
-Export-ModuleMember -Function Get-HostTypeId, Get-DefaultHostTypePriority, Resolve-HostType, Resolve-HostProfile, Initialize-HostEnvironment, Show-HostProfile, Clear-HostProfileCache, Get-SettingOrEnv, ConvertFrom-TaskCliArgString, Get-PortableNodeDir, Get-DevcontainersCliEntrypoint, Remove-DevcontainersCli, Resolve-DockerPath, Get-WorkspaceFolderVariant, Get-RunningDevcontainerId, Stop-Devcontainer, Test-BuildSubcommand, Enter-DevcontainerBuildLock, Exit-DevcontainerBuildLock, Invoke-DevcontainerCliProcess, Invoke-DevcontainerCli
+Export-ModuleMember -Function Get-HostTypeId, Get-DefaultHostTypePriority, Resolve-HostType, Resolve-HostProfile, Initialize-HostEnvironment, Get-HostMount, ConvertTo-MountArgument, ConvertTo-JsonWithoutComment, Get-ConfiguredMountTarget, Test-HostMountsEnabled, Resolve-HostMount, Initialize-HostMountSource, Get-HostMountArgument, Show-HostProfile, Clear-HostProfileCache, Get-SettingOrEnv, ConvertFrom-TaskCliArgString, Get-PortableNodeDir, Get-DevcontainersCliEntrypoint, Remove-DevcontainersCli, Resolve-DockerPath, Get-WorkspaceFolderVariant, Get-RunningDevcontainerId, Stop-Devcontainer, Test-BuildSubcommand, Enter-DevcontainerBuildLock, Exit-DevcontainerBuildLock, Invoke-DevcontainerCliProcess, Invoke-DevcontainerCli

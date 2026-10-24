@@ -39,6 +39,10 @@
     HOST_TYPE_PRIORITY: ordered, comma-separated ids that auto tries. Empty =
     $env:HOST_TYPE_PRIORITY, else the default for the OS.
 
+.PARAMETER HostMounts
+    HOST_MOUNTS: false (or 0, no) turns off the mounts the launcher adds to `up`
+    (the `.git-dirs` folder at /git-dirs). Empty = $env:HOST_MOUNTS, else on.
+
 .PARAMETER NodeVersion
     Portable Node.js version (Windows). Empty = $env:DEVCONTAINER_NODE_VERSION
     or the module default.
@@ -56,6 +60,7 @@ param(
     [string]$DockerPath,
     [string]$HostType,
     [string]$HostTypePriority,
+    [string]$HostMounts,
     [string]$NodeVersion,
     [string]$CliVersion,
     [switch]$Force
@@ -66,6 +71,7 @@ Import-Module (Join-Path $PSScriptRoot 'DevcontainerCli.psm1') -Force
 # The module reads them as environment variables (a .env file can drive it too).
 if ($HostType) { $env:HOST_TYPE = $HostType }
 if ($HostTypePriority) { $env:HOST_TYPE_PRIORITY = $HostTypePriority }
+if ($HostMounts) { $env:HOST_MOUNTS = $HostMounts }
 
 $params = @{
     Subcommand      = $Subcommand

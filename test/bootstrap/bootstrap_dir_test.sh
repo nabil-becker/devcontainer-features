@@ -133,10 +133,25 @@ contains 'old form re-run: note says ./bootstrap can be deleted' "$out" './boots
 check 'old form re-run: ./bootstrap kept' 'old vendored' "$(cat "$T/repo/bootstrap/devcontainer.yml")"
 check 'old form re-run: vendors into the new default' yes "$([ -f "$T/repo/.devcontainer/cli_bootstrap.ignore/devcontainer.yml" ] && echo yes)"
 contains 'old form re-run: include repointed' "$T/repo/Taskfile.yml" 'taskfile: ./.devcontainer/cli_bootstrap.ignore/devcontainer.yml   # old'
-check 'old form re-run: only that value changed' "$(sed 's#\./bootstrap/devcontainer\.yml#./.devcontainer/cli_bootstrap.ignore/devcontainer.yml#' "$T/old-Taskfile.yml")" "$(cat "$T/repo/Taskfile.yml")"
+check 'old form re-run: the value changed and optional: true was added, nothing else' "$(printf "version: '3'\n# my comment\nincludes:\n  devcontainer:\n    taskfile: ./.devcontainer/cli_bootstrap.ignore/devcontainer.yml   # old\n    optional: true\n    aliases: [dc]\n  other:\n    taskfile: ./other.yml\ntasks:\n  shutdown:check:\n    cmds: [true]\n")" "$(cat "$T/repo/Taskfile.yml")"
 contains 'old form re-run: says it repointed' "$out" 'repointed Taskfile.yml'
+contains 'old form re-run: says it added optional: true' "$out" 'added     optional: true'
+check 'old form re-run: only the devcontainer include got optional (the other include did not)' 1 "$(grep -c 'optional: true' "$T/repo/Taskfile.yml")"
 run --
 lacks 'old form second re-run: nothing left to repoint' "$out" 'repointed'
+check 'old form second re-run: optional: true still there once' 1 "$(grep -c 'optional: true' "$T/repo/Taskfile.yml")"
+# an include that already says optional (before or after the taskfile line) is not given a second one
+old_repo; printf "includes:\n  devcontainer:\n    optional: true\n    taskfile: ./bootstrap/devcontainer.yml\n  other:\n    taskfile: ./other.yml\n" > "$T/repo/Taskfile.yml"
+run --
+check 'old form, optional before taskfile: no second optional' 1 "$(grep -c 'optional' "$T/repo/Taskfile.yml")"
+lacks 'old form, optional present: no "added" line' "$out" 'added     optional'
+old_repo; printf "includes:\n  devcontainer:\n    taskfile: ./bootstrap/devcontainer.yml\n    optional: false\n  other:\n    taskfile: ./other.yml\n" > "$T/repo/Taskfile.yml"
+run --
+check 'old form, optional: false kept as the engineer wrote it' 1 "$(grep -c 'optional' "$T/repo/Taskfile.yml")"
+# a taskfile line with no trailing newline at the end of the file
+old_repo; printf "includes:\n  devcontainer:\n    taskfile: ./bootstrap/devcontainer.yml" > "$T/repo/Taskfile.yml"
+run --
+check 'old form, last line without newline: optional added on its own line' "$(printf "includes:\n  devcontainer:\n    taskfile: ./.devcontainer/cli_bootstrap.ignore/devcontainer.yml\n    optional: true")" "$(cat "$T/repo/Taskfile.yml")"
 # an include that is not exactly the old path is left alone
 old_repo; sed -i 's#\./bootstrap/devcontainer\.yml#./bootstrap/devcontainer.yml.local#' "$T/repo/Taskfile.yml"; cp "$T/repo/Taskfile.yml" "$T/old-Taskfile.yml"
 run --
