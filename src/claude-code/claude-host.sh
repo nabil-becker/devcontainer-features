@@ -25,8 +25,8 @@
 # session that ended and never counts as live) and looks for live sessions whose
 # cwd is this folder:
 #   none live              -> the rules above (resume if transcript, else create)
-#   one or more live       -> start nothing, print each running id and pid and how
-#                             to attach (`claude agents`, select it), exit 1; with
+#   one or more live       -> start nothing, print each running id and pid and the
+#                             exact command to attach (`claude attach <id>`), exit 1; with
 #                             CLAUDE_HOST_PRINT_FLAG print nothing and exit 1 too.
 #                             When the pinned id is not among them it says the pin
 #                             is stale; CLAUDE_HOST_UPDATE_PIN=1 then also rewrites
@@ -37,6 +37,11 @@
 # `claude agents --json` missing or failing (older Claude Code): one-line note and
 # the rules above. CLAUDE_HOST_LIVE_CHECK=0 skips the check (claude-fleet does, it
 # has made the same check already).
+# Inside a session HOST_SESSION is the id that session started with, stale after a /clear
+# or a fork; when it is in no line of .devcontainer/.env (found upwards,
+# or CLAUDE_HOST_ENV_FILE; CLAUDE_HOST_PIN_VAR names another variable), claude-host uses the
+# environment value as before and warns which it used (no warning when another line of
+# .env holds the id: a per-folder session).
 # Sessions are referred to by UUID; a session's name is only a label, may
 # change with /rename and may collide. The transcript is looked up where
 # Claude Code keeps it for the current directory:
@@ -53,6 +58,25 @@ if ! [[ "$sid" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[
   exit 2
 fi
 here="$(pwd -P)"
+envf="${CLAUDE_HOST_ENV_FILE:-}"
+if [ -z "$envf" ]; then
+  d="$here"
+  while :; do
+    [ -f "$d/.devcontainer/.env" ] && { envf="$d/.devcontainer/.env"; break; }
+    [ "$d" = / ] && break
+    d="$(dirname "$d")"
+  done
+fi
+if [ -n "$envf" ] && [ -f "$envf" ]; then
+  pv="${CLAUDE_HOST_PIN_VAR:-HOST_SESSION}"
+  fv="$(sed -n "s/^[[:space:]]*\(export[[:space:]]\{1,\}\)\{0,1\}$pv=[[:space:]]*//p" "$envf" | tail -n 1 | tr -d '\r' |
+    sed "s/^[\"']//; s/[\"'][[:space:]]*\$//; s/[[:space:]]\{1,\}#.*\$//; s/[[:space:]]*\$//")"
+  # a per-folder session (HOST_SESSION_<NAME> in .env) legitimately differs from the root line:
+  # warn only when the id is in no line of .env
+  if [ -n "$fv" ] && ! grep -qiF "$sid" "$envf"; then
+    echo "claude-host: warning: HOST_SESSION in the environment ($sid) differs from $pv in $envf ($fv); using the environment value (inside a session it can be stale after a /clear or a fork)." >&2
+  fi
+fi
 slug="$(printf '%s' "$here" | sed 's/[^A-Za-z0-9]/-/g')"
 
 # live_in_dir: "id pid" of each live session whose cwd is this folder, one per
@@ -86,8 +110,8 @@ if [ "${CLAUDE_HOST_LIVE_CHECK:-1}" != 0 ]; then
     if [ -n "$live" ] && [ -z "${CLAUDE_HOST_ALLOW_SECOND:-}" ]; then
       {
         echo "claude-host: a session is already running in this folder; starting nothing (a second process on one transcript would be a second copy):"
-        printf '%s\n' "$live" | while read -r lid lpid; do echo "  session $lid (pid $lpid)"; done
-        echo "claude-host: attach with 'claude agents' and select it. CLAUDE_HOST_ALLOW_SECOND=1 starts one anyway."
+        printf '%s\n' "$live" | while read -r lid lpid; do echo "  session $lid (pid $lpid): claude attach $lid"; done
+        echo "claude-host: attach with the command above. CLAUDE_HOST_ALLOW_SECOND=1 starts one anyway."
         if ! printf '%s\n' "${live,,}" | cut -d' ' -f1 | grep -qxF "${sid,,}"; then
           echo "claude-host: the pinned $sid (HOST_SESSION... in .devcontainer/.env) is stale: it is not a running session (a /clear gives a session a new id). CLAUDE_HOST_UPDATE_PIN=1 claude-host updates it with the running id when exactly one runs; the claude-host-pin SessionStart hook keeps it current."
         fi

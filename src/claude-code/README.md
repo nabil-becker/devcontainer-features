@@ -106,21 +106,42 @@ What the Feature adds in both cases:
   required. A variable without a line is left alone (never adds one) unless
   `CLAUDE_HOST_PIN_CREATE=1` appends `VAR=<id>`. It always exits 0, notes go to stderr, so a
   session never fails because of it. The consumer's own write-back and second-copy check can go.
-- **`claude-fleet`: several sessions in one terminal, never a second copy** (1.5.0). Bash
+- **`claude-fleet`: several sessions in one terminal, never a second copy** (1.5.0; 1.6.0 below). Bash
   like `claude-host`, for the same reason (no jq, no python; the container always has
   bash), installed beside it, run where `claude agents` runs. `SESSIONS` (environment, or
   `SESSIONS_B64` base64-encoded) holds one line per session,
   `name|session-variable|dir|extra claude args` (blank lines and `#` lines skipped; the
   extra args are split on whitespace, no quoting). Each variable's value (the session's
-  UUID) comes from the environment, else `.devcontainer/.env`, since inside the container
-  only `HOST_SESSION` is in the environment. For each line, against `claude agents --json`:
+  UUID) comes from `.devcontainer/.env` first, and from the environment only when `.env`
+  has no line for that variable (1.6.0 reverses the earlier order: inside a session the
+  environment keeps the id the session started with, stale after a `/clear` or a fork, while
+  the `claude-host-pin` hook keeps `.env` current). For each line, against `claude agents --json`:
   variable unset: said, skipped; its id live, or any live session working in its folder
   (a `/clear`ed session has a new id there): running, not started (two or more live in
-  one folder are reported); otherwise `cd <dir> && HOST_SESSION=<id> claude-host --bg <args>`
+  one folder are reported as duplicates, below); otherwise `cd <dir> && HOST_SESSION=<id> claude-host --bg <args>`
   (claude-host's own live check is off for these starts, the fleet has made it; a live session is one with a `pid`, ended entries never count). Then
   `exec claude agents`. `-- --plan` prints what it would do and starts nothing; `-- --no-view`
   starts the missing ones and does not open the view. When the list cannot be read it
-  starts nothing and exits 1. `task claude-code:fleet` runs it inside (SESSIONS in the
+  starts nothing and exits 1.
+
+  1.6.0, from a consuming repository's lessons running four agents in one container:
+  - **It waits for restored sessions.** After a rebuild the Claude daemon restores background
+    sessions from this Feature's volume; starting sessions in that window races the restore and
+    makes duplicates. Before reconciling, `claude-fleet` prints `waiting for restored
+    sessions…` and reads `claude agents --json` until two reads `FLEET_SETTLE_INTERVAL` seconds
+    apart (default 3) give the same set of live ids, for at most `FLEET_SETTLE_TIMEOUT` seconds
+    (default 30; then it reconciles anyway with a one-line note). `-- --no-wait` skips it.
+  - **Duplicates are reported, and stopped only on request.** When more than one live session
+    matches an agent (by its id or by its folder), `-- --plan` and a normal run list each one
+    (id, pid, age, whether a transcript exists) and mark the kept one (the id in `.env` if
+    live, else the newest by `startedAt`) and the extras, then print the `--stop-duplicates`
+    hint; nothing is stopped. `-- --stop-duplicates` stops the extras with `claude stop <id>`,
+    which keeps the conversation (`claude attach <id>` resumes it), re-reads the list to confirm
+    they are gone, and says so. A stopped extra is never restarted: the agent still has its kept
+    session. `claude-fleet` never deletes a session (`claude rm` can delete its worktree, which
+    is not Claude's to delete in a fleet); a test guards that.
+  - `claude-host`'s refusal now names `claude attach <id>` for each live id, and warns when the
+    `HOST_SESSION` in the environment is in no line of `.devcontainer/.env` (it still uses it). `task claude-code:fleet` runs it inside (SESSIONS in the
   environment); from the host, `task devcontainer:claude:fleet` (see the README), with
   `SESSIONS` set where the Taskfile includes `bootstrap/devcontainer.yml`:
 

@@ -317,6 +317,7 @@ the host type needs; ADR 0024 decides it, `docs/proposals/host-profile.md` is th
   general-purpose and should not live in a container volume (it prints fingerprints, never key material).
   Both are one-shot commands; nothing stays running on the host.
   Not verified on a real host: `devcontainer exec` forwarding its stdin on every platform (the tests use a stub).
+- **Fleet waits, reports and stops duplicates (1.11.0).** `task devcontainer:claude:fleet -- --no-wait|--stop-duplicates` reach `claude-fleet` (claude-code 1.6.0); the task description says so.
 - **Several Claude sessions (1.9.0).** `task devcontainer:claude:fleet` passes `SESSIONS` (set by the including Taskfile)
   and its arguments to the claude-code Feature's `claude-fleet` in the container (through `exec`, or directly inside); see
   that Feature's notes. `devcontainer:claude` itself gains nothing: its `claude-host` now refuses to start a session already running in the folder
