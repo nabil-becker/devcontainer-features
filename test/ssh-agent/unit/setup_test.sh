@@ -134,18 +134,31 @@ run -- git-signing "$fp_a"
 has 'default scope without a git Feature volume is repo' 'using repo' "$out"
 run GIT_CONFIG_GLOBAL=/var/lib/devcontainer-features/git/config -- git-signing "$fp_a"
 has 'default scope with the git Feature volume is global' 'using global' "$out"
+run DCF_HOST_TYPE=windows-wslc GIT_CONFIG_GLOBAL="$T/gitconfig" -- git-signing "$fp_a"
+has 'default scope on a Windows host without the volume is global' 'using global' "$out"
+has 'it says why: Windows git would share the repo config' 'shared with Windows git' "$out"
+run DCF_HOST_TYPE=linux -- git-signing "$fp_a"
+has 'default scope on a Linux host without the volume stays repo' 'using repo' "$out"
+has 'SCOPE=repo names SCOPE=global as the safe choice for a shared git dir' 'use SCOPE=global' "$out"
 
 git -C "$T/repo" config --local user.signingkey "key::$(awk '{print $1 " " $2}' "$T/a.pub")"
 git -C "$T/repo" config --local gpg.format ssh
-run -- git-verify
+mkdir -p "$T/tmpd"
+run TMPDIR="$T/tmpd" -- git-verify
 check 'git-verify exits 0 with the key in the agent' 0 "$rc"
 has 'git-verify says ok' 'ok: signed a throwaway message' "$out"
+# The cleanup trap runs after cmd_git_verify returns, under set -u (1.1.0 printed "tmp: unbound variable").
+lacks 'git-verify cleans up without an unbound-variable error' 'unbound variable' "$out"
+check 'git-verify leaves no temporary folder' '' "$(ls -A "$T/tmpd")"
 git -C "$T/repo" config --local user.signingkey "key::$(awk '{print $1 " " $2}' "$T/a.pub")"
 ssh-keygen -q -t ed25519 -N '' -C 'not-loaded' -f "$T/c" >/dev/null
 git -C "$T/repo" config --local user.signingkey "key::$(awk '{print $1 " " $2}' "$T/c.pub")"
-run -- git-verify
+rm -rf "${T:?}/tmpd"/*
+run TMPDIR="$T/tmpd" -- git-verify
 check 'git-verify exits 1 with a key the agent does not hold' 1 "$rc"
 has 'git-verify says why' 'signing failed' "$out"
+lacks 'a failed git-verify cleans up without an unbound-variable error' 'unbound variable' "$out"
+check 'a failed git-verify leaves no temporary folder' '' "$(ls -A "$T/tmpd")"
 git -C "$T/repo" config --local --unset-all gpg.format
 run -- git-verify
 check 'git-verify without ssh signing configured exits 1' 1 "$rc"
