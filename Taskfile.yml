@@ -8,6 +8,9 @@ includes:
   devcontainer:
     taskfile: ./bootstrap/devcontainer.yml
     aliases: [dc]   # task dc:up == task devcontainer:up, as in the Taskfile the bootstrap writes
+    vars:
+      # The fleet (task dc:claude:fleet): one session, the devhost's, pinned in .env.
+      SESSIONS: "host|HOST_SESSION|.|"
   # Tasks contributed by the Features installed in this repo's devcontainer
   # (go-task:*, devcontainer-cli:*); absent on the host.
   features:
