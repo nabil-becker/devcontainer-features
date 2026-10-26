@@ -184,13 +184,27 @@ git config --global commit.gpgsign true
 `SCOPE=global` writes the container's own git config (`GIT_CONFIG_GLOBAL`, the `git` Feature's
 volume); `SCOPE=repo` writes the current repository's config, which in this collection can be
 **shared with the Windows host**, because a checkout's git dir may live under `.git-dirs` and be
-mounted into every container. The default is therefore `global` when the `git` Feature's volume is
-present (`GIT_CONFIG_GLOBAL` under `/var/lib/devcontainer-features/`), else `repo`, and the task
-says which it used. `task ssh-agent:git:verify` signs a throwaway message through the agent with
+mounted into every container. Then Windows git reads the same `user.signingkey key::<public key>`,
+signs through the Windows agent, which does not hold that key, and every commit on the host fails.
+**Where the git dir is shared with a Windows host, use `SCOPE=global`.** The default is therefore
+`global` when the `git` Feature's volume is present (`GIT_CONFIG_GLOBAL` under
+`/var/lib/devcontainer-features/`) or the host is Windows (`DCF_HOST_TYPE` `windows-*`), else
+`repo`, and the task says which it used. `task ssh-agent:git:verify` signs a throwaway message through the agent with
 `ssh-keygen -Y sign` and verifies it against a temporary `allowed_signers` file, printing `ok` or
 why not, without committing. To check signatures with `git log --show-signature`, also set
 `gpg.ssh.allowedSignersFile`; adding the public key to GitHub as a signing key marks the commits
-verified there.
+verified there, with the condition in the next section.
+
+## Signing and GitHub
+
+GitHub shows **Verified** only when the commit's **committer email is a verified email of the account
+that registered the signing key**. A repository whose agents commit as an address no account can
+claim (an `.invalid` address, to keep personal emails out of history) gets `verified: false` with
+`reason: no_user` on every agent commit, although the signature is good. That is expected, not a
+fault of this Feature: the signatures still check locally with `gpg.ssh.allowedSignersFile` and
+`git log --show-signature`, and a squash merge (or a merge queue's commit) made on GitHub is signed
+by GitHub itself and shows Verified. To get the badge on the agent commits, commit with an email
+the key's account has verified.
 
 ## Security notes
 
@@ -250,6 +264,11 @@ this collection or of `devcontainers/features` forwards the agent for the CLI; t
 the launcher's mount instead of a process on the host, and is honest where a host type cannot.
 
 ## Version and upgrade
+
+`1.1.1`: `git:verify` no longer ends with `tmp: unbound variable` after `ok` and removes its
+temporary folder; `git:signing` defaults to `SCOPE=global` on a Windows host (`DCF_HOST_TYPE`
+`windows-*`) even without the `git` Feature's volume, and with `SCOPE=repo` says to use `global`
+where the git dir is shared with Windows. Nothing in the key volume or git config changes on upgrade.
 
 `1.1.0`: dedicated-key guidance and warnings (default names, keys that also open something on the
 host), `key:new`'s default name `<repo>-<container>-sign`, `key:rotate`, `key:retire`, `key:age`

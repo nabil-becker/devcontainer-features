@@ -93,7 +93,7 @@ tasks:
 
   git:signing:
     dir: '{{.USER_WORKING_DIR}}'
-    desc: 'Configure git to sign commits and tags with a key of the agent (gpg.format ssh, user.signingkey key::<public key>, commit.gpgsign and tag.gpgsign true); works with a host agent too, it needs only the public key from ssh-add -L. KEY=<fingerprint or .pub path> picks the key (optional with exactly one). SCOPE=global writes the container''s own config (the git Feature''s volume); SCOPE=repo writes the current repository''s config, which can be SHARED with the Windows host through .git-dirs. Default: global when the git Feature''s volume is present, else repo.'
+    desc: 'Configure git to sign commits and tags with a key of the agent (gpg.format ssh, user.signingkey key::<public key>, commit.gpgsign and tag.gpgsign true); works with a host agent too, it needs only the public key from ssh-add -L. KEY=<fingerprint or .pub path> picks the key (optional with exactly one). SCOPE=global writes the container''s own config (the git Feature''s volume); SCOPE=repo writes the current repository''s config, which can be SHARED with the Windows host through .git-dirs. Default: global when the git Feature''s volume is present or the host is Windows (DCF_HOST_TYPE windows-*), else repo; use global wherever the git dir is shared with Windows.'
     vars:
       KEY: '{{.KEY | default ""}}'
       SCOPE: '{{.SCOPE | default ""}}'

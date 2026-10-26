@@ -1,6 +1,6 @@
 {
   "id": "ssh-agent",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "name": "SSH agent",
   "description": "Makes an SSH agent available to every process in the devcontainer (SSH_AUTH_SOCK=/var/lib/devcontainer-features/ssh-agent/agent.sock, also for `devcontainer exec`) so git commits can be signed with an SSH key: the devcontainer-cli launcher bind-mounts the host's agent socket onto that path where the host type has one (linux, macos, a WSL distro), the private key never entering the container; a post-start hook (ssh-agent-setup) checks it on every start and says plainly what a host type without one can do; the opt-in keyMode starts an agent inside the container and loads keys from its own volume instead, which breaks the no-key rule for whoever turns it on. Plus the Feature Taskfile (check, keys, key tasks including key:rotate, key:retire and key:age, git:signing, git:verify).",
   "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/ssh-agent",

@@ -389,7 +389,12 @@ pubkey_lines() { SSH_AUTH_SOCK="$ACTIVE" ssh-add -L 2>/dev/null; }
 default_scope() { # sets DEFAULT_SCOPE and DEFAULT_WHY
   case "${GIT_CONFIG_GLOBAL:-}" in
     /var/lib/devcontainer-features/*) DEFAULT_SCOPE=global; DEFAULT_WHY="the git Feature keeps the container's own global config in a volume" ;;
-    *) DEFAULT_SCOPE=repo; DEFAULT_WHY="no git Feature volume found" ;;
+    *)
+      case "$host_type" in
+        windows-*) DEFAULT_SCOPE=global; DEFAULT_WHY="on a Windows host the repository's config can be shared with Windows git, which would sign with a key its agent does not hold" ;;
+        *) DEFAULT_SCOPE=repo; DEFAULT_WHY="no git Feature volume found" ;;
+      esac
+      ;;
   esac
 }
 
@@ -437,6 +442,7 @@ cmd_git_signing() { # [key] [scope]
       git rev-parse --git-dir >/dev/null 2>&1 || { warn "SCOPE=repo needs a git repository in the current directory"; exit 1; }
       cfg=(--local)
       say "SCOPE=repo writes into this repository's own git config, which in this collection can be shared with the Windows host (a git dir kept under .git-dirs); SCOPE=global writes only the container's config."
+      say "if this git dir is shared with Windows, use SCOPE=global: Windows git would read user.signingkey key::<public key> and sign through a Windows agent that does not hold the key, so commits on the host fail."
       ;;
     *) warn "SCOPE is repo or global, not '$scope'"; exit 1 ;;
   esac
@@ -452,7 +458,9 @@ cmd_git_signing() { # [key] [scope]
 }
 
 cmd_git_verify() {
-  local format key pub tmp why
+  # tmp is deliberately not local: the EXIT trap below runs after this
+  # function has returned, and set -u would abort on an unbound name.
+  local format key pub why
   command -v git >/dev/null 2>&1 || { warn "git is not installed in this container"; exit 1; }
   command -v ssh-keygen >/dev/null 2>&1 || { warn "ssh-keygen is not installed in this container"; exit 1; }
   format="$(git config --get gpg.format 2>/dev/null || true)"
