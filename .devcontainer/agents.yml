@@ -1,0 +1,11 @@
+# The agents of this repository (the agents Feature): task agents -- <name> inside,
+# task devcontainer:agent -- <name> from the workstation; task agents:list shows them.
+agents:
+  # The host session, driven from the workstation and from the phone. On-demand with
+  # --remote-control until a background session is shown to be reachable through Remote
+  # Control (the agents proposal, decision D2 and fact 5); then it becomes resident.
+  - name: host
+    cli: claude
+    kind: on-demand
+    folder: .
+    args: [--remote-control]

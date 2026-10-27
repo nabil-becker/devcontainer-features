@@ -553,5 +553,17 @@ lacks 'never rm: the fake saw no rm' "$log" 'RM'
 check 'claude-fleet never invokes rm on a session (guard on the code)' 0 "$(grep -v '^[[:space:]]*#' "$fleet_sh" | grep -cE 'claude[[:space:]]+rm|\brm[[:space:]]+"?\$')"
 rm -f "$T"/agents.json.* "$T/agents.dup" "$T/count"
 
+echo "# deprecated (claude-code 1.7.0): one line, the scripts still work"
+echo '[]' > "$T/agents.json"
+err="$(cd "$T" && PATH="$bin:$PATH" CLAUDE_CONFIG_DIR="$T/cfg" FAKE_AGENTS="$T/agents.json" FAKE_LOG="$T/log" claude-host 2>&1 >/dev/null)"
+contains 'claude-host prints the deprecation line' "$err" 'claude-host: deprecated: use task agents -- <name>'
+contains 'the deprecation line names the claude-code 2.0 removal' "$err" 'claude-code 2.0 removes claude-host'
+err="$(cd "$T" && printf '{}' | PATH="$bin:$PATH" claude-host-pin 2>&1 >/dev/null)"; rc=$?
+contains 'claude-host-pin prints the deprecation line' "$err" 'claude-host-pin: deprecated'
+check 'claude-host-pin still exits 0' 0 "$rc"
+err="$(cd "$T" && PATH="$bin:$PATH" CLAUDE_CONFIG_DIR="$T/cfg" FAKE_AGENTS="$T/agents.json" FAKE_LOG="$T/log" \
+  SESSIONS='a|HOST_SESSION_A|.|' HOST_SESSION_A=11111111-1111-1111-1111-111111111111 claude-fleet --no-wait --no-view 2>&1 >/dev/null)"
+check 'claude-fleet: one deprecation line, none from the claude-host it calls' 1 "$(printf '%s\n' "$err" | grep -c 'deprecated')"
+
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

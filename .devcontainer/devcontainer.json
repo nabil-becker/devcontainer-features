@@ -48,6 +48,9 @@
     },
     "./features/gh": {},
     "./features/claude-code": {},
+    // The agent list is .devcontainer/agents.yml: `task agents -- host` inside,
+    // `task devcontainer:agent -- host` from the workstation.
+    "./features/agents": {},
     "./features/devhost": {}
   },
   // Host side, before every start: stage the Features, and make sure

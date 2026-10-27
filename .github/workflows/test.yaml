@@ -23,6 +23,7 @@ jobs:
           - go-task
           - devcontainer-cli
           - claude-code
+          - agents
           - coder-cli
           - openbao
           - velero
@@ -63,6 +64,7 @@ jobs:
           - go-task
           - devcontainer-cli
           - claude-code
+          - agents
           - coder-cli
           - openbao
           - velero

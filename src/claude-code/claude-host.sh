@@ -46,7 +46,11 @@
 # change with /rename and may collide. The transcript is looked up where
 # Claude Code keeps it for the current directory:
 #   ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/<cwd, every non-alphanumeric as ->/<uuid>.jsonl
+# Deprecated (claude-code 1.7.0): the agents Feature replaces it (task agents -- <name>, the
+# agent list .devcontainer/agents.yml); claude-code 2.0 removes it. It still works; one line
+# on stderr says so (once per call chain: CLAUDE_CODE_DEPRECATION_SHOWN).
 set -u
+[ -n "${CLAUDE_CODE_DEPRECATION_SHOWN:-}" ] || echo "claude-host: deprecated: use task agents -- <name> (the agents Feature, .devcontainer/agents.yml); claude-code 2.0 removes claude-host." >&2
 sid="${HOST_SESSION:-}"
 if [ -z "$sid" ]; then
   echo "claude-host: HOST_SESSION is not set; set it to a UUID to resume one session by its id." >&2

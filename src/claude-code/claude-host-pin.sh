@@ -26,7 +26,11 @@
 # CLAUDE_HOST_UPDATE_PIN calls: the one HOST_SESSION... line holding <old-id> gets
 # <new-id> (CLAUDE_HOST_PIN_VAR=<name> restricts the variable); not exactly one such
 # line: nothing is changed. Exit 0, or 1 when nothing was updated.
+# Deprecated (claude-code 1.7.0): the agents Feature replaces it (task agents -- <name>, the
+# agent list .devcontainer/agents.yml); claude-code 2.0 removes it. It still works; one line
+# on stderr says so (once per call chain: CLAUDE_CODE_DEPRECATION_SHOWN).
 set -u
+[ -n "${CLAUDE_CODE_DEPRECATION_SHOWN:-}" ] || echo "claude-host-pin: deprecated: use task agents -- <name> (the agents Feature, .devcontainer/agents.yml); claude-code 2.0 removes claude-host-pin." >&2
 uuid='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
 
 # env_files <dir>: first line the root (the folder holding .devcontainer), then the .env files

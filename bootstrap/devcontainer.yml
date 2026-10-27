@@ -80,7 +80,10 @@
 #                              ahead). No single quote in it. The contract is in
 #                              bootstrap/SHUTDOWN.md in the collection.
 #   FORCE=1 (task var)         stop/rebuild without running that check.
-#   HOST_SESSION               UUID of the Claude Code session that the claude
+#   AGENTS_FILE                for `agent` and `agent:list`: the agent list, relative to the
+#                              repository root (default .devcontainer/agents.yml; the agents
+#                              Feature resolves it inside: task variable, .env, environment).
+#   HOST_SESSION               (deprecated with `claude`) UUID of the Claude Code session that the claude
 #                              task resumes (HOST_SESSION_<DIR> per sub-folder).
 #                              A session running in the folder (`claude agents --json`,
 #                              an entry with a pid) is never started twice: claude-host
@@ -88,7 +91,7 @@
 #                              a stale pin (after /clear) is reported, and the opt-in
 #                              claude-host-pin SessionStart hook (claude-code Feature
 #                              NOTES) keeps the line in .devcontainer/.env current.
-#   SESSIONS                   for `claude:fleet`: one line per session,
+#   SESSIONS                   (deprecated with `claude:fleet`) one line per session,
 #                              name|session-variable|dir|extra claude args, set where the
 #                              Taskfile includes this file, e.g.
 #                                includes:
@@ -342,8 +345,23 @@ tasks:
           SUBCOMMAND: exec
           ARGS: 'pwsh -NoLogo'
 
+  agent:
+    desc: 'Start an agent of the repository''s agent list inside the devcontainer (the agents Feature: task agents -- <name>), starting the container first (through exec, which runs up; idempotent): task devcontainer:agent -- <name> [--resume|--new] [extra CLI args]. A resident agent is made to run in the background and attached; an on-demand agent opens a new session in this terminal. AGENTS_FILE=<repo-relative path> (before the --) picks another list than .devcontainer/agents.yml. Runs directly when already inside the container.'
+    interactive: true
+    cmds:
+      - task: run
+        vars:
+          CMD: '{{if .AGENTS_FILE}}AGENTS_FILE_TASK_VAR={{.AGENTS_FILE | shellQuote}} {{end}}agents start {{.CLI_ARGS}}'
+
+  agent:list:
+    desc: 'List the agents of the repository''s agent list with their kind, CLI, state and session id (the agents Feature: task agents:list), starting the container first; -- --json for a JSON array. Runs directly when already inside the container.'
+    cmds:
+      - task: run
+        vars:
+          CMD: '{{if .AGENTS_FILE}}AGENTS_FILE_TASK_VAR={{.AGENTS_FILE | shellQuote}} {{end}}agents list {{.CLI_ARGS}}'
+
   claude:
-    desc: 'Start or resume the Claude Code host session inside the devcontainer (claude-host from the claude-code Feature), starting the container first (through exec, which runs up; idempotent): the session named by HOST_SESSION in .devcontainer/.env is resumed by UUID, or created the first time; unset, a plain new session. DIR=<sub-folder> starts there and reads HOST_SESSION_<DIR> instead (e.g. DIR=rooms/solis -> HOST_SESSION_SOLIS); SESSION=<uuid> overrides both. Extra arguments after --: task devcontainer:claude -- --model sonnet. Runs directly when already inside the container.'
+    desc: 'Deprecated: use task devcontainer:agent -- <name> (the agents Feature); goes with claude-code 2.0. Start or resume the Claude Code host session inside the devcontainer (claude-host from the claude-code Feature), starting the container first (through exec, which runs up; idempotent): the session named by HOST_SESSION in .devcontainer/.env is resumed by UUID, or created the first time; unset, a plain new session. DIR=<sub-folder> starts there and reads HOST_SESSION_<DIR> instead (e.g. DIR=rooms/solis -> HOST_SESSION_SOLIS); SESSION=<uuid> overrides both. Extra arguments after --: task devcontainer:claude -- --model sonnet. Runs directly when already inside the container.'
     interactive: true
     vars:
       DIR: '{{.DIR | default ""}}'
@@ -352,17 +370,19 @@ tasks:
         sh: 'printf %s "${{"{"}}{{._SESSION_VAR}}:-${HOST_SESSION:-}}"'
       SESSION: '{{.SESSION | default ._SESSION_FROM_ENV}}'
     cmds:
+      - cmd: 'echo "devcontainer:claude is deprecated: use task devcontainer:agent -- <name> (the agents Feature, .devcontainer/agents.yml); it goes with claude-code 2.0." >&2'
       - task: run
         vars:
           CMD: '{{if .DIR}}cd ''{{.DIR}}'' && {{end}}HOST_SESSION=''{{.SESSION}}'' claude-host {{.CLI_ARGS}}'
 
   claude:fleet:
-    desc: 'Several Claude Code sessions in one terminal, never a second copy of one (claude-fleet from the claude-code Feature, which needs the claude-code Feature''s claude-host and Claude Code with `claude agents --json`): SESSIONS, set by the including Taskfile (include vars), has one line per session, name|session-variable|dir|extra claude args. A session counts as running when its id (the variable''s value, from .devcontainer/.env first, then the container''s environment) or its folder is live in `claude agents --json`; the others are started in the background with claude-host --bg in their folder; then `claude agents` opens. It first waits until sessions restored after a rebuild are stable (-- --no-wait skips that). Several live sessions for one agent are reported; -- --stop-duplicates stops the extras with `claude stop` (never rm). -- --plan prints what it would do and starts nothing; -- --no-view starts the missing ones without opening the view. Starts the container first; runs directly when already inside it.'
+    desc: 'Deprecated: use the agent list and task devcontainer:agent (the agents Feature; residents start with the container); goes with claude-code 2.0. Several Claude Code sessions in one terminal, never a second copy of one (claude-fleet from the claude-code Feature, which needs the claude-code Feature''s claude-host and Claude Code with `claude agents --json`): SESSIONS, set by the including Taskfile (include vars), has one line per session, name|session-variable|dir|extra claude args. A session counts as running when its id (the variable''s value, from .devcontainer/.env first, then the container''s environment) or its folder is live in `claude agents --json`; the others are started in the background with claude-host --bg in their folder; then `claude agents` opens. It first waits until sessions restored after a rebuild are stable (-- --no-wait skips that). Several live sessions for one agent are reported; -- --stop-duplicates stops the extras with `claude stop` (never rm). -- --plan prints what it would do and starts nothing; -- --no-view starts the missing ones without opening the view. Starts the container first; runs directly when already inside it.'
     interactive: true
     preconditions:
       - sh: '[ -n "{{.SESSIONS | default "" | trim}}" ]'
         msg: 'devcontainer:claude:fleet needs SESSIONS, the list of sessions to keep running, one per line: name|session-variable|dir|extra claude args. Set it in the vars of your root Taskfile''s devcontainer include, e.g. SESSIONS: "host|HOST_SESSION|.|" (see the claude-code Feature NOTES, "Fleet"). A repository with one session uses task devcontainer:claude instead.'
     cmds:
+      - cmd: 'echo "devcontainer:claude:fleet is deprecated: list the agents in .devcontainer/agents.yml and use task devcontainer:agent (the agents Feature); it goes with claude-code 2.0." >&2'
       # SESSIONS travels base64-encoded: its lines hold | and spaces, and the
       # command is quoted again by exec and the host shell.
       - task: run

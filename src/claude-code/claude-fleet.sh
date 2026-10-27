@@ -50,7 +50,12 @@
 # missing ones and leaves the view out. When the list cannot be read, nothing is started (exit 1):
 # guessing would start copies. Exit 1 also when a start fails, a dir is missing
 # or an id is not a UUID; the other sessions are still handled.
+# Deprecated (claude-code 1.7.0): the agents Feature replaces it (task agents -- <name>, the
+# agent list .devcontainer/agents.yml); claude-code 2.0 removes it. It still works; one line
+# on stderr says so (once per call chain: CLAUDE_CODE_DEPRECATION_SHOWN).
 set -u
+[ -n "${CLAUDE_CODE_DEPRECATION_SHOWN:-}" ] || echo "claude-fleet: deprecated: use task agents -- <name> (the agents Feature, .devcontainer/agents.yml); claude-code 2.0 removes claude-fleet." >&2
+export CLAUDE_CODE_DEPRECATION_SHOWN=1  # the claude-host it calls says nothing more
 
 plan='' view=1 wait=1 stopdup=''
 for a in "$@"; do

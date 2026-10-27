@@ -154,7 +154,7 @@ installed globally on any host. Its host settings are
 
 `task devcontainer:up` (alias `start`) and `task devcontainer:stop` (alias
 `down`) are idempotent, so other tasks can require them. `up` starts a stopped
-container and leaves a running one alone. `exec`, `shell`, `pwsh` and `claude`
+container and leaves a running one alone. `exec`, `shell`, `pwsh`, `agent` and `claude`
 run `up` first; `rebuild` runs `stop` first (shutdown check included; `FORCE=1` and
 `STOP_CHECK` pass through) and then recreates the container; a stop that fails
 (the check refuses, or any error) stops the rebuild too, so `FORCE=1` is the
@@ -311,6 +311,13 @@ the host type needs; ADR 0024 decides it, `docs/proposals/host-profile.md` is th
   repository line for the same target suppress it like the others. `DCF_HOST_CLOUD_FOLDER` itself is passed on to the
   CLI unchanged, so `containerEnv` can map it (the bootstrap's template does) and the Feature's report can name the
   source. Not verified on a real host: Docker Desktop and wslc taking a Windows path with spaces from `--mount`.
+- **One verb for every agent (1.13.0).** `task devcontainer:agent -- <name> [--resume|--new] [extra CLI args]` runs the
+  `agents` Feature's start verb in the container (`agents start`, through `exec` with a terminal, starting the container
+  first; directly when already inside), and `task devcontainer:agent:list [-- --json]` its list. `AGENTS_FILE=<path>`
+  on the command line (before the `--`) picks another agent list; it reaches the container as `AGENTS_FILE_TASK_VAR`,
+  and the `agents` command resolves it against `.env` and the environment there. Taskfile tasks only: neither launcher
+  twin changes. `devcontainer:claude` and `devcontainer:claude:fleet` still work and print one line saying they are
+  deprecated and go with claude-code 2.0; the migration is in `docs/migrations/agents.md` of the collection.
 - **Fleet waits, reports and stops duplicates (1.11.0).** `task devcontainer:claude:fleet -- --no-wait|--stop-duplicates` reach `claude-fleet` (claude-code 1.6.0); the task description says so.
 - **Several Claude sessions (1.9.0).** `task devcontainer:claude:fleet` passes `SESSIONS` (set by the including Taskfile)
   and its arguments to the claude-code Feature's `claude-fleet` in the container (through `exec`, or directly inside); see

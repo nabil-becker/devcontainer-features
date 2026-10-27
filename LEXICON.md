@@ -57,6 +57,14 @@ The domain words of the project itself are not here; they live with the project'
   the **workstation**, never "the host".
 - **Inter** (interface agent): an agent that works with an engineer, directly or through another
   inter; the host is the main one.
+- **Resident agent**: an agent kind in the agent list: it runs continuously in the background, and
+  starting it attaches to it (starting it first if it is not running). The host becomes one once
+  Remote Control reaches a background session; until then it is on-demand. Not to be confused with
+  a back, which no person attaches to.
+- **On-demand agent**: an agent kind in the agent list: starting it opens a new session, and it
+  can resume an earlier one when asked. A designer or a general Claude instance is one.
+- **Agent list**: the file a repository keeps naming its agents, each with its kind and CLI;
+  `.devcontainer/agents.yml` by default, with a configurable path relative to the repository root.
 - **Back** (background agent): an agent that never works with a person. After each turn, and after
   each con's job, it reads what was done and keeps one record current, so no inter spends a turn
   on upkeep. It reports only through a quiet notice. Each runs on its own model, inside the

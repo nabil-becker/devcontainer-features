@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Installs Anthropic's Claude Code CLI (https://code.claude.com/docs) and the
-# pieces that make it part of this collection's ecosystem: the claude-host
-# launcher, the claude-fleet command, the post-create setup of CLAUDE_CONFIG_DIR, and the Feature
-# Taskfile. Feature options arrive as upper-cased environment variables (see
+# pieces that make it part of this collection's ecosystem: agent-adapter-claude (the agents
+# Feature's adapter), the deprecated claude-host launcher and claude-fleet command, the post-create
+# setup of CLAUDE_CONFIG_DIR, and the Feature Taskfile. Feature options arrive as upper-cased environment variables (see
 # devcontainer-feature.json): INSTALL, VERSION.
 #
 # State: devcontainer-feature.json points CLAUDE_CONFIG_DIR at
@@ -144,6 +144,9 @@ install -m 0755 "$feature_dir/claude-fleet.sh" /usr/local/bin/claude-fleet
 # claude-host's CLAUDE_HOST_UPDATE_PIN calls).
 install -m 0755 "$feature_dir/claude-host-pin.sh" /usr/local/bin/claude-host-pin
 install -m 0755 "$feature_dir/claude-code-setup.sh" /usr/local/bin/claude-code-setup
+# agent-adapter-claude is Claude Code's adapter for the agents Feature (task agents -- <name>),
+# which replaces claude-host, claude-fleet and claude-host-pin (deprecated; gone in 2.0).
+install -m 0755 "$feature_dir/agent-adapter-claude.sh" /usr/local/bin/agent-adapter-claude
 # dcf-persist is the shared state-directory helper the hook calls (verbatim
 # copy of src/common/dcf-persist.sh; every Feature of this collection
 # installs the same file).

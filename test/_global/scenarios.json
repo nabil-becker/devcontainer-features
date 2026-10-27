@@ -10,6 +10,7 @@
       "go-task": {},
       "devcontainer-cli": {},
       "claude-code": {},
+      "agents": {},
       "coder-cli": {},
       "openbao": {},
       "velero": {},

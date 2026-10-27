@@ -7,6 +7,7 @@ source dev-container-features-test-lib
 
 check "no claude binary" bash -c "! command -v claude"
 check "claude-host on PATH" command -v claude-host
+check "agent-adapter-claude on PATH" command -v agent-adapter-claude
 check "claude-code-setup on PATH" command -v claude-code-setup
 check "dcf-persist on PATH" command -v dcf-persist
 check "CLAUDE_CONFIG_DIR points at the Feature's state dir" bash -c "[ \"\$CLAUDE_CONFIG_DIR\" = /var/lib/devcontainer-features/claude-code ]"
