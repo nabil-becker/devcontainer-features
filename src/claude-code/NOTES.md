@@ -1,3 +1,46 @@
+## Deprecated in 1.7.0: claude-host, claude-fleet, claude-host-pin
+
+The [`agents`](../agents) Feature replaces them: a repository lists its agents in
+`.devcontainer/agents.yml` (name, CLI, kind, folder, args) and starts any of them with
+`task agents -- <name>` inside, `task devcontainer:agent -- <name>` from the host. No session id
+is pinned anywhere, so `HOST_SESSION`, the `claude-host-pin` hook and `SESSIONS` go. This
+release keeps the three scripts working; each prints one line on stderr saying it is deprecated
+and that **claude-code 2.0 removes it** (`claude-fleet` says it once, not again for the
+`claude-host` it calls). `task claude-code:host` and `task claude-code:fleet` say so in their
+descriptions. The migration for a consuming repository is in
+[docs/migrations/agents.md](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/migrations/agents.md).
+
+## The agents adapter (`agent-adapter-claude`, 1.7.0)
+
+Claude Code's adapter for the `agents` Feature, on PATH. The `agents` command calls it; nothing
+else should. The contract (verbs, exit codes) is in the `agents` Feature's notes.
+
+| Verb | What it runs |
+| --- | --- |
+| `start-bg` | `cd <folder> && claude --bg --name <name> <args>`; waits until the session is listed and prints its id |
+| `wake` | the agent's newest stopped or failed session, by its full id: `cd <folder> && claude --bg --resume <session id>` (the same id and conversation; Claude Code 2.1.308 says `woke session ...`) |
+| `attach` | `claude attach <id>` of its newest running session; an interactive one is refused with the pid and tty of the terminal that holds it |
+| `resume` | `cd <folder> && claude --resume <session id> <args>` of its newest session; refused while that session runs (a second process on one transcript) |
+| `new` | `cd <folder> && claude --name <name> <args>` |
+| `list` | `claude agents --json --all`: name, session id, state (a pid is running; failed; anything else stopped), folder, newest first |
+| `stop` | `claude stop <id>` of its newest running session; `--extras` stops every other running one instead. Never `claude rm`. |
+| `logs` | `claude logs <id>` |
+
+**Identity by name and folder, action by id.** A session is the agent's when its `cwd` is the
+agent's folder and its `name` is the agent's name, or that name with Claude Code's collision
+number (`host (2)`). `attach`, `stop` and `logs` take the session's short `id` from the list (the
+full `sessionId` when there is none), never the name: `claude attach host` also matches part of a
+name (`host-review`) and works only while the session runs, and `claude stop` takes an id only.
+A stopped session is woken by its full id with `--bg --resume`; `--bg -c` and `--bg --resume
+<name>` start copies, so the adapter never uses them. The name is set with `--name` at start and
+survives `/clear`, so nothing has to be written back. The JSON is read with `sed` (no jq or python
+in the Feature), as `claude-host` does. Needs Claude Code 2.1.290 or later (session names).
+
+Not verified against a live `claude --bg` in CI: the unit tests (`task test:claude-unit`) use a
+fake `claude`; the calls rest on the facts checked live on Claude Code 2.1.308 (the agents
+proposal, section 7). A background session in a folder Claude Code has never trusted fails to
+start (`Workspace not trusted`): run `claude` there once and accept.
+
 ## Augment, don't duplicate
 
 With the default `install: auto` this Feature keeps a `claude` that is
@@ -20,7 +63,8 @@ version and verifies nothing, which is why this installer still exists.
 
 What the Feature adds in both cases:
 
-- `claude-host` on PATH: start or resume **one** session by its UUID. With
+- `agent-adapter-claude` on PATH (1.7.0, above).
+- `claude-host` on PATH (deprecated in 1.7.0, see the top): start or resume **one** session by its UUID. With
   `HOST_SESSION=<uuid>` set it runs `claude --resume <uuid>` when that
   session's transcript exists for the current directory, else
   `claude --session-id <uuid>` to create it; unset, a plain `claude` with a
@@ -59,7 +103,7 @@ What the Feature adds in both cases:
   python, which the Feature does not install. Deliberately not done: falling back to the newest
   transcript of the folder when the pin is stale. It is too implicit; the hook below makes it
   unnecessary.
-- **`claude-host-pin`: keep the pin equal to the running id** (opt-in SessionStart hook, 1.5.0).
+- **`claude-host-pin`: keep the pin equal to the running id** (opt-in SessionStart hook, 1.5.0; deprecated in 1.7.0).
   The Feature manages no Claude Code settings, so a repository registers the hook in its
   `.claude/settings.json`:
 
@@ -84,7 +128,7 @@ What the Feature adds in both cases:
   required. A variable without a line is left alone (never adds one) unless
   `CLAUDE_HOST_PIN_CREATE=1` appends `VAR=<id>` to `.devcontainer/.env` (no file holds the variable). It always exits 0, notes go to stderr, so a
   session never fails because of it. The consumer's own write-back and second-copy check can go.
-- **`claude-fleet`: several sessions in one terminal, never a second copy** (1.5.0; 1.6.0 below). Bash
+- **`claude-fleet`: several sessions in one terminal, never a second copy** (1.5.0; 1.6.0 below; deprecated in 1.7.0). Bash
   like `claude-host`, for the same reason (no jq, no python; the container always has
   bash), installed beside it, run where `claude agents` runs. `SESSIONS` (environment, or
   `SESSIONS_B64` base64-encoded) holds one line per session,

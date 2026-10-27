@@ -80,7 +80,7 @@ tasks:
           echo "generated READMEs are up to date"
 
   lint:
-    desc: 'shellcheck every shell script, yamllint every YAML file (.yamllint), PSScriptAnalyzer every PowerShell file, the vendored copies of src/common/*.sh (in src/ and local-features/) identical to the canonical ones, and the Docker-free unit tests (devhost tooling, the git Feature''s .git-dirs mapping, the ssh-agent Feature''s setup script, the cloud-folder Feature''s status and sync, the claude-code Feature''s live-session rule and claude-fleet, the host launcher) (CI runs exactly this inside .devcontainer/ci; the tools must be installed - this repo''s devcontainer has them, at the pinned versions).'
+    desc: 'shellcheck every shell script, yamllint every YAML file (.yamllint), PSScriptAnalyzer every PowerShell file, the vendored copies of src/common/*.sh (in src/ and local-features/) identical to the canonical ones, and the Docker-free unit tests (devhost tooling, the git Feature''s .git-dirs mapping, the ssh-agent Feature''s setup script, the cloud-folder Feature''s status and sync, the agents Feature''s list and verbs, the claude-code Feature''s agent adapter, live-session rule and claude-fleet, the host launcher and its agent task) (CI runs exactly this inside .devcontainer/ci; the tools must be installed - this repo''s devcontainer has them, at the pinned versions).'
     cmds:
       - shellcheck -x src/*/*.sh local-features/*/*.sh local-features/*/share/bin/*.sh local-features/*/share/jobs/*/*.sh test/*/*.sh test/*/unit/*.sh test/bootstrap/*.sh bootstrap/*.sh bootstrap/host/*.sh .githooks/* .devcontainer/*.sh
       - yamllint --strict .
@@ -98,13 +98,26 @@ tasks:
       - task: test:ssh-key-import
       - task: test:ssh-agent-unit
       - task: test:cloud-folder-unit
+      - task: test:agents-unit
       - task: test:claude-unit
       - task: test:claude-fleet-task
+      - task: test:agent-task
 
   test:claude-unit:
-    desc: 'Docker-free tests of the claude-code Feature''s claude-host live-session rule (a running session, one with a pid, refuses a second copy; ended sessions never count; CLAUDE_HOST_ALLOW_SECOND; the stale-pin warning and CLAUDE_HOST_UPDATE_PIN; `claude agents --json` unavailable), of the claude-host-pin SessionStart hook (the right .env line, every other byte kept, never fails) and of claude-fleet (running by id or by folder, unset variable, start with --bg in the folder, --plan, --no-view, the environment beating .env); a fake claude on PATH answers `agents --json` from a fixture and records the other calls; part of lint.'
+    desc: 'Docker-free tests of the claude-code Feature''s claude-host live-session rule (a running session, one with a pid, refuses a second copy; ended sessions never count; CLAUDE_HOST_ALLOW_SECOND; the stale-pin warning and CLAUDE_HOST_UPDATE_PIN; `claude agents --json` unavailable), of the claude-host-pin SessionStart hook (the right .env line, every other byte kept, never fails) of claude-fleet (running by id or by folder, unset variable, start with --bg in the folder, --plan, --no-view, the environment beating .env), the deprecation line of the three, and of agent-adapter-claude (list from `claude agents --json --all`, a session found by name and folder, every action by id, a stopped one woken with --bg --resume <session id>, never -c, never rm, resume refused while running, --extras); a fake claude on PATH answers `agents --json` and records the other calls; part of lint.'
     cmds:
       - bash test/claude-code/unit/live_session_test.sh
+      - bash test/claude-code/unit/adapter_test.sh
+
+  test:agents-unit:
+    desc: 'Docker-free tests of the agents Feature''s agents command: the agent list (the YAML subset, required keys, unknown keys warned, errors with file and line), AGENTS_FILE from the task variable, .env, .devcontainer/.env, the environment or the default (a missing file named with its source), each verb per kind (start, --resume, --new and its question, up, list, stop, logs), the no-terminal rule, the fallbacks when the adapter answers exit 3, the once-per-container-start marker, and the Feature Taskfile; a fake adapter keeps sessions in a file and records every call; part of lint. Needs task for the Taskfile part.'
+    cmds:
+      - bash test/agents/unit/agents_test.sh
+
+  test:agent-task:
+    desc: 'Docker-free test of how `task devcontainer:agent` and `devcontainer:agent:list` hand the name, the flags and AGENTS_FILE to the agents command, inside the container and through the exec task from the host (--dry), and that the deprecated devcontainer:claude and devcontainer:claude:fleet still run and print one deprecation line; fake commands record what they get; part of lint.'
+    cmds:
+      - bash test/bootstrap/agent_task_test.sh
 
   test:claude-fleet-task:
     desc: 'Docker-free test of how `task devcontainer:claude:fleet` hands SESSIONS (encoded) and its arguments to claude-fleet, inside the container and through the exec task from the host (--dry), and its refusal without SESSIONS; a fake claude-fleet records what it gets; part of lint.'

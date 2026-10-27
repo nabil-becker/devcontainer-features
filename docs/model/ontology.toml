@@ -876,3 +876,38 @@ summary = "A bind mount the launcher adds to devcontainer up from a per-host-typ
 subject = "devcontainer"
 predicate = "uses"
 object = "host-mount"
+
+[agent-list]
+type = "record"
+term = "Agent list"
+summary = "The file a repository keeps naming its agents (name, CLI, folder, args, kind); .devcontainer/agents.yml unless AGENTS_FILE names another repo-relative path."
+
+[resident-agent]
+type = "concept"
+term = "Resident agent"
+summary = "An agent kind: runs continuously in the background; starting it attaches, starting it first when it is not running."
+
+[on-demand-agent]
+type = "concept"
+term = "On-demand agent"
+summary = "An agent kind: starting it opens a new session; it resumes an earlier one only when asked."
+
+[[relation]]
+subject = "agent-list"
+predicate = "contains"
+object = "resident-agent"
+
+[[relation]]
+subject = "agent-list"
+predicate = "contains"
+object = "on-demand-agent"
+
+[[relation]]
+subject = "resident-agent"
+predicate = "is-a"
+object = "agent"
+
+[[relation]]
+subject = "on-demand-agent"
+predicate = "is-a"
+object = "agent"

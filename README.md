@@ -10,7 +10,8 @@ installing Node.js, and a one-line bootstrap that wires both into any repo.
 | --- | --- |
 | [`go-task`](src/go-task) | [Task](https://taskfile.dev) (`task`), sha256-verified from GitHub releases, with bash/zsh completions. |
 | [`devcontainer-cli`](src/devcontainer-cli) | `@devcontainers/cli` as `devcontainer`, on a private Node.js under `/opt/devcontainer-cli` that is never put on PATH. |
-| [`claude-code`](src/claude-code) | [Claude Code](https://code.claude.com/docs): the native release binary (no Node.js, version pinnable) unless a `claude` is already there (the official Anthropic Feature), plus the `claude-host` launcher (a running session of the folder is never started twice), `claude-host-pin` (opt-in SessionStart hook keeping the pin current), `claude-fleet` (several sessions in one terminal) and the state (`CLAUDE_CONFIG_DIR`) in a volume it owns. |
+| [`claude-code`](src/claude-code) | [Claude Code](https://code.claude.com/docs): the native release binary (no Node.js, version pinnable) unless a `claude` is already there (the official Anthropic Feature), plus `agent-adapter-claude` (Claude Code's adapter for the `agents` Feature) and the state (`CLAUDE_CONFIG_DIR`) in a volume it owns; the `claude-host` launcher, `claude-host-pin` hook and `claude-fleet` still work in 1.7.0 but are deprecated (claude-code 2.0 removes them). |
+| [`agents`](src/agents) | One list of a repository's agents (`.devcontainer/agents.yml`: name, CLI, folder, args, kind) and one verb for every agent CLI: `task agents -- <name>` makes a `resident` agent run in the background and attaches, or opens a new session of an `on-demand` one; `agents:up` starts the residents with the container; each CLI Feature supplies the adapter. |
 | [`git`](src/git) | git augmented for the container: a worktree-aware wrapper that scopes `GIT_DIR` to the checkout and maps a `.git` pointer under the host's `.git-dirs` onto one shared mount, `safe.directory` and `core.hooksPath` at post-create, the global config in a volume it owns. |
 | [`gh`](src/gh) | [GitHub CLI](https://cli.github.com) from GitHub releases, checksum-verified, unless the official Feature installed it; its login (`GH_CONFIG_DIR`) in a volume it owns, git's GitHub credentials taken from it. |
 | [`ssh-agent`](src/ssh-agent) | `SSH_AUTH_SOCK` at a fixed path in every process, so git commits can be signed with an SSH key: the launcher mounts the host's agent socket (linux, macOS, a WSL distro), the private key never entering the container; the Windows engines get a plain explanation and an opt-in, temporary key mode; `ssh-agent:*` tasks for keys, dedicated-key warnings, rotation and retirement (`key:rotate`, `key:retire`, `key:age`) and git signing setup. |
@@ -75,14 +76,17 @@ gap to close here (see [Contributing from a consuming repo](#contributing-from-a
   worktrees stay out of the checkout too (`PYTHONPYCACHEPREFIX`, a volume
   over `.claude/worktrees`), or a synced checkout carries every build
   artefact.
-- **One session per role, found by UUID.** `claude-host` resumes the session
-  in `HOST_SESSION` (from `.devcontainer/.env`) wherever it runs;
-  `task devcontainer:claude` does it from the host, `task claude-code:host`
-  inside, `DIR=<sub-folder>` for a session per sub-folder. A session that is
-  running in the folder (`claude agents --json`, an entry with a pid) is never
-  started a second time (claude-host refuses and names it; `/clear` gives a
-  session a new id, which the opt-in `claude-host-pin` SessionStart hook writes back to `.env`); several agents in one terminal are
-  `task devcontainer:claude:fleet` (below), never a second copy of one.
+- **One list of agents, one verb.** A repository names its agents in
+  `.devcontainer/agents.yml` (the `agents` Feature): a name, a CLI, a folder,
+  extra args and a kind. `task agents -- <name>` inside, `task
+  devcontainer:agent -- <name>` from the host, does the right thing for the
+  kind: a `resident` agent is made to run in the background and attached, an
+  `on-demand` one opens a new session (`--resume` for its latest). Each CLI
+  Feature supplies an adapter (`agent-adapter-claude` from `claude-code`); the
+  adapter finds a session by its name and folder and acts on it by id, so no
+  session id is pinned anywhere and nothing starts a second copy of a running
+  agent. `claude-host`, `claude-fleet`, `HOST_SESSION` and `SESSIONS` are
+  deprecated and go with claude-code 2.0.
 - **Settings are plain variables, three ways.** Command-line var, then the
   `.env` files, then the exported environment, with the same names in the
   tasks, the PowerShell scripts and their bash twins.
@@ -268,8 +272,10 @@ Each Feature stores its persistent state (logins, config, transcripts) in a name
 | `devcontainer:ssh-key-import FILE=<host path>` | Opt-in key mode: stream a private key file of the host (and its `.pub`) into the running container's `ssh-agent` key volume through `devcontainer exec` on stdin (never an argument), mode 0600, then load it; prints the fingerprint, never the key; warns (never blocks) when FILE has a default name or its public key also opens this host. Refuses when FILE is missing, no container runs, or key mode is off there. Host only. |
 | `devcontainer:host` | Print the host profile (`HOST_TYPE` and why, engine, `DCF_HOST_*`) and the host mounts `up` would add or skip; starts nothing. |
 | `devcontainer:exec CMD='...'` / `shell` / `pwsh` | Run a command (base64-safe), an interactive bash, or PowerShell in the container. |
-| `devcontainer:claude [DIR=<sub-folder>] [SESSION=<uuid>] [-- <claude args>]` | Start or resume the Claude Code host session inside (needs the `claude-code` Feature): `HOST_SESSION` from `.devcontainer/.env`, `HOST_SESSION_<DIR>` for a sub-folder. Runs directly when already inside the container. |
-| `devcontainer:claude:fleet [-- --plan\|--no-view\|--no-wait\|--stop-duplicates]` | Several Claude Code sessions in one terminal (`claude-fleet` from the `claude-code` Feature): `SESSIONS` (include `vars:`; one line per session, `name\|session-variable\|dir\|extra claude args`) is read against `claude agents --json`; a session counts as running when its id (from `.devcontainer/.env`, then the container's environment) or its folder is live, the missing ones start in the background with `claude-host --bg` in their folder, then `claude agents` opens. It first waits for sessions restored after a rebuild to settle (`-- --no-wait` skips that); several live sessions for one agent are reported, and `-- --stop-duplicates` stops the extras with `claude stop` (never rm). `-- --plan` prints what it would do and starts nothing; `-- --no-view` skips the view. |
+| `devcontainer:agent [AGENTS_FILE=<path>] -- <name> [--resume\|--new] [<CLI args>]` | Start an agent of the repository's agent list inside (needs the `agents` Feature and the adapter of the agent's CLI): a `resident` runs in the background and is attached, an `on-demand` agent opens a new session in this terminal. Runs directly when already inside the container. |
+| `devcontainer:agent:list [-- --json]` | The agents with their kind, CLI, state and session id. |
+| `devcontainer:claude [DIR=<sub-folder>] [SESSION=<uuid>] [-- <claude args>]` | Deprecated (prints one line; goes with claude-code 2.0): use `devcontainer:agent`. Start or resume the Claude Code host session inside (needs the `claude-code` Feature): `HOST_SESSION` from `.devcontainer/.env`, `HOST_SESSION_<DIR>` for a sub-folder. Runs directly when already inside the container. |
+| `devcontainer:claude:fleet [-- --plan\|--no-view\|--no-wait\|--stop-duplicates]` | Deprecated (prints one line; goes with claude-code 2.0): list the agents in `agents.yml` instead. Several Claude Code sessions in one terminal (`claude-fleet` from the `claude-code` Feature): `SESSIONS` (include `vars:`; one line per session, `name\|session-variable\|dir\|extra claude args`) is read against `claude agents --json`; a session counts as running when its id (from `.devcontainer/.env`, then the container's environment) or its folder is live, the missing ones start in the background with `claude-host --bg` in their folder, then `claude agents` opens. It first waits for sessions restored after a rebuild to settle (`-- --no-wait` skips that); several live sessions for one agent are reported, and `-- --stop-duplicates` stops the extras with `claude stop` (never rm). `-- --plan` prints what it would do and starts nothing; `-- --no-view` skips the view. |
 | `devcontainer:config` | Resolved configuration. |
 | `devcontainer:<anything>` | Passthrough to that CLI subcommand, args after `--`. |
 | `devcontainer:reset-storage` | wslc.exe only: reset WSL Containers' storage after a read-only BuildKit error. |
@@ -305,6 +311,14 @@ Where there is no host folder (a cluster), `cloud-folder` 1.1.0 syncs it with rc
 `remotePath`, run `task cloud-folder:login` once, and a timer keeps the folder in sync; add
 `cloud-folder-setup shutdown-check` to your `shutdown:check` so a stop waits for a running sync (see the Feature's
 NOTES).
+
+**One verb for every agent (`agents` 1.0.0, claude-code 1.7.0, devcontainer-cli 1.13.0):** add
+`ghcr.io/nabil-becker/devcontainer-features/agents:1` to the `features`, write `.devcontainer/agents.yml` (one entry per
+agent: `name`, `cli`, `kind` resident or on-demand, `folder`, `args`) and start them with `task devcontainer:agent --
+<name>` (inside: `task agents -- <name>`). That replaces `devcontainer:claude`, `devcontainer:claude:fleet` with
+`SESSIONS`, the `HOST_SESSION...` pins in `.devcontainer/.env`, the `claude-host-pin` hook and any join script of your
+own; they keep working, with a deprecation line, until claude-code 2.0. Step by step:
+[docs/migrations/agents.md](docs/migrations/agents.md).
 
 All of them also answer to `dc:` (the include's alias in the generated
 Taskfile). Each task dispatches per platform (Task's per-command

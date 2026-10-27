@@ -11,14 +11,14 @@ tasks:
 
   host:
     dir: '{{.USER_WORKING_DIR}}'
-    desc: 'Start or resume the host session with claude-host: the session named by HOST_SESSION (a UUID) is resumed, or created under that UUID the first time; unset, a plain new session. Extra arguments after --, e.g. task claude-code:host -- --model sonnet. From the host machine use task devcontainer:claude instead.'
+    desc: 'Deprecated (claude-code 2.0 removes it): use task agents -- <name> (the agents Feature). Start or resume the host session with claude-host: the session named by HOST_SESSION (a UUID) is resumed, or created under that UUID the first time; unset, a plain new session. Extra arguments after --, e.g. task claude-code:host -- --model sonnet. From the host machine use task devcontainer:claude instead.'
     interactive: true
     cmds:
       - claude-host {{.CLI_ARGS}}
 
   fleet:
     dir: '{{.USER_WORKING_DIR}}'
-    desc: 'Several sessions in one terminal, never a second copy: claude-fleet reads SESSIONS from the environment (one line per session, name|session-variable|dir|extra claude args), starts the ones not running in the background (a session counts as running when its id or its folder is in `claude agents --json`) and opens `claude agents`. Before reconciling it waits until the restored sessions are stable (-- --no-wait skips that). Duplicates (several live sessions for one agent) are reported, and -- --stop-duplicates stops the extras with `claude stop` (never rm). Ids are read from .devcontainer/.env first, then the environment. -- --plan prints what it would do and starts nothing; -- --no-view leaves the view out. From the host machine use task devcontainer:claude:fleet.'
+    desc: 'Deprecated (claude-code 2.0 removes it): use the agent list and task agents:up (the agents Feature). Several sessions in one terminal, never a second copy: claude-fleet reads SESSIONS from the environment (one line per session, name|session-variable|dir|extra claude args), starts the ones not running in the background (a session counts as running when its id or its folder is in `claude agents --json`) and opens `claude agents`. Before reconciling it waits until the restored sessions are stable (-- --no-wait skips that). Duplicates (several live sessions for one agent) are reported, and -- --stop-duplicates stops the extras with `claude stop` (never rm). Ids are read from .devcontainer/.env first, then the environment. -- --plan prints what it would do and starts nothing; -- --no-view leaves the view out. From the host machine use task devcontainer:claude:fleet.'
     interactive: true
     cmds:
       - claude-fleet {{.CLI_ARGS}}
