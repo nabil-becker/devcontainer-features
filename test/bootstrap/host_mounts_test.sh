@@ -4,8 +4,9 @@
 # tests 'Host mounts' in DevcontainerCli.Tests.ps1: the --mount argument per host type (linux,
 # macos, windows-wsl-docker), the source folder created, a mount skipped when the repository's
 # devcontainer.json already declares its target (JSONC: comments, trailing commas, objects,
-# --config), HOST_MOUNTS=false, no mount for build/exec/read-configuration, and what `host`
-# lists. A stub `devcontainer` first on PATH records its arguments, one per line.
+# --config), HOST_MOUNTS=false, no mount for build/exec/read-configuration, what `host`
+# lists, the SSH agent socket mount, and the cloud folder (DCF_HOST_CLOUD_FOLDER, a Windows path,
+# a missing folder, the fixed target). A stub `devcontainer` first on PATH records its arguments, one per line.
 # Part of `task lint` (`task test:host-mounts`). CLI_SH points the tests at another copy of the
 # script (used to show a test fails when the code it covers is broken).
 set -u
@@ -165,6 +166,47 @@ ws="$(new_ws "$plain")"; run linux "$ws" -- host
 check 'host shows DCF_HOST_SSH_AGENT: none without a socket' 'DCF_HOST_SSH_AGENT : none' "$(grep '^DCF_HOST_SSH_AGENT' <<<"$out")"
 ws="$(new_ws "$plain")"; run linux "$ws" SSH_AUTH_SOCK="$sock" SSH_AGENT_MODE=key -- host
 check 'host shows DCF_HOST_SSH_AGENT: key' 'DCF_HOST_SSH_AGENT : key' "$(grep '^DCF_HOST_SSH_AGENT' <<<"$out")"
+# --- the cloud folder (cloud-folder proposal, slice 1): DCF_HOST_CLOUD_FOLDER at the Feature's fixed host mount
+cf_target=/mnt/cloud-folder-host
+cf_mounts() { grep -c "target=$cf_target\$" <<<"$args"; }
+mkdir -p "$T/Shared Docs"
+cf="$T/Shared Docs"
+for os in linux macos wsl; do
+  ws="$(new_ws "$plain")"; run "$os" "$ws" -- up
+  check "$os: no DCF_HOST_CLOUD_FOLDER, no cloud-folder mount" 0 "$(cf_mounts)"
+  n0="$(grep -c -x -- '--mount' <<<"$args")"
+  ws="$(new_ws "$plain")"; run "$os" "$ws" DCF_HOST_CLOUD_FOLDER="$cf" -- up
+  check "$os: DCF_HOST_CLOUD_FOLDER is mounted at the Feature's host mount" "type=bind,source=$cf,target=$cf_target" "$(grep -x -- "type=bind,source=$cf,target=$cf_target" <<<"$args")"
+  check "$os: the cloud folder is one more --mount, the others kept" $((n0 + 1)) "$(grep -c -x -- '--mount' <<<"$args")"
+done
+win='C:\Users\someone\Synced Library - Docs\Shared'
+ws="$(new_ws "$plain")"; run linux "$ws" DCF_HOST_CLOUD_FOLDER="$win" -- up
+check 'a Windows path goes to the engine as is (backslashes and spaces kept, one argument)' "type=bind,source=$win,target=$cf_target" "$(grep -x -F -- "type=bind,source=$win,target=$cf_target" <<<"$args")"
+check 'and is not created on this host' 0 "$(grep -c 'could not create' <<<"$out")"
+ws="$(new_ws "$plain")"; run linux "$ws" DCF_HOST_CLOUD_FOLDER="$T/no-such-folder" -- up
+check 'a host path that does not exist: no mount' 0 "$(cf_mounts)"
+check 'and one line says so' 1 "$(grep -c "host mount cloud-folder skipped: DCF_HOST_CLOUD_FOLDER '$T/no-such-folder' is not a folder on this host" <<<"$out")"
+check 'and the folder is not created' no "$([ -e "$T/no-such-folder" ] && echo yes || echo no)"
+check 'and up still runs' up "$(head -n1 <<<"$args")"
+ws="$(new_ws "$plain")"; run linux "$ws" DCF_HOST_CLOUD_FOLDER="$cf" CLOUD_FOLDER_MOUNT_POINT=/mnt/office-shared -- up
+check 'the target is fixed: CLOUD_FOLDER_MOUNT_POINT is not a launcher setting' "type=bind,source=$cf,target=$cf_target" "$(grep -x -- "type=bind,source=$cf,target=$cf_target" <<<"$args")"
+ws="$(new_ws "$plain")"; run linux "$ws" DCF_HOST_CLOUD_FOLDER='C:\a,b' -- up
+check 'a source with a comma: no mount' 0 "$(cf_mounts)"
+ws="$(new_ws "$plain")"; run linux "$ws" DCF_HOST_CLOUD_FOLDER="$cf" HOST_MOUNTS=false -- up
+check 'HOST_MOUNTS=false suppresses the cloud-folder mount too' 0 "$(grep -c -x -- '--mount' <<<"$args")"
+ws="$(new_ws '{ "mounts": ["source=C:/x,target=/mnt/cloud-folder-host,type=bind"] }')"; run linux "$ws" DCF_HOST_CLOUD_FOLDER="$cf" -- up
+check 'a repository that mounts the target itself keeps its own line' 0 "$(cf_mounts)"
+check 'and one line says the launcher skipped its own' "host mount skipped: $cf_target is already mounted by this repository's devcontainer.json" "$(grep 'host mount skipped' <<<"$out")"
+for sub in build exec; do
+  ws="$(new_ws "$plain")"; run linux "$ws" DCF_HOST_CLOUD_FOLDER="$cf" -- "$sub"
+  check "$sub: no cloud-folder mount" 0 "$(cf_mounts)"
+done
+ws="$(new_ws "$plain")"; run linux "$ws" DCF_HOST_CLOUD_FOLDER="$cf" -- host
+check 'host lists the cloud-folder mount' "host mount (add)   : cloud-folder: type=bind,source=$cf,target=$cf_target" "$(grep 'host mount (add)   : cloud-folder' <<<"$out")"
+check 'host shows DCF_HOST_CLOUD_FOLDER' "DCF_HOST_CLOUD_FOLDER: $cf" "$(grep '^DCF_HOST_CLOUD_FOLDER' <<<"$out")"
+ws="$(new_ws "$plain")"; run linux "$ws" -- host
+check 'host shows DCF_HOST_CLOUD_FOLDER unset' 'DCF_HOST_CLOUD_FOLDER: (unset)' "$(grep '^DCF_HOST_CLOUD_FOLDER' <<<"$out")"
+
 # what the CLI is handed in its environment
 # shellcheck disable=SC2016  # the stub's own variable
 printf '#!/bin/sh\nenv | grep "^DCF_HOST_SSH_AGENT=" > "$DCF_TEST_RECORD"\n' > "$bin/devcontainer"
@@ -176,6 +218,12 @@ ws="$(new_ws "$plain")"; run linux "$ws" SSH_AGENT_MODE=key SSH_AUTH_SOCK="$sock
 check 'the CLI sees DCF_HOST_SSH_AGENT=key' DCF_HOST_SSH_AGENT=key "$args"
 ws="$(new_ws "$plain")"; run linux "$ws" -- up
 check 'the CLI sees DCF_HOST_SSH_AGENT=none' DCF_HOST_SSH_AGENT=none "$args"
+# shellcheck disable=SC2016  # the stub's own variable
+printf '#!/bin/sh\nenv | grep "^DCF_HOST_CLOUD_FOLDER=" > "$DCF_TEST_RECORD"\n' > "$bin/devcontainer"
+ws="$(new_ws "$plain")"; run linux "$ws" DCF_HOST_CLOUD_FOLDER="$win" -- up
+check 'the CLI sees DCF_HOST_CLOUD_FOLDER unchanged (containerEnv maps it)' "DCF_HOST_CLOUD_FOLDER=$win" "$args"
+ws="$(new_ws "$plain")"; run linux "$ws" -- up
+check 'the CLI sees DCF_HOST_CLOUD_FOLDER empty when unset' 'DCF_HOST_CLOUD_FOLDER=' "$args"
 
 echo
 echo "$pass passed, $fail failed"

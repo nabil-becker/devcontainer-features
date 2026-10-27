@@ -1,0 +1,34 @@
+{
+  "id": "cloud-folder",
+  "version": "1.0.0",
+  "name": "Cloud folder",
+  "description": "One fixed path in the devcontainer (mountPoint, default /mnt/cloud-folder) for a shared document folder that must never go in git, such as a SharePoint or OneDrive folder. This version knows host mode only: the devcontainer-cli launcher bind-mounts the host folder named by DCF_HOST_CLOUD_FOLDER (a folder a sync client keeps on the host) at /mnt/cloud-folder-host, and mountPoint links to it; no rclone, no sign-in. A post-start hook (cloud-folder-setup) reports on every start which mode is in use and whether the folder is mounted, empty and writable, and cloud-folder:status exits non-zero when it is missing or unwritable, so a start-up check can stop. Plus the Feature Taskfile (version, status, setup).",
+  "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/cloud-folder",
+  "licenseURL": "https://github.com/nabil-becker/devcontainer-features/blob/main/LICENSE",
+  "options": {
+    "installTaskfile": {
+      "type": "boolean",
+      "default": true,
+      "description": "Also install this Feature's Taskfile into /usr/local/share/go-task/includes.d so its tasks appear under the <id>: namespace of a root Taskfile that includes /usr/local/share/go-task/features.yml (see the go-task Feature)."
+    },
+    "mode": {
+      "type": "string",
+      "enum": [
+        "auto",
+        "host"
+      ],
+      "default": "auto",
+      "description": "Where the folder comes from. host: a bind mount the launcher adds from DCF_HOST_CLOUD_FOLDER (no rclone). auto: host when something is mounted at the mount point, else it reports that there is no source and never pretends. The rclone modes (sync, mount) come in a later version. Override per container with CLOUD_FOLDER_MODE in containerEnv, or per call on the task."
+    },
+    "mountPoint": {
+      "type": "string",
+      "default": "/mnt/cloud-folder",
+      "description": "Absolute path where the folder appears in the container. The launcher always mounts the host folder at /mnt/cloud-folder-host; when mountPoint is another path, the install makes it a symbolic link to that one, so this option is the only place to name the path. The install refuses a mountPoint that already exists in the image as a folder with content or as a file."
+    }
+  },
+  "postStartCommand": "cloud-folder-setup",
+  "installsAfter": [
+    "ghcr.io/nabil-becker/devcontainer-features/go-task",
+    "ghcr.io/devcontainers/features/common-utils"
+  ]
+}

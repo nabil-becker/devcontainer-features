@@ -80,7 +80,7 @@ tasks:
           echo "generated READMEs are up to date"
 
   lint:
-    desc: 'shellcheck every shell script, yamllint every YAML file (.yamllint), PSScriptAnalyzer every PowerShell file, the vendored copies of src/common/*.sh (in src/ and local-features/) identical to the canonical ones, and the Docker-free unit tests (devhost tooling, the git Feature''s .git-dirs mapping, the ssh-agent Feature''s setup script, the claude-code Feature''s live-session rule and claude-fleet, the host launcher) (CI runs exactly this inside .devcontainer/ci; the tools must be installed - this repo''s devcontainer has them, at the pinned versions).'
+    desc: 'shellcheck every shell script, yamllint every YAML file (.yamllint), PSScriptAnalyzer every PowerShell file, the vendored copies of src/common/*.sh (in src/ and local-features/) identical to the canonical ones, and the Docker-free unit tests (devhost tooling, the git Feature''s .git-dirs mapping, the ssh-agent Feature''s setup script, the cloud-folder Feature''s status, the claude-code Feature''s live-session rule and claude-fleet, the host launcher) (CI runs exactly this inside .devcontainer/ci; the tools must be installed - this repo''s devcontainer has them, at the pinned versions).'
     cmds:
       - shellcheck -x src/*/*.sh local-features/*/*.sh local-features/*/share/bin/*.sh local-features/*/share/jobs/*/*.sh test/*/*.sh test/*/unit/*.sh test/bootstrap/*.sh bootstrap/*.sh bootstrap/host/*.sh .githooks/* .devcontainer/*.sh
       - yamllint --strict .
@@ -97,6 +97,7 @@ tasks:
       - task: test:host-mounts
       - task: test:ssh-key-import
       - task: test:ssh-agent-unit
+      - task: test:cloud-folder-unit
       - task: test:claude-unit
       - task: test:claude-fleet-task
 
@@ -131,9 +132,14 @@ tasks:
       - bash test/bootstrap/host_type_test.sh
 
   test:host-mounts:
-    desc: 'Docker-free bash tests of the host mounts the bash twin (src/devcontainer-cli/devcontainer-cli.sh) adds to `up`: the --mount argument per host type (linux, macos, windows-wsl-docker), the source folder created, a mount skipped when the repository''s devcontainer.json already declares its target (JSONC comments, trailing commas, object form, --config), HOST_MOUNTS=false, none for build/exec/read-configuration, and the SSH agent socket mount per host type and SSH_AGENT_MODE=key, and what `host` lists; a stub devcontainer records its arguments; part of lint. The PowerShell twin is in test:bootstrap.'
+    desc: 'Docker-free bash tests of the host mounts the bash twin (src/devcontainer-cli/devcontainer-cli.sh) adds to `up`: the --mount argument per host type (linux, macos, windows-wsl-docker), the source folder created, a mount skipped when the repository''s devcontainer.json already declares its target (JSONC comments, trailing commas, object form, --config), HOST_MOUNTS=false, none for build/exec/read-configuration, the SSH agent socket mount per host type and SSH_AGENT_MODE=key, the cloud folder (DCF_HOST_CLOUD_FOLDER at the fixed /mnt/cloud-folder-host, a Windows path passed as is, a missing folder skipped and never created), and what `host` lists; a stub devcontainer records its arguments; part of lint. The PowerShell twin is in test:bootstrap.'
     cmds:
       - bash test/bootstrap/host_mounts_test.sh
+
+  test:cloud-folder-unit:
+    desc: 'Docker-free tests of the cloud-folder Feature''s cloud-folder-setup over a faked mount point (a mount table file, no mount, no privilege): the build-time link from mountPoint to the host mount (made, idempotent, none when they are equal, an empty folder replaced, a folder with content or a file refused), status through the link, no source, mounted and not empty, mounted and empty, not writable (skipped as root), a bare folder that is not mounted, mode host with nothing mounted, modes this version does not know, a path with a space, a mounted file, --json, the post-start report never failing, nothing written into the folder, and the Feature Taskfile handing CLOUD_FOLDER_* and CLI_ARGS to the script; part of lint. Needs python3 (to read the JSON) and task.'
+    cmds:
+      - bash test/cloud-folder/unit/status_test.sh
 
   test:ssh-agent-unit:
     desc: 'Docker-free tests of the ssh-agent Feature''s ssh-agent-setup against temp folders with the real OpenSSH tools and git: the verdict per DCF_HOST_SSH_AGENT (socket, none, key, unknown), key mode (an agent started on the fixed path and reused, a stale socket replaced, a 0600 key loaded and a 0644 one refused, key-new, key-add, key-stdin, key-remove), key hygiene (dedicated default name, default-name and age warnings, key-age), rotation and retirement against a stubbed gh (the steps in order, the old key retired only after git:verify passes, the allowed_signers history, REVOKE, the resume path, --plan changing nothing), the refusal when key mode is off, git-signing (KEY by fingerprint or .pub, SCOPE and its default) and a real sign and verify round trip in git-verify; only throwaway keys; part of lint. Needs openssh-client and git.'

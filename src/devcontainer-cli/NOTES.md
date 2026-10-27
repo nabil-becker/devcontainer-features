@@ -243,13 +243,14 @@ knows what kind of host it runs on, so a repository writes nothing host-specific
   the priority list that fits the OS is taken, because the engine is given. Unset, the engine follows the host type, so on Windows
   `docker` that is on PATH but whose daemon is down no longer wins over an installed `wslc.exe`.
 - Before it runs the CLI (`up`, `build`, `exec` and the other subcommands that take `--docker-path`) the launcher sets
-  `DCF_HOST_TYPE` (the resolved id), `DCF_HOST_HOME` (the host user's home) and `DCF_HOST_SSH_AGENT`
-  (`socket`, `none` or `key`, see "The SSH agent" below) in its own environment. A repository maps them into the
+  `DCF_HOST_TYPE` (the resolved id), `DCF_HOST_HOME` (the host user's home), `DCF_HOST_SSH_AGENT`
+  (`socket`, `none` or `key`, see "The SSH agent" below) and `DCF_HOST_CLOUD_FOLDER` (the user's own value, passed on
+  unchanged, see "The cloud folder" below) in its own environment. A repository maps them into the
   container itself with `containerEnv`, `"DCF_HOST_TYPE": "${localEnv:DCF_HOST_TYPE}"` and so on (the bootstrap's
   `devcontainer.json` template does). It declares no host mount: the launcher adds those (next section). Opening the
   folder straight in VS Code skips the launcher: the variables are then empty.
 - `task devcontainer:host` prints the result without starting anything: `HOST_TYPE` as resolved and why, the priority list
-  used, the engine command, the three `DCF_HOST_*` values and the host mounts `up` would add or skip (next section).
+  used, the engine command, the four `DCF_HOST_*` values and the host mounts `up` would add or skip (next section).
   `HOST_TYPE=<id>` or `HOST_TYPE_PRIORITY=<ids>` on the command line try other choices.
 
 Not verified on real hosts: `wsl -e docker info` answering for the default distro; the WSL markers on every WSL version
@@ -296,6 +297,20 @@ the host type needs; ADR 0024 decides it, `docs/proposals/host-profile.md` is th
   general-purpose and should not live in a container volume (it prints fingerprints, never key material).
   Both are one-shot commands; nothing stays running on the host.
   Not verified on a real host: `devcontainer exec` forwarding its stdin on every platform (the tests use a stub).
+- **The cloud folder (1.12.0).** When `DCF_HOST_CLOUD_FOLDER` names a host folder (one a sync client keeps, such as a
+  SharePoint or OneDrive folder), `up` bind-mounts it at one fixed path, `/mnt/cloud-folder-host`, the `cloud-folder`
+  Feature's host mount (a constant in both twins and in the Feature). The Feature links its `mountPoint` option to that
+  path at build time, so a consumer names the path in the container once, in the option, and the launcher needs no
+  target setting. The variable is a setting like the others: a Task var, `.devcontainer/.env` or the environment
+  (PowerShell: `-CloudFolder`); the path is shell-quoted on its way, so spaces and quotes in a library's name survive.
+  Unset means no folder and no mount. The
+  folder is the user's, so it is never created: a path this launcher can check (a Windows path from Windows, an absolute
+  path elsewhere) that is not a folder is skipped with one warning and the container starts without it (the Feature's
+  `task cloud-folder:status` then fails); another form, such as a Windows path seen from Linux, goes to the engine as is.
+  A source with a comma is skipped the same way. `HOST_MOUNTS=false` and a
+  repository line for the same target suppress it like the others. `DCF_HOST_CLOUD_FOLDER` itself is passed on to the
+  CLI unchanged, so `containerEnv` can map it (the bootstrap's template does) and the Feature's report can name the
+  source. Not verified on a real host: Docker Desktop and wslc taking a Windows path with spaces from `--mount`.
 - **Fleet waits, reports and stops duplicates (1.11.0).** `task devcontainer:claude:fleet -- --no-wait|--stop-duplicates` reach `claude-fleet` (claude-code 1.6.0); the task description says so.
 - **Several Claude sessions (1.9.0).** `task devcontainer:claude:fleet` passes `SESSIONS` (set by the including Taskfile)
   and its arguments to the claude-code Feature's `claude-fleet` in the container (through `exec`, or directly inside); see

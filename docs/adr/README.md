@@ -79,3 +79,4 @@ numbering and a row below.
 | [0028](0028-claude-host-refuses-a-second-live-session-and-a-hook-writes-the-pin-back.md) | claude-host refuses a second live session, and an opt-in hook writes the pin back | accepted | 2026-10-24 |
 | [0029](0029-key-rotation-is-one-command-and-keeps-the-old-key-registered-unless-revoked.md) | Key rotation is one command, and it keeps the old key registered unless revoked | accepted | 2026-10-24 |
 | [0030](0030-claude-fleet-waits-for-restored-sessions-and-stops-extras-but-never-removes-them.md) | claude-fleet waits for restored sessions, and stops extras but never removes them | accepted | 2026-10-24 |
+| [0031](0031-the-launcher-grants-fuse-on-request-and-the-cloud-folder-mode-is-chosen-in-the-container.md) | The launcher grants FUSE on request, and the cloud-folder mode is chosen in the container | accepted | 2026-10-27 |

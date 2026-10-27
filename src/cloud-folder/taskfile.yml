@@ -1,0 +1,23 @@
+# Tasks contributed by the cloud-folder Feature (namespace: cloud-folder).
+# CLOUD_FOLDER_MODE and CLOUD_FOLDER_MOUNT_POINT, from the command line, a .env file or the
+# environment (in that order, as Task resolves them), override the Feature options for one call.
+version: '3'
+
+tasks:
+  version:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Show the cloud-folder Feature version, the mode option and the mount point in use, and whether rclone is on PATH (this version uses none).'
+    cmds:
+      - '{{if .CLOUD_FOLDER_MODE}}CLOUD_FOLDER_MODE={{shellQuote .CLOUD_FOLDER_MODE}} {{end}}{{if .CLOUD_FOLDER_MOUNT_POINT}}CLOUD_FOLDER_MOUNT_POINT={{shellQuote .CLOUD_FOLDER_MOUNT_POINT}} {{end}}cloud-folder-setup version'
+
+  status:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Report on the cloud folder: the mode in use and why, whether the mount point is mounted, empty and writable, and what to do when it is not. Exit 0 when it is mounted and writable (an empty folder is reported, not failed), 1 when it is missing, not mounted, not writable or the mode is unknown, so a start-up check can stop. `-- --json` prints one JSON object for agents. Writes nothing into the folder.'
+    cmds:
+      - '{{if .CLOUD_FOLDER_MODE}}CLOUD_FOLDER_MODE={{shellQuote .CLOUD_FOLDER_MODE}} {{end}}{{if .CLOUD_FOLDER_MOUNT_POINT}}CLOUD_FOLDER_MOUNT_POINT={{shellQuote .CLOUD_FOLDER_MOUNT_POINT}} {{end}}cloud-folder-setup status {{.CLI_ARGS}}'
+
+  setup:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Re-run the post-start hook: the same report as status, but never fatal (exit 0).'
+    cmds:
+      - '{{if .CLOUD_FOLDER_MODE}}CLOUD_FOLDER_MODE={{shellQuote .CLOUD_FOLDER_MODE}} {{end}}{{if .CLOUD_FOLDER_MOUNT_POINT}}CLOUD_FOLDER_MOUNT_POINT={{shellQuote .CLOUD_FOLDER_MOUNT_POINT}} {{end}}cloud-folder-setup'

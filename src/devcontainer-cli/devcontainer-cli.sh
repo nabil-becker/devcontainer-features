@@ -44,6 +44,10 @@
 #   SSH_AGENT_MODE             key = the user opts into a signing key kept in the container
 #                              (the ssh-agent Feature's key mode): DCF_HOST_SSH_AGENT=key and
 #                              no agent socket is mounted. Unset = the host type decides.
+#   DCF_HOST_CLOUD_FOLDER      a host folder (one a sync client keeps) that `up` bind-mounts at
+#                              /mnt/cloud-folder-host, the cloud-folder Feature's host mount (its
+#                              mountPoint links there); passed on to the CLI as is.
+#                              Unset = no host folder, no mount.
 #   DEVCONTAINER_BUILD_LOCK    0 = do not serialise image builds (below).
 #   DEVCONTAINER_BUILD_LOCK_FEATURES_TEST  true = `features test` takes the
 #                              lock too (default false).
@@ -313,31 +317,46 @@ resolve_ssh_agent() {
   esac
 }
 
-# resolve_host_profile: HT_* plus HT_HOME and the SSH agent (HT_SSH_AGENT, HT_SSH_SOCKET).
+# The cloud folder (docs/proposals/cloud-folder.md, slice 1): DCF_HOST_CLOUD_FOLDER names a host
+# folder that `up` bind-mounts at one fixed path, the cloud-folder Feature's host mount; the
+# Feature links its mountPoint option there, so the consumer names the path once (the option).
+# The user sets the variable; the launcher passes it on unchanged, for a repository's containerEnv.
+# The same constant is $script:CloudFolderTarget in DevcontainerCli.psm1 and HOST_MOUNT in the
+# Feature's install.sh.
+cloud_folder_target=/mnt/cloud-folder-host
+
+# resolve_cloud_folder: sets HT_CLOUD_FOLDER (the host path, or empty).
+resolve_cloud_folder() { HT_CLOUD_FOLDER="${DCF_HOST_CLOUD_FOLDER:-}"; }
+
+# resolve_host_profile: HT_* plus HT_HOME, the SSH agent (HT_SSH_AGENT, HT_SSH_SOCKET) and the
+# cloud folder (HT_CLOUD_FOLDER).
 resolve_host_profile() {
   resolve_host_type
   HT_HOME="${HOME:-}"
   resolve_ssh_agent
+  resolve_cloud_folder
 }
 
 # export_host_env: DCF_HOST_* into this process's environment, which the CLI inherits;
 # a repository maps them into the container with containerEnv.
 export_host_env() {
   resolve_host_profile
-  export DCF_HOST_TYPE="$HT_TYPE" DCF_HOST_HOME="$HT_HOME" DCF_HOST_SSH_AGENT="$HT_SSH_AGENT"
+  export DCF_HOST_TYPE="$HT_TYPE" DCF_HOST_HOME="$HT_HOME" DCF_HOST_SSH_AGENT="$HT_SSH_AGENT" DCF_HOST_CLOUD_FOLDER="$HT_CLOUD_FOLDER"
 }
 
 # ---------------------------------------------------------- host mounts ----
 # The mounts the launcher adds to `devcontainer up` (--mount type=bind,source=..,target=..),
 # per host type, so a repository declares none (ADR 0024; the PowerShell twin is
-# Get-HostMount). Two entries: the host home's .git-dirs at /git-dirs (slice 3) and the SSH agent
-# socket at the ssh-agent Feature's fixed path where the host type has one (slice 4).
+# Get-HostMount). Three entries: the host home's .git-dirs at /git-dirs (slice 3), the SSH agent
+# socket at the ssh-agent Feature's fixed path where the host type has one (slice 4), and the
+# host folder DCF_HOST_CLOUD_FOLDER at the cloud-folder Feature's host mount when it is set.
 # `up` (and so rebuild) only: `build` mounts nothing, `exec` runs in an existing container.
 # A mount whose target the repository's own devcontainer.json already declares is skipped
 # (one line says so); HOST_MOUNTS=false turns all of them off.
 
-# host_mount_specs: prints "name|source|target" lines for HT_TYPE, HT_HOME and HT_SSH_SOCKET.
-# The ssh-agent source is a socket (or Docker Desktop's path), never a folder to create.
+# host_mount_specs: prints "name|source|target" lines for HT_TYPE, HT_HOME, HT_SSH_SOCKET and
+# HT_CLOUD_FOLDER. The ssh-agent source is a socket (or Docker Desktop's path) and the
+# cloud-folder source is the user's folder: neither is ours to create.
 host_mount_specs() {
   if [ -n "${HT_HOME:-}" ]; then
     case "$HT_TYPE" in
@@ -347,6 +366,9 @@ host_mount_specs() {
   fi
   if [ "${HT_SSH_AGENT:-none}" = socket ] && [ -n "${HT_SSH_SOCKET:-}" ]; then
     printf 'ssh-agent|%s|%s\n' "$HT_SSH_SOCKET" "$ssh_agent_target"
+  fi
+  if [ -n "${HT_CLOUD_FOLDER:-}" ]; then
+    printf 'cloud-folder|%s|%s\n' "$HT_CLOUD_FOLDER" "$cloud_folder_target"
   fi
 }
 
@@ -429,9 +451,18 @@ host_mount_args() {
     case "$source" in
       *,*) echo "host mount $name skipped: the source '$source' contains a comma, which --mount cannot carry." >&2; continue ;;
     esac
-    if [ "$name" != ssh-agent ]; then # a socket is not ours to create
-      mkdir -p "$source" 2>/dev/null || echo "host mount: could not create $source" >&2
-    fi
+    case "$name" in
+      ssh-agent) ;; # a socket is not ours to create
+      cloud-folder) # the user's folder: never created (an empty one would hide a wrong path)
+        # Only a path of this host can be checked; another form (a Windows path) goes to the engine as is.
+        case "$source" in
+          /*) if [ ! -d "$source" ]; then
+                echo "host mount cloud-folder skipped: DCF_HOST_CLOUD_FOLDER '$source' is not a folder on this host; the container starts without it (task cloud-folder:status says so)." >&2
+                continue
+              fi ;;
+        esac ;;
+      *) mkdir -p "$source" 2>/dev/null || echo "host mount: could not create $source" >&2 ;;
+    esac
     HM_ARGS+=(--mount "type=bind,source=$source,target=$target")
   done
 }
@@ -449,6 +480,7 @@ mode_host() { # [workspace] [cli args...]
   echo "DCF_HOST_TYPE      : $HT_TYPE"
   echo "DCF_HOST_HOME      : $HT_HOME"
   echo "DCF_HOST_SSH_AGENT : $HT_SSH_AGENT"
+  echo "DCF_HOST_CLOUD_FOLDER: ${HT_CLOUD_FOLDER:-(unset)}"
   resolve_host_mounts "$ws" "$@"
   if [ "$HM_ENABLED" = false ]; then echo 'host mounts        : off (HOST_MOUNTS=false)'; return 0; fi
   if [ $(( ${#HM_ADD[@]} + ${#HM_SKIP[@]} )) -eq 0 ]; then echo 'host mounts        : none'; return 0; fi

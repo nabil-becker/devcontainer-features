@@ -437,7 +437,7 @@ Describe 'Host type (HOST_TYPE, HOST_TYPE_PRIORITY, DCF_HOST_*)' {
 Describe 'Host mounts (HOST_MOUNTS, --mount on up)' {
     # Same evidence as the host type tests: the OS, the engine, mocked inside the module.
     BeforeAll {
-        $script:EnvNames = 'HOST_TYPE', 'HOST_TYPE_PRIORITY', 'HOST_MOUNTS', 'DEVCONTAINER_DOCKER_PATH', 'DCF_HOST_TYPE', 'DCF_HOST_HOME', 'DCF_HOST_SSH_AGENT', 'SSH_AGENT_MODE', 'SSH_AUTH_SOCK', 'USERPROFILE', 'HOME'
+        $script:EnvNames = 'HOST_TYPE', 'HOST_TYPE_PRIORITY', 'HOST_MOUNTS', 'DEVCONTAINER_DOCKER_PATH', 'DCF_HOST_TYPE', 'DCF_HOST_HOME', 'DCF_HOST_SSH_AGENT', 'SSH_AGENT_MODE', 'SSH_AUTH_SOCK', 'USERPROFILE', 'HOME', 'DCF_HOST_CLOUD_FOLDER', 'CLOUD_FOLDER_MOUNT_POINT'
         $script:SavedEnv = @{}
         foreach ($n in $script:EnvNames) { $script:SavedEnv[$n] = [Environment]::GetEnvironmentVariable($n) }
         $script:SavedPath = $env:PATH
@@ -557,6 +557,81 @@ Describe 'Host mounts (HOST_MOUNTS, --mount on up)' {
         Test-Path $src | Should -BeFalse
     }
 
+    It 'lists the cloud-folder mount only with a -CloudFolder source, always at the fixed host mount' {
+        $m = @(Get-HostMount -Type 'windows-docker' -HostHome 'C:\Users\test' -CloudFolder 'C:\Users\test\Synced - Docs\Shared')
+        $m.Count | Should -Be 2
+        $m[1].Name | Should -Be 'cloud-folder'
+        $m[1].Target | Should -Be '/mnt/cloud-folder-host'
+        ConvertTo-MountArgument -Mount $m[1] | Should -Be 'type=bind,source=C:\Users\test\Synced - Docs\Shared,target=/mnt/cloud-folder-host'
+        (@(Get-HostMount -Type 'linux' -HostHome '' -CloudFolder '/srv/docs'))[0].Target | Should -Be '/mnt/cloud-folder-host'
+        @(Get-HostMount -Type 'windows-docker' -HostHome 'C:\Users\test' -CloudFolder '').Count | Should -Be 1
+    }
+
+    It 'passes the cloud-folder --mount for <Id> (<Os>) with <Source>: <Expect>' -ForEach @(
+        @{ Os = 'windows'; Id = 'windows-docker'; Source = 'C:\Users\test\Synced - Docs\Shared'; Exists = $true; Expect = 'mounted' }
+        @{ Os = 'windows'; Id = 'windows-wslc'; Source = 'C:\Users\test\Synced - Docs\Shared'; Exists = $true; Expect = 'mounted' }
+        @{ Os = 'windows'; Id = 'windows-docker'; Source = 'C:\Users\test\Missing'; Exists = $false; Expect = 'skipped' }
+        @{ Os = 'windows'; Id = 'windows-wsl-docker'; Source = '/home/wsluser/docs'; Exists = $false; Expect = 'mounted' }
+        @{ Os = 'linux'; Id = 'linux'; Source = 'C:\Users\test\Synced - Docs\Shared'; Exists = $false; Expect = 'mounted' }
+        @{ Os = 'linux'; Id = 'linux'; Source = '/srv/missing-docs'; Exists = $false; Expect = 'skipped' }
+    ) {
+        Initialize-MountEvidence -Os $Os -Wslc 'C:\wslc.exe'
+        $script:CloudExists = $Exists
+        Mock -ModuleName DevcontainerCli Test-Path { $script:CloudExists } -ParameterFilter { $PathType -eq 'Container' }
+        Mock -ModuleName DevcontainerCli Test-Path { Microsoft.PowerShell.Management\Test-Path @PesterBoundParameters } -ParameterFilter { $PathType -ne 'Container' }
+        $env:HOST_TYPE = $Id
+        $env:DCF_HOST_CLOUD_FOLDER = $Source
+        $ws = Get-MountWorkspace '{ "name": "plain" }'
+        $out = @(Get-HostMountArgument -WorkspaceFolder $ws 3>&1)
+        $cloud = @($out | Where-Object { $_ -is [string] -and $_ -like '*target=/mnt/cloud-folder-host' })
+        $warnings = @($out | Where-Object { $_ -is [System.Management.Automation.WarningRecord] } | ForEach-Object { $_.Message })
+        if ($Expect -eq 'mounted') {
+            $cloud | Should -HaveCount 1
+            $cloud[0] | Should -Be "type=bind,source=$Source,target=/mnt/cloud-folder-host"
+            $warnings | Should -HaveCount 0
+        }
+        else {
+            $cloud | Should -HaveCount 0
+            $warnings | Should -Contain "host mount cloud-folder skipped: DCF_HOST_CLOUD_FOLDER '$Source' is not a folder on this host; the container starts without it (task cloud-folder:status says so)."
+        }
+    }
+
+    It 'the cloud-folder target is fixed (CLOUD_FOLDER_MOUNT_POINT is no launcher setting); HOST_MOUNTS=false and a repository mount of the target suppress it' {
+        Initialize-MountEvidence -Os linux
+        $env:HOST_TYPE = 'linux'
+        $env:DCF_HOST_CLOUD_FOLDER = 'C:\Users\test\Shared'
+        $ws = Get-MountWorkspace '{ }'
+        $env:CLOUD_FOLDER_MOUNT_POINT = '/mnt/office-shared'
+        @(Get-HostMountArgument -WorkspaceFolder $ws) | Should -Contain 'type=bind,source=C:\Users\test\Shared,target=/mnt/cloud-folder-host'
+        $env:CLOUD_FOLDER_MOUNT_POINT = $null
+        $env:HOST_MOUNTS = 'false'
+        @(Get-HostMountArgument -WorkspaceFolder $ws) | Should -HaveCount 0
+        $env:HOST_MOUNTS = $null
+        $own = Get-MountWorkspace '{ "mounts": ["source=C:/x,target=/mnt/cloud-folder-host,type=bind"] }'
+        @(Get-HostMountArgument -WorkspaceFolder $own 6>$null) | Should -Not -Contain 'type=bind,source=C:\Users\test\Shared,target=/mnt/cloud-folder-host'
+    }
+
+    It 'sets DCF_HOST_CLOUD_FOLDER unchanged for the CLI, and host prints it' {
+        Initialize-MountEvidence -Os windows -Wslc 'C:\wslc.exe'
+        $env:HOST_TYPE = 'windows-wslc'
+        $env:DCF_HOST_CLOUD_FOLDER = 'C:\Users\test\Synced - Docs\Shared'
+        (Initialize-HostEnvironment).CloudFolder | Should -Be 'C:\Users\test\Synced - Docs\Shared'
+        $env:DCF_HOST_CLOUD_FOLDER | Should -Be 'C:\Users\test\Synced - Docs\Shared'
+        $text = (Show-HostProfile -WorkspaceFolder (Get-MountWorkspace '{ }') 6>&1 3>$null | ForEach-Object { $_.MessageData.Message }) -join "`n"
+        $text | Should -Match 'DCF_HOST_CLOUD_FOLDER: C:\\Users\\test\\Synced - Docs\\Shared'
+        $env:DCF_HOST_CLOUD_FOLDER = $null
+        Clear-HostProfileCache
+        $text = (Show-HostProfile -WorkspaceFolder (Get-MountWorkspace '{ }') 6>&1 | ForEach-Object { $_.MessageData.Message }) -join "`n"
+        $text | Should -Match 'DCF_HOST_CLOUD_FOLDER: \(unset\)'
+    }
+
+    It 'Initialize-HostMountSource leaves a cloud-folder source alone (the user''s folder is never created)' {
+        $src = Join-Path $TestDrive 'cloud-folder-source'
+        $m = [pscustomobject]@{ Name = 'cloud-folder'; Source = $src; Target = '/mnt/cloud-folder-host'; Type = 'bind' }
+        Initialize-HostMountSource -Mount $m -Type linux
+        Test-Path $src | Should -BeFalse
+    }
+
     It 'passes --mount for <Id> with the home of that host type' -ForEach @(
         @{ Os = 'windows'; Id = 'windows-docker'; Source = 'C:\Users\test/.git-dirs' }
         @{ Os = 'windows'; Id = 'windows-wslc'; Source = 'C:\Users\test/.git-dirs' }
@@ -639,7 +714,7 @@ Describe 'Host mounts (HOST_MOUNTS, --mount on up)' {
 # arguments (the Windows branch runs the portable node.exe instead, so these run on Linux/macOS).
 Describe 'The up argument list carries the host mounts' -Skip:$IsWindows {
     BeforeAll {
-        $script:EnvNames = 'HOST_TYPE', 'HOST_MOUNTS', 'DEVCONTAINER_DOCKER_PATH', 'HOME', 'SSH_AUTH_SOCK', 'SSH_AGENT_MODE', 'DCF_HOST_TYPE', 'DCF_HOST_HOME', 'DCF_HOST_SSH_AGENT'
+        $script:EnvNames = 'HOST_TYPE', 'HOST_MOUNTS', 'DEVCONTAINER_DOCKER_PATH', 'HOME', 'SSH_AUTH_SOCK', 'SSH_AGENT_MODE', 'DCF_HOST_TYPE', 'DCF_HOST_HOME', 'DCF_HOST_SSH_AGENT', 'DCF_HOST_CLOUD_FOLDER', 'CLOUD_FOLDER_MOUNT_POINT'
         $script:SavedEnv = @{}
         foreach ($n in $script:EnvNames) { $script:SavedEnv[$n] = [Environment]::GetEnvironmentVariable($n) }
         $script:SavedPath = $env:PATH
@@ -692,6 +767,20 @@ Describe 'The up argument list carries the host mounts' -Skip:$IsWindows {
         $a = Invoke-Recorded -Subcommand up -Json '{ "mounts": ["source=${localEnv:HOME}/.git-dirs,target=/git-dirs,type=bind"] }'
         $a | Should -Not -Contain '--mount'
         $a[0] | Should -Be 'up'
+    }
+
+    It 'up gets --mount for DCF_HOST_CLOUD_FOLDER at the Feature host mount, and none without it' {
+        (Invoke-Recorded -Subcommand up) | Should -Not -Contain 'type=bind,source=,target=/mnt/cloud-folder-host'
+        @((Invoke-Recorded -Subcommand up) | Where-Object { $_ -like '*target=/mnt/cloud-folder-host' }) | Should -HaveCount 0
+        $docs = Join-Path $TestDrive 'Synced Docs'
+        New-Item -ItemType Directory -Path $docs -Force | Out-Null
+        $env:DCF_HOST_CLOUD_FOLDER = $docs
+        $a = Invoke-Recorded -Subcommand up
+        $a | Should -Contain "type=bind,source=$docs,target=/mnt/cloud-folder-host"
+        $a[[array]::IndexOf($a, "type=bind,source=$docs,target=/mnt/cloud-folder-host") - 1] | Should -Be '--mount'
+        # The stub records with sh's echo, which reads \t and the like: the path has none of them.
+        $env:DCF_HOST_CLOUD_FOLDER = 'C:\Users\Synced - Docs\Shared'
+        (Invoke-Recorded -Subcommand up) | Should -Contain 'type=bind,source=C:\Users\Synced - Docs\Shared,target=/mnt/cloud-folder-host'
     }
 
     It 'up passes no --mount with HOST_MOUNTS=false' {
