@@ -40,12 +40,25 @@ check "bisync's listings live in the volume" bash -c "ls $state/bisync | grep -q
 
 check "the timer starts" bash -c "CLOUD_FOLDER_SYNC_INTERVAL=2s cloud-folder-setup start | tee -a $out | grep -F 'timer: started'"
 check "a second start leaves it" bash -c "CLOUD_FOLDER_SYNC_INTERVAL=2s cloud-folder-setup start | tee -a $out | grep -F 'timer: already running'"
-check "one loop" bash -c "[ \"\$(pgrep -fc 'cloud-folder-setup run')\" = 1 ]"
+# The loop's forked subshells keep its arguments, and pgrep -f also matches a shell whose command
+# line quotes the pattern, so count only processes whose arguments end in "cloud-folder-setup run"
+# and whose parent is not such a process, and check that one is the PID file's.
+one_loop() {
+  local p pp n=0 loop
+  loop="$(cat "$state/run/loop.pid")"
+  for p in $(pgrep -f 'cloud-folder-setup run$'); do
+    pp="$(ps -o ppid= -p "$p" | tr -d ' ')"
+    ps -o args= -p "$pp" 2>/dev/null | grep -q 'cloud-folder-setup run$' && continue
+    n=$((n + 1)); [ "$p" = "$loop" ] || return 1
+  done
+  [ "$n" = 1 ]
+}
+check "one loop" one_loop
 # Sample every process's arguments while the timer syncs.
 for _ in $(seq 1 30); do ps -eo args >> /tmp/cf-ps; sleep 0.2; done
 check "the timer synced" bash -c "grep -F 'sync ok' $state/timer.log"
 check "the timer stops" bash -c "cloud-folder-setup stop | tee -a $out | grep -F 'timer: stopped'"
-check "no loop left" bash -c "! pgrep -f 'cloud-folder-setup run'"
+check "no loop left" bash -c "! pgrep -f 'cloud-folder-setup run$'"
 
 check "the token is in no process's arguments" bash -c "! grep -F '$marker' /tmp/cf-ps"
 check "the token is in no output" bash -c "! grep -F '$marker' $out"
