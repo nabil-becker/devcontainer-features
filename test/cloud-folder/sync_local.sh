@@ -16,6 +16,7 @@ out=/tmp/cf-output
 
 check "mountPoint is a folder, not a link" bash -c "test -d /mnt/shared-docs && ! test -L /mnt/shared-docs"
 check "the post-start hook runs (again) and hands the folders to the user" bash -c "cloud-folder-setup >> $out 2>&1 && [ \"\$(stat -c %U $state)\" = vscode ]"
+check "the sync folder is the user's before any sign-in" bash -c "[ \"\$(stat -c %U /mnt/shared-docs)\" = vscode ] && test -w /mnt/shared-docs"
 
 mkdir -p /tmp/cf-remote/sub
 echo from-remote > /tmp/cf-remote/sub/remote.txt

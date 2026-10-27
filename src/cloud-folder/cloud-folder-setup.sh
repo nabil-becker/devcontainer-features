@@ -142,6 +142,10 @@ make_folder() {
     return 1
   fi
   mkdir -p -- "$mp" || return 1
+  # Hand it to the remote user now when the build names one; the post-start report does it again.
+  if [ -n "${_REMOTE_USER:-}" ] && [ "${_REMOTE_USER}" != root ] && id -u "$_REMOTE_USER" >/dev/null 2>&1; then
+    chown "$_REMOTE_USER:$(id -gn "$_REMOTE_USER")" "$mp" || return 1
+  fi
   say "mountPoint $mp is a folder, filled by the sync (it is handed to the remote user at start)"
 }
 
@@ -808,7 +812,7 @@ case "$cmd" in
   report)
     prepare_state verbose || true
     resolve
-    [ "$MODE_USED" = sync ] && [ "$CONF" = ok ] && ensure_local "$REAL" >/dev/null 2>&1
+    [ "$MODE_USED" = sync ] && ensure_local "$REAL" >/dev/null 2>&1
     assess remote
     print_report
     [ "$MODE_USED" = sync ] && start_timer
