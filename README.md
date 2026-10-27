@@ -14,7 +14,7 @@ installing Node.js, and a one-line bootstrap that wires both into any repo.
 | [`git`](src/git) | git augmented for the container: a worktree-aware wrapper that scopes `GIT_DIR` to the checkout and maps a `.git` pointer under the host's `.git-dirs` onto one shared mount, `safe.directory` and `core.hooksPath` at post-create, the global config in a volume it owns. |
 | [`gh`](src/gh) | [GitHub CLI](https://cli.github.com) from GitHub releases, checksum-verified, unless the official Feature installed it; its login (`GH_CONFIG_DIR`) in a volume it owns, git's GitHub credentials taken from it. |
 | [`ssh-agent`](src/ssh-agent) | `SSH_AUTH_SOCK` at a fixed path in every process, so git commits can be signed with an SSH key: the launcher mounts the host's agent socket (linux, macOS, a WSL distro), the private key never entering the container; the Windows engines get a plain explanation and an opt-in, temporary key mode; `ssh-agent:*` tasks for keys, dedicated-key warnings, rotation and retirement (`key:rotate`, `key:retire`, `key:age`) and git signing setup. |
-| [`cloud-folder`](src/cloud-folder) | One fixed path (`/mnt/cloud-folder`, the `mountPoint` option) for a shared document folder that must never go in git (SharePoint, OneDrive): today host mode, the launcher bind-mounting the host folder a sync client keeps (`DCF_HOST_CLOUD_FOLDER`) at `/mnt/cloud-folder-host`, linked from `mountPoint`; `cloud-folder:status` says whether it is mounted, empty and writable and fails when it is not, so a start-up check can stop. rclone sync and mount come later. |
+| [`cloud-folder`](src/cloud-folder) | One fixed path (`/mnt/cloud-folder`, the `mountPoint` option) for a shared document folder that must never go in git (SharePoint, OneDrive), filled by host mode (the launcher bind-mounting the host folder a sync client keeps, `DCF_HOST_CLOUD_FOLDER`, at `/mnt/cloud-folder-host`, linked from `mountPoint`) or sync mode (rclone, pinned and verified, running `bisync` with the remote on a timer and on demand, the sign-in in the Feature's volume; nothing privileged, so it works on a cluster); `cloud-folder:status` fails when the folder is missing, unwritable, never synced or its last sync failed, so a start-up check can stop, and `cloud-folder:shutdown-check` refuses a stop while a sync runs or local changes wait. rclone mount comes later. |
 | [`az`](src/az) | Augments the official `azure-cli` Feature: its login (`AZURE_CONFIG_DIR`) in a volume it owns, `az bicep` using the Bicep on PATH. |
 | [`kube-state`](src/kube-state) | Owns the kubeconfig (`KUBECONFIG`) the Kubernetes tools share, in a volume it owns, so velero and kubectl stop needing a hand-mounted `~/.kube`; installs no binary. |
 | [`common`](src/common) | The shared helper behind every Feature's post-create hook (`dcf-persist`: make a state directory usable and say what backs it), for a repo's own scripts too. |
@@ -301,6 +301,10 @@ signing key in the container's volume and so breaks "the key never enters the co
 `/mnt/cloud-folder-host`, and the Feature's `mountPoint` (default `/mnt/cloud-folder`) links there: the path in the
 container is named once, in that option. Drop a hand-written bind mount of the folder from `devcontainer.json`. Put
 `task cloud-folder:status` in your start-up check: it fails when the folder is missing or unwritable.
+Where there is no host folder (a cluster), `cloud-folder` 1.1.0 syncs it with rclone instead: set `siteUrl` and
+`remotePath`, run `task cloud-folder:login` once, and a timer keeps the folder in sync; add
+`cloud-folder-setup shutdown-check` to your `shutdown:check` so a stop waits for a running sync (see the Feature's
+NOTES).
 
 All of them also answer to `dc:` (the include's alias in the generated
 Taskfile). Each task dispatches per platform (Task's per-command

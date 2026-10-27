@@ -42,5 +42,36 @@
       }
     },
     "remoteUser": "vscode"
+  },
+  "pinned_version": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "cloud-folder": {
+        "rcloneVersion": "1.75.1"
+      }
+    },
+    "remoteUser": "vscode"
+  },
+  "host_only": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "cloud-folder": {
+        "mode": "host"
+      }
+    },
+    "remoteUser": "vscode"
+  },
+  "sync_local": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "go-task": {},
+      "cloud-folder": {
+        "mode": "sync",
+        "mountPoint": "/mnt/shared-docs",
+        "remotePath": "sub",
+        "syncInterval": "0"
+      }
+    },
+    "remoteUser": "vscode"
   }
 }

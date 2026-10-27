@@ -1,0 +1,7 @@
+# sha256 of rclone release zips, "<digest>  <asset name>", one per line, checked on
+# 2026-10-27 against both downloads.rclone.org/v<version>/SHA256SUMS and the GitHub release's
+# SHA256SUMS (they agree). install.sh checks this file first; a version not listed here is
+# verified against the publisher's SHA256SUMS at build. Add a version with the one-liner in
+# NOTES.md ("Version and upgrade").
+349ac8fba6ff65d6247043f1750cdcb518ec5d500ef91463a10d37c0ccdf3702  rclone-v1.75.2-linux-amd64.zip
+7e1e8d69654941b7b7df84ee74c5f7fb09cce7d5496947fb7bf16b55ff427d10  rclone-v1.75.2-linux-arm64.zip

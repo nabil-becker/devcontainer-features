@@ -1,8 +1,8 @@
 {
   "id": "cloud-folder",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "name": "Cloud folder",
-  "description": "One fixed path in the devcontainer (mountPoint, default /mnt/cloud-folder) for a shared document folder that must never go in git, such as a SharePoint or OneDrive folder. This version knows host mode only: the devcontainer-cli launcher bind-mounts the host folder named by DCF_HOST_CLOUD_FOLDER (a folder a sync client keeps on the host) at /mnt/cloud-folder-host, and mountPoint links to it; no rclone, no sign-in. A post-start hook (cloud-folder-setup) reports on every start which mode is in use and whether the folder is mounted, empty and writable, and cloud-folder:status exits non-zero when it is missing or unwritable, so a start-up check can stop. Plus the Feature Taskfile (version, status, setup).",
+  "description": "One fixed path in the devcontainer (mountPoint, default /mnt/cloud-folder) for a shared document folder that must never go in git, such as a SharePoint or OneDrive folder, filled by one of two modes. host: the devcontainer-cli launcher bind-mounts the host folder named by DCF_HOST_CLOUD_FOLDER (a folder a sync client keeps on the host) at /mnt/cloud-folder-host, and mountPoint links to it. sync: rclone (installed pinned and checksum-verified, only when absent) runs bisync between the remote and the folder, on demand and on a timer started at each start, with the token, config and sync state in the Feature's own volume; nothing privileged, so it works on a cluster. auto picks host when a host folder is mounted, else sync when a remote is signed in. A post-start hook (cloud-folder-setup) reports on every start; cloud-folder:status exits non-zero when the folder is missing, unwritable, never synced or its last sync failed, and cloud-folder:shutdown-check refuses a stop while a sync runs or local changes wait. Plus the Feature Taskfile (version, status, setup, login, sync, start, stop, shutdown-check).",
   "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/cloud-folder",
   "licenseURL": "https://github.com/nabil-becker/devcontainer-features/blob/main/LICENSE",
   "options": {
@@ -15,20 +15,72 @@
       "type": "string",
       "enum": [
         "auto",
-        "host"
+        "host",
+        "sync"
       ],
       "default": "auto",
-      "description": "Where the folder comes from. host: a bind mount the launcher adds from DCF_HOST_CLOUD_FOLDER (no rclone). auto: host when something is mounted at the mount point, else it reports that there is no source and never pretends. The rclone modes (sync, mount) come in a later version. Override per container with CLOUD_FOLDER_MODE in containerEnv, or per call on the task."
+      "description": "Where the folder comes from. host: a bind mount the launcher adds from DCF_HOST_CLOUD_FOLDER (no rclone). sync: rclone bisync between the remote and the folder, on a timer and on demand (mountPoint is then a plain folder, no link). auto: host when something is mounted at the mount point, else sync when a remote is signed in (task cloud-folder:login), else it reports that there is no source and never pretends. The mount mode comes in a later version. Override per container with CLOUD_FOLDER_MODE in containerEnv, or per call on the task."
     },
     "mountPoint": {
       "type": "string",
       "default": "/mnt/cloud-folder",
-      "description": "Absolute path where the folder appears in the container. The launcher always mounts the host folder at /mnt/cloud-folder-host; when mountPoint is another path, the install makes it a symbolic link to that one, so this option is the only place to name the path. The install refuses a mountPoint that already exists in the image as a folder with content or as a file."
+      "description": "Absolute path where the folder appears in the container. In auto and host, the launcher always mounts the host folder at /mnt/cloud-folder-host and mountPoint is a symbolic link to it when it is another path (in auto, a sync fills the folder the link leads to). In sync, mountPoint is a plain folder, no link. The install refuses a mountPoint that already exists in the image as a folder with content (auto, host) or as a file."
+    },
+    "remoteType": {
+      "type": "string",
+      "enum": [
+        "sharepoint",
+        "onedrive"
+      ],
+      "default": "sharepoint",
+      "description": "sync: what the remote is. sharepoint: a document library of the SharePoint site siteUrl (the only kind the client-credentials sign-in of a cluster can use). onedrive: the signed-in person's own OneDrive. Both use rclone's onedrive backend. Override with CLOUD_FOLDER_REMOTE_TYPE."
+    },
+    "driveType": {
+      "type": "string",
+      "enum": [
+        "personal",
+        "business",
+        "documentLibrary"
+      ],
+      "default": "documentLibrary",
+      "description": "sync: rclone's drive_type for the remote, written at login; the drive lookup at login replaces it with what the drive reports. Override with CLOUD_FOLDER_DRIVE_TYPE."
+    },
+    "siteUrl": {
+      "type": "string",
+      "default": "",
+      "description": "sync, remoteType sharepoint: the site's URL, for example https://<tenant>.sharepoint.com/sites/<site>; login finds the site's document library from it. Override with CLOUD_FOLDER_SITE_URL."
+    },
+    "remotePath": {
+      "type": "string",
+      "default": "",
+      "description": "sync: the folder inside the drive (document library) to sync, for example Shared/Recordings; empty means the whole drive. It must exist on the remote. Override with CLOUD_FOLDER_REMOTE_PATH."
+    },
+    "syncInterval": {
+      "type": "string",
+      "default": "15m",
+      "description": "sync: how often the timer runs a sync (a number of seconds, or with s, m or h: 900, 15m, 1h). 0: no timer, sync on demand only (task cloud-folder:sync). Override with CLOUD_FOLDER_SYNC_INTERVAL."
+    },
+    "rcloneVersion": {
+      "type": "string",
+      "default": "1.75.2",
+      "description": "The rclone release to install for sync (with or without a leading v), or 'latest'. The default is pinned with its sha256 per architecture in this Feature; another version is verified against the release's SHA256SUMS. Not installed in mode host, nor when the image already has rclone (that one is kept)."
     }
   },
+  "containerEnv": {
+    "RCLONE_CONFIG": "/var/lib/devcontainer-features/cloud-folder/rclone.conf"
+  },
+  "mounts": [
+    {
+      "source": "cloud-folder-${devcontainerId}",
+      "target": "/var/lib/devcontainer-features/cloud-folder",
+      "type": "volume"
+    }
+  ],
   "postStartCommand": "cloud-folder-setup",
   "installsAfter": [
     "ghcr.io/nabil-becker/devcontainer-features/go-task",
-    "ghcr.io/devcontainers/features/common-utils"
+    "ghcr.io/devcontainers/features/common-utils",
+    "ghcr.io/devcontainers-extra/features/rclone",
+    "ghcr.io/devcontainer-community/devcontainer-features/rclone.org"
   ]
 }
