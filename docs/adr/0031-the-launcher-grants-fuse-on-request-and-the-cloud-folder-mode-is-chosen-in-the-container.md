@@ -35,14 +35,16 @@ rclone backend. The Operator accepted all six recommendations of the proposal on
 3. **`auto` tries `host`, then `mount`, then `sync`**, inside the container, and says which it
    chose. `mount` is chosen only if `/dev/fuse` is usable, which is all the Feature detects.
 4. **`remoteType` defaults to `sharepoint`**, not `onedrive`, because the client-credentials flow
-   the cluster will need works only with the `sharepoint` backend.
+   the cluster will need works only with a SharePoint document library. (`sharepoint` is a
+   choice inside rclone's `onedrive` backend, not a backend of its own; corrected 2026-10-27.)
 5. **The sync timer is one supervised loop started from the Feature's `postStartCommand`**, with a
    PID file in the Feature's volume, following the ssh-agent Feature's key mode. No `entrypoint`
    is declared. The repository's shutdown check refuses a stop while a sync runs or uploads are
    pending.
 6. **Slices:** `host` mode and `status` first (the office adopts then), `sync` and the timer
    second, `mount`, `auto` and the FUSE grant third. In `sync` mode bisync's defaults stand
-   (newer wins, the loser is renamed, the 50% delete guard stays).
+   (no winner is picked: both versions of a conflicting file are kept, renamed `.conflict1` and
+   `.conflict2`; the 50% delete guard stays; corrected 2026-10-27, rclone 1.75.2).
 
 ## Options considered
 
@@ -91,3 +93,4 @@ case would need a different remote type. Rejected.
 | Date | Change |
 |---|---|
 | 2026-10-27 | Accepted: the Operator accepted all six recommendations of the cloud-folder proposal. |
+| 2026-10-27 | Corrected while building step 2 against rclone 1.75.2: bisync's default keeps both versions of a conflict (it was described as "newer wins"), and `sharepoint` is a choice inside the `onedrive` backend. The decisions stand; the Operator also accepted step 2's six build decisions (both versions kept on conflict, `--resilient --recover` on every sync, the local copy in the container's filesystem, the shutdown check refusing unsynced local changes, no rclone in `host` mode, client-credentials sign-in only through `cloud-folder:login`). |

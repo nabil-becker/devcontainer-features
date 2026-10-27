@@ -128,7 +128,7 @@ So the timer follows the ssh-agent pattern: `cloud-folder-setup` runs as the `po
 3. Supervise the timer from `postStartCommand`, not an `entrypoint`. Recommended: yes.
 4. The launcher grants FUSE only when the project asks for it (a launcher variable, for example `DCF_HOST_FUSE=1`), never by default. Recommended: yes.
 5. Slice order, with the office adopting after slice 1. Recommended: as written.
-6. In `sync` mode, which side wins a conflict, and whether deletions propagate. Recommended: keep bisync's defaults (newer wins, the loser is renamed) and keep the 50% delete guard.
+6. In `sync` mode, which side wins a conflict, and whether deletions propagate. Recommended: keep bisync's defaults and keep the 50% delete guard. (Corrected 2026-10-27: the default picks no winner; both versions are kept, renamed `.conflict1` and `.conflict2`.)
 
 ## 11. Still open (unverified facts, not decisions)
 
