@@ -1,0 +1,46 @@
+{
+  "mounted": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "go-task": {},
+      "cloud-folder": {}
+    },
+    "mounts": [
+      {
+        "source": "cloud-folder-test-mounted",
+        "target": "/mnt/cloud-folder-host",
+        "type": "volume"
+      }
+    ],
+    "remoteUser": "root"
+  },
+  "mount_point": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "go-task": {},
+      "cloud-folder": {
+        "mode": "host",
+        "mountPoint": "/mnt/shared"
+      }
+    },
+    "remoteUser": "vscode"
+  },
+  "fixed_path": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "cloud-folder": {
+        "mountPoint": "/mnt/cloud-folder-host"
+      }
+    },
+    "remoteUser": "vscode"
+  },
+  "no_taskfile": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "cloud-folder": {
+        "installTaskfile": false
+      }
+    },
+    "remoteUser": "vscode"
+  }
+}

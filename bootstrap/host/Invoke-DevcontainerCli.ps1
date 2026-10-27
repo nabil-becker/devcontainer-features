@@ -48,6 +48,11 @@
     socket is mounted, DCF_HOST_SSH_AGENT=key). Empty = $env:SSH_AGENT_MODE, else the
     host type decides.
 
+.PARAMETER CloudFolder
+    DCF_HOST_CLOUD_FOLDER: a host folder (one a sync client keeps) that `up` bind-mounts at the
+    cloud-folder Feature's host mount, /mnt/cloud-folder-host. Empty = $env:DCF_HOST_CLOUD_FOLDER,
+    else no folder.
+
 .PARAMETER NodeVersion
     Portable Node.js version (Windows). Empty = $env:DEVCONTAINER_NODE_VERSION
     or the module default.
@@ -67,6 +72,7 @@ param(
     [string]$HostTypePriority,
     [string]$HostMounts,
     [string]$SshAgentMode,
+    [string]$CloudFolder,
     [string]$NodeVersion,
     [string]$CliVersion,
     [switch]$Force
@@ -79,6 +85,7 @@ if ($HostType) { $env:HOST_TYPE = $HostType }
 if ($HostTypePriority) { $env:HOST_TYPE_PRIORITY = $HostTypePriority }
 if ($HostMounts) { $env:HOST_MOUNTS = $HostMounts }
 if ($SshAgentMode) { $env:SSH_AGENT_MODE = $SshAgentMode }
+if ($CloudFolder) { $env:DCF_HOST_CLOUD_FOLDER = $CloudFolder }
 
 $params = @{
     Subcommand      = $Subcommand

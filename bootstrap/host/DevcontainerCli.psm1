@@ -25,20 +25,24 @@
     windows-wsl-docker, windows-wslc, linux, macos - and HOST_TYPE_PRIORITY
     (ordered comma list) says which `auto` tries first. The engine follows the
     host type unless DEVCONTAINER_DOCKER_PATH is set, which always wins. Before
-    the CLI runs, DCF_HOST_TYPE, DCF_HOST_HOME and DCF_HOST_SSH_AGENT are set in
-    this process (see Resolve-HostProfile; `host` prints them).
+    the CLI runs, DCF_HOST_TYPE, DCF_HOST_HOME, DCF_HOST_SSH_AGENT and DCF_HOST_CLOUD_FOLDER are
+    set in this process (see Resolve-HostProfile; `host` prints them).
 
     Every setting here is read from an environment variable so a .env file
     (loaded by Task's dotenv: or by bootstrap.ps1) can drive it:
       DEVCONTAINER_DOCKER_PATH, DEVCONTAINER_NODE_VERSION,
-      DEVCONTAINER_CLI_VERSION, HOST_TYPE, HOST_TYPE_PRIORITY, HOST_MOUNTS, SSH_AGENT_MODE. Explicit parameters win over the environment.
+      DEVCONTAINER_CLI_VERSION, HOST_TYPE, HOST_TYPE_PRIORITY, HOST_MOUNTS, SSH_AGENT_MODE,
+      DCF_HOST_CLOUD_FOLDER. Explicit parameters win over the environment.
 
     Host mounts: `up` (so `rebuild`) adds the mounts the host type needs with
     `--mount type=bind,source=...,target=...` (Get-HostMount; slice 3: the
     `.git-dirs` folder of the host home at /git-dirs; slice 4: the SSH agent socket at
     /var/lib/devcontainer-features/ssh-agent/agent.sock where the host type has one),
     so a repository declares none. DCF_HOST_SSH_AGENT is socket, none or key
-    (SSH_AGENT_MODE=key, the opt-in to a key in the container, also suppresses the mount). A mount whose target the repository's devcontainer.json already mounts is
+    (SSH_AGENT_MODE=key, the opt-in to a key in the container, also suppresses the mount). The
+    host folder DCF_HOST_CLOUD_FOLDER, when set, goes to the cloud-folder Feature's fixed host mount
+    /mnt/cloud-folder-host (the Feature links its mountPoint there); it is never created, and
+    skipped with a warning when it does not exist on this host. A mount whose target the repository's devcontainer.json already mounts is
     skipped, with one line saying so. HOST_MOUNTS=false turns the launcher's mounts
     off. `build` mounts nothing and `exec` runs in an existing container: neither
     takes them.
@@ -409,8 +413,9 @@ function Resolve-HostProfile {
     .SYNOPSIS
         Everything the launcher knows about the host: Type, Why, Priority, Engine
         (the command shown), EnginePath ($null = docker on PATH), and the three
-        DCF_HOST_* values: Home, SshAgent (socket, none or key), and SshSocket (the host
-        socket the agent mount takes, or empty).
+        DCF_HOST_* values: Home, SshAgent (socket, none or key), SshSocket (the host
+        socket the agent mount takes, or empty) and CloudFolder (DCF_HOST_CLOUD_FOLDER as given, or
+        empty).
     #>
     [CmdletBinding()]
     param([string]$DockerPath)
@@ -431,34 +436,41 @@ function Resolve-HostProfile {
         Type = $t.Type; Why = $t.Why; Priority = $t.Priority
         Engine = $engine; EnginePath = $enginePath
         Home = $hostHome; SshAgent = $agent.Mode; SshSocket = $agent.Socket
+        CloudFolder = (Get-SettingOrEnv '' 'DCF_HOST_CLOUD_FOLDER')
     }
 }
 
 function Initialize-HostEnvironment {
-    <# .SYNOPSIS Sets DCF_HOST_TYPE, DCF_HOST_HOME and DCF_HOST_SSH_AGENT in this process, so the devcontainer CLI (and ${localEnv:...} in a repo's devcontainer.json) sees them. Returns the profile. #>
+    <# .SYNOPSIS Sets DCF_HOST_TYPE, DCF_HOST_HOME, DCF_HOST_SSH_AGENT and DCF_HOST_CLOUD_FOLDER in this process, so the devcontainer CLI (and ${localEnv:...} in a repo's devcontainer.json) sees them. Returns the profile. #>
     [CmdletBinding()]
     param([string]$DockerPath)
     $p = Resolve-HostProfile -DockerPath $DockerPath
     [Environment]::SetEnvironmentVariable('DCF_HOST_TYPE', $p.Type)
     [Environment]::SetEnvironmentVariable('DCF_HOST_HOME', $p.Home)
     [Environment]::SetEnvironmentVariable('DCF_HOST_SSH_AGENT', $p.SshAgent)
+    # Passed on unchanged (the user's value), so containerEnv can map it; empty removes it.
+    [Environment]::SetEnvironmentVariable('DCF_HOST_CLOUD_FOLDER', $p.CloudFolder)
     return $p
 }
 
 # ---------------------------------------------------------------- host mounts ----
 # The mounts the launcher adds to `devcontainer up` (--mount), per host type: the host home's
-# .git-dirs (slice 3) and the SSH agent socket at the ssh-agent Feature's fixed path (slice 4).
-# Add a case to the switch, or an entry to the array of a case: nothing else changes.
+# .git-dirs (slice 3), the SSH agent socket at the ssh-agent Feature's fixed path (slice 4), and
+# the host folder DCF_HOST_CLOUD_FOLDER at the cloud-folder Feature's fixed host mount (cloud-folder
+# proposal, slice 1; the same constant is cloud_folder_target in devcontainer-cli.sh and HOST_MOUNT
+# in the Feature's install.sh). Add a case to the switch, or an entry to the array of a case: nothing else changes.
 $script:SshAgentTarget = '/var/lib/devcontainer-features/ssh-agent/agent.sock'
+$script:CloudFolderTarget = '/mnt/cloud-folder-host'
 function Get-HostMount {
     <#
     .SYNOPSIS
         The host mounts for a host type: objects with Name, Source, Target and Type.
         git-dirs is empty when the home is unknown; ssh-agent is present only with
-        -SshAgent socket and a -SshSocket source.
+        -SshAgent socket and a -SshSocket source; cloud-folder only with a -CloudFolder source,
+        always at /mnt/cloud-folder-host.
     #>
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$Type, [string]$HostHome, [string]$SshAgent = 'none', [string]$SshSocket)
+    param([Parameter(Mandatory)][string]$Type, [string]$HostHome, [string]$SshAgent = 'none', [string]$SshSocket, [string]$CloudFolder)
     $mounts = @()
     if ($HostHome) {
         switch ($Type) {
@@ -471,6 +483,9 @@ function Get-HostMount {
     }
     if ($SshAgent -eq 'socket' -and $SshSocket) {
         $mounts += [pscustomobject]@{ Name = 'ssh-agent'; Source = $SshSocket; Target = $script:SshAgentTarget; Type = 'bind' }
+    }
+    if ($CloudFolder) {
+        $mounts += [pscustomobject]@{ Name = 'cloud-folder'; Source = $CloudFolder; Target = $script:CloudFolderTarget; Type = 'bind' }
     }
     return $mounts
 }
@@ -561,7 +576,7 @@ function Resolve-HostMount {
     $p = Resolve-HostProfile -DockerPath $DockerPath
     $configured = @(Get-ConfiguredMountTarget -WorkspaceFolder $WorkspaceFolder -Arguments $Arguments)
     $add = @(); $skip = @()
-    foreach ($m in @(Get-HostMount -Type $p.Type -HostHome $p.Home -SshAgent $p.SshAgent -SshSocket $p.SshSocket)) {
+    foreach ($m in @(Get-HostMount -Type $p.Type -HostHome $p.Home -SshAgent $p.SshAgent -SshSocket $p.SshSocket -CloudFolder $p.CloudFolder)) {
         if ($configured -contains $m.Target) { $skip += $m } else { $add += $m }
     }
     return [pscustomobject]@{ Enabled = $true; Add = $add; Skip = $skip }
@@ -571,12 +586,31 @@ function Initialize-HostMountSource {
     <# .SYNOPSIS Creates the host folder of a bind mount when it is a path this launcher can reach (idempotent), so a start never fails on a missing source. A failure is a warning, never fatal. #>
     [CmdletBinding()]
     param([Parameter(Mandatory)]$Mount, [Parameter(Mandatory)][string]$Type)
-    # A socket is not ours to create.
-    if ($Mount.Name -eq 'ssh-agent') { return }
+    # A socket is not ours to create, nor is the user's cloud folder (an empty one would hide a wrong path).
+    if ($Mount.Name -in 'ssh-agent', 'cloud-folder') { return }
     # windows-wsl-docker driven from Windows has a distro path (/home/...) that Windows cannot create.
     if ($Type -eq 'windows-wsl-docker' -and (Get-HostPlatform) -eq 'windows') { return }
     try { if (-not (Test-Path -LiteralPath $Mount.Source)) { [void](New-Item -ItemType Directory -Path $Mount.Source -Force) } }
     catch { Write-Warning "host mount: could not create $($Mount.Source): $($_.Exception.Message)" }
+}
+
+function Test-CloudFolderMount {
+    <#
+    .SYNOPSIS
+        $true when the cloud-folder mount can be passed: a source that is a folder on this host. A source this launcher cannot check (a Windows path from Linux or
+        macOS, a distro path from Windows) goes to the engine as is. A refusal is one warning;
+        the container then starts without the folder and its status says so.
+    #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param([Parameter(Mandatory)]$Mount)
+    $windowsPath = $Mount.Source -match '^([A-Za-z]:[\\/]|\\\\)'
+    $checkable = if ((Get-HostPlatform) -eq 'windows') { $windowsPath } else { $Mount.Source.StartsWith('/') }
+    if ($checkable -and -not (Test-Path -LiteralPath $Mount.Source -PathType Container)) {
+        Write-Warning "host mount cloud-folder skipped: DCF_HOST_CLOUD_FOLDER '$($Mount.Source)' is not a folder on this host; the container starts without it (task cloud-folder:status says so)."
+        return $false
+    }
+    return $true
 }
 
 function Get-HostMountArgument {
@@ -593,6 +627,7 @@ function Get-HostMountArgument {
     foreach ($m in $r.Skip) { Write-Host "host mount skipped: $($m.Target) is already mounted by this repository's devcontainer.json" }
     foreach ($m in $r.Add) {
         if ($m.Source -match ',') { Write-Warning "host mount $($m.Name) skipped: the source '$($m.Source)' contains a comma, which --mount cannot carry."; continue }
+        if ($m.Name -eq 'cloud-folder' -and -not (Test-CloudFolderMount -Mount $m)) { continue }
         Initialize-HostMountSource -Mount $m -Type $type
         $out += @('--mount', (ConvertTo-MountArgument -Mount $m))
     }
@@ -611,6 +646,7 @@ function Show-HostProfile {
     Write-Host "DCF_HOST_TYPE      : $($p.Type)"
     Write-Host "DCF_HOST_HOME      : $($p.Home)"
     Write-Host "DCF_HOST_SSH_AGENT : $($p.SshAgent)"
+    Write-Host "DCF_HOST_CLOUD_FOLDER: $(if ($p.CloudFolder) { $p.CloudFolder } else { '(unset)' })"
     if (-not $WorkspaceFolder) { $WorkspaceFolder = (Get-Location).Path }
     $r = Resolve-HostMount -WorkspaceFolder $WorkspaceFolder -Arguments $Arguments -DockerPath $DockerPath
     if (-not $r.Enabled) { Write-Host 'host mounts        : off (HOST_MOUNTS=false)'; return }
@@ -1055,4 +1091,4 @@ function Invoke-DevcontainerCli {
     exit $rc
 }
 
-Export-ModuleMember -Function Get-HostTypeId, Get-DefaultHostTypePriority, Resolve-HostType, Resolve-SshAgent, Resolve-HostProfile, Initialize-HostEnvironment, Get-HostMount, ConvertTo-MountArgument, ConvertTo-JsonWithoutComment, Get-ConfiguredMountTarget, Test-HostMountsEnabled, Resolve-HostMount, Initialize-HostMountSource, Get-HostMountArgument, Show-HostProfile, Import-SshKey, Clear-HostProfileCache, Get-SettingOrEnv, ConvertFrom-TaskCliArgString, Get-PortableNodeDir, Get-DevcontainersCliEntrypoint, Remove-DevcontainersCli, Resolve-DockerPath, Get-WorkspaceFolderVariant, Get-RunningDevcontainerId, Stop-Devcontainer, Test-BuildSubcommand, Enter-DevcontainerBuildLock, Exit-DevcontainerBuildLock, Invoke-DevcontainerCliProcess, Invoke-DevcontainerCli
+Export-ModuleMember -Function Get-HostTypeId, Get-DefaultHostTypePriority, Resolve-HostType, Resolve-SshAgent, Resolve-HostProfile, Initialize-HostEnvironment, Get-HostMount, Test-CloudFolderMount, ConvertTo-MountArgument, ConvertTo-JsonWithoutComment, Get-ConfiguredMountTarget, Test-HostMountsEnabled, Resolve-HostMount, Initialize-HostMountSource, Get-HostMountArgument, Show-HostProfile, Import-SshKey, Clear-HostProfileCache, Get-SettingOrEnv, ConvertFrom-TaskCliArgString, Get-PortableNodeDir, Get-DevcontainersCliEntrypoint, Remove-DevcontainersCli, Resolve-DockerPath, Get-WorkspaceFolderVariant, Get-RunningDevcontainerId, Stop-Devcontainer, Test-BuildSubcommand, Enter-DevcontainerBuildLock, Exit-DevcontainerBuildLock, Invoke-DevcontainerCliProcess, Invoke-DevcontainerCli

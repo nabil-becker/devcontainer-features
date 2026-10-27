@@ -14,6 +14,7 @@ installing Node.js, and a one-line bootstrap that wires both into any repo.
 | [`git`](src/git) | git augmented for the container: a worktree-aware wrapper that scopes `GIT_DIR` to the checkout and maps a `.git` pointer under the host's `.git-dirs` onto one shared mount, `safe.directory` and `core.hooksPath` at post-create, the global config in a volume it owns. |
 | [`gh`](src/gh) | [GitHub CLI](https://cli.github.com) from GitHub releases, checksum-verified, unless the official Feature installed it; its login (`GH_CONFIG_DIR`) in a volume it owns, git's GitHub credentials taken from it. |
 | [`ssh-agent`](src/ssh-agent) | `SSH_AUTH_SOCK` at a fixed path in every process, so git commits can be signed with an SSH key: the launcher mounts the host's agent socket (linux, macOS, a WSL distro), the private key never entering the container; the Windows engines get a plain explanation and an opt-in, temporary key mode; `ssh-agent:*` tasks for keys, dedicated-key warnings, rotation and retirement (`key:rotate`, `key:retire`, `key:age`) and git signing setup. |
+| [`cloud-folder`](src/cloud-folder) | One fixed path (`/mnt/cloud-folder`, the `mountPoint` option) for a shared document folder that must never go in git (SharePoint, OneDrive): today host mode, the launcher bind-mounting the host folder a sync client keeps (`DCF_HOST_CLOUD_FOLDER`) at `/mnt/cloud-folder-host`, linked from `mountPoint`; `cloud-folder:status` says whether it is mounted, empty and writable and fails when it is not, so a start-up check can stop. rclone sync and mount come later. |
 | [`az`](src/az) | Augments the official `azure-cli` Feature: its login (`AZURE_CONFIG_DIR`) in a volume it owns, `az bicep` using the Bicep on PATH. |
 | [`kube-state`](src/kube-state) | Owns the kubeconfig (`KUBECONFIG`) the Kubernetes tools share, in a volume it owns, so velero and kubectl stop needing a hand-mounted `~/.kube`; installs no binary. |
 | [`common`](src/common) | The shared helper behind every Feature's post-create hook (`dcf-persist`: make a state directory usable and say what backs it), for a repo's own scripts too. |
@@ -231,6 +232,7 @@ run is configured:
 | Ordered, comma-separated host types `auto` tries (default per OS: Windows `windows-docker,windows-wsl-docker,windows-wslc`, inside WSL `windows-wsl-docker`, `linux`, `macos`) | `HOST_TYPE_PRIORITY` | `HOST_TYPE_PRIORITY=` var |
 | `false` (or `0`, `no`): the launcher adds no host mounts to `up`. By default it adds the host home's `.git-dirs` at `/git-dirs` and, where the host type has one, the SSH agent socket at the `ssh-agent` Feature's fixed path (each skipped when the repository's `devcontainer.json` already mounts that target), so a repository declares no mount line; `task devcontainer:host` lists them. | `HOST_MOUNTS` | `HOST_MOUNTS=` var |
 | `key`: opt into a signing key kept in the container (the `ssh-agent` Feature's key mode, which breaks "the private key never enters the container" for you): `DCF_HOST_SSH_AGENT=key` and no agent socket mounted. Unset: the host type decides (socket on linux, macos, a WSL distro; none on the Windows engines). | `SSH_AGENT_MODE` | `SSH_AGENT_MODE=` var |
+| A host folder a sync client keeps (SharePoint, OneDrive) that `up` bind-mounts at `/mnt/cloud-folder-host`, where the `cloud-folder` Feature's `mountPoint` links; passed on unchanged for `containerEnv`. Never created: a path missing on this host is skipped with a warning. Unset: no folder. | `DCF_HOST_CLOUD_FOLDER` | `DCF_HOST_CLOUD_FOLDER=` var |
 | Portable Node.js version | `DEVCONTAINER_NODE_VERSION` | - |
 | `@devcontainers/cli` version (default `latest`) | `DEVCONTAINER_CLI_VERSION` | - |
 | Root of the host-side tool-state folders (`devcontainer:homes`; default `~/.devcontainer-homes`) | `DEVCONTAINER_HOMES` | - |
@@ -291,6 +293,14 @@ signing key in the container's volume and so breaks "the key never enters the co
 `task dc:ssh-key-import FILE=<key>` (a dedicated key, one per container, registered at GitHub as a signing key only;
 `task ssh-agent:key:new` makes one inside the container). Then `task ssh-agent:git:signing` and `task ssh-agent:git:verify`;
 `task ssh-agent:key:rotate` replaces the key in four steps and `key:retire` / `key:age` retire it and show its age.
+
+**A shared document folder outside git (`cloud-folder` 1.0.0, devcontainer-cli 1.12.0):** add
+`ghcr.io/nabil-becker/devcontainer-features/cloud-folder:1` to the `features`, map `"DCF_HOST_CLOUD_FOLDER":
+"${localEnv:DCF_HOST_CLOUD_FOLDER}"` with `containerEnv` (the bootstrap's template does), and set
+`DCF_HOST_CLOUD_FOLDER=<the synced folder on this host>` in `.devcontainer/.env`. `up` then mounts it at
+`/mnt/cloud-folder-host`, and the Feature's `mountPoint` (default `/mnt/cloud-folder`) links there: the path in the
+container is named once, in that option. Drop a hand-written bind mount of the folder from `devcontainer.json`. Put
+`task cloud-folder:status` in your start-up check: it fails when the folder is missing or unwritable.
 
 All of them also answer to `dc:` (the include's alias in the generated
 Taskfile). Each task dispatches per platform (Task's per-command

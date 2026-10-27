@@ -36,11 +36,16 @@
     // The host user's home: %USERPROFILE% on Windows, $HOME elsewhere
     "DCF_HOST_HOME": "${localEnv:DCF_HOST_HOME}",
     // socket, key or none (none for now)
-    "DCF_HOST_SSH_AGENT": "${localEnv:DCF_HOST_SSH_AGENT}"
+    "DCF_HOST_SSH_AGENT": "${localEnv:DCF_HOST_SSH_AGENT}",
+    // The host folder (DCF_HOST_CLOUD_FOLDER in .devcontainer/.env) the launcher mounts for the
+    // cloud-folder Feature; empty when none. The Feature's status names it.
+    "DCF_HOST_CLOUD_FOLDER": "${localEnv:DCF_HOST_CLOUD_FOLDER}"
   },
   // Host mounts: the launcher (task devcontainer:up / rebuild) adds the mounts the host type
   // needs with `devcontainer up --mount`, today the host home's .git-dirs at /git-dirs (the git
-  // Feature's one mount), so nothing here declares it. HOST_MOUNTS=false turns that off. If you
+  // Feature's one mount), so nothing here declares it; also, when DCF_HOST_CLOUD_FOLDER is set,
+  // that host folder at /mnt/cloud-folder-host, where the cloud-folder Feature's mountPoint
+  // option links. HOST_MOUNTS=false turns that off. If you
   // keep or add the line below, the launcher sees the target and skips its own, so it is harmless.
   // Only when you also open the folder straight in VS Code (Reopen in Container), which skips the
   // launcher and leaves DCF_HOST_HOME empty, add the line yourself, with the home variable VS Code
