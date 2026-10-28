@@ -73,6 +73,20 @@ rclone_version_line() { # <rclone binary>
   "$1" version 2>/dev/null | sed -n 1p
 }
 
+# The retry flags for every download here. A TLS reset in mid-handshake ("curl: (35) ... unexpected
+# eof") is not retried by plain --retry; --retry-all-errors (curl 7.71+) retries it. Support is read
+# from curl's own help into a variable (a `| grep -q` would close the pipe early, SIGPIPE, and under
+# pipefail answer "unsupported" by luck); an older curl keeps plain --retry. Fills CURL_RETRY.
+# test/cloud-folder/unit/retry_test.sh.
+curl_retry_flags() {
+  local help
+  help="$(curl --help all 2>&1 || true)"
+  CURL_RETRY=(--retry 3 --retry-delay 2)
+  case "$help" in
+    *--retry-all-errors*) CURL_RETRY+=(--retry-all-errors) ;;
+  esac
+}
+
 install_rclone() {
   local arch v asset sum tmp missing=()
   command -v curl >/dev/null 2>&1 || missing+=(curl ca-certificates)
@@ -93,10 +107,11 @@ install_rclone() {
     *) echo "cloud-folder: rclone: unsupported architecture $(uname -m) (amd64 and arm64)" >&2; return 1 ;;
   esac
 
+  curl_retry_flags
   v="$RCLONEVERSION"
   if [ "$v" = latest ]; then
     # The publisher's one-line version file ("rclone v1.75.2").
-    v="$(curl -fsSL "$DOWNLOADS/version.txt" | sed -n 's/^rclone v\{0,1\}\([0-9][0-9.]*\).*/\1/p' | head -n 1)"
+    v="$(curl -fsSL "${CURL_RETRY[@]}" "$DOWNLOADS/version.txt" | sed -n 's/^rclone v\{0,1\}\([0-9][0-9.]*\).*/\1/p' | head -n 1)"
     echo "cloud-folder: rcloneVersion latest resolves to $v"
   fi
   v="${v#v}"
@@ -113,7 +128,7 @@ install_rclone() {
   sum="$(awk -v n="$asset" '$2 == n { print $1; exit }' "$feature_dir/rclone-checksums.txt" 2>/dev/null || true)"
   if [ -z "$sum" ]; then
     # 2. A version not pinned here: the release's SHA256SUMS from the publisher.
-    sum="$(curl -fsSL --retry 3 --retry-delay 2 "$DOWNLOADS/v${v}/SHA256SUMS" | awk -v n="$asset" '$2 == n { print $1; exit }' || true)"
+    sum="$(curl -fsSL "${CURL_RETRY[@]}" "$DOWNLOADS/v${v}/SHA256SUMS" | awk -v n="$asset" '$2 == n { print $1; exit }' || true)"
     [ -n "$sum" ] && echo "cloud-folder: rclone $v is not pinned in this Feature; verifying against the release's SHA256SUMS"
   fi
   if [[ ! "$sum" =~ ^[0-9a-f]{64}$ ]]; then
@@ -121,7 +136,7 @@ install_rclone() {
     return 1
   fi
   echo "cloud-folder: downloading rclone v${v} (${asset})..."
-  curl -fsSL --retry 3 --retry-delay 2 -o "$tmp/$asset" "$DOWNLOADS/v${v}/$asset"
+  curl -fsSL "${CURL_RETRY[@]}" -o "$tmp/$asset" "$DOWNLOADS/v${v}/$asset"
   echo "${sum}  $tmp/$asset" | sha256sum -c -
   unzip -q -j -o "$tmp/$asset" "rclone-v${v}-linux-${arch}/rclone" -d "$tmp/x"
   install -m 0755 "$tmp/x/rclone" /usr/local/bin/rclone

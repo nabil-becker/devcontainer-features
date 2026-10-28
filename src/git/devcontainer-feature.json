@@ -1,6 +1,6 @@
 {
   "id": "git",
-  "version": "1.4.3",
+  "version": "1.4.4",
   "name": "git (devcontainer wrapper and setup)",
   "description": "Augments whichever git the image already has (base image, common-utils or ghcr.io/devcontainers/features/git) for devcontainers whose checkout keeps its git dir outside the workspace: with one bind mount of the host's .git-dirs folder at /git-dirs (GIT_DIRS_ROOT), a /usr/local/bin/git wrapper maps a checkout's .git pointer holding a host path under .git-dirs (C:/Users/<user>/.git-dirs/<owner>/<repo>) onto that mount for each call, so no repo declares GIT_DIR; with GIT_DIR and GIT_WORK_TREE in containerEnv (the per-repo form, still supported) it drops those two variables inside linked worktrees (Claude Code's .claude/worktrees/<name>) and nested repositories, so they are not sent to the main checkout, and puts the real values back when Claude Code replaces GIT_DIR with a not-a-git-repository placeholder, and a postCreateCommand hook (git-setup) does the per-container setup every repo otherwise scripts by hand - the git dir mapping recorded, safe.directory and core.hooksPath - in a global git config (GIT_CONFIG_GLOBAL at /var/lib/devcontainer-features/git/gitconfig) kept in a named volume so identity and credential helper survive rebuilds.",
   "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/git",

@@ -97,8 +97,10 @@ if [ -z "$recorded" ] && [ -z "${GIT_DIR:-}" ]; then rm -f "$dirs_file" 2>/dev/n
 # by another uid, and every repo-local command below needs them trusted.
 # Run from / so a workspace whose .git pointer git cannot follow (the mount is
 # missing) does not make git refuse the global config too.
+# grep reads all of the list (no -q: it would exit at the first match, git can get SIGPIPE, and under
+# pipefail a false "not there" adds a duplicate entry). test/git/unit/safe_directory_test.sh.
 add_safe_directory() {
-  if git -C / config --global --get-all safe.directory 2>/dev/null | grep -qxF -- "$1"; then
+  if git -C / config --global --get-all safe.directory 2>/dev/null | grep -xF -- "$1" >/dev/null; then
     echo "safe.directory: $1 (kept)"
   elif git -C / config --global --add safe.directory "$1" 2>/dev/null; then
     echo "safe.directory: $1 (added)"

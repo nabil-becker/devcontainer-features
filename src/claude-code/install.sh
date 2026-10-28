@@ -83,7 +83,9 @@ install_native() {
       ;;
   esac
   platform="linux-${arch}"
-  if ldd /bin/ls 2>&1 | grep -q musl; then
+  # grep reads all of ldd's output: `grep -q` exits at the first match, ldd can get SIGPIPE, and under
+  # pipefail the 141 would read as "not musl". test/claude-code/unit/musl_test.sh.
+  if ldd /bin/ls 2>&1 | grep musl >/dev/null; then
     platform="${platform}-musl"
   fi
 

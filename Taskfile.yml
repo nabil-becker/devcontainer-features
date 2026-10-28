@@ -109,6 +109,7 @@ tasks:
       - bash test/claude-code/unit/live_session_test.sh
       - bash test/claude-code/unit/adapter_test.sh
       - bash test/claude-code/unit/additional_dirs_test.sh
+      - bash test/claude-code/unit/musl_test.sh
 
   test:agents-unit:
     desc: 'Docker-free tests of the agents Feature''s agents command: the agent list (the YAML subset, required keys, unknown keys warned, errors with file and line), AGENTS_FILE from the task variable, .env, .devcontainer/.env, the environment or the default (a missing file named with its source), each verb per kind (start, --resume, --new and its question, up, list, stop, logs), the no-terminal rule, the fallbacks when the adapter answers exit 3, a listing that fails (state error, nothing started, the hint, never a fresh session), an on-demand agent shown none unless running, reset (a dry run by default, duplicates stopped, --purge, only listed agents and their folders, unlisted sessions untouched, a session mid-turn not stopped, uncommitted changes a warning and with --purge a refusal, --force, refused inside a Claude Code session, --all), the once-per-container-start marker, and the Feature Taskfile; a fake adapter keeps sessions in a file and records every call; part of lint. Needs task for the Taskfile part.'
@@ -134,6 +135,7 @@ tasks:
     desc: 'Docker-free tests of the git Feature''s wrapper, git-setup and .git-dirs mapping, run from src/git against temp folders (never the checkout''s own git dir or global config); part of lint.'
     cmds:
       - bash test/git/unit/git_dirs_test.sh
+      - bash test/git/unit/safe_directory_test.sh
 
   test:shutdown:
     desc: 'Docker-free bash tests of the shutdown-check contract (bootstrap/SHUTDOWN.md): the default resolution snippet from bootstrap/devcontainer.yml against fake task and devhost-shutdown-check commands, the starter bootstrap/shutdown-check.sh in temp git repos, and the bash twin''s stop (127 message, refusal, FORCE, prepshutdown) with a stub engine and CLI; part of lint.'
@@ -156,6 +158,7 @@ tasks:
       - bash test/cloud-folder/unit/status_test.sh
       - bash test/cloud-folder/unit/sync_test.sh
       - bash test/cloud-folder/unit/version_test.sh
+      - bash test/cloud-folder/unit/retry_test.sh
 
   test:ssh-agent-unit:
     desc: 'Docker-free tests of the ssh-agent Feature''s ssh-agent-setup against temp folders with the real OpenSSH tools and git: the verdict per DCF_HOST_SSH_AGENT (socket, none, key, unknown), key mode (an agent started on the fixed path and reused, a stale socket replaced, a 0600 key loaded and a 0644 one refused, key-new, key-add, key-stdin, key-remove), key hygiene (dedicated default name, default-name and age warnings, key-age), rotation and retirement against a stubbed gh (the steps in order, the old key retired only after git:verify passes, the allowed_signers history, REVOKE, the resume path, --plan changing nothing), the refusal when key mode is off, git-signing (KEY by fingerprint or .pub, SCOPE and its default) and a real sign and verify round trip in git-verify; only throwaway keys; part of lint. Needs openssh-client and git.'
