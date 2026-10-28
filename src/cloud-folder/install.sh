@@ -66,6 +66,13 @@ feature_dir="$(cd "$(dirname "$0")" && pwd)"
 version="$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' "$feature_dir/devcontainer-feature.json" | head -n 1)"
 
 # ---------------------------------------------------------------- rclone ----
+# The first line of `<rclone> version`. sed reads all of the output: `| head -n 1` closes the pipe
+# after one line, rclone (still writing) gets SIGPIPE, and under pipefail the 141 stopped the
+# install (a --no-cache rebuild, intermittently). test/cloud-folder/unit/version_test.sh.
+rclone_version_line() { # <rclone binary>
+  "$1" version 2>/dev/null | sed -n 1p
+}
+
 install_rclone() {
   local arch v asset sum tmp missing=()
   command -v curl >/dev/null 2>&1 || missing+=(curl ca-certificates)
@@ -118,13 +125,13 @@ install_rclone() {
   echo "${sum}  $tmp/$asset" | sha256sum -c -
   unzip -q -j -o "$tmp/$asset" "rclone-v${v}-linux-${arch}/rclone" -d "$tmp/x"
   install -m 0755 "$tmp/x/rclone" /usr/local/bin/rclone
-  /usr/local/bin/rclone version | head -n 1
+  rclone_version_line /usr/local/bin/rclone
 }
 
 if [ "$MODE" = host ]; then
   echo "cloud-folder: mode host: rclone is not installed (host mode does not use it)"
 elif found="$(command -v rclone 2>/dev/null)"; then
-  echo "cloud-folder: keeping the rclone already in the image ($found, $("$found" version 2>/dev/null | head -n 1)); rcloneVersion '$RCLONEVERSION' is ignored."
+  echo "cloud-folder: keeping the rclone already in the image ($found, $(rclone_version_line "$found")); rcloneVersion '$RCLONEVERSION' is ignored."
 else
   install_rclone
 fi

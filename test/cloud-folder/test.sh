@@ -9,7 +9,7 @@ source dev-container-features-test-lib
 check "cloud-folder-setup on PATH" command -v cloud-folder-setup
 check "cloud-folder-setup is root-owned" bash -c "[ \"\$(stat -c %U \"\$(command -v cloud-folder-setup)\")\" = root ]"
 check "options baked for cloud-folder-setup" bash -c "grep -qx 'MODE=auto' /usr/local/share/cloud-folder-feature/options.env && grep -qx 'MOUNTPOINT=/mnt/cloud-folder' /usr/local/share/cloud-folder-feature/options.env"
-check "the Feature version is baked" grep -qx 'FEATURE_VERSION=1.1.0' /usr/local/share/cloud-folder-feature/options.env
+check "the Feature version is baked" grep -qx 'FEATURE_VERSION=1.1.1' /usr/local/share/cloud-folder-feature/options.env
 check "the host mount path is baked" grep -qx 'HOST_MOUNT=/mnt/cloud-folder-host' /usr/local/share/cloud-folder-feature/options.env
 check "the mount point is a link to the host mount" bash -c "[ \"\$(readlink /mnt/cloud-folder)\" = /mnt/cloud-folder-host ]"
 check "the host mount is not created by the image" bash -c "! test -e /mnt/cloud-folder-host"
