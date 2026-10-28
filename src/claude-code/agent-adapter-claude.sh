@@ -315,7 +315,9 @@ case "$verb" in
     else
       [ "$(col "$s" 3)" = running ] && die 1 "$want: running; stop it first."
       # claude rm keeps the transcript and a worktree with unpushed work, and says so
-      claude rm "$(col "$s" 5)" </dev/null >&2 || die 1 "'claude rm $(col "$s" 5)' failed."
+      # its own "removed <id>" line is dropped: the line below says it once
+      rmout="$(claude rm "$(col "$s" 5)" </dev/null 2>&1)" || { printf '%s\n' "$rmout" >&2; die 1 "'claude rm $(col "$s" 5)' failed."; }
+      [ -z "$rmout" ] || printf '%s\n' "$rmout" | grep -v '^removed ' >&2 || true
       echo "$want: removed from the session list"
     fi
     exit 0 ;;

@@ -754,7 +754,7 @@ cmd_reset() {
       owner="$(owner_of "$cli" "$nm" "$fo")"
       [ "$owner" = "$i" ] || continue
       if [ "$st" = running ]; then
-        if [ -z "$kept" ]; then kept="$id"; plan_add "$cli" "$id" "${NAME[i]}" "$st" "$fo" keep 'the session the agent is'
+        if [ -z "$kept" ]; then kept="$id"; plan_add "$cli" "$id" "${NAME[i]}" "$st" "$fo" keep "the agent's session (the one it attaches to)"
         else plan_add "$cli" "$id" "${NAME[i]}" "$st" "$fo" stop 'a second running session (its conversation is kept)'; fi
       elif [ -n "$purge" ]; then plan_add "$cli" "$id" "${NAME[i]}" "$st" "$fo" remove 'ended (--purge)'
       else plan_add "$cli" "$id" "${NAME[i]}" "$st" "$fo" keep 'ended; its conversation is kept'
@@ -798,16 +798,23 @@ cmd_reset() {
     fi
   done
   for ((k = 0; k < ${#PL_ID[@]}; k++)); do case "${PL_ACT[k]}" in stop | remove) changes=$((changes + 1)) ;; esac; done
-  printf '%-16s %-38s %-8s %-9s %s\n' AGENT SESSION STATE ACTION WHY
+  local w=16
+  for ((k = 0; k < ${#PL_ID[@]}; k++)); do [ "${#PL_AGENT[k]}" -le "$w" ] || w="${#PL_AGENT[k]}"; done
+  for i in "${starts[@]+"${starts[@]}"}"; do [ "${#NAME[i]}" -le "$w" ] || w="${#NAME[i]}"; done
+  printf "%-${w}s %-38s %-8s %-9s %s\n" AGENT SESSION STATE ACTION WHY
   for ((k = 0; k < ${#PL_ID[@]}; k++)); do
-    printf '%-16s %-38s %-8s %-9s %s\n' "${PL_AGENT[k]}" "${PL_ID[k]}" "${PL_STATE[k]}" "${PL_ACT[k]}" "${PL_WHY[k]}"
+    printf "%-${w}s %-38s %-8s %-9s %s\n" "${PL_AGENT[k]}" "${PL_ID[k]}" "${PL_STATE[k]}" "${PL_ACT[k]}" "${PL_WHY[k]}"
   done
   for i in "${starts[@]+"${starts[@]}"}"; do
-    printf '%-16s %-38s %-8s %-9s %s\n' "${NAME[i]}" - - start "a resident with no running session: woken with its latest conversation, else a fresh one"
+    printf "%-${w}s %-38s %-8s %-9s %s\n" "${NAME[i]}" - - start "a resident with no running session: woken with its latest conversation, else a fresh one"
   done
   if [ "$changes" -eq 0 ] && [ "${#starts[@]}" -eq 0 ]; then
-    echo "agents: reset: nothing to stop, remove or start."
-    [ "$refused" -eq 0 ] || exit 1
+    if [ "$refused" -gt 0 ]; then
+      echo "agents: reset: $refused refused (see above); nothing else to stop, remove or start."
+      [ "$rc" -ne 0 ] || rc=2
+    else
+      echo "agents: reset: nothing to stop, remove or start."
+    fi
     exit "$rc"
   fi
   if [ "$changes" -gt 0 ] && [ "${CLAUDE_CODE_CHILD_SESSION:-}" = 1 ] && [ -z "$force" ]; then
@@ -841,7 +848,7 @@ cmd_reset() {
     make_run "$i"; a=$?
     case "$a" in 0) ;; 3) echo "${NAME[i]}: skipped, ${CLI[i]} has no background mode" ;; *) rc=1 ;; esac
   done
-  [ "$refused" -eq 0 ] || rc=1
+  [ "$refused" -eq 0 ] || [ "$rc" -ne 0 ] || rc=2
   exit "$rc"
 }
 

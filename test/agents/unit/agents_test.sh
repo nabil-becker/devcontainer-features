@@ -454,6 +454,7 @@ out="$(run reset host)"; rc=$?
 check 'reset: a dry run by default (exit 0)' 0 "$rc"
 check 'reset dry run: nothing called' "" "$(calls)"
 check 'reset dry run: the sessions unchanged' "$(cat "$T/sessions.before")" "$(cat "$T/sessions")"
+contains 'reset plan: the keep reason is a full sentence' "$out" "the agent's session (the one it attaches to)"
 contains 'reset dry run: says so' "$out" 'a dry run, nothing changed; add --yes'
 contains 'reset plan: keeps the session the agent is' "$out" "$(printf '%-16s %-38s %-8s %-9s' host id-h1 running keep)"
 contains 'reset plan: stops the duplicate' "$out" "$(printf '%-16s %-38s %-8s %-9s' host id-h2 running stop)"
@@ -486,12 +487,22 @@ check 'reset inside a Claude Code session: nothing called' "" "$(calls)"
 contains 'reset inside a Claude Code session: says where to run it' "$out" 'run it from a container terminal or task devcontainer:shell'
 out="$(CLAUDE_CODE_CHILD_SESSION=1 run reset host --yes --force)"; rc=$?
 check 'reset inside a session --force: goes ahead' "session-stop|id-h2;record|host|$repo|--;" "$(calls)"
+# a long unlisted name widens the AGENT column for every row
+reset; sessions_for_reset; printf 'd47 d50 personalization medallion\tid-long\trunning\t%s\n' "$repo" >> "$T/sessions"
+out="$(run reset host)"
+contains 'reset plan: a long unlisted name keeps the columns aligned (keep row)' "$out" "$(printf '%-35s %-38s %-8s %-9s' host id-h1 running keep)"
+contains 'reset plan: a long unlisted name keeps the columns aligned (header)' "$out" "$(printf '%-35s %-38s %-8s %-9s %s' AGENT SESSION STATE ACTION WHY)"
 # a session mid-turn is not stopped
 reset; sessions_for_reset; export FAKE_BUSY=id-h2
 out="$(run reset host --yes)"; rc=$?
-check 'reset, a duplicate mid-turn: exit 1' 1 "$rc"
+check 'reset, a duplicate mid-turn, applied: exit 2 (a refusal, nothing failed)' 2 "$rc"
 check 'reset, a duplicate mid-turn: not stopped' "" "$(calls)"
 contains 'reset, a duplicate mid-turn: says which and why' "$out" "$(printf '%-16s %-38s %-8s %-9s' host id-h2 running refused) would stop it, but it is mid-turn right now (busy)"
+: > "$T/calls"
+out="$(run reset host)"; rc=$?
+check 'reset, a duplicate mid-turn, dry run: exit 2' 2 "$rc"
+contains 'reset, only a refusal: counts it' "$out" 'agents: reset: 1 refused (see above); nothing else to stop, remove or start.'
+lacks 'reset, only a refusal: not "nothing to stop" alone' "$out" 'agents: reset: nothing to stop'
 : > "$T/calls"
 out="$(run reset host --yes --force)"; rc=$?
 check 'reset, a duplicate mid-turn, --force: stopped' "session-stop|id-h2;record|host|$repo|--;" "$(calls)"
@@ -509,7 +520,7 @@ if command -v git >/dev/null 2>&1; then
   contains 'reset, uncommitted changes, plain: a warning naming the folder' "$out" "warning: uncommitted changes in $repo"
   reset; sessions_for_reset
   out="$(run reset host --purge --yes)"; rc=$?
-  check 'reset --purge, uncommitted changes: exit 1' 1 "$rc"
+  check 'reset --purge, uncommitted changes: exit 2' 2 "$rc"
   check 'reset --purge, uncommitted changes: the stop goes ahead, the removal does not' "session-stop|id-h2;record|host|$repo|--;" "$(calls)"
   contains 'reset --purge, uncommitted changes: says which folder' "$out" "would remove it (its conversation), but $repo has uncommitted changes (git status)"
   reset; sessions_for_reset

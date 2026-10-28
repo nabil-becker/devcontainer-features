@@ -77,6 +77,8 @@ if [ "$1" = --bg ] && [ "$2" = --name ]; then
   echo "started b$n"
 elif [ "$1" = --bg ] && [ "$2" = --resume ]; then
   awk -F'\t' -v OFS='\t' -v s="$3" '$2 == s { $6 = 999; $7 = "running" } { print }' "$FAKE_TABLE" > "$FAKE_TABLE.n" && mv "$FAKE_TABLE.n" "$FAKE_TABLE"
+elif [ "$1" = rm ]; then
+  echo "removed $2"; echo "kept the transcript"
 elif [ "$1" = stop ]; then
   awk -F'\t' -v OFS='\t' -v s="$2" '$1 == s { $6 = 0; $7 = "done" } { print }' "$FAKE_TABLE" > "$FAKE_TABLE.n" && mv "$FAKE_TABLE.n" "$FAKE_TABLE"
 fi
@@ -306,6 +308,7 @@ check 'session-stop of an interactive session: refused, nothing called' "1:" "$r
 check 'session-remove of a running session: refused, nothing called' "1:" "$rc:$(calls)"
 : > "$FAKE_CALLS"; out="$(ad session-remove sess-r0)"; rc=$?
 check 'session-remove of an ended session: claude rm <short id>' "0:$T|rm|r0;" "$rc:$(calls)"
+check 'session-remove: one removal line, claude rm'"'"'s own "removed <id>" dropped, its notes kept' "1:0" "$(printf '%s\n' "$out" | grep -c 'removed from the session list'):$(printf '%s\n' "$out" | grep -c '^removed ')"
 out="$(ad session-remove nope)"; rc=$?
 check 'session-remove of an unknown id: exit 1' 1 "$rc"
 out="$(ad record host "$repo")"
