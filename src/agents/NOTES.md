@@ -114,7 +114,7 @@ start that fails is said and the start goes on. `task agents:up -- --no-wait` sk
 Exit codes of `agents`: 0 done, 1 failed, 2 bad use (unknown agent, broken or missing list,
 refused), 3 the CLI cannot do it.
 
-## Reset (1.0.1)
+## Reset (1.0.1, output fixed in 1.0.2)
 
 `task agents:reset -- <name>... | --all [--purge] [--include-unlisted] [--yes] [--force]` puts the listed agents'
 sessions in order, from a container terminal:
@@ -139,6 +139,10 @@ sessions in order, from a container terminal:
   - any stop or removal from inside a Claude Code session (`CLAUDE_CODE_CHILD_SESSION=1`, which Claude Code sets for
     its tools' commands), which may be one it would stop: run it from a container terminal or `task
     devcontainer:shell`.
+- **Exit codes:** 0 done, 1 something failed (a stop, removal or start that errored), 2 a refusal and nothing failed
+  (dry run or applied). When every action was refused the summary says how many ("1 refused (see above); nothing else
+  to stop, remove or start."); "nothing to stop, remove or start." means nothing was refused either. The AGENT column
+  is as wide as the longest name in the plan (16 at least; an unlisted session shows as `(name)`).
 - An adapter without the optional verbs: `session-busy` missing counts as not busy (said);
   `session-stop` missing leaves the duplicate running (said, exit 1);
   `session-remove` missing skips `--purge` with a note; `record` missing is skipped.
@@ -269,7 +273,9 @@ so they live here and each CLI Feature adds only its adapter.
 ## Version and upgrade
 
 `ghcr.io/nabil-becker/devcontainer-features/agents:1` follows 1.x; rebuild to update. 1.0.0 is the
-first release. 1.0.1: `task agents:reset` (above); a `list` that fails is state `error` and starts nothing (it showed `unknown`
+first release. 1.0.2: `agents reset` output fixes: the keep reason is a full sentence, the AGENT column fits the longest
+name, a refusal exits 2 (1 stays for a failure) and is counted in the summary; pair it with claude-code 1.8.1, whose
+`session-remove` prints one line instead of two. 1.0.1: `task agents:reset` (above); a `list` that fails is state `error` and starts nothing (it showed `unknown`
 and started residents as fresh sessions), with the adapter's reason and how to resume by hand; an
 on-demand agent shows `none` unless a session runs (it showed yesterday's stopped one). Pair it with
 claude-code 1.8.0, whose adapter reads the list sturdily and gives the reason and the hint, and finds an agent
