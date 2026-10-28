@@ -398,7 +398,9 @@ can trust. It installs rclone only when absent and orders itself after those Fea
 ## Version and upgrade
 
 - `1.1.1`: fix: the install no longer stops (exit 141, intermittently) right after it prints the rclone
-  version; the version line is read without closing the pipe early. No option or behavior change.
+  version; the version line is read without closing the pipe early. The rclone downloads (the
+  version file, the checksums, the zip) retry every error, a TLS reset included, as far as curl
+  supports it (7.71+; an older curl keeps plain `--retry`). No option or behavior change.
 - `1.1.0`: sync mode (rclone pinned and verified, `login`, `sync`, the timer, `start`, `stop`,
   `shutdown-check`), the options `remoteType`, `driveType`, `siteUrl`, `remotePath`,
   `syncInterval` and `rcloneVersion`, the Feature volume, and `auto` choosing sync when a remote
