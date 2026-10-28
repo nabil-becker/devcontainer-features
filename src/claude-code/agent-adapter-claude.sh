@@ -6,8 +6,13 @@
 #   agent-adapter-claude <verb> <name> <folder> [--extras] [-- claude args...]
 #     start-bg   cd <folder> && claude --bg --name <name> <args>; prints the new session's id
 #     wake       the agent's newest stopped or failed session, by its full id:
-#                cd <folder> && claude --bg --resume <session id> (the same id, its conversation)
-#     attach     claude attach <id> of its newest running session (a terminal is needed)
+#                cd <folder> && claude --bg --resume <session id> (the same id, its conversation,
+#                its saved options) when Claude Code's saved options for it are --name <name>
+#                <args> and its own state.json says it ended; otherwise ... --resume <session id>
+#                --name <name> <args> (a copy)
+#     attach     claude attach <id> of its newest running session (a terminal is needed); an
+#                ended one is attached (restarted) only when wake would wake it bare, else
+#                woken as wake does, then attached
 #     resume     cd <folder> && claude --resume <session id> <args> of its newest session;
 #                refused while that session runs (a second process on one transcript); when
 #                the list cannot be read, claude --resume <args> (its own picker), never new
@@ -29,7 +34,9 @@
 # session's short id (the "id" field; the full sessionId when there is none), never the
 # name: `claude attach host` would match part of a name ("host-review" too) and only while
 # the session runs. A stopped session is woken by its full id with --bg --resume, never
-# with -c or --resume <name>, which start copies. The JSON is read with sed (no jq or
+# with -c or --resume <name>, which start copies; Claude Code puts its saved options back,
+# and a flag given with --bg --resume starts a copy instead, so flags go with it only when the
+# saved options are not the agent's ("saved options" below). The JSON is read with sed (no jq or
 # python in the Feature), as claude-host does; entries are flat objects.
 set -u
 
@@ -271,6 +278,104 @@ wait_running() {
 }
 ids_now() { sessions 2>/dev/null | cut -f2 | tr '\n' ' '; }
 
+# ------------------------------------------------------------ saved options ----
+# Claude Code keeps the options a background session was started with (its "saved options",
+# the respawnFlags in $CLAUDE_CONFIG_DIR/jobs/<short id>/state.json) and puts them back when the
+# session is woken bare (`claude --bg --resume <session id>`, or `claude attach <id>` of an ended
+# one): `note: woke session <id> with its saved options (--name, --agent, --settings, --model)`.
+# Any flag given with --bg --resume makes Claude Code start a copy under a new id instead
+# (`the flags you passed started a copy as <id>`; 2.1.308). So a session is woken bare only when
+# its saved options are exactly what start-bg passes for the agent (--name <name> and its args);
+# when they differ (the args changed, or the session was started without them) or cannot be read,
+# it is woken with --name <name> and the args, so the agent never runs without its options. The
+# same when Claude Code's own state for it (state.json "state") is not an ended one although the
+# list shows it ended: after a rebuild a bare wake of it starts a copy without any options.
+jobs_dir() { printf '%s' "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/jobs"; }
+
+# saved_flags <short id>: the session's saved options, one JSON string per line as the file holds
+# it (still escaped); returns 1 when they cannot be read.
+saved_flags() {
+  local f; f="$(jobs_dir)/$1/state.json"
+  [ -n "$1" ] && [ -r "$f" ] || return 1
+  awk 'BEGIN { RS = "\001" } { s = s $0 } END {
+    i = index(s, "\"respawnFlags\""); if (!i) exit 1
+    s = substr(s, i + 14)
+    if (!match(s, /^[ \t\r\n]*:[ \t\r\n]*\[/)) exit 1
+    s = substr(s, RLENGTH + 1); n = length(s); tok = ""; ins = 0; esc = 0
+    for (k = 1; k <= n; k++) {
+      c = substr(s, k, 1)
+      if (ins) {
+        if (esc) { tok = tok c; esc = 0 } else if (c == "\\") { tok = tok c; esc = 1 }
+        else if (c == "\"") { print tok; tok = ""; ins = 0 } else tok = tok c
+        continue
+      }
+      if (c == "\"") { ins = 1; continue }
+      if (c == "]") exit 0
+      if (c ~ /[ \t\r\n,]/) continue
+      exit 1
+    }
+    exit 1 }' "$f"
+}
+
+# want_flags <args...>: what start-bg passes for the agent (--name <name> <args>), encoded as
+# saved_flags prints it (JSON string escapes, as Claude Code writes them).
+want_flags() {
+  local a
+  for a in --name "$NAME" "$@"; do
+    a="${a//\\/\\\\}"; a="${a//\"/\\\"}"; a="${a//$'\n'/\\n}"; a="${a//$'\t'/\\t}"; a="${a//$'\r'/\\r}"
+    printf '%s\n' "$a"
+  done
+}
+
+# saved_state <short id>: the session's own state in its state.json (the top-level "state":
+# running, starting, working, stopped, done, failed, ... as Claude Code 2.1.308 writes it);
+# returns 1 when it cannot be read.
+saved_state() {
+  local f v; f="$(jobs_dir)/$1/state.json"
+  [ -n "$1" ] && [ -r "$f" ] || return 1
+  v="$(tr -d '\n\r' < "$f" | sed -n 's/^[[:space:]]*{[[:space:]]*"state"[[:space:]]*:[[:space:]]*"\([^"\\]*\)".*/\1/p')"
+  [ -n "$v" ] || v="$(tr -d '\n\r' < "$f" | grep -o '"state"[[:space:]]*:[[:space:]]*"[^"\\]*"' | head -n 1 | sed 's/.*"\([^"]*\)"$/\1/')"
+  [ -n "$v" ] || return 1
+  printf '%s' "$v"
+}
+
+# bare_ok <short id> <args...>: 0 when a bare wake (or claude attach) of that ended session is
+# known to bring it back as the agent: its saved options are --name <name> <args>, and Claude
+# Code's own state for it is an ended one. A state that still says running (or starting, or
+# anything else; after a rebuild the volume keeps the last one) would make Claude Code take it
+# for a live session and start a copy without any options. Else 1, with WHY set for the note.
+bare_ok() {
+  local short="$1" saved st; shift
+  if ! saved="$(saved_flags "$short")"; then
+    WHY="the options Claude Code saved for its session $short cannot be read ($(jobs_dir)/$short/state.json)"; return 1
+  fi
+  if [ "$saved" != "$(want_flags "$@")" ]; then
+    WHY="its session $short keeps other options than the agent's (--name and its args from the list)"; return 1
+  fi
+  st="$(saved_state "$short")" || st=''
+  case "${st,,}" in
+    stopped | done | failed | error* | crash* | exited | killed) return 0 ;;
+  esac
+  WHY="its session $short is ended in the list but Claude Code's own state for it says '${st:-(none)}' (after a rebuild a bare wake would start a copy without its options)"
+  return 1
+}
+
+# wake_session <session line> <args...>: wake that ended session in the background, bare when
+# bare_ok, else with --name <name> <args> (said on stderr); wait until it runs, record it and
+# print its session id (the copy's, when Claude Code started one).
+wake_session() {
+  local s="$1" sid short before WHY=''; shift
+  sid="$(col "$s" 2)" short="$(col "$s" 5)"
+  before="$(printf '%s\n' "$ALL" | cut -f2 | tr '\n' ' ')"
+  if bare_ok "$short" "$@"; then
+    (cd "$FOLDER" && claude --bg --resume "$sid" </dev/null >&2) || die 1 "$NAME: 'claude --bg --resume' failed."
+  else
+    note "$NAME: $WHY; waking it with the agent's options (--name and its args from the list), which Claude Code may start as a copy under a new id."
+    (cd "$FOLDER" && claude --bg --resume "$sid" --name "$NAME" "$@" </dev/null >&2) || die 1 "$NAME: 'claude --bg --resume' failed."
+  fi
+  wait_running "$before" "$sid"
+}
+
 extras_note() { # extras_note <running lines>
   local n; n="$(printf '%s\n' "$1" | grep -c .)"
   [ "$n" -gt 1 ] && note "$NAME: $n running sessions; using the newest ($(col "$1" 2)). task agents:stop -- $NAME --extras stops the others."
@@ -387,16 +492,22 @@ case "$verb" in
     got="$(mine)"
     s="$(printf '%s\n' "$got" | awk -F'\t' '$3 == "stopped" || $3 == "failed"' | head -n 1)"
     [ -n "$s" ] || die 1 "$NAME: no stopped session to wake in $FOLDER."
-    before="$(printf '%s\n' "$ALL" | cut -f2 | tr '\n' ' ')"
-    (cd "$FOLDER" && claude --bg --resume "$(col "$s" 2)" </dev/null >&2) || die 1 "$NAME: 'claude --bg --resume' failed."
-    wait_running "$before" "$(col "$s" 2)" ;;
+    wake_session "$s" "$@" ;;
   attach)
     run="$(mine running)"
     if [ -z "$run" ]; then
       s="$(mine | head -n 1)"
       [ -n "$s" ] || die 1 "$NAME: no session in $FOLDER to attach to."
-      # attaching to a stopped or failed session restarts it from its saved conversation
-      exec claude attach "$(col "$s" 5)"
+      # attaching to a stopped or failed session restarts it with its saved options, so that is
+      # done only when they are the agent's; otherwise it is woken with them first, then attached
+      if bare_ok "$(col "$s" 5)" "$@"; then
+        exec claude attach "$(col "$s" 5)"
+      fi
+      sid="$(wake_session "$s" "$@")" || exit 1
+      [ -n "$sid" ] || die 1 "$NAME: woken in the background, but not listed as running yet; attach again in a moment (task agents -- $NAME)."
+      rec_get "$NAME" "$FOLDER"
+      [ "$RSID" = "$sid" ] && [ -n "$RID" ] || die 1 "$NAME: woken in the background ($sid), but its id to attach to is not known; attach again in a moment (task agents -- $NAME)."
+      exec claude attach "$RID"
     fi
     extras_note "$run"
     if [ "$(col "$run" 6)" = interactive ]; then

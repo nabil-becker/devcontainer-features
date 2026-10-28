@@ -29,7 +29,9 @@ cp "$adapter_sh" "$bin/agent-adapter-claude"; chmod +x "$bin/agent-adapter-claud
 # The fake claude. $FAKE_TABLE: short id, sessionId, name, cwd, kind, pid (0 = none), state,
 # startedAt, tab-separated. `agents --json [--all]` renders it (pid and state only when set,
 # as Claude Code does; FAKE_NO_ALL=1 refuses --all). `--bg --name N` adds a running background
-# session in the current folder; `--bg --resume <sessionId>` gives that session a pid again;
+# session in the current folder and keeps its flags as its saved options ($CLAUDE_CONFIG_DIR/
+# jobs/<id>/state.json, respawnFlags); `--bg --resume <sessionId>` gives that session a pid again,
+# and with any flag after it starts a copy under a new id (c...) instead, as Claude Code does;
 # `stop <id>` clears it. Every call but `agents` is recorded in $FAKE_CALLS as "folder|arg|arg";
 # every `agents` call adds a line to $FAKE_READS. The ways a read goes wrong: FAKE_AGENTS_FAIL
 # (exit 1, nothing printed), FAKE_WRAPPED (what a wrapper putting `--add-dir <dir>` first
@@ -72,9 +74,23 @@ fi
 line="$(pwd -P)"; for a in "$@"; do line="$line|$a"; done
 echo "$line" >> "$FAKE_CALLS"
 n=$(( $(grep -c . "$FAKE_TABLE") + 1 ))
+# saved <short id> <flags...>: the session's saved options, as Claude Code keeps them
+saved() {
+  local d="$CLAUDE_CONFIG_DIR/jobs/$1" a sep=''; shift; mkdir -p "$d"
+  { printf '{\n  "state": "running",\n  "respawnFlags": ['
+    for a in "$@"; do a="${a//\\/\\\\}"; a="${a//\"/\\\"}"; printf '%s\n    "%s"' "$sep" "$a"; sep=','; done
+    printf '\n  ],\n  "backend": "daemon"\n}\n'; } > "$d/state.json"
+}
 if [ "$1" = --bg ] && [ "$2" = --name ]; then
   printf 'b%07d\tsess-%s-0000-0000-0000-000000000000\t%s\t%s\tbackground\t%s\trunning\t%s\n' "$n" "$n" "$3" "$(pwd -P)" "$((100 + n))" "$((2000 + n))" >> "$FAKE_TABLE"
+  shift; saved "$(printf 'b%07d' "$n")" "$@"
   echo "started b$n"
+elif [ "$1" = --bg ] && [ "$2" = --resume ] && [ $# -gt 3 ]; then
+  # flags with --resume: Claude Code 2.1.308 starts a copy under a new id with those flags
+  nm=''; prev=''; for a in "$@"; do [ "$prev" = --name ] && nm="$a"; prev="$a"; done
+  printf 'c%07d\tsess-c%s-0000-0000-0000-000000000000\t%s\t%s\tbackground\t%s\trunning\t%s\n' "$n" "$n" "$nm" "$(pwd -P)" "$((100 + n))" "$((2000 + n))" >> "$FAKE_TABLE"
+  shift 3; saved "$(printf 'c%07d' "$n")" "$@"
+  echo "note: background session keeps its own saved options, so the flags you passed started a copy as c$n." >&2
 elif [ "$1" = --bg ] && [ "$2" = --resume ]; then
   awk -F'\t' -v OFS='\t' -v s="$3" '$2 == s { $6 = 999; $7 = "running" } { print }' "$FAKE_TABLE" > "$FAKE_TABLE.n" && mv "$FAKE_TABLE.n" "$FAKE_TABLE"
 elif [ "$1" = rm ]; then
@@ -95,6 +111,12 @@ records="$T/config/agent-adapter-claude/agents.tsv"
 table() { # rows: id sid name cwd kind pid state started
   : > "$FAKE_TABLE"; : > "$FAKE_CALLS"
   local r; for r in "$@"; do printf '%s\n' "$r" | tr '|' '\t' >> "$FAKE_TABLE"; done
+}
+saved_opts() { # saved_opts <short id> <flags...>: what the fake claude keeps for a session (SAVED_STATE: its state, default stopped)
+  local d="$CLAUDE_CONFIG_DIR/jobs/$1" a sep=''; shift; mkdir -p "$d"
+  { printf '{\n  "state": "%s",\n  "respawnFlags": [' "${SAVED_STATE:-stopped}"
+    for a in "$@"; do a="${a//\\/\\\\}"; a="${a//\"/\\\"}"; printf '%s\n    "%s"' "$sep" "$a"; sep=','; done
+    printf '\n  ],\n  "name": "x"\n}\n'; } > "$d/state.json"
 }
 ad() { (cd "$T" && PATH="$bin:$PATH" agent-adapter-claude "$@" 2>&1); }
 calls() { tr '\n' ';' < "$FAKE_CALLS"; cat "$FAKE_CALLS" >> "$T/all-calls"; }
@@ -145,8 +167,24 @@ out="$(ad attach host "$repo")"; rc=$?
 check 'attach: by the short id of the session with that name in that folder (not host-review, not another folder)' "$T|attach|a2;" "$(calls)"
 
 table "a1|sess-a1|host|$repo|background|0|done|1000"
+rm -rf "$CLAUDE_CONFIG_DIR/jobs"; mkdir -p "$CLAUDE_CONFIG_DIR/jobs/a1"
+printf '{\n  "state": "done",\n  "respawnFlags": [\n    "--name",\n    "host"\n  ]\n}\n' > "$CLAUDE_CONFIG_DIR/jobs/a1/state.json"
 out="$(ad attach host "$repo")"
-check 'attach a stopped session: claude attach <id> (restarts it)' "$T|attach|a1;" "$(calls)"
+check 'attach a stopped session whose saved options are the agent'"'"'s: claude attach <id> (restarts it with them)' "$T|attach|a1;" "$(calls)"
+table "a1|sess-a1|host|$repo|background|0|done|1000"
+out="$(ad attach host "$repo" -- --agent host --settings '{"env":{"AGENTIC_REGISTER_AS":"host"}}')"; rc=$?
+copy="$(awk -F'\t' '$1 ~ /^c/ { print $1 }' "$FAKE_TABLE")"
+check 'attach a stopped session without the agent'"'"'s args saved: woken with --name and the args, then attached (exit 0)' \
+  "0:$repo|--bg|--resume|sess-a1|--name|host|--agent|host|--settings|{\"env\":{\"AGENTIC_REGISTER_AS\":\"host\"}};$T|attach|$copy;" "$rc:$(calls)"
+rm -f "$records"
+table "a1|sess-a1|host|$repo|background|0|done|1000"
+SAVED_STATE=running saved_opts a1 --name host --agent host
+out="$(ad attach host "$repo" -- --agent host)"; rc=$?
+copy="$(awk -F'\t' '$1 ~ /^c/ { print $1 }' "$FAKE_TABLE")"
+check 'attach a stopped session whose state.json says running: woken with --name and the args, then attached (exit 0)' \
+  "0:$repo|--bg|--resume|sess-a1|--name|host|--agent|host;$T|attach|$copy;" "$rc:$(calls)"
+check 'attach, state.json says running: the copy is recorded as the agent'"'"'s' "host	$repo	$copy" "$(grep '^host	' "$records" | cut -f1-3)"
+rm -rf "$CLAUDE_CONFIG_DIR/jobs"
 
 table "a5|sess-a5|reviewer|$repo|interactive|204|busy|2500"
 out="$(ad attach reviewer "$repo")"; rc=$?
@@ -165,10 +203,58 @@ check 'start-bg: exit 0' 0 "$rc"
 check 'start-bg: claude --bg --name <name> <args> in the folder' "$repo|--bg|--name|host|--remote-control|--model|opus;" "$(calls)"
 check 'start-bg: prints the session id on stdout (claude'"'"'s own output goes to stderr)' 'sess-1-0000-0000-0000-000000000000' "$out"
 
+# A woken session gets the agent's options: Claude Code puts its saved options back on a bare
+# --bg --resume, and starts a copy when flags are given; so bare when they are the agent's
+# (--name <name> <args>), else with them (the copy then carries them).
+reg='{"env":{"AGENTIC_REGISTER_AS":"host"}}'
+rm -rf "$CLAUDE_CONFIG_DIR/jobs"
 table "a1|sess-a1|host|$repo|background|0|done|1000" "a8|sess-a8|host|$repo|background|0|failed|1500" "a9|sess-a9|host|$repo/rooms/review|background|0|done|9000"
-out="$(ad wake host "$repo" -- --remote-control)"; rc=$?
-check 'wake: the newest stopped or failed session of the agent, by its full id, in the background' "$repo|--bg|--resume|sess-a8;" "$(calls)"
+saved_opts a8 --name host --agent host --settings "$reg"
+out="$(ad wake host "$repo" -- --agent host --settings "$reg")"; rc=$?
+check 'wake: the newest stopped or failed session of the agent, by its full id, bare when its saved options are the agent'"'"'s' "$repo|--bg|--resume|sess-a8;" "$(calls)"
 lacks 'wake: never -c' "$(calls)" '|-c'
+table "a8|sess-a8|host|$repo|background|0|failed|1500"
+saved_opts a8 --name host
+out="$(ad wake host "$repo" -- --agent host --settings "$reg")"; rc=$?
+check 'wake: saved options without the agent'"'"'s args: woken with --name and the args (exit 0)' "0:$repo|--bg|--resume|sess-a8|--name|host|--agent|host|--settings|$reg;" "$rc:$(calls)"
+contains 'wake: saved options without the args: says why, and that it is a copy' "$out" 'keeps other options than the agent'"'"'s'
+copy="$(awk -F'\t' '$1 ~ /^c/ { print $1 "\t" $2 }' "$FAKE_TABLE")"
+check 'wake: the copy Claude Code started is recorded as the agent'"'"'s' "host	$repo	$copy" "$(grep '^host	' "$records")"
+rm -rf "$CLAUDE_CONFIG_DIR/jobs"
+table "a8|sess-a8|host|$repo|background|0|failed|1500"
+out="$(ad wake host "$repo" -- --agent host)"; rc=$?
+check 'wake: saved options that cannot be read: woken with --name and the args' "$repo|--bg|--resume|sess-a8|--name|host|--agent|host;" "$(calls)"
+contains 'wake: saved options that cannot be read: says so' "$out" 'cannot be read'
+table "a8|sess-a8|host|$repo|background|0|failed|1500"
+saved_opts a8 --name host --agent host
+out="$(ad wake host "$repo" -- --agent host --model opus)"
+check 'wake: saved options that differ (the args changed in the list): woken with the new ones' "$repo|--bg|--resume|sess-a8|--name|host|--agent|host|--model|opus;" "$(calls)"
+table "a8|sess-a8|host|$repo|background|0|failed|1500"
+saved_opts a8 --name host
+out="$(ad wake host "$repo")"
+check 'wake: an agent without args, saved --name only: bare' "$repo|--bg|--resume|sess-a8;" "$(calls)"
+table "a8|sess-a8|host|$repo|background|0|failed|1500"
+saved_opts a8 --name host --settings '{"a":["x]","y\"z"],"b":"\\"}'
+out="$(ad wake host "$repo" -- --settings '{"a":["x]","y\"z"],"b":"\\"}')"
+check 'wake: saved options with quotes, brackets and backslashes are read as Claude Code wrote them' "$repo|--bg|--resume|sess-a8;" "$(calls)"
+# after a rebuild: the list shows the session ended, but Claude Code's own state.json still says
+# running (a bare wake would start a copy without any options): woken with the options
+rm -f "$records"
+table "a8|sess-a8|host|$repo|background|0|failed|1500"
+SAVED_STATE=running saved_opts a8 --name host --agent host --settings "$reg"
+out="$(ad wake host "$repo" -- --agent host --settings "$reg")"; rc=$?
+check 'wake: saved options match but its state.json says running: woken with --name and the args (exit 0)' "0:$repo|--bg|--resume|sess-a8|--name|host|--agent|host|--settings|$reg;" "$rc:$(calls)"
+contains 'wake: its state.json says running: says why' "$out" "Claude Code's own state for it says 'running'"
+copy="$(awk -F'\t' '$1 ~ /^c/ { print $1 "\t" $2 }' "$FAKE_TABLE")"
+check 'wake: its state.json says running: the copy is recorded as the agent'"'"'s' "host	$repo	$copy" "$(grep '^host	' "$records")"
+table "a8|sess-a8|host|$repo|background|0|failed|1500"
+SAVED_STATE=starting saved_opts a8 --name host
+out="$(ad wake host "$repo")"
+check 'wake: its state.json says starting (not ended): woken with --name' "$repo|--bg|--resume|sess-a8|--name|host;" "$(calls)"
+table "a8|sess-a8|host|$repo|background|0|failed|1500"
+SAVED_STATE='done' saved_opts a8 --name host
+out="$(ad wake host "$repo")"
+check 'wake: its state.json says done: bare' "$repo|--bg|--resume|sess-a8;" "$(calls)"
 table
 out="$(ad wake host "$repo")"; rc=$?
 check 'wake with nothing to wake: exit 1' 1 "$rc"
@@ -277,6 +363,22 @@ out="$(ad attach host "$repo")"
 check 'by name: a live session wins over newer ended ones' "$T|attach|l1;" "$(calls)"
 out="$(ad list)"
 contains 'a blocked session (waiting on a decision) is running' "$(table "b1|sess-b1|host|$repo|background|0|blocked|100"; ad list)" "host	sess-b1	running"
+
+# end to end: agents up wakes a stopped resident with the args of its entry in agents.yml
+# (the report: three residents came back without --agent and the register --settings)
+rm -f "$records"; rm -rf "$CLAUDE_CONFIG_DIR/jobs"
+table "s1|sess-s1|scribe|$repo|background|0|done|100"
+saved_opts s1 --name scribe
+printf 'agents:\n  - name: scribe\n    cli: claude\n    kind: resident\n    args: [--agent, scribe, --settings, %s]\n' \
+  "'{\"env\":{\"AGENTIC_REGISTER_AS\":\"scribe\"}}'" > "$repo/.devcontainer/agents.yml"
+out="$(cd "$repo" && AGENTS_STATE_DIR="$T/agents-state2" PATH="$bin:$PATH" agents up --no-wait 2>&1)"; rc=$?
+check 'agents up of a stopped resident: woken with --name and the args of its entry (exit 0)' \
+  "0:$repo|--bg|--resume|sess-s1|--name|scribe|--agent|scribe|--settings|{\"env\":{\"AGENTIC_REGISTER_AS\":\"scribe\"}};" "$rc:$(calls)"
+table "s1|sess-s1|scribe|$repo|background|0|done|100"
+saved_opts s1 --name scribe --agent scribe --settings '{"env":{"AGENTIC_REGISTER_AS":"scribe"}}'
+out="$(cd "$repo" && AGENTS_STATE_DIR="$T/agents-state3" PATH="$bin:$PATH" agents up --no-wait 2>&1)"; rc=$?
+check 'agents up of a stopped resident that keeps its args: the same session, bare' "0:$repo|--bg|--resume|sess-s1;" "$rc:$(calls)"
+rm -f "$records"; rm -rf "$CLAUDE_CONFIG_DIR/jobs"
 
 # ------------------------------------------------------------ reset's verbs ----
 table \
