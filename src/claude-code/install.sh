@@ -31,6 +31,11 @@
 # rebuild picks up new versions instead.
 set -euo pipefail
 
+# Every download goes through dcf_curl (dcf-curl.sh, the collection's retry helper, vendored from
+# src/common): curl with --retry and, on curl 7.71+, --retry-all-errors.
+# shellcheck source=src/claude-code/dcf-curl.sh
+. "$(cd "$(dirname "$0")" && pwd)/dcf-curl.sh"
+
 INSTALL="${INSTALL:-auto}"
 VERSION="${VERSION:-stable}"
 BASE_URL="https://downloads.claude.ai/claude-code-releases"
@@ -92,7 +97,7 @@ install_native() {
   # 'stable'/'latest' are channel files on the release bucket containing a
   # version number.
   case "$VERSION" in
-    stable | latest) VERSION="$(curl -fsSL "$BASE_URL/$VERSION")" ;;
+    stable | latest) VERSION="$(dcf_curl -fsSL "$BASE_URL/$VERSION")" ;;
   esac
   VERSION="${VERSION#v}"
   if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]]; then
@@ -102,7 +107,7 @@ install_native() {
 
   # Extract platforms["<platform>"].checksum without depending on jq (not in
   # every base image): each platform's object has no nested braces.
-  checksum="$(curl -fsSL "$BASE_URL/$VERSION/manifest.json" | tr -d '\n\r\t ' |
+  checksum="$(dcf_curl -fsSL "$BASE_URL/$VERSION/manifest.json" | tr -d '\n\r\t ' |
     grep -o "\"$platform\":{[^{}]*}" | grep -o '"checksum":"[a-f0-9]\{64\}"' | cut -d'"' -f4)"
   if [ -z "$checksum" ]; then
     echo "claude-code: $platform not found in the $VERSION manifest" >&2
@@ -112,7 +117,7 @@ install_native() {
   tmp="$(mktemp)"
   trap 'rm -f "$tmp"' EXIT
   echo "claude-code: downloading Claude Code v${VERSION} (${platform})..."
-  curl -fsSL -o "$tmp" "$BASE_URL/$VERSION/$platform/claude"
+  dcf_curl -fsSL -o "$tmp" "$BASE_URL/$VERSION/$platform/claude"
   echo "$checksum  $tmp" | sha256sum -c -
   install -m 0755 "$tmp" /usr/local/bin/claude
   /usr/local/bin/claude --version

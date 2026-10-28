@@ -1,7 +1,7 @@
 
 # Common helpers (devcontainer-features) (common)
 
-Shared helpers used by this collection's Features and available to a repo's own post-create scripts. Today one: dcf-persist, which makes a tool's state directory (a named volume or a bind mount) usable by the remote user and reports what backs it.
+Shared helpers used by this collection's Features: dcf-persist (installed, also for a repo's own post-create scripts), which makes a tool's state directory (a named volume or a bind mount) usable by the remote user and reports what backs it; and dcf-curl.sh, the download helper every installer sources so each download retries every error.
 
 ## Example Usage
 
@@ -74,10 +74,35 @@ order and the last source for a target wins:
 A repo's own post-create scripts can call `dcf-persist` the same way for
 their own directories once this Feature is installed.
 
+## `dcf-curl`: every download retries
+
+`dcf-curl.sh` is sourced by every installer that downloads (and by
+`devcontainer-cli.sh`), never installed. It defines `dcf_curl`, which is
+`curl` with `--retry 3 --retry-delay 2 --retry-connrefused` added and, on
+curl 7.71+, `--retry-all-errors`:
+
+```bash
+# shellcheck source=src/<id>/dcf-curl.sh
+. "$(cd "$(dirname "$0")" && pwd)/dcf-curl.sh"
+dcf_curl -fsSL -o "$tmp/$asset" "$base_url/$asset"
+```
+
+Plain `--retry` retries a timeout or an HTTP 5xx, not a TLS reset in
+mid-handshake (curl exit 35) or a connection cut mid-transfer (exit 56); both
+failed CI builds. An older curl keeps plain `--retry`. The caller's own flags
+(`-f`, `-s`, `-S`, `-L`, `-o`, `-w`) pass through unchanged, and so does the
+checksum check that follows. A retried download to stdout (no `-o`) can
+repeat the bytes of the cut attempt, so a binary is always fetched with
+`-o` and checked. `task common:curl-check` (part of `task lint`) fails on a
+`curl` or `wget` call in a Feature script that does not go through
+`dcf_curl`; a justified exception carries `dcf-curl: allow <reason>` on the
+same line.
+
 ## Why copies rather than a dependency
 
-Every Feature that needs `dcf-persist` carries a verbatim copy of
-`src/common/dcf-persist.sh` and installs it itself rather than declaring
+Every Feature that needs `dcf-persist` or `dcf-curl` carries a verbatim copy of
+`src/common/dcf-persist.sh` or `src/common/dcf-curl.sh` (the first installed, the second
+sourced) rather than declaring
 `dependsOn` on this Feature: `devcontainer features test` cannot resolve a
 `dependsOn` on an OCI reference that has not been published yet, so the
 Features could not be tested before the first release, and the official

@@ -51,6 +51,7 @@ new_repo; run --
 check 'default: exits 0' 0 "$rc"
 check 'default: vendors devcontainer.yml' yes "$([ -f "$T/repo/.devcontainer/cli_bootstrap.ignore/devcontainer.yml" ] && echo yes)"
 check 'default: vendors the bash twin, executable' yes "$([ -x "$T/repo/.devcontainer/cli_bootstrap.ignore/host/devcontainer-cli.sh" ] && echo yes)"
+check 'default: vendors the download helper next to the bash twin' yes "$([ -f "$T/repo/.devcontainer/cli_bootstrap.ignore/host/dcf-curl.sh" ] && echo yes)"
 check 'default: no ./bootstrap in the repo' no "$([ -e "$T/repo/bootstrap" ] && echo yes || echo no)"
 contains 'default: prints the folder used' "$out" 'folder    .devcontainer/cli_bootstrap.ignore/'
 check 'default: .devcontainer/.gitignore ignores the folder' 'cli_bootstrap.ignore/' "$(cat "$T/repo/.devcontainer/.gitignore")"

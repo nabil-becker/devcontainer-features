@@ -80,14 +80,16 @@ tasks:
           echo "generated READMEs are up to date"
 
   lint:
-    desc: 'shellcheck every shell script, yamllint every YAML file (.yamllint), PSScriptAnalyzer every PowerShell file, the vendored copies of src/common/*.sh (in src/ and local-features/) identical to the canonical ones, and the Docker-free unit tests (devhost tooling, the git Feature''s .git-dirs mapping, the ssh-agent Feature''s setup script, the cloud-folder Feature''s status and sync, the agents Feature''s list and verbs, the claude-code Feature''s agent adapter, live-session rule and claude-fleet, the host launcher and its agent task) (CI runs exactly this inside .devcontainer/ci; the tools must be installed - this repo''s devcontainer has them, at the pinned versions).'
+    desc: 'shellcheck every shell script, yamllint every YAML file (.yamllint), PSScriptAnalyzer every PowerShell file, the vendored copies of src/common/*.sh (in src/ and local-features/) identical to the canonical ones, every download in a Feature script through dcf_curl (common:curl-check), and the Docker-free unit tests (the dcf_curl retry helper, devhost tooling, the git Feature''s .git-dirs mapping, the ssh-agent Feature''s setup script, the cloud-folder Feature''s status and sync, the agents Feature''s list and verbs, the claude-code Feature''s agent adapter, live-session rule and claude-fleet, the host launcher and its agent task) (CI runs exactly this inside .devcontainer/ci; the tools must be installed - this repo''s devcontainer has them, at the pinned versions).'
     cmds:
       - shellcheck -x src/*/*.sh local-features/*/*.sh local-features/*/share/bin/*.sh local-features/*/share/jobs/*/*.sh test/*/*.sh test/*/unit/*.sh test/bootstrap/*.sh bootstrap/*.sh bootstrap/host/*.sh .githooks/* .devcontainer/*.sh
       - yamllint --strict .
       - task: lint:toolchain
       - pwsh -NoLogo -NoProfile -File '{{.ROOT_DIR}}/.github/scripts/Invoke-PSScriptAnalyzer.ps1'
       - task: common:check
+      - task: common:curl-check
       - task: taskfiles:check
+      - task: test:common-unit
       - task: test:devhost
       - task: test:git-unit
       - task: test:bootstrap
@@ -153,12 +155,11 @@ tasks:
       - bash test/bootstrap/host_mounts_test.sh
 
   test:cloud-folder-unit:
-    desc: 'Docker-free tests of the cloud-folder Feature''s cloud-folder-setup. Host mode over a faked mount point (a mount table file, no mount, no privilege): the build-time link from mountPoint to the host mount (made, idempotent, none when they are equal, an empty folder replaced, a folder with content or a file refused), status through the link, no source, mounted and not empty, mounted and empty, not writable (skipped as root), a bare folder that is not mounted, mode host with nothing mounted, the mode this version does not know (mount), a path with a space, a mounted file, --json, the post-start report never failing, nothing written into the folder. The installer''s version line under pipefail (a fake rclone writing 100000 lines, no SIGPIPE). Sync mode with a fake rclone that plays bisync between two temp folders: login (a pasted token read from stdin, the drive lookup through rclone''s non-interactive config, several drives, client credentials from a secret file), the first sync a --resync with --max-lock, --max-delete 50, --resilient and --recover, later syncs, a new folder resynced, failures and the delete guard, one sync at a time, the shutdown check (a running sync, pending changes, waiting), the timer (started once, syncing, syncInterval 0, stopped cleanly, a running sync stopped gracefully), and no token in any process''s arguments, log, record or output. Both: the Feature Taskfile handing CLOUD_FOLDER_*, CLI_ARGS and WAIT to the script; part of lint. Needs python3 (to read the JSON) and task.'
+    desc: 'Docker-free tests of the cloud-folder Feature''s cloud-folder-setup. Host mode over a faked mount point (a mount table file, no mount, no privilege): the build-time link from mountPoint to the host mount (made, idempotent, none when they are equal, an empty folder replaced, a folder with content or a file refused), status through the link, no source, mounted and not empty, mounted and empty, not writable (skipped as root), a bare folder that is not mounted, mode host with nothing mounted, the mode this version does not know (mount), a path with a space, a mounted file, --json, the post-start report never failing, nothing written into the folder. The installer''s version line under pipefail (a fake rclone writing 100000 lines, no SIGPIPE); its download retries are dcf_curl''s (test:common-unit). Sync mode with a fake rclone that plays bisync between two temp folders: login (a pasted token read from stdin, the drive lookup through rclone''s non-interactive config, several drives, client credentials from a secret file), the first sync a --resync with --max-lock, --max-delete 50, --resilient and --recover, later syncs, a new folder resynced, failures and the delete guard, one sync at a time, the shutdown check (a running sync, pending changes, waiting), the timer (started once, syncing, syncInterval 0, stopped cleanly, a running sync stopped gracefully), and no token in any process''s arguments, log, record or output. Both: the Feature Taskfile handing CLOUD_FOLDER_*, CLI_ARGS and WAIT to the script; part of lint. Needs python3 (to read the JSON) and task.'
     cmds:
       - bash test/cloud-folder/unit/status_test.sh
       - bash test/cloud-folder/unit/sync_test.sh
       - bash test/cloud-folder/unit/version_test.sh
-      - bash test/cloud-folder/unit/retry_test.sh
 
   test:ssh-agent-unit:
     desc: 'Docker-free tests of the ssh-agent Feature''s ssh-agent-setup against temp folders with the real OpenSSH tools and git: the verdict per DCF_HOST_SSH_AGENT (socket, none, key, unknown), key mode (an agent started on the fixed path and reused, a stale socket replaced, a 0600 key loaded and a 0644 one refused, key-new, key-add, key-stdin, key-remove), key hygiene (dedicated default name, default-name and age warnings, key-age), rotation and retirement against a stubbed gh (the steps in order, the old key retired only after git:verify passes, the allowed_signers history, REVOKE, the resume path, --plan changing nothing), the refusal when key mode is off, git-signing (KEY by fingerprint or .pub, SCOPE and its default) and a real sign and verify round trip in git-verify; only throwaway keys; part of lint. Needs openssh-client and git.'
@@ -212,7 +213,7 @@ tasks:
         platforms: [linux, darwin]
 
   common:check:
-    desc: 'Fail if a Feature''s copy of a src/common helper (dcf-persist.sh) differs from the canonical file. Run `task common:sync` to refresh the copies.'
+    desc: 'Fail if a Feature''s copy of a src/common helper (dcf-persist.sh, dcf-curl.sh) differs from the canonical file. Run `task common:sync` to refresh the copies.'
     silent: true
     cmds:
       - cmd: |
@@ -222,11 +223,39 @@ tasks:
             [ "$name" = install.sh ] && continue
             for copy in src/*/"$name" local-features/*/"$name"; do
               [ "$copy" = "$canon" ] && continue
+              [ -e "$copy" ] || continue
               if ! cmp -s "$canon" "$copy"; then echo "stale copy: $copy differs from $canon (task common:sync)"; rc=1; fi
             done
           done
           [ "$rc" -eq 0 ] && echo "common helper copies are up to date"
           exit "$rc"
+
+  common:curl-check:
+    desc: 'Fail on a download in a Feature script (src/<id>/*.sh, local-features/<id>/*.sh) that does not go through dcf_curl, the retry helper in src/common/dcf-curl.sh (a curl or wget call: the name followed by an option, a quote, a variable or a URL; comment lines skipped), and on a script that calls dcf_curl without its vendored copy beside it or without sourcing it. A justified exception carries `dcf-curl: allow <reason>` on the same line.'
+    silent: true
+    cmds:
+      - cmd: |
+          rc=0
+          for f in src/*/*.sh local-features/*/*.sh; do
+            [ "$(basename "$f")" = dcf-curl.sh ] && continue
+            dir="$(dirname "$f")"
+            hits="$(grep -nE '(^|[^[:alnum:]_./-])(curl|wget)[[:space:]]+(-|"|\$|https?:)' "$f" | grep -vE '^[0-9]+:[[:space:]]*#' | grep -v 'dcf-curl: allow' || true)"
+            if [ -n "$hits" ]; then
+              printf '%s\n' "$hits" | while IFS= read -r h; do echo "$f:$h"; echo "  ^ a download without dcf_curl: source dcf-curl.sh and call dcf_curl, or mark the line 'dcf-curl: allow <reason>'"; done
+              rc=1
+            fi
+            if grep -qE '(^|[^[:alnum:]_])dcf_curl[[:space:]]' "$f"; then
+              if [ ! -f "$dir/dcf-curl.sh" ]; then echo "$f calls dcf_curl but $dir/dcf-curl.sh is missing (cp src/common/dcf-curl.sh $dir/)"; rc=1; fi
+              if ! grep -qE '^[[:space:]]*(\.|source)[[:space:]].*dcf-curl\.sh' "$f"; then echo "$f calls dcf_curl but never sources dcf-curl.sh"; rc=1; fi
+            fi
+          done
+          [ "$rc" -eq 0 ] && echo "every download in a Feature script goes through dcf_curl"
+          exit "$rc"
+
+  test:common-unit:
+    desc: 'Docker-free test of the download helper src/common/dcf-curl.sh: the retry flags (--retry-all-errors when curl has it, read without SIGPIPE; dropped on an older curl), the arguments passed through, curl --help read once; then the real curl against a local server that cuts the first connection mid-transfer (curl exit 56) and mid-TLS-handshake (exit 35, needs openssl): plain curl --retry gives up, dcf_curl gets the file; part of lint. Needs python3.'
+    cmds:
+      - bash test/common/unit/dcf_curl_test.sh
 
   taskfiles:check:
     desc: 'Fail if a Feature Taskfile (src/<id>/taskfile.yml or local-features/<id>/taskfile.yml) breaks the mechanical rules: every task runs in the directory task was started from (dir: ''{{"{{"}}.USER_WORKING_DIR{{"}}"}}''; included through features.yml it would otherwise run in /usr/local/share/go-task/includes.d), every task has a desc, and the first task is version (NFR-2).'
@@ -275,6 +304,7 @@ tasks:
             [ "$name" = install.sh ] && continue
             for copy in src/*/"$name" local-features/*/"$name"; do
               [ "$copy" = "$canon" ] && continue
+              [ -e "$copy" ] || continue
               cp "$canon" "$copy" && echo "synced $copy"
             done
           done

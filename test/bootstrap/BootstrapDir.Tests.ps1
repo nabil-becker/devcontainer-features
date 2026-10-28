@@ -50,6 +50,7 @@ Describe 'bootstrap.ps1 vendoring folder' {
         $res.Code | Should -Be 0
         Test-Path (Join-Path $r '.devcontainer/cli_bootstrap.ignore/devcontainer.yml') | Should -BeTrue
         Test-Path (Join-Path $r '.devcontainer/cli_bootstrap.ignore/host/devcontainer-cli.sh') | Should -BeTrue
+        Test-Path (Join-Path $r '.devcontainer/cli_bootstrap.ignore/host/dcf-curl.sh') | Should -BeTrue
         Test-Path (Join-Path $r 'bootstrap') | Should -BeFalse
         $res.Out | Should -Match 'folder\s+\.devcontainer/cli_bootstrap\.ignore/'
         $res.Out | Should -Not -Match 'MIGRATION'

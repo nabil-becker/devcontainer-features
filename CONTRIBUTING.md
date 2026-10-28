@@ -109,10 +109,14 @@ installer.
    `src/gh/devcontainer-feature.json` or `src/az/devcontainer-feature.json`.
    Check: `grep -n 'containerEnv\|mounts\|postCreateCommand'
    src/<id>/devcontainer-feature.json`.
-5. **Vendor the shared helper.** A Feature with a `<id>-setup` hook carries a
+5. **Vendor the shared helpers.** A Feature with a `<id>-setup` hook carries a
    verbatim `src/<id>/dcf-persist.sh`, installed by `install.sh` to
-   `/usr/local/bin/dcf-persist`. Run `task common:sync`; check
-   `task common:check` (also part of `task lint`).
+   `/usr/local/bin/dcf-persist`. A Feature that downloads carries a verbatim
+   `src/<id>/dcf-curl.sh`, sourced at the top of `install.sh`, and every
+   download is `dcf_curl` (curl with the retry flags; see
+   `src/common/NOTES.md`). Copy a helper in once with `cp src/common/<helper>
+   src/<id>/`; after that `task common:sync` refreshes it. Check
+   `task common:check` and `task common:curl-check` (both part of `task lint`).
 6. **Register the Taskfile.** `src/<id>/taskfile.yml` (rules under
    "`taskfile.yml`" below), installed by the verbatim "Feature Taskfile"
    block at the end of `install.sh` and switched by `installTaskfile`.
@@ -217,7 +221,9 @@ test/<id>/
 
 In this order, as the existing Features do:
 
-1. `set -euo pipefail`; read options from their upper-cased environment
+1. `set -euo pipefail`; source the vendored `dcf-curl.sh` when the script
+   downloads (every download, the `releases/latest` lookup included, is
+   `dcf_curl`); read options from their upper-cased environment
    variables with defaults (`VERSION="${VERSION:-latest}"`).
 2. Refuse to run as non-root with a clear message.
 3. Install `curl`/`tar`/`jq` with apt only if missing, and clean apt lists.

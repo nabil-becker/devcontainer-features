@@ -33,7 +33,7 @@ documents kept in a SharePoint or OneDrive folder. Agents and people read and wr
 normal directory, and `task cloud-folder:status` says whether it is really there before anyone
 writes into it.
 
-This version (1.1.1) fills it in one of two ways:
+This version (1.1.2) fills it in one of two ways:
 
 - **host mode**: the folder a sync client (OneDrive) keeps on the host is bind-mounted by the
   launcher (the `devcontainer-cli` Feature and its bootstrap) at one fixed path, the host mount
@@ -397,6 +397,9 @@ can trust. It installs rclone only when absent and orders itself after those Fea
 
 ## Version and upgrade
 
+- `1.1.2`: the rclone downloads go through `dcf_curl`, the collection's download helper vendored
+  from `common`, instead of this Feature's own retry flags; it also retries a refused connection
+  (`--retry-connrefused`). No option or behavior change.
 - `1.1.1`: fix: the install no longer stops (exit 141, intermittently) right after it prints the rclone
   version; the version line is read without closing the pipe early. The rclone downloads (the
   version file, the checksums, the zip) retry every error, a TLS reset included, as far as curl

@@ -10,6 +10,11 @@
 # unauthenticated rate limit broke CI and a Feature build gets no token.
 set -euo pipefail
 
+# Every download goes through dcf_curl (dcf-curl.sh, the collection's retry helper, vendored from
+# src/common): curl with --retry and, on curl 7.71+, --retry-all-errors.
+# shellcheck source=src/dsc/dcf-curl.sh
+. "$(cd "$(dirname "$0")" && pwd)/dcf-curl.sh"
+
 VERSION="${VERSION:-latest}"
 SHA256="${SHA256:-}"
 repo="PowerShell/DSC"
@@ -46,7 +51,7 @@ esac
 # Resolve "latest" through the GitHub redirect rather than the API (no token,
 # no rate limit): releases/latest 302s to releases/tag/v<version>.
 if [ "$VERSION" = "latest" ]; then
-  VERSION="$(curl -fsSIL -o /dev/null -w '%{url_effective}' "https://github.com/$repo/releases/latest" | sed -E 's#.*/tag/v?##')"
+  VERSION="$(dcf_curl -fsSIL -o /dev/null -w '%{url_effective}' "https://github.com/$repo/releases/latest" | sed -E 's#.*/tag/v?##')"
 fi
 VERSION="${VERSION#v}"
 if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]]; then
@@ -66,7 +71,7 @@ if [ -z "$SHA256" ]; then
   # 2. The release page's asset list (github.com, not api.github.com): it
   #    shows the sha256 GitHub records for each asset, and the unauthenticated
   #    API's hourly limit does not apply to it.
-  page="$(curl -fsSL --retry 3 --retry-delay 2 "https://github.com/$repo/releases/expanded_assets/v${VERSION}" || true)"
+  page="$(dcf_curl -fsSL "https://github.com/$repo/releases/expanded_assets/v${VERSION}" || true)"
   SHA256="$(printf '%s' "$page" | grep -oE "digest for ${asset//./\\.}\"[^>]*value=\"sha256:[0-9a-fA-F]{64}" | grep -oE '[0-9a-fA-F]{64}$' | head -n1 || true)"
   if [ -z "$SHA256" ]; then
     echo "dsc: no digest for $asset in digests.txt or on the release page. Set the sha256 option explicitly." >&2
@@ -81,7 +86,7 @@ fi
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 echo "dsc: downloading DSC v${VERSION} (${asset})..."
-curl -fsSL -o "$tmp/$asset" "$base_url/$asset"
+dcf_curl -fsSL -o "$tmp/$asset" "$base_url/$asset"
 echo "${SHA256}  $tmp/$asset" | sha256sum -c -
 
 # Installed whole: dsc looks up its bundled resource manifests (and the

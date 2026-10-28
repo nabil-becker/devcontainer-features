@@ -18,6 +18,11 @@
 # gh-setup makes it usable at post-create.
 set -euo pipefail
 
+# Every download goes through dcf_curl (dcf-curl.sh, the collection's retry helper, vendored from
+# src/common): curl with --retry and, on curl 7.71+, --retry-all-errors.
+# shellcheck source=src/gh/dcf-curl.sh
+. "$(cd "$(dirname "$0")" && pwd)/dcf-curl.sh"
+
 INSTALL="${INSTALL:-auto}"
 VERSION="${VERSION:-latest}"
 GITCREDENTIALHELPER="${GITCREDENTIALHELPER:-true}"
@@ -72,7 +77,7 @@ install_native() {
   # Resolve 'latest' through the GitHub redirect (no API call, no token,
   # no rate limit): releases/latest 302s to releases/tag/v<version>.
   if [ "$VERSION" = "latest" ]; then
-    VERSION="$(curl -fsSIL -o /dev/null -w '%{url_effective}' https://github.com/cli/cli/releases/latest | sed -E 's#.*/tag/v?##')"
+    VERSION="$(dcf_curl -fsSIL -o /dev/null -w '%{url_effective}' https://github.com/cli/cli/releases/latest | sed -E 's#.*/tag/v?##')"
   fi
   VERSION="${VERSION#v}"
   if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -87,8 +92,8 @@ install_native() {
   asset="gh_${VERSION}_linux_${arch}.tar.gz"
   base="https://github.com/cli/cli/releases/download/v${VERSION}"
   echo "gh: downloading GitHub CLI v${VERSION} (linux/${arch})..."
-  curl -fsSL -o "$tmp/$asset" "$base/$asset"
-  curl -fsSL -o "$tmp/checksums.txt" "$base/gh_${VERSION}_checksums.txt"
+  dcf_curl -fsSL -o "$tmp/$asset" "$base/$asset"
+  dcf_curl -fsSL -o "$tmp/checksums.txt" "$base/gh_${VERSION}_checksums.txt"
   # Verify against the publisher's checksums file before anything is installed.
   (cd "$tmp" && grep -E "  ${asset}\$" checksums.txt | sha256sum -c -)
   tar -xzf "$tmp/$asset" -C "$tmp" "gh_${VERSION}_linux_${arch}/bin/gh"

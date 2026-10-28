@@ -20,7 +20,8 @@
 #   --no-gitignore           BOOTSTRAP_GITIGNORE=false       (do not git-ignore the vendored folder)
 #
 # What it does: (1) vendors bootstrap/devcontainer.yml, bootstrap/host/* and
-# the devcontainer-cli Feature's devcontainer-cli.sh into the bootstrap folder
+# the devcontainer-cli Feature's devcontainer-cli.sh (with dcf-curl.sh, its
+# download helper) into the bootstrap folder
 # (always refreshed - re-run to update), and git-ignores that folder: in
 # .devcontainer/.gitignore when it is under .devcontainer/, else in the repo's
 # root .gitignore (created or appended, a line is never duplicated);
@@ -120,6 +121,7 @@ bootstrap/host/Reset-WslcStorage.ps1 @BDIR@/host/Reset-WslcStorage.ps1
 bootstrap/host/Initialize-DevcontainerHomes.ps1 @BDIR@/host/Initialize-DevcontainerHomes.ps1
 bootstrap/host/devcontainer-homes.sh @BDIR@/host/devcontainer-homes.sh
 src/devcontainer-cli/devcontainer-cli.sh @BDIR@/host/devcontainer-cli.sh
+src/devcontainer-cli/dcf-curl.sh @BDIR@/host/dcf-curl.sh
 EOF
 chmod +x "$path/$bdir/host/devcontainer-cli.sh" "$path/$bdir/host/devcontainer-homes.sh"
 

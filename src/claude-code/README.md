@@ -26,6 +26,13 @@ Claude Code (https://code.claude.com/docs) as a member of this collection's ecos
 
 - `anthropic.claude-code`
 
+## Changes in 1.8.5
+
+- **The downloads retry every error.** The channel file, the manifest and the binary go through
+  `dcf_curl`, the collection's download helper (vendored from `common`): `--retry 3`, and on curl
+  7.71+ `--retry-all-errors`, so a TLS reset (curl exit 35) or a connection cut mid-transfer (exit 56)
+  no longer fails a no-cache rebuild. The checksum check is unchanged. No option or behavior change.
+
 ## Changes in 1.8.4
 
 - **The example pins Node.** "Augment, don't duplicate" now shows the node Feature with

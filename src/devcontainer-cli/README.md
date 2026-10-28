@@ -29,6 +29,9 @@ container with no system-wide Node.js. `install.sh` runs
 1. Downloads `node-v<nodeVersion>-linux-<arch>.tar.gz` and `SHASUMS256.txt`
    from `https://nodejs.org/dist/v<nodeVersion>/`, checks the tarball's
    SHA-256 against that file, and unpacks it to `/opt/devcontainer-cli/node`.
+   Both downloads go through `dcf_curl` (`dcf-curl.sh`, the collection's
+   download helper, vendored from `common`), which retries every error on
+   curl 7.71+, a TLS reset or a connection cut mid-transfer included.
 2. Runs `npm install -g --prefix /opt/devcontainer-cli @devcontainers/cli`
    (with `@<version>` unless `version` is `latest`), using that Node.
 3. Writes a two-line wrapper at `/usr/local/bin/devcontainer` that runs the
@@ -164,7 +167,8 @@ under `~/.cache/devcontainer-features` (or just uses a `devcontainer` already
 on PATH when the version is `latest`). Together with the PowerShell flavour
 for Windows it backs the `task devcontainer:*` tasks that
 `bootstrap/bootstrap.ps1` / `bootstrap.sh` vendor into a repo's
-`.devcontainer/cli_bootstrap.ignore/` (git-ignored; `BOOTSTRAP_DIR` picks another
+`.devcontainer/cli_bootstrap.ignore/` (with `dcf-curl.sh`, its download helper,
+beside it in `host/`; git-ignored; `BOOTSTRAP_DIR` picks another
 repo-relative folder, `BOOTSTRAP_GITIGNORE=false` keeps it committable, and the
 root Taskfile include is `optional: true`: a fresh clone runs the bootstrap
 first; the old `./bootstrap/` form keeps working until the bootstrap is re-run,
@@ -332,6 +336,10 @@ the host type needs; ADR 0024 decides it, `docs/proposals/host-profile.md` is th
   repository line for the same target suppress it like the others. `DCF_HOST_CLOUD_FOLDER` itself is passed on to the
   CLI unchanged, so `containerEnv` can map it (the bootstrap's template does) and the Feature's report can name the
   source. Not verified on a real host: Docker Desktop and wslc taking a Windows path with spaces from `--mount`.
+- **Downloads retry (1.14.1).** The Node.js tarball and `SHASUMS256.txt` go through `dcf_curl` (`dcf-curl.sh`,
+  vendored from `common`, and vendored by the bootstrap next to `host/devcontainer-cli.sh`): a TLS reset or a cut
+  connection is retried on curl 7.71+. A host whose bootstrap folder predates it re-runs the bootstrap; without
+  `dcf-curl.sh` beside it the script stops with that hint when it has to download Node.js, and every other verb works.
 - **Reset the agents (1.14.0).** `task devcontainer:agent:reset -- <name>... | --all [--purge] [--include-unlisted]
   [--yes] [--force]` runs the `agents` Feature's reset in the container (agents 1.0.1; a dry run unless `--yes`), the
   same way as `devcontainer:agent`; `AGENTS_FILE=<path>` before the `--` picks another list.

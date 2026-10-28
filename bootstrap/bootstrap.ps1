@@ -25,7 +25,7 @@
 
       1. Vendors bootstrap/devcontainer.yml, bootstrap/host/* (the PowerShell
          flavour) and the devcontainer-cli Feature's devcontainer-cli.sh (the
-         bash flavour) into the bootstrap folder (default
+         bash flavour, with dcf-curl.sh, its download helper) into the bootstrap folder (default
          .devcontainer/cli_bootstrap.ignore/, see -BootstrapDir) - always
          refreshed, so re-running the bootstrap is how you update them - and
          git-ignores that folder (.devcontainer/.gitignore when it is under
@@ -164,6 +164,7 @@ $vendored = [ordered]@{
     'bootstrap/host/Initialize-DevcontainerHomes.ps1' = '{BD}/host/Initialize-DevcontainerHomes.ps1'
     'bootstrap/host/devcontainer-homes.sh'         = '{BD}/host/devcontainer-homes.sh'
     'src/devcontainer-cli/devcontainer-cli.sh'     = '{BD}/host/devcontainer-cli.sh'
+    'src/devcontainer-cli/dcf-curl.sh'             = '{BD}/host/dcf-curl.sh'
 }
 foreach ($entry in $vendored.GetEnumerator()) {
     $dest = $entry.Value.Replace('{BD}', $BootstrapDir)
