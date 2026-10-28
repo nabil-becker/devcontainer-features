@@ -312,6 +312,7 @@ stays. Ids are short descriptive slugs (two to four kebab-case words naming the 
 - [ ] **wake-name-real-check Check claude accepts --name with --resume** (engineers). The wake fix passes `--name` with `--resume` and the agent's arguments, and its tests use a fake `claude`; on the real Claude Code, wake one resident and check that it resumes under its name before relying on it. Added 2026-10-28.
 - [x] **release-claude-code-1-8-3 Release claude-code 1.8.3 after the wake fix merges** (the Operator). `agents-wake-args` ships as 1.8.3 (agents 1.0.3 too if it changes); run the release once its pull request is in, then rebuild the devhost here. The host does not start the release; it says when one is due. Added 2026-10-28. Done 2026-10-28.
 - [x] **merge-pr-90-wake Review and merge PR #90 (agents wake args)** (the Operator). Its Node 24 pin for the claude-code scenario fixes the CI failure found after opening; the adapter's tests pass 109 of 109 and shellcheck is clean. Merge once its checks pass, before the release item. Added 2026-10-28. Done 2026-10-28.
+- [x] **node-lts-pin Pin Node in the claude-code example** (host). Node 26.13.0 became the newest LTS on 2026-10-28; the upstream node Feature's default (`lts`) then failed builds: an empty checksum in CI (#90) and `libatomic.so.1` missing on Debian bookworm in the office's rebuild. The claude-code NOTES example showed `node:1` unpinned; pin it to 24 with the reason. Added 2026-10-28. Done 2026-10-28.
 
 ## Next
 
