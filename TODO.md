@@ -319,6 +319,7 @@ stays. Ids are short descriptive slugs (two to four kebab-case words naming the 
 - [ ] **node-pin-upstream Unpin Node once upstream installs libatomic1** (host). The missing `libatomic1` is a bug in devcontainers/features, not in ours; check the upstream Node Feature on each release and, once it installs `libatomic1` itself, drop the pin from the NOTES and from the consumers. Added 2026-10-28.
 - [ ] **office-pins-and-state Office checks the rebuild cause and moves its pins** (the Operator). Confirm the after-rebuild cause from the residents' `state.json` fields, and move the office's pins to cloud-folder 1.1.1 and claude-code 1.8.3. Added 2026-10-28.
 - [ ] **release-claude-code-1-8-4 Release claude-code 1.8.4 after the Node pin merges** (the Operator). #91 pins Node to 24 in claude-code's NOTES example (docs only, so a version bump with no code change); run the release once it is in, and the published README picks up the pin. The host does not start the release; it says when one is due. Added 2026-10-28.
+- [ ] **task-feature-aliases The go-task Feature makes aliases easy to specify** (host). Team words (the lexicon, a theme) and personal shortcuts as task names, without hand-wiring includes: a committed team alias file and a personal one in a volume, generated as wrapper tasks by task-features-registry; aliases point at tasks, with fixed variables allowed. Proposal in `docs/proposals/task-aliases.md`. Added 2026-10-28.
 
 ## Next
 
