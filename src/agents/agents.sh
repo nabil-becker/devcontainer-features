@@ -36,7 +36,7 @@
 # Adapters (the contract, docs/proposals/agents.md section 5): each CLI Feature installs
 #   agent-adapter-<cli> <verb> <name> <folder> [--extras] [-- args...]
 # with the verbs start-bg, wake, attach, resume, new, list, stop, logs, supports, and the
-# optional hint, record and (`agent-adapter-<cli> <verb> <id>`) session-stop, session-remove. Exit 0
+# optional hint, record and (`agent-adapter-<cli> <verb> <id>`) session-busy, session-stop, session-remove. Exit 0
 # done, 1 failed, 2 bad use, 3 not supported by this CLI; `list` prints
 # name<TAB>id<TAB>state<TAB>folder per session, newest first (state running, stopped or
 # failed). An unsupported verb falls back as section 6 says and says so in one line;
@@ -695,8 +695,10 @@ cmd_check() {
 # a resident left with no running session is started (woken with its conversation, or fresh
 # after --purge). --purge also removes (adapter `session-remove`) the agent's ended sessions.
 # Sessions in those folders that belong to no listed agent are reported and left alone, unless
-# --include-unlisted. A dry run unless --yes (or a yes on a terminal). A session whose folder has
-# uncommitted changes is not stopped or removed unless --force.
+# --include-unlisted. A dry run unless --yes (or a yes on a terminal). Refused unless --force: a
+# stop of a session mid-turn (adapter `session-busy`; one it cannot tell about counts as not
+# busy, with a note) and a removal where the folder has uncommitted changes (tracked files); a
+# stop there only warns.
 
 # owner_of <cli> <name> <folder>: the index of the listed agent the session belongs to, or none.
 owner_of() {
@@ -773,12 +775,25 @@ cmd_reset() {
       fi
     done <<< "${LISTS[$cli]}"
   done
-  # uncommitted changes where a session would be stopped or removed
+  # a session mid-turn is not stopped; uncommitted changes warn, and refuse a removal
   for ((k = 0; k < ${#PL_ID[@]}; k++)); do
     case "${PL_ACT[k]}" in stop | remove) ;; *) continue ;; esac
+    if [ "${PL_ACT[k]}" = stop ]; then
+      "${CLIADP[${PL_CLI[k]}]}" session-busy "${PL_ID[k]}" </dev/null >/dev/null 2>&1; a=$?
+      case "$a" in
+        0)
+          if [ -n "$force" ]; then PL_WHY[k]="${PL_WHY[k]}; mid-turn right now (--force)"
+          else PL_WHY[k]="would stop it, but it is mid-turn right now (busy); wait until it is idle, or --force" PL_ACT[k]=refused; refused=1; continue
+          fi ;;
+        1) ;;
+        *) PL_WHY[k]="${PL_WHY[k]}; whether it is mid-turn is unknown (${PL_CLI[k]} does not say)" ;;
+      esac
+    fi
     if [ -n "$(git -C "${PL_FOLDER[k]}" status --porcelain --untracked-files=no 2>/dev/null | head -n 1)" ]; then
-      if [ -n "$force" ]; then PL_WHY[k]="${PL_WHY[k]}; uncommitted changes in ${PL_FOLDER[k]} (--force)"
-      else PL_WHY[k]="would ${PL_ACT[k]}, but ${PL_FOLDER[k]} has uncommitted changes (git status); commit or stash them, or --force" PL_ACT[k]=refused; refused=1
+      if [ "${PL_ACT[k]}" = remove ] && [ -z "$force" ]; then
+        PL_WHY[k]="would remove it (its conversation), but ${PL_FOLDER[k]} has uncommitted changes (git status); commit or stash them, or --force" PL_ACT[k]=refused; refused=1
+      else
+        PL_WHY[k]="${PL_WHY[k]}; warning: uncommitted changes in ${PL_FOLDER[k]}${force:+ (--force)}"
       fi
     fi
   done

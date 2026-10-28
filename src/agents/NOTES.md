@@ -130,11 +130,17 @@ sessions in order, from a container terminal:
   reported as `untouched`; `--include-unlisted` treats it like a duplicate (stopped; removed with `--purge`).
 - **A dry run by default:** the plan, one line per session (agent, session id, state, action, why), and nothing
   changed. `--yes` applies it; on a terminal it asks instead.
-- **Refused:** stopping or removing a session whose folder has uncommitted changes (`git status`, tracked files), unless
-  `--force`; and any stop or removal from inside a Claude Code session (`CLAUDE_CODE_CHILD_SESSION=1`, which Claude Code
-  sets for its tools' commands), which may be one it would stop: run it from a container terminal or `task
-  devcontainer:shell`, or add `--force`.
-- An adapter without the optional verbs: `session-stop` missing leaves the duplicate running (said, exit 1);
+- **Refused, unless `--force`:**
+  - stopping a session that is mid-turn right now (the adapter's `session-busy`; Claude Code: status `busy` or state
+    `working`; idle, waiting for input or blocked on a decision is not busy). The plan names the session. An adapter
+    that cannot tell counts it as not busy and says so;
+  - with `--purge`, removing a session (its conversation) where the folder has uncommitted changes (`git status`,
+    tracked files). On a plain reset, and for the stops of a purge, uncommitted changes are a warning in the plan;
+  - any stop or removal from inside a Claude Code session (`CLAUDE_CODE_CHILD_SESSION=1`, which Claude Code sets for
+    its tools' commands), which may be one it would stop: run it from a container terminal or `task
+    devcontainer:shell`.
+- An adapter without the optional verbs: `session-busy` missing counts as not busy (said);
+  `session-stop` missing leaves the duplicate running (said, exit 1);
   `session-remove` missing skips `--purge` with a note; `record` missing is skipped.
 
 ## The adapter contract
@@ -159,6 +165,7 @@ agent-adapter-<cli> hint <name> <folder>
                                its list fails (exit 3 or missing: a general line instead)
 agent-adapter-<cli> <verb> <name> <folder>, optional (exit 3 or missing: skipped):
   record                       record the agent's running session as the agent's, or clear its record
+agent-adapter-<cli> session-busy <id>     exit 0 mid-turn now, 1 not (idle, waiting, ended), 3 cannot tell
 agent-adapter-<cli> session-stop <id>     stop that session (the id `list` printed); conversation kept
 agent-adapter-<cli> session-remove <id>   remove that ended session from the CLI's list
 agent-adapter-<cli> supports   the verbs it supports, one per line

@@ -44,7 +44,7 @@ tasks:
 
   reset:
     dir: '{{.USER_WORKING_DIR}}'
-    desc: 'Tidy the listed agents'' sessions, from a container terminal (refused inside a Claude Code session): task agents:reset -- <name>... | --all. Per agent its running session is kept, any other running one stopped (conversations kept), its record set again, and a resident with none running started. -- --purge also removes the agent''s ended sessions (a fresh start). Only the listed agents and their folders are touched; other sessions there are reported (-- --include-unlisted includes them). A dry run that prints the plan unless -- --yes (or a yes on a terminal); a folder with uncommitted changes is refused unless -- --force.'
+    desc: 'Tidy the listed agents'' sessions, from a container terminal (refused inside a Claude Code session): task agents:reset -- <name>... | --all. Per agent its running session is kept, any other running one stopped (conversations kept), its record set again, and a resident with none running started. -- --purge also removes the agent''s ended sessions (a fresh start). Only the listed agents and their folders are touched; other sessions there are reported (-- --include-unlisted includes them). A dry run that prints the plan unless -- --yes (or a yes on a terminal); a session mid-turn is not stopped, and with --purge a session is not removed where the folder has uncommitted changes (a plain reset warns), unless -- --force.'
     interactive: true
     cmds:
       - '{{if .AGENTS_FILE}}AGENTS_FILE_TASK_VAR={{shellQuote .AGENTS_FILE}} {{end}}agents reset {{.CLI_ARGS}}'

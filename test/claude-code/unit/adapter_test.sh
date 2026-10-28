@@ -62,7 +62,9 @@ if [ "$1" = agents ]; then
     [ -z "$first" ] && printf ',\n'; first=''
     printf '{"id":"%s","cwd":"%s","kind":"%s","startedAt":%s,"sessionId":"%s","name":"%s"' "$id" "$cwd" "$kind" "$started" "$sid" "$name"
     [ "$pid" != 0 ] && printf ',"pid":%s' "$pid"
-    [ "$state" != - ] && printf ',"state":"%s"' "$state"
+    # busy, idle and waiting are what Claude Code reports as "status" (a live process);
+    # the rest (working, blocked, done, failed, stopped) as a background session's "state"
+    case "$state" in -) ;; busy | idle | waiting) printf ',"status":"%s"' "$state" ;; *) printf ',"state":"%s"' "$state" ;; esac
     printf '}'
   done < "$FAKE_TABLE"
   printf ']\n'; exit 0
@@ -275,6 +277,22 @@ out="$(ad list)"
 contains 'a blocked session (waiting on a decision) is running' "$(table "b1|sess-b1|host|$repo|background|0|blocked|100"; ad list)" "host	sess-b1	running"
 
 # ------------------------------------------------------------ reset's verbs ----
+table \
+  "w1|sess-w1|host|$repo|background|701|working|100" \
+  "u1|sess-u1|host|$repo|background|702|busy|100" \
+  "d1|sess-d1|host|$repo|background|703|idle|100" \
+  "q1|sess-q1|host|$repo|background|704|waiting|100" \
+  "k1|sess-k1|host|$repo|background|705|blocked|100" \
+  "n1|sess-n1|host|$repo|background|706|-|100" \
+  "e1|sess-e1|host|$repo|background|0|done|100"
+busy() { ad session-busy "$1" >/dev/null; echo $?; }
+check 'session-busy: a background state of working is mid-turn (exit 0)' 0 "$(busy sess-w1)"
+check 'session-busy: status busy is mid-turn (exit 0)' 0 "$(busy sess-u1)"
+check 'session-busy: idle is not (exit 1)' 1 "$(busy sess-d1)"
+check 'session-busy: waiting for input is not (exit 1)' 1 "$(busy sess-q1)"
+check 'session-busy: blocked on a decision is not (exit 1)' 1 "$(busy sess-k1)"
+check 'session-busy: an ended session is not (exit 1)' 1 "$(busy sess-e1)"
+check 'session-busy: running, and nothing says: unknown (exit 3)' 3 "$(busy sess-n1)"
 rm -f "$records"; table \
   "r1|sess-r1|host|$repo|background|501|working|100" \
   "r2|sess-r2|host (2)|$repo|background|502|working|200" \
@@ -298,7 +316,7 @@ table "r0|sess-r0|host|$repo|background|0|done|50"
 out="$(ad record host "$repo")"
 check 'record with no running session: the record is cleared' "" "$(cat "$records")"
 contains 'record with no running session: says so' "$out" 'its record is cleared'
-contains 'supports: names the reset verbs' "$(ad supports | tr '\n' ' ')" 'record session-stop session-remove'
+contains 'supports: names the reset verbs' "$(ad supports | tr '\n' ' ')" 'record session-busy session-stop session-remove'
 
 out="$(ad frob host "$repo")"; rc=$?
 check 'an unknown verb: exit 3 (not supported)' 3 "$rc"

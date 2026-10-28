@@ -16,6 +16,7 @@
 #     logs       claude logs <id> of its newest session
 #     hint       how to find and resume the agent by hand (when the list cannot be read)
 #     record     record the agent's running session as the agent's (or clear its record)
+#   agent-adapter-claude session-busy <id>     exit 0 when that session is mid-turn, 1 when not, 3 unknown
 #   agent-adapter-claude session-stop <id>     claude stop that session (the list's id)
 #   agent-adapter-claude session-remove <id>   claude rm that ended session (never a running one)
 #   agent-adapter-claude list       name<TAB>session id<TAB>state<TAB>folder, newest first
@@ -88,14 +89,16 @@ read_agents() {
 }
 
 # sessions: one line per session, newest first:
-#   name sessionId state cwd shortid kind pid startedAt   (tab-separated)
+#   name sessionId state cwd shortid kind pid startedAt activity   (tab-separated)
+# activity: busy (mid-turn: status busy, or a background state of working), idle (status idle
+# or waiting, a state of blocked, or not running), unknown (running, and neither says).
 # state: running (a pid, or a background state that says so), failed, stopped.
 # The first read after a Claude Code update may be slow (its daemon restarts), so a read that
 # timed out or printed nothing is tried once more after AGENT_ADAPTER_CLAUDE_PAUSE seconds
 # (default 3) with three times the time-out (AGENT_ADAPTER_CLAUDE_TIMEOUT, default 30); a quick
 # error with a message is not. When it fails, the reason is said on stderr and it returns 1.
 sessions() {
-  local out entry name sid id cwd pid kind st started LIST='' REASON='' AGAIN=0 t="${AGENT_ADAPTER_CLAUDE_TIMEOUT:-30}"
+  local out entry name sid id cwd pid kind st bst pst act started LIST='' REASON='' AGAIN=0 t="${AGENT_ADAPTER_CLAUDE_TIMEOUT:-30}"
   case "$t" in '' | *[!0-9]*) t=30 ;; esac
   command -v claude >/dev/null 2>&1 || { note "the session list could not be read: claude is not installed (not on PATH)."; return 1; }
   if ! read_agents "$t"; then
@@ -112,7 +115,13 @@ sessions() {
     [ -n "$sid" ] || continue
     name="$(field "$entry" name)" id="$(field "$entry" id)" cwd="$(field "$entry" cwd)"
     kind="$(field "$entry" kind)" pid="$(number "$entry" pid)" started="$(number "$entry" startedAt)"
-    st="$(field "$entry" state)"; [ -n "$st" ] || st="$(field "$entry" status)"
+    bst="$(field "$entry" state)" pst="$(field "$entry" status)"
+    st="$bst"; [ -n "$st" ] || st="$pst"
+    case "${pst,,}:${bst,,}" in
+      busy:* | *:working) act=busy ;;
+      idle:* | waiting:* | *:blocked) act=idle ;;
+      *) act=unknown ;;
+    esac
     if [ "${pid:-0}" -gt 0 ]; then st=running
     else
       case "${st,,}" in
@@ -122,7 +131,8 @@ sessions() {
       esac
     fi
     cwd="$( (cd "$cwd" 2>/dev/null && pwd -P) || printf '%s' "${cwd%/}")"
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "${name//$'\t'/ }" "$sid" "$st" "$cwd" "${id:-$sid}" "${kind:-unknown}" "${pid:-0}" "${started:-0}"
+    [ "$st" = running ] || act=idle
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "${name//$'\t'/ }" "$sid" "$st" "$cwd" "${id:-$sid}" "${kind:-unknown}" "${pid:-0}" "${started:-0}" "$act"
   done < <(printf '%s' "$out" | sed 's/}[[:space:]]*,[[:space:]]*{/}\n{/g') | sort -t $'\t' -k8,8nr
 }
 
@@ -175,7 +185,7 @@ rec_put() {
 
 # apply_records: the session lines on stdin with every recorded session given its agent's
 # name and folder (by job id, else session id), so a retitled session still reads as the agent,
-# and an R in a ninth column.
+# and an R in a tenth column.
 apply_records() {
   if [ -r "$RECORDS" ]; then
     awk -F'\t' -v OFS='\t' 'NR == FNR { if ($3 != "") byid[$3] = $1 "\t" $2; if ($4 != "") bysid[$4] = $1 "\t" $2; next }
@@ -270,14 +280,26 @@ extras_note() { # extras_note <running lines>
 verb="${1:-}"
 [ $# -gt 0 ] && shift
 case "$verb" in
-  supports) printf '%s\n' start-bg wake attach resume new list stop logs hint record session-stop session-remove supports; exit 0 ;;
+  supports) printf '%s\n' start-bg wake attach resume new list stop logs hint record session-busy session-stop session-remove supports; exit 0 ;;
   list)
     # newest first, an agent's recorded session before the others (it is the one the agent is)
     ALL="$(sessions)" || exit 1
     ALL="$(printf '%s\n' "$ALL" | apply_records)"
-    printf '%s\n' "$ALL" | awk -F'\t' 'NF && $9 == "R" { print $1 "\t" $2 "\t" $3 "\t" $4 }'
-    printf '%s\n' "$ALL" | awk -F'\t' 'NF && $9 != "R" { print $1 "\t" $2 "\t" $3 "\t" $4 }'
+    printf '%s\n' "$ALL" | awk -F'\t' 'NF && $10 == "R" { print $1 "\t" $2 "\t" $3 "\t" $4 }'
+    printf '%s\n' "$ALL" | awk -F'\t' 'NF && $10 != "R" { print $1 "\t" $2 "\t" $3 "\t" $4 }'
     exit 0 ;;
+  session-busy)
+    # exit 0: that session is mid-turn now; 1: it is not (idle, waiting for input, or ended);
+    # 3: Claude Code does not say (the caller treats it as not busy, with a note)
+    [ $# -ge 1 ] || die 2 "$verb needs the session id from list"
+    ALL="$(sessions)" || exit 1
+    s="$(printf '%s\n' "$ALL" | awk -F'\t' -v w="$1" '$2 == w || $5 == w' | head -n 1)"
+    [ -n "$s" ] || die 1 "no session $1 in 'claude agents --json --all'."
+    case "$(col "$s" 9)" in
+      busy) echo "$1: mid-turn"; exit 0 ;;
+      idle) echo "$1: not mid-turn"; exit 1 ;;
+      *) echo "$1: Claude Code does not say whether it is mid-turn"; exit 3 ;;
+    esac ;;
   session-stop | session-remove)
     # by the id `list` printed (the full session id), whatever agent it belongs to
     [ $# -ge 1 ] || die 2 "$verb needs the session id from list"

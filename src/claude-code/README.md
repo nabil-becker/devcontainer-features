@@ -38,7 +38,7 @@ Claude Code (https://code.claude.com/docs) as a member of this collection's ecos
   session; a new `hint` verb tells the `agents` Feature how to resume by hand.
 - **The adapter keeps its own record of each agent's session**, so a session Claude Code retitles after a prompt is
   still the agent's (1.7.0 found it by name only, so a retitled resident looked stopped and was started again), and
-  adds the verbs `record`, `session-stop` and `session-remove` for `task agents:reset`.
+  adds the verbs `record`, `session-busy`, `session-stop` and `session-remove` for `task agents:reset`.
 
 ## Deprecated in 1.7.0: claude-host, claude-fleet, claude-host-pin
 
@@ -102,6 +102,7 @@ agent's recorded session runs (never a second one).
 | Verb | What it runs |
 | --- | --- |
 | `record` | records the agent's running session (the one the lookup picks), or clears its record when none runs |
+| `session-busy <id>` | exit 0 when that session is mid-turn: `status` `busy` (a live process) or background `state` `working`; exit 1 when it is idle, `waiting` for input, `blocked` on a decision or ended; exit 3 when a running session says neither |
 | `session-stop <id>` | `claude stop` of the session with that id (from `list`); an interactive one is refused |
 | `session-remove <id>` | `claude rm` of that ended session (Claude Code keeps the transcript and a worktree with unpushed work); a running one is refused |
 

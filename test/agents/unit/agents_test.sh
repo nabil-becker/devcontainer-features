@@ -38,6 +38,7 @@ case " ${FAKE_FAIL:-} " in *" $verb "*) exit 1 ;; esac
 if [ "$verb" = list ] && [ -n "${FAKE_LIST_ERR:-}" ]; then echo "list" >> "$FAKE_CALLS"; echo "agent-adapter-fake: $FAKE_LIST_ERR" >&2; exit 1; fi
 if [ "$verb" = hint ]; then echo "resume it by hand: cd $2 && fake --resume (pick $1)"; exit 0; fi
 case "$verb" in
+  session-busy) case " ${FAKE_BUSY:-} " in *" $1 "*) exit 0 ;; esac; exit 1 ;;
   session-stop) echo "session-stop|$1" >> "$FAKE_CALLS"; sed -i "s/^\([^\t]*\t$1\t\)running\t/\1stopped\t/" "$FAKE_SESSIONS"; exit 0 ;;
   session-remove) echo "session-remove|$1" >> "$FAKE_CALLS"; sed -i "/^[^\t]*\t$1\t/d" "$FAKE_SESSIONS"; exit 0 ;;
 esac
@@ -63,7 +64,7 @@ export FAKE_SESSIONS="$T/sessions" FAKE_CALLS="$T/calls" AGENTS_STATE_DIR="$T/st
 export AGENTS_SETTLE_INTERVAL=0 AGENTS_SETTLE_TIMEOUT=0
 unset AGENTS_FILE AGENTS_FILE_TASK_VAR AGENTS_TTY CLAUDE_CODE_CHILD_SESSION
 write_list() { cat > "$repo/.devcontainer/agents.yml"; }
-reset() { : > "$T/sessions"; : > "$T/calls"; rm -rf "$T/state"; unset FAKE_UNSUPPORTED FAKE_FAIL FAKE_LIST_ERR; }
+reset() { : > "$T/sessions"; : > "$T/calls"; rm -rf "$T/state"; unset FAKE_UNSUPPORTED FAKE_FAIL FAKE_LIST_ERR FAKE_BUSY; }
 run() { (cd "${DIRIN:-$repo}" && PATH="$bin:$PATH" agents "$@" 2>&1); }
 calls() { grep -v '^list$' "$T/calls" | tr '\n' ';'; }
 
@@ -485,18 +486,35 @@ check 'reset inside a Claude Code session: nothing called' "" "$(calls)"
 contains 'reset inside a Claude Code session: says where to run it' "$out" 'run it from a container terminal or task devcontainer:shell'
 out="$(CLAUDE_CODE_CHILD_SESSION=1 run reset host --yes --force)"; rc=$?
 check 'reset inside a session --force: goes ahead' "session-stop|id-h2;record|host|$repo|--;" "$(calls)"
+# a session mid-turn is not stopped
+reset; sessions_for_reset; export FAKE_BUSY=id-h2
+out="$(run reset host --yes)"; rc=$?
+check 'reset, a duplicate mid-turn: exit 1' 1 "$rc"
+check 'reset, a duplicate mid-turn: not stopped' "" "$(calls)"
+contains 'reset, a duplicate mid-turn: says which and why' "$out" "$(printf '%-16s %-38s %-8s %-9s' host id-h2 running refused) would stop it, but it is mid-turn right now (busy)"
+: > "$T/calls"
+out="$(run reset host --yes --force)"; rc=$?
+check 'reset, a duplicate mid-turn, --force: stopped' "session-stop|id-h2;record|host|$repo|--;" "$(calls)"
+reset; sessions_for_reset; export FAKE_UNSUPPORTED=session-busy
+out="$(run reset host --yes)"; rc=$?
+check 'reset, an adapter that cannot tell: not busy, stopped' "0:session-stop|id-h2;record|host|$repo|--;" "$rc:$(calls)"
+contains 'reset, an adapter that cannot tell: says so' "$out" 'whether it is mid-turn is unknown (fake does not say)'
 # uncommitted changes in the folder
 if command -v git >/dev/null 2>&1; then
   reset; sessions_for_reset
   git -C "$repo" init -q && printf 'a\n' > "$repo/tracked" && git -C "$repo" add tracked &&
     git -C "$repo" -c user.name=t -c user.email=t@invalid commit -qm t && printf 'b\n' > "$repo/tracked"
+  out="$(run reset host --yes)"; rc=$?
+  check 'reset, uncommitted changes, plain: the duplicate stopped (exit 0)' "0:session-stop|id-h2;record|host|$repo|--;" "$rc:$(calls)"
+  contains 'reset, uncommitted changes, plain: a warning naming the folder' "$out" "warning: uncommitted changes in $repo"
+  reset; sessions_for_reset
   out="$(run reset host --purge --yes)"; rc=$?
-  check 'reset, uncommitted changes: exit 1' 1 "$rc"
-  check 'reset, uncommitted changes: nothing stopped or removed there' "" "$(calls)"
-  contains 'reset, uncommitted changes: says which folder' "$out" "$repo has uncommitted changes (git status)"
-  : > "$T/calls"
+  check 'reset --purge, uncommitted changes: exit 1' 1 "$rc"
+  check 'reset --purge, uncommitted changes: the stop goes ahead, the removal does not' "session-stop|id-h2;record|host|$repo|--;" "$(calls)"
+  contains 'reset --purge, uncommitted changes: says which folder' "$out" "would remove it (its conversation), but $repo has uncommitted changes (git status)"
+  reset; sessions_for_reset
   out="$(run reset host --purge --yes --force)"
-  check 'reset, uncommitted changes, --force: goes ahead' "session-stop|id-h2;session-remove|id-h0;record|host|$repo|--;" "$(calls)"
+  check 'reset --purge, uncommitted changes, --force: goes ahead' "session-stop|id-h2;session-remove|id-h0;record|host|$repo|--;" "$(calls)"
   rm -rf "$repo/.git" "$repo/tracked"
 fi
 cp "$T/list.before-reset" "$repo/.devcontainer/agents.yml"
