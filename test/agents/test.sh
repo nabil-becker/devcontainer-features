@@ -10,7 +10,7 @@ source dev-container-features-test-lib
 
 check "agents on PATH" command -v agents
 check "agents is root-owned" bash -c "[ \"\$(stat -c %U \"\$(command -v agents)\")\" = root ]"
-check "the Feature version is baked" grep -qx '1.0.1' /usr/local/share/agents-feature/version
+check "the Feature version is baked" grep -qx '1.0.2' /usr/local/share/agents-feature/version
 check "the state folder is there and sticky" bash -c "[ \"\$(stat -c %a /var/lib/devcontainer-features/agents)\" = 1777 ]"
 check "taskfile registered" test -f /usr/local/share/go-task/includes.d/agents.yml
 check "no adapter of its own" bash -c "! ls /usr/local/bin/agent-adapter-* 2>/dev/null"
