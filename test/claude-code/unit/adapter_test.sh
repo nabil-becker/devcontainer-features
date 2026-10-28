@@ -30,12 +30,32 @@ cp "$adapter_sh" "$bin/agent-adapter-claude"; chmod +x "$bin/agent-adapter-claud
 # startedAt, tab-separated. `agents --json [--all]` renders it (pid and state only when set,
 # as Claude Code does; FAKE_NO_ALL=1 refuses --all). `--bg --name N` adds a running background
 # session in the current folder; `--bg --resume <sessionId>` gives that session a pid again;
-# `stop <id>` clears it. Every call but `agents` is recorded in $FAKE_CALLS as "folder|arg|arg".
+# `stop <id>` clears it. Every call but `agents` is recorded in $FAKE_CALLS as "folder|arg|arg";
+# every `agents` call adds a line to $FAKE_READS. The ways a read goes wrong: FAKE_AGENTS_FAIL
+# (exit 1, nothing printed), FAKE_WRAPPED (what a wrapper putting `--add-dir <dir>` first
+# causes: Claude Code 2.1.312 says "error: unknown option '--json'", exit 1), FAKE_SLOW_FIRST
+# (the first read sleeps 3 seconds, the later ones answer), FAKE_NOISE (a line before the
+# array and one after it, the array pretty-printed).
 cat > "$bin/claude" <<'FAKE'
 #!/usr/bin/env bash
 if [ "$1" = agents ]; then
+  echo "$*" >> "$FAKE_READS"
   [ -n "${FAKE_NO_ALL:-}" ] && [ "${3:-}" = --all ] && { echo "error: unknown option '--all'" >&2; exit 1; }
   [ -n "${FAKE_AGENTS_FAIL:-}" ] && exit 1
+  [ -n "${FAKE_WRAPPED:-}" ] && { echo "error: unknown option '--json'" >&2; exit 1; }
+  [ -n "${FAKE_SLOW_FIRST:-}" ] && [ "$(grep -c . "$FAKE_READS")" -eq 1 ] && sleep 3
+  if [ -n "${FAKE_NOISE:-}" ]; then
+    echo "Restarting the background service after an update…"
+    printf '[\n'; first=1
+    while IFS=$'\t' read -r id sid name cwd kind pid state started; do
+      [ -n "$sid" ] || continue
+      [ -z "$first" ] && printf ',\n'; first=''
+      printf '  {\n    "id": "%s",\n    "cwd": "%s",\n    "kind": "%s",\n    "startedAt": %s,\n    "sessionId": "%s",\n    "name": "%s"' "$id" "$cwd" "$kind" "$started" "$sid" "$name"
+      [ "$pid" != 0 ] && printf ',\n    "pid": %s' "$pid"
+      printf '\n  }'
+    done < "$FAKE_TABLE"
+    printf '\n]\n'; echo "(1 more line after the list)"; exit 0
+  fi
   printf '['; first=1
   while IFS=$'\t' read -r id sid name cwd kind pid state started; do
     [ -n "$sid" ] || continue
@@ -63,7 +83,7 @@ FAKE
 chmod +x "$bin/claude"
 
 repo="$T/repo"; mkdir -p "$repo/rooms/review"
-export FAKE_TABLE="$T/table" FAKE_CALLS="$T/calls" AGENT_ADAPTER_WAIT=0
+export FAKE_TABLE="$T/table" FAKE_CALLS="$T/calls" FAKE_READS="$T/reads" AGENT_ADAPTER_WAIT=0 AGENT_ADAPTER_CLAUDE_PAUSE=0
 table() { # rows: id sid name cwd kind pid state started
   : > "$FAKE_TABLE"; : > "$FAKE_CALLS"
   local r; for r in "$@"; do printf '%s\n' "$r" | tr '|' '\t' >> "$FAKE_TABLE"; done
@@ -85,8 +105,30 @@ check 'list: name, session id, state, folder; newest first; a pid is running, fa
   "$(printf '%s\n' "$out" | tr '\n' ';')"
 out="$(FAKE_NO_ALL=1 ad list)"
 contains 'list: without --all (older Claude Code) the plain list' "$out" 'sess-a2'
+: > "$FAKE_READS"
 out="$(FAKE_AGENTS_FAIL=1 ad list)"; rc=$?
 check 'list: an unreadable list is exit 1' 1 "$rc"
+check 'list: a read that printed nothing is tried once more' 2 "$(grep -c . "$FAKE_READS")"
+contains 'list: the reason names the call and its exit code' "$out" "'claude agents --json --all' exited 1"
+
+out="$(FAKE_NOISE=1 ad list)"; rc=$?
+check 'list: a line before and after a pretty-printed array: exit 0' 0 "$rc"
+check 'list: a line before and after a pretty-printed array: the sessions read' \
+  "host	sess-a4	running	$repo/rooms/review;host-review	sess-a3	running	$repo;host	sess-a2	running	$repo;reviewer	sess-a5	running	$repo/rooms/review;host	sess-a1	stopped	$repo;old	sess-a6	stopped	$repo;" \
+  "$(printf '%s\n' "$out" | tr '\n' ';')"
+
+: > "$FAKE_READS"
+out="$(FAKE_SLOW_FIRST=1 AGENT_ADAPTER_CLAUDE_TIMEOUT=1 ad list)"; rc=$?
+check 'list: a first read that times out, then answers: exit 0' 0 "$rc"
+contains 'list: a first read that times out, then answers: the sessions' "$out" 'sess-a2'
+check 'list: a first read that times out is not asked again without --all' '--json --all;--json --all;' "$(tr '\n' ';' < "$FAKE_READS" | sed 's/agents //g')"
+
+: > "$FAKE_READS"
+out="$(FAKE_WRAPPED=1 ad list)"; rc=$?
+check 'list: a wrapper rewriting the arguments: exit 1' 1 "$rc"
+contains 'list: a wrapper: the CLI'"'"'s own line, as it is' "$out" "exited 1: error: unknown option '--json'"
+contains 'list: a wrapper: names what claude is here' "$out" "may be rewriting its arguments: claude here is $bin/claude"
+check 'list: a quick error with a message is not asked again' 1 "$(grep -c . "$FAKE_READS")"
 out="$(ad supports)"
 contains 'supports: names the verbs' "$out" 'wake'
 
@@ -134,6 +176,14 @@ table
 out="$(ad resume reviewer "$repo/rooms/review")"; rc=$?
 check 'resume with nothing to resume: exit 1' 1 "$rc"
 contains 'resume with nothing to resume: says how to start one' "$out" 'task agents -- reviewer'
+table "a1|sess-a1|reviewer|$repo/rooms/review|interactive|0|done|1000"
+out="$(FAKE_AGENTS_FAIL=1 ad resume reviewer "$repo/rooms/review" -- --model sonnet)"; rc=$?
+check 'resume when the list cannot be read: Claude Code'"'"'s own picker (--resume without an id), never a new session' "$repo/rooms/review|--resume|--model|sonnet;" "$(calls)"
+contains 'resume when the list cannot be read: says to pick the agent' "$out" "pick 'reviewer'"
+out="$(ad hint reviewer "$repo/rooms/review")"; rc=$?
+check 'hint: exit 0' 0 "$rc"
+contains 'hint: how to resume by hand' "$out" "cd '$repo/rooms/review' && claude --resume (pick 'reviewer')"
+contains 'supports: names hint' "$(ad supports)" 'hint'
 
 table
 out="$(ad new reviewer "$repo/rooms/review" -- --model sonnet)"

@@ -34,11 +34,14 @@
 #
 # Adapters (the contract, docs/proposals/agents.md section 5): each CLI Feature installs
 #   agent-adapter-<cli> <verb> <name> <folder> [--extras] [-- args...]
-# with the verbs start-bg, wake, attach, resume, new, list, stop, logs, supports. Exit 0
+# with the verbs start-bg, wake, attach, resume, new, list, stop, logs, hint, supports. Exit 0
 # done, 1 failed, 2 bad use, 3 not supported by this CLI; `list` prints
 # name<TAB>id<TAB>state<TAB>folder per session, newest first (state running, stopped or
 # failed). An unsupported verb falls back as section 6 says and says so in one line;
-# a fallback never starts a second copy of something that may be running.
+# a fallback never starts a second copy of something that may be running. A `list` that
+# fails (any exit but 0 and 3) is not "cannot list": the agent's state is error, a resident
+# is not started (the adapter's optional `hint <name> <folder>` says how to resume by hand),
+# and nothing turns into a fresh session in its place.
 #
 # Exit: 0 done, 1 failed, 2 bad use (unknown agent, bad list, refused), 3 the CLI cannot.
 set -uo pipefail
@@ -331,26 +334,36 @@ adapter_of() {
   fi
 }
 
-declare -A LISTS=() LIST_RC=()
-# sessions_of <cli>: the adapter's list, read once per run (LISTS, LIST_RC; 3 = cannot list).
+declare -A LISTS=() LIST_RC=() LIST_ERR=()
+# sessions_of <cli>: the adapter's list, read once per run (LISTS, LIST_RC: 0 read, 3 the CLI
+# cannot list, anything else the listing failed; LIST_ERR: what the adapter said, one line).
 sessions_of() {
-  local cli="$1" out rc
+  local cli="$1" out rc errf err=''
   [ -n "${LIST_RC[$cli]:-}" ] && return 0
-  out="$("$ADAPTER" list </dev/null)"; rc=$?
-  LISTS[$cli]="$out" LIST_RC[$cli]="$rc"
+  errf="$(mktemp 2>/dev/null)" || errf=''
+  out="$("$ADAPTER" list </dev/null 2>"${errf:-/dev/null}")"; rc=$?
+  if [ -n "$errf" ]; then
+    err="$(tr -d '\r' < "$errf" | sed '/^[[:space:]]*$/d; s/^agent-adapter-[A-Za-z0-9_-]*: //' | head -n 3 | tr '\n' ' ' | cut -c1-400)"
+    [ "$rc" -eq 0 ] && cat "$errf" >&2
+    rm -f "$errf"
+  fi
+  LISTS[$cli]="$out" LIST_RC[$cli]="$rc" LIST_ERR[$cli]="${err% }"
 }
 reread() { unset 'LIST_RC[$1]'; sessions_of "$1"; }
 
-# state_of <i>: STATE (running, stopped, failed, none, unknown), SID (the id) and EXTRAS
-# (how many more running sessions the agent has) from the adapter's list; a session is
-# the agent's when its folder is the agent's and its name is the agent's name, or the
-# name with a collision number, "host (2)".
+# state_of <i>: STATE (running, stopped, failed, none, unknown, error), SID (the id) and
+# EXTRAS (how many more running sessions the agent has) from the adapter's list; a session
+# is the agent's when its folder is the agent's and its name is the agent's name, or the
+# name with a collision number, "host (2)". unknown: the CLI cannot list (exit 3, the
+# agreed fallback); error: the listing failed (returns 1; nothing may be started on it). An
+# on-demand agent shows only a running session; otherwise none (its stopped ones are only
+# what --resume reaches).
 state_of() {
   local i="$1" cli="${CLI[$1]}" nm id st fo first='' firstst='' running=0 runid=''
   sessions_of "$cli"
   STATE=none SID='' EXTRAS=0
   if [ "${LIST_RC[$cli]}" = 3 ]; then STATE=unknown; return 0; fi
-  if [ "${LIST_RC[$cli]}" != 0 ]; then STATE=unknown; return 1; fi
+  if [ "${LIST_RC[$cli]}" != 0 ]; then STATE=error; return 1; fi
   while IFS=$'\t' read -r nm id st fo; do
     [ -n "${nm:-}" ] || continue
     [ "$fo" = "$DIR" ] || continue
@@ -361,9 +374,22 @@ state_of() {
     [ -z "$first" ] && { first="$id"; firstst="$st"; }
   done <<< "${LISTS[$cli]}"
   if [ "$running" -gt 0 ]; then STATE=running SID="$runid" EXTRAS=$((running - 1))
-  elif [ -n "$first" ]; then STATE="$firstst" SID="$first"
+  elif [ -n "$first" ] && [ "${KIND[i]}" != on-demand ]; then STATE="$firstst" SID="$first"
   fi
   return 0
+}
+
+# list_failed <i>: say that the agent's sessions could not be listed (the adapter's reason),
+# that nothing was started, and how to find and resume it by hand (the adapter's hint verb,
+# else a general line).
+list_failed() {
+  local i="$1" cli="${CLI[$1]}" h
+  warn "${NAME[i]}: the $cli sessions could not be listed${LIST_ERR[$cli]:+ (${LIST_ERR[$cli]})}; starting nothing, since it may be running or have a conversation to resume."
+  if h="$("$ADAPTER" hint "${NAME[i]}" "$DIR" </dev/null 2>/dev/null)" && [ -n "$h" ]; then
+    printf '%s\n' "$h" | sed "s/^/agents: ${NAME[i]}: /" >&2
+  else
+    warn "${NAME[i]}: check with $cli itself whether it runs, and resume its conversation by hand if it does not."
+  fi
 }
 
 call() { # call <verb> <i> [adapter flags]: the adapter for entry i, CLI args after --
@@ -396,7 +422,7 @@ marked() { [ -e "$(marker "$1")" ]; }
 # what it did. Returns 0 running, 1 failed, 3 the CLI has no background mode.
 make_run() {
   local i="$1" nm="${NAME[$1]}" rc
-  state_of "$i" || { warn "$nm: the adapter could not list sessions; starting nothing (it may be running)."; return 1; }
+  state_of "$i" || { list_failed "$i"; return 1; }
   case "$STATE" in
     running)
       echo "$nm: running ($SID)"
@@ -450,7 +476,7 @@ cmd_start() {
   adapter_of "$i" || exit 1
   if [ "${KIND[i]}" = resident ]; then
     if [ "$mode" = new ]; then
-      state_of "$i" || die 1 "$name: the adapter could not list sessions; starting nothing."
+      state_of "$i" || { list_failed "$i"; exit 1; }
       if [ "$STATE" = running ]; then
         if [ -z "$yes" ]; then
           has_tty || die 2 "$name: --new stops the running session ($SID) and starts a fresh one; it asks first, so run it from a terminal or add --yes."
@@ -579,7 +605,8 @@ settle() {
 json_str() { local s="$1"; s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; printf '"%s"' "$s"; }
 
 cmd_list() {
-  local json='' i first=1 st a
+  local json='' i first=1 st a c
+  declare -A failed=()
   for a in "$@"; do
     case "$a" in --json) json=1 ;; *) die 2 "list: unknown argument '$a' (--json)" ;; esac
   done
@@ -589,7 +616,9 @@ cmd_list() {
   for ((i = 1; i <= N; i++)); do
     STATE='' SID='' EXTRAS=0
     if adapter_of "$i" 2>/dev/null; then
-      state_of "$i" || STATE=unknown
+      if ! state_of "$i"; then
+        c="${LIST_ERR[${CLI[i]}]}"; failed[${CLI[i]}]="${c:-the listing failed}"
+      fi
     elif [ -z "$(command -v "agent-adapter-${CLI[i]}" 2>/dev/null)" ]; then
       STATE=no-adapter
     else
@@ -599,14 +628,19 @@ cmd_list() {
     if [ -n "$json" ]; then
       [ -z "$first" ] && printf ','
       first=''
-      printf '{"name":%s,"kind":%s,"cli":%s,"folder":%s,"state":%s,"id":%s,"extras":%d}' \
+      printf '{"name":%s,"kind":%s,"cli":%s,"folder":%s,"state":%s,"id":%s,"extras":%d' \
         "$(json_str "${NAME[i]}")" "$(json_str "${KIND[i]}")" "$(json_str "${CLI[i]}")" \
         "$(json_str "${FOLDER[i]}")" "$(json_str "$STATE")" "$(json_str "$SID")" "$EXTRAS"
+      [ "$STATE" = error ] && printf ',"error":%s' "$(json_str "${failed[${CLI[i]}]}")"
+      printf '}'
     else
       printf '%-16s %-10s %-8s %-9s %-38s %s\n' "${NAME[i]}" "${KIND[i]}" "${CLI[i]}" "$st" "${SID:--}" "${FOLDER[i]}"
     fi
   done
   [ -n "$json" ] && printf ']\n'
+  for c in "${!failed[@]}"; do
+    warn "the $c sessions could not be listed: ${failed[$c]}"
+  done
   return 0
 }
 

@@ -27,12 +27,16 @@ bin="$T/bin"; mkdir -p "$bin"
 cp "$agents_sh" "$bin/agents"; chmod +x "$bin/agents"
 # The fake adapter: sessions in $FAKE_SESSIONS (name<TAB>id<TAB>state<TAB>folder, newest first);
 # FAKE_UNSUPPORTED (a space-separated list of verbs) answers exit 3, FAKE_FAIL exit 1; every call
-# is recorded in $FAKE_CALLS as "verb|name|folder|arg|arg...".
+# is recorded in $FAKE_CALLS as "verb|name|folder|arg|arg..."; FAKE_LIST_ERR makes `list` fail
+# (exit 1) with that message on stderr, as an adapter whose CLI cannot be read does. `hint`
+# prints how to resume by hand and is not recorded.
 cat > "$bin/agent-adapter-fake" <<'FAKE'
 #!/usr/bin/env bash
 verb="$1"; shift
 case " ${FAKE_UNSUPPORTED:-} " in *" $verb "*) echo "fake: $verb not supported" >&2; exit 3 ;; esac
 case " ${FAKE_FAIL:-} " in *" $verb "*) exit 1 ;; esac
+if [ "$verb" = list ] && [ -n "${FAKE_LIST_ERR:-}" ]; then echo "list" >> "$FAKE_CALLS"; echo "agent-adapter-fake: $FAKE_LIST_ERR" >&2; exit 1; fi
+if [ "$verb" = hint ]; then echo "resume it by hand: cd $2 && fake --resume (pick $1)"; exit 0; fi
 if [ "$verb" = list ]; then echo "list" >> "$FAKE_CALLS"; cat "$FAKE_SESSIONS" 2>/dev/null; exit 0; fi
 if [ "$verb" = supports ]; then echo start-bg; exit 0; fi
 name="$1" folder="$2"; shift 2
@@ -55,7 +59,7 @@ export FAKE_SESSIONS="$T/sessions" FAKE_CALLS="$T/calls" AGENTS_STATE_DIR="$T/st
 export AGENTS_SETTLE_INTERVAL=0 AGENTS_SETTLE_TIMEOUT=0
 unset AGENTS_FILE AGENTS_FILE_TASK_VAR AGENTS_TTY
 write_list() { cat > "$repo/.devcontainer/agents.yml"; }
-reset() { : > "$T/sessions"; : > "$T/calls"; rm -rf "$T/state"; unset FAKE_UNSUPPORTED FAKE_FAIL; }
+reset() { : > "$T/sessions"; : > "$T/calls"; rm -rf "$T/state"; unset FAKE_UNSUPPORTED FAKE_FAIL FAKE_LIST_ERR; }
 run() { (cd "${DIRIN:-$repo}" && PATH="$bin:$PATH" agents "$@" 2>&1); }
 calls() { grep -v '^list$' "$T/calls" | tr '\n' ';'; }
 
@@ -249,6 +253,41 @@ contains 'list unsupported: the second run says why' "$out" 'started earlier in 
 out="$(AGENTS_TTY=0 AGENTS_START_ID=start-2 run start host)"
 check 'list unsupported: a new container start starts it again' "start-bg|host|$repo|--|--remote-control;" "$(calls)"
 
+# the listing failed (not "cannot list"): never a fresh start, never a second copy
+reset; printf 'host\tid-old\tstopped\t%s\n' "$repo" > "$T/sessions"; export FAKE_LIST_ERR='the session list could not be read: timed out after 30s'
+for tty in 1 0; do
+  out="$(AGENTS_TTY=$tty run start host)"; rc=$?
+  check "listing failed, resident start (terminal $tty): exit 1" 1 "$rc"
+  check "listing failed, resident start (terminal $tty): nothing started, woken or attached" "" "$(calls)"
+  contains "listing failed, resident start (terminal $tty): the adapter's reason" "$out" 'host: the fake sessions could not be listed (the session list could not be read: timed out after 30s); starting nothing'
+  contains "listing failed, resident start (terminal $tty): how to resume by hand" "$out" "agents: host: resume it by hand: cd $repo && fake --resume (pick host)"
+done
+out="$(AGENTS_TTY=1 run start host --resume)"; rc=$?
+check 'listing failed, resident --resume: nothing started, exit 1' "1:" "$rc:$(calls)"
+out="$(AGENTS_TTY=0 run start host --new --yes)"; rc=$?
+check 'listing failed, resident --new: nothing stopped or started, exit 1' "1:" "$rc:$(calls)"
+out="$(run up --no-wait)"; rc=$?
+check 'listing failed, up: exit 1' 1 "$rc"
+check 'listing failed, up: no resident started' "" "$(calls)"
+contains 'listing failed, up: the hint' "$out" 'fake --resume (pick host)'
+out="$(run up --post-start)"; rc=$?
+check 'listing failed, up --post-start: the container start goes on' 0 "$rc"
+check 'listing failed, up --post-start: no resident started' "" "$(calls)"
+contains 'listing failed, up --post-start: says so' "$out" 'did not start'
+export FAKE_UNSUPPORTED=hint
+out="$(AGENTS_TTY=0 run start host)"; rc=$?
+contains 'listing failed, no hint from the adapter: a general line' "$out" 'check with fake itself whether it runs'
+check 'listing failed, no hint from the adapter: still nothing started' "1:" "$rc:$(calls)"
+unset FAKE_UNSUPPORTED
+export FAKE_FAIL=resume; : > "$T/calls"
+out="$(AGENTS_TTY=1 run start reviewer --resume)"; rc=$?
+check 'listing failed, on-demand --resume that fails: exit 1' 1 "$rc"
+check 'listing failed, on-demand --resume that fails: never a fresh session in its place' "" "$(calls)"
+unset FAKE_FAIL
+: > "$T/calls"
+out="$(AGENTS_TTY=1 run start reviewer)"; rc=$?
+check 'listing failed, on-demand plain start: a new session as always' "new|reviewer|$repo/rooms/review|--|--model|sonnet;" "$(calls)"
+
 reset; printf 'host\tid-old\trunning\t%s\n' "$repo" > "$T/sessions"
 out="$(printf 'y\n' | AGENTS_TTY=1 run start host --new)"; rc=$?
 contains '--new asks first' "$out" 'Stop host (id-old) and start a fresh session? [y/N]'
@@ -340,14 +379,24 @@ out="$(run list)"; rc=$?
 check 'list: exit 0' 0 "$rc"
 contains 'list: a header' "$out" 'NAME'
 contains 'list: a running resident with its id' "$out" "$(printf '%-16s %-10s %-8s %-9s %-38s %s' host resident fake running id-old .)"
-contains 'list: a stopped on-demand agent' "$out" "$(printf '%-16s %-10s %-8s %-9s %-38s %s' reviewer on-demand fake stopped id-r rooms/review)"
+contains 'list: an on-demand agent with only a stopped session is none (not yesterday'"'"'s session)' "$out" "$(printf '%-16s %-10s %-8s %-9s %-38s %s' reviewer on-demand fake none - rooms/review)"
 contains 'list: no adapter' "$out" 'no-adapter'
 contains 'list: no folder' "$out" 'no-folder'
 out="$(run list --json)"
 contains 'list --json: an array of objects' "$out" '[{"name":"host","kind":"resident","cli":"fake","folder":".","state":"running","id":"id-old","extras":0},'
+reset; printf 'reviewer\tid-r2\trunning\t%s/rooms/review\nreviewer\tid-r\tstopped\t%s/rooms/review\n' "$repo" "$repo" > "$T/sessions"
+out="$(run list)"
+contains 'list: an on-demand agent with a running session shows it' "$out" "$(printf '%-16s %-10s %-8s %-9s %-38s %s' reviewer on-demand fake running id-r2 rooms/review)"
 export FAKE_UNSUPPORTED=list
 out="$(run list --json)"
 contains 'list: unknown when the adapter cannot list' "$out" '"state":"unknown"'
+reset; export FAKE_LIST_ERR="'fake agents' exited 1: error: unknown option '--json'"
+out="$(run list)"; rc=$?
+check 'list, the listing failed: exit 0 (the list is still shown)' 0 "$rc"
+contains 'list, the listing failed: state error, not unknown' "$out" "$(printf '%-16s %-10s %-8s %-9s %-38s %s' host resident fake error - .)"
+contains 'list, the listing failed: the adapter'"'"'s message, once' "$out" "the fake sessions could not be listed: 'fake agents' exited 1: error: unknown option '--json'"
+out="$(run list --json 2>/dev/null)"
+contains 'list --json, the listing failed: state and message' "$out" '"state":"error","id":"","extras":0,"error":"'"'"'fake agents'"'"' exited 1: error: unknown option '"'"'--json'"'"'"}'
 reset; printf 'host\tid-old\trunning\t%s\n' "$repo" > "$T/sessions"
 out="$(run stop host)"; rc=$?
 check 'stop: the adapter stop' "stop|host|$repo|--|--remote-control;" "$(calls)"

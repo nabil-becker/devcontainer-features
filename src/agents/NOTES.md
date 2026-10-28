@@ -84,7 +84,7 @@ it differs from both.
 | `task agents -- <name> --resume` | the same | resume its latest conversation (refused while that one runs) |
 | `task agents -- <name> --new` | stop the running session and start a fresh one, after a yes/no question (`--yes` skips it), then attach | the same as plain |
 | `task agents:up` | start every resident not running, attach none (the postStartCommand) | skipped |
-| `task agents:list` | name, kind, CLI, state (`running`, `stopped`, `failed`, `none`; `+N` extra running sessions), id, folder; `-- --json` for agents | the same |
+| `task agents:list` | name, kind, CLI, state (`running`, `stopped`, `failed`, `none`; `+N` extra running sessions; `unknown` when the CLI cannot list, `error` when listing failed, with the adapter's reason below the table and as `"error"` in `--json`), id, folder; `-- --json` for agents | `running` with its id, else `none` (a stopped conversation is what `--resume` opens, not a state) |
 | `task agents:stop -- <name>` | stop it; the conversation is kept. `-- <name> --extras` stops only the extra sessions | stop a running one, if the adapter can |
 | `task agents:logs -- <name>` | recent output | recent output, if it ran in the background |
 | `task agents:check` | read and check the list, print it | the same |
@@ -130,6 +130,9 @@ agent-adapter-<cli> <verb> <name> <folder> [--extras] [-- args...]
   logs       print recent output
 agent-adapter-<cli> list       one line per session of this CLI, newest first:
                                name<TAB>id<TAB>state<TAB>folder (state: running | stopped | failed)
+agent-adapter-<cli> hint <name> <folder>
+                               optional: how to find and resume the agent by hand, printed when
+                               its list fails (exit 3 or missing: a general line instead)
 agent-adapter-<cli> supports   the verbs it supports, one per line
 Exit: 0 done, 1 failed, 2 bad use, 3 not supported by this CLI.
 ```
@@ -150,6 +153,14 @@ second copy of something that may be running:
 | `resume` | `new` |
 | `list` | the agent counts as not running; a resident is started at most once per container start (a marker under `/var/lib/devcontainer-features/agents`, keyed by the start of the container's PID 1), and the verb says that "make sure it runs" cannot be promised |
 | `stop`, `logs` | say so; exit 3 |
+
+**When `list` fails** (any exit but 0 and 3: the CLI is there but its list could not be read) it is
+not "cannot list": the agent's state is `error`, and nothing is started on a guess, since the agent
+may be running or have a conversation to resume. `task agents -- <name>` and `agents:up` start no
+resident, say the adapter's reason, print how to resume by hand (the adapter's `hint`, for Claude
+Code `claude agents` and `cd <folder> && claude --resume`) and exit 1 (`agents up --post-start` still
+lets the container start go on). An on-demand plain start opens a new session as always; `--resume`
+never turns into a new session (Claude Code's adapter opens its own picker instead).
 
 ## State
 
@@ -223,6 +234,9 @@ so they live here and each CLI Feature adds only its adapter.
 ## Version and upgrade
 
 `ghcr.io/nabil-becker/devcontainer-features/agents:1` follows 1.x; rebuild to update. 1.0.0 is the
-first release. It replaces claude-code's `claude-host`, `claude-fleet` and `claude-host-pin` and
+first release. 1.0.1: a `list` that fails is state `error` and starts nothing (it showed `unknown`
+and started residents as fresh sessions), with the adapter's reason and how to resume by hand; an
+on-demand agent shows `none` unless a session runs (it showed yesterday's stopped one). Pair it with
+claude-code 1.8.0, whose adapter reads the list sturdily and gives the reason and the hint. It replaces claude-code's `claude-host`, `claude-fleet` and `claude-host-pin` and
 the `SESSIONS` / `HOST_SESSION` settings, which claude-code 2.0 removes; the migration is in
 [docs/migrations/agents.md](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/migrations/agents.md).

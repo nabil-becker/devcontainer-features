@@ -1,6 +1,6 @@
 {
   "id": "agents",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Agents",
   "description": "One list of a repository's agents (.devcontainer/agents.yml, or the repo-relative path in AGENTS_FILE: name, CLI, folder, args, kind), two kinds and one verb for every agent CLI: task agents -- <name> makes a resident agent run in the background and attaches to it, or opens a new session of an on-demand agent (--resume, --new); agents:up starts every resident at container start (its postStartCommand, never fatal), agents:list, agents:stop, agents:logs, agents:check. Each CLI Feature supplies an adapter (agent-adapter-<cli> on PATH; the claude-code Feature ships agent-adapter-claude); a verb an adapter does not support falls back and says so. Installs a bash script and the Feature Taskfile; nothing downloaded.",
   "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/agents",

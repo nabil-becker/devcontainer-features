@@ -30,6 +30,13 @@ Where the build differs from the text below, the build is what ships:
 - **This repository** lists `host` as `on-demand` with `--remote-control` (D2) and adds the Feature to its devhost;
   `SESSIONS`, `HOST_SESSION` and the pin hook stay until 2.0 (section 8).
 - The consumer migration note is `docs/migrations/agents.md`.
+- **agents 1.0.1, claude-code 1.8.0 (2026-10-28):** a `list` that fails (exit 1, not 3) is a state of its own,
+  `error`: section 6's "counts as not running, start once" applies only to exit 3; on `error` no resident is started,
+  the adapter's reason and an optional adapter verb `hint <name> <folder>` (how to resume by hand) are printed, and
+  on-demand `--resume` never becomes `new` (Claude Code's adapter opens `claude --resume`, its picker). `agents:list`
+  shows an on-demand agent as `running` or `none` only. The Claude Code adapter reads the list past surrounding lines,
+  retries a time-out or an empty answer once, and names the cause; the trigger was a consumer's `claude` wrapper that
+  put `--add-dir` first, which the new claude-code option `additionalDirectories` replaces.
 
 ## 1. The direction (given, not reopened)
 

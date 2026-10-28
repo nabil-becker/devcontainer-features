@@ -25,5 +25,14 @@
       }
     },
     "remoteUser": "vscode"
+  },
+  "additional_directories": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "claude-code": {
+        "additionalDirectories": "/workspaces/shared, ~/notes ,/mnt/One Drive"
+      }
+    },
+    "remoteUser": "vscode"
   }
 }

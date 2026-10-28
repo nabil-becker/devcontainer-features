@@ -3,7 +3,7 @@
 # pieces that make it part of this collection's ecosystem: agent-adapter-claude (the agents
 # Feature's adapter), the deprecated claude-host launcher and claude-fleet command, the post-create
 # setup of CLAUDE_CONFIG_DIR, and the Feature Taskfile. Feature options arrive as upper-cased environment variables (see
-# devcontainer-feature.json): INSTALL, VERSION.
+# devcontainer-feature.json): INSTALL, VERSION, ADDITIONALDIRECTORIES, INSTALLTASKFILE.
 #
 # State: devcontainer-feature.json points CLAUDE_CONFIG_DIR at
 # /var/lib/devcontainer-features/claude-code and mounts a named volume there,
@@ -151,6 +151,16 @@ install -m 0755 "$feature_dir/agent-adapter-claude.sh" /usr/local/bin/agent-adap
 # copy of src/common/dcf-persist.sh; every Feature of this collection
 # installs the same file).
 install -m 0755 "$feature_dir/dcf-persist.sh" /usr/local/bin/dcf-persist
+
+# ------------------------------------------------ additional directories ----
+# The additionalDirectories option becomes a managed-settings drop-in under /etc/claude-code,
+# so every session gets those folders without a wrapper adding --add-dir (claude-additional-dirs.sh
+# says why there and how ~ is expanded). Empty: nothing is written.
+remote_home="${_REMOTE_USER_HOME:-}"
+if [ -z "$remote_home" ] && [ -n "${_REMOTE_USER:-}" ]; then
+  remote_home="$(getent passwd "$_REMOTE_USER" 2>/dev/null | cut -d: -f6 || true)"
+fi
+bash "$feature_dir/claude-additional-dirs.sh" "${ADDITIONALDIRECTORIES:-}" "$remote_home"
 
 # ---------------------------------------------------- Feature Taskfile ----
 # Drop this Feature's taskfile.yml where the go-task Feature's registry picks
