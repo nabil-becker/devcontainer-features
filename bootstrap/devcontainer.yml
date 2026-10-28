@@ -80,7 +80,7 @@
 #                              ahead). No single quote in it. The contract is in
 #                              bootstrap/SHUTDOWN.md in the collection.
 #   FORCE=1 (task var)         stop/rebuild without running that check.
-#   AGENTS_FILE                for `agent` and `agent:list`: the agent list, relative to the
+#   AGENTS_FILE                for `agent`, `agent:list` and `agent:reset`: the agent list, relative to the
 #                              repository root (default .devcontainer/agents.yml; the agents
 #                              Feature resolves it inside: task variable, .env, environment).
 #   HOST_SESSION               (deprecated with `claude`) UUID of the Claude Code session that the claude
@@ -359,6 +359,14 @@ tasks:
       - task: run
         vars:
           CMD: '{{if .AGENTS_FILE}}AGENTS_FILE_TASK_VAR={{.AGENTS_FILE | shellQuote}} {{end}}agents list {{.CLI_ARGS}}'
+
+  agent:reset:
+    desc: 'Tidy the listed agents'' sessions inside the devcontainer (the agents Feature: task agents:reset), starting the container first: task devcontainer:agent:reset -- <name>... | --all [--purge] [--include-unlisted] [--yes] [--force]. A dry run that prints the plan unless --yes. Runs directly when already inside the container (refused from inside a Claude Code session).'
+    interactive: true
+    cmds:
+      - task: run
+        vars:
+          CMD: '{{if .AGENTS_FILE}}AGENTS_FILE_TASK_VAR={{.AGENTS_FILE | shellQuote}} {{end}}agents reset {{.CLI_ARGS}}'
 
   claude:
     desc: 'Deprecated: use task devcontainer:agent -- <name> (the agents Feature); goes with claude-code 2.0. Start or resume the Claude Code host session inside the devcontainer (claude-host from the claude-code Feature), starting the container first (through exec, which runs up; idempotent): the session named by HOST_SESSION in .devcontainer/.env is resumed by UUID, or created the first time; unset, a plain new session. DIR=<sub-folder> starts there and reads HOST_SESSION_<DIR> instead (e.g. DIR=rooms/solis -> HOST_SESSION_SOLIS); SESSION=<uuid> overrides both. Extra arguments after --: task devcontainer:claude -- --model sonnet. Runs directly when already inside the container.'

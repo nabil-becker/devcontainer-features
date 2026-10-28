@@ -311,6 +311,9 @@ the host type needs; ADR 0024 decides it, `docs/proposals/host-profile.md` is th
   repository line for the same target suppress it like the others. `DCF_HOST_CLOUD_FOLDER` itself is passed on to the
   CLI unchanged, so `containerEnv` can map it (the bootstrap's template does) and the Feature's report can name the
   source. Not verified on a real host: Docker Desktop and wslc taking a Windows path with spaces from `--mount`.
+- **Reset the agents (1.14.0).** `task devcontainer:agent:reset -- <name>... | --all [--purge] [--include-unlisted]
+  [--yes] [--force]` runs the `agents` Feature's reset in the container (agents 1.0.1; a dry run unless `--yes`), the
+  same way as `devcontainer:agent`; `AGENTS_FILE=<path>` before the `--` picks another list.
 - **One verb for every agent (1.13.0).** `task devcontainer:agent -- <name> [--resume|--new] [extra CLI args]` runs the
   `agents` Feature's start verb in the container (`agents start`, through `exec` with a terminal, starting the container
   first; directly when already inside), and `task devcontainer:agent:list [-- --json]` its list. `AGENTS_FILE=<path>`

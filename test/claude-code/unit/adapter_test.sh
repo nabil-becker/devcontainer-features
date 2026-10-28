@@ -30,19 +30,41 @@ cp "$adapter_sh" "$bin/agent-adapter-claude"; chmod +x "$bin/agent-adapter-claud
 # startedAt, tab-separated. `agents --json [--all]` renders it (pid and state only when set,
 # as Claude Code does; FAKE_NO_ALL=1 refuses --all). `--bg --name N` adds a running background
 # session in the current folder; `--bg --resume <sessionId>` gives that session a pid again;
-# `stop <id>` clears it. Every call but `agents` is recorded in $FAKE_CALLS as "folder|arg|arg".
+# `stop <id>` clears it. Every call but `agents` is recorded in $FAKE_CALLS as "folder|arg|arg";
+# every `agents` call adds a line to $FAKE_READS. The ways a read goes wrong: FAKE_AGENTS_FAIL
+# (exit 1, nothing printed), FAKE_WRAPPED (what a wrapper putting `--add-dir <dir>` first
+# causes: Claude Code 2.1.312 says "error: unknown option '--json'", exit 1), FAKE_SLOW_FIRST
+# (the first read sleeps 3 seconds, the later ones answer), FAKE_NOISE (a line before the
+# array and one after it, the array pretty-printed).
 cat > "$bin/claude" <<'FAKE'
 #!/usr/bin/env bash
 if [ "$1" = agents ]; then
+  echo "$*" >> "$FAKE_READS"
   [ -n "${FAKE_NO_ALL:-}" ] && [ "${3:-}" = --all ] && { echo "error: unknown option '--all'" >&2; exit 1; }
   [ -n "${FAKE_AGENTS_FAIL:-}" ] && exit 1
+  [ -n "${FAKE_WRAPPED:-}" ] && { echo "error: unknown option '--json'" >&2; exit 1; }
+  [ -n "${FAKE_SLOW_FIRST:-}" ] && [ "$(grep -c . "$FAKE_READS")" -eq 1 ] && sleep 3
+  if [ -n "${FAKE_NOISE:-}" ]; then
+    echo "Restarting the background service after an update…"
+    printf '[\n'; first=1
+    while IFS=$'\t' read -r id sid name cwd kind pid state started; do
+      [ -n "$sid" ] || continue
+      [ -z "$first" ] && printf ',\n'; first=''
+      printf '  {\n    "id": "%s",\n    "cwd": "%s",\n    "kind": "%s",\n    "startedAt": %s,\n    "sessionId": "%s",\n    "name": "%s"' "$id" "$cwd" "$kind" "$started" "$sid" "$name"
+      [ "$pid" != 0 ] && printf ',\n    "pid": %s' "$pid"
+      printf '\n  }'
+    done < "$FAKE_TABLE"
+    printf '\n]\n'; echo "(1 more line after the list)"; exit 0
+  fi
   printf '['; first=1
   while IFS=$'\t' read -r id sid name cwd kind pid state started; do
     [ -n "$sid" ] || continue
     [ -z "$first" ] && printf ',\n'; first=''
     printf '{"id":"%s","cwd":"%s","kind":"%s","startedAt":%s,"sessionId":"%s","name":"%s"' "$id" "$cwd" "$kind" "$started" "$sid" "$name"
     [ "$pid" != 0 ] && printf ',"pid":%s' "$pid"
-    [ "$state" != - ] && printf ',"state":"%s"' "$state"
+    # busy, idle and waiting are what Claude Code reports as "status" (a live process);
+    # the rest (working, blocked, done, failed, stopped) as a background session's "state"
+    case "$state" in -) ;; busy | idle | waiting) printf ',"status":"%s"' "$state" ;; *) printf ',"state":"%s"' "$state" ;; esac
     printf '}'
   done < "$FAKE_TABLE"
   printf ']\n'; exit 0
@@ -63,7 +85,11 @@ FAKE
 chmod +x "$bin/claude"
 
 repo="$T/repo"; mkdir -p "$repo/rooms/review"
-export FAKE_TABLE="$T/table" FAKE_CALLS="$T/calls" AGENT_ADAPTER_WAIT=0
+export FAKE_TABLE="$T/table" FAKE_CALLS="$T/calls" FAKE_READS="$T/reads" AGENT_ADAPTER_WAIT=0 AGENT_ADAPTER_CLAUDE_PAUSE=0
+# the adapter's records go to a scratch config folder, never the real one
+export CLAUDE_CONFIG_DIR="$T/config"
+unset AGENT_ADAPTER_CLAUDE_STATE
+records="$T/config/agent-adapter-claude/agents.tsv"
 table() { # rows: id sid name cwd kind pid state started
   : > "$FAKE_TABLE"; : > "$FAKE_CALLS"
   local r; for r in "$@"; do printf '%s\n' "$r" | tr '|' '\t' >> "$FAKE_TABLE"; done
@@ -85,8 +111,30 @@ check 'list: name, session id, state, folder; newest first; a pid is running, fa
   "$(printf '%s\n' "$out" | tr '\n' ';')"
 out="$(FAKE_NO_ALL=1 ad list)"
 contains 'list: without --all (older Claude Code) the plain list' "$out" 'sess-a2'
+: > "$FAKE_READS"
 out="$(FAKE_AGENTS_FAIL=1 ad list)"; rc=$?
 check 'list: an unreadable list is exit 1' 1 "$rc"
+check 'list: a read that printed nothing is tried once more' 2 "$(grep -c . "$FAKE_READS")"
+contains 'list: the reason names the call and its exit code' "$out" "'claude agents --json --all' exited 1"
+
+out="$(FAKE_NOISE=1 ad list)"; rc=$?
+check 'list: a line before and after a pretty-printed array: exit 0' 0 "$rc"
+check 'list: a line before and after a pretty-printed array: the sessions read' \
+  "host	sess-a4	running	$repo/rooms/review;host-review	sess-a3	running	$repo;host	sess-a2	running	$repo;reviewer	sess-a5	running	$repo/rooms/review;host	sess-a1	stopped	$repo;old	sess-a6	stopped	$repo;" \
+  "$(printf '%s\n' "$out" | tr '\n' ';')"
+
+: > "$FAKE_READS"
+out="$(FAKE_SLOW_FIRST=1 AGENT_ADAPTER_CLAUDE_TIMEOUT=1 ad list)"; rc=$?
+check 'list: a first read that times out, then answers: exit 0' 0 "$rc"
+contains 'list: a first read that times out, then answers: the sessions' "$out" 'sess-a2'
+check 'list: a first read that times out is not asked again without --all' '--json --all;--json --all;' "$(tr '\n' ';' < "$FAKE_READS" | sed 's/agents //g')"
+
+: > "$FAKE_READS"
+out="$(FAKE_WRAPPED=1 ad list)"; rc=$?
+check 'list: a wrapper rewriting the arguments: exit 1' 1 "$rc"
+contains 'list: a wrapper: the CLI'"'"'s own line, as it is' "$out" "exited 1: error: unknown option '--json'"
+contains 'list: a wrapper: names what claude is here' "$out" "may be rewriting its arguments: claude here is $bin/claude"
+check 'list: a quick error with a message is not asked again' 1 "$(grep -c . "$FAKE_READS")"
 out="$(ad supports)"
 contains 'supports: names the verbs' "$out" 'wake'
 
@@ -134,10 +182,23 @@ table
 out="$(ad resume reviewer "$repo/rooms/review")"; rc=$?
 check 'resume with nothing to resume: exit 1' 1 "$rc"
 contains 'resume with nothing to resume: says how to start one' "$out" 'task agents -- reviewer'
+table "a1|sess-a1|reviewer|$repo/rooms/review|interactive|0|done|1000"
+out="$(FAKE_AGENTS_FAIL=1 ad resume reviewer "$repo/rooms/review" -- --model sonnet)"; rc=$?
+check 'resume when the list cannot be read: Claude Code'"'"'s own picker (--resume without an id), never a new session' "$repo/rooms/review|--resume|--model|sonnet;" "$(calls)"
+contains 'resume when the list cannot be read: says to pick the agent' "$out" "pick 'reviewer'"
+out="$(ad hint reviewer "$repo/rooms/review")"; rc=$?
+check 'hint: exit 0' 0 "$rc"
+contains 'hint: how to resume by hand' "$out" "cd '$repo/rooms/review' && claude --resume (pick 'reviewer')"
+contains 'supports: names hint' "$(ad supports)" 'hint'
 
 table
 out="$(ad new reviewer "$repo/rooms/review" -- --model sonnet)"
-check 'new: claude --name <name> <args> in the folder' "$repo/rooms/review|--name|reviewer|--model|sonnet;" "$(calls)"
+got="$(calls)"; nsid="$(printf '%s' "$got" | cut -d'|' -f5)"
+check 'new: claude --name <name> --session-id <a new id> <args> in the folder' "$repo/rooms/review|--name|reviewer|--session-id|$nsid|--model|sonnet;" "$got"
+check 'new: the chosen session id is recorded before it starts' "reviewer	$repo/rooms/review	$nsid	$nsid" "$(grep '^reviewer	' "$records")"
+: > "$FAKE_CALLS"
+out="$(ad new reviewer "$repo/rooms/review" -- --session-id given)"
+check 'new: a --session-id of its own is left alone' "$repo/rooms/review|--name|reviewer|--session-id|given;" "$(calls)"
 
 table "a1|sess-a1|host|$repo|background|201|-|1000" "a7|sess-a7|host (2)|$repo|background|207|-|7000"
 out="$(ad stop host "$repo")"
@@ -153,6 +214,110 @@ table "a1|sess-a1|host|$repo|background|0|done|1000" "a2|sess-a2|host|$repo|back
 out="$(ad logs host "$repo")"
 check 'logs: the running session first, by its id' "$T|logs|a2;" "$(calls)"
 
+# ------------------------------------------------ a session Claude Code retitles ----
+# Claude Code may retitle a background session after a prompt: the session started as "host"
+# is then listed under another name. The record (job id, session id) still finds it.
+rm -f "$records"; table \
+  "o1|sess-o1|host|$repo|background|0|done|100" \
+  "o2|sess-o2|host|$repo|background|0|failed|200"
+out="$(cd "$T" && PATH="$bin:$PATH" agent-adapter-claude start-bg host "$repo" 2>/dev/null)"
+newid="$(awk -F'\t' '$3 == "host" && $6 != 0 { print $1 }' "$FAKE_TABLE")"
+newsid="$(awk -F'\t' '$3 == "host" && $6 != 0 { print $2 }' "$FAKE_TABLE")"
+check 'start-bg: the new session recorded (name, folder, job id, session id)' "host	$repo	$newid	$newsid" "$(cat "$records")"
+check 'the record file is the user'"'"'s only (600)' 600 "$(stat -c %a "$records")"
+check 'the record folder is the user'"'"'s only (700)' 700 "$(stat -c %a "$(dirname "$records")")"
+# the first real prompt: Claude Code retitles it
+awk -F'\t' -v OFS='\t' -v i="$newid" '$1 == i { $3 = "d47 d50 personalization medallion" } { print }' "$FAKE_TABLE" > "$FAKE_TABLE.n" && mv "$FAKE_TABLE.n" "$FAKE_TABLE"
+out="$(ad list)"
+contains 'retitled: list shows it as the agent, running' "$out" "host	$newsid	running	$repo"
+lacks 'retitled: list does not show the new title' "$out" 'personalization'
+: > "$FAKE_CALLS"
+out="$(ad attach host "$repo")"
+check 'retitled, ended sessions by its name beside it: attach the live recorded one' "$T|attach|$newid;" "$(calls)"
+: > "$FAKE_CALLS"
+out="$(ad start-bg host "$repo")"; rc=$?
+check 'retitled: start-bg refuses a second session (exit 1)' 1 "$rc"
+check 'retitled: start-bg starts nothing' "" "$(calls)"
+contains 'retitled: start-bg says why' "$out" "its recorded session $newsid runs"
+# end to end: the agents command over this adapter
+cp "$root/src/agents/agents.sh" "$bin/agents"; chmod +x "$bin/agents"
+mkdir -p "$repo/.devcontainer"
+printf 'agents:\n  - name: host\n    cli: claude\n    kind: resident\n' > "$repo/.devcontainer/agents.yml"
+: > "$FAKE_CALLS"
+out="$(cd "$repo" && AGENTS_TTY=1 AGENTS_STATE_DIR="$T/agents-state" PATH="$bin:$PATH" agents start host 2>&1)"; rc=$?
+check 'agents start of a retitled resident: attaches to it, no second session' "$repo|attach|$newid;" "$(calls)"
+contains 'agents start of a retitled resident: says it runs' "$out" "host: running ($newsid)"
+out="$(cd "$repo" && AGENTS_STATE_DIR="$T/agents-state" PATH="$bin:$PATH" agents list 2>&1)"
+contains 'agents list of a retitled resident: running with its id' "$out" "$(printf '%-16s %-10s %-8s %-9s %-38s %s' host resident claude running "$newsid" .)"
+: > "$FAKE_CALLS"
+out="$(cd "$repo" && AGENTS_STATE_DIR="$T/agents-state" PATH="$bin:$PATH" agents up --no-wait 2>&1)"
+check 'agents up with a retitled resident: starts nothing' "" "$(calls)"
+# /clear in that session: the same job id, a new session id
+awk -F'\t' -v OFS='\t' -v i="$newid" '$1 == i { $2 = "sess-cleared" } { print }' "$FAKE_TABLE" > "$FAKE_TABLE.n" && mv "$FAKE_TABLE.n" "$FAKE_TABLE"
+: > "$FAKE_CALLS"
+out="$(ad attach host "$repo")"
+check 'a /clear (new session id, same job id): still attached by its job id' "$T|attach|$newid;" "$(calls)"
+contains 'a /clear: says how it was resolved' "$out" "now holds session id sess-cleared"
+check 'a /clear: the record follows' "host	$repo	$newid	sess-cleared" "$(cat "$records")"
+# the recorded session is gone (removed): back to name and folder
+awk -F'\t' -v i="$newid" '$1 != i' "$FAKE_TABLE" > "$FAKE_TABLE.n" && mv "$FAKE_TABLE.n" "$FAKE_TABLE"
+printf 'o3\tsess-o3\thost\t%s\tbackground\t303\t-\t300\n' "$repo" >> "$FAKE_TABLE"
+: > "$FAKE_CALLS"
+out="$(ad attach host "$repo")"
+check 'the recorded session no longer listed: found by name and folder' "$T|attach|o3;" "$(calls)"
+contains 'the recorded session no longer listed: says so' "$out" 'is no longer listed; finding it by name and folder'
+# no record: a live session by the name wins over newer ended ones
+rm -f "$records"; table \
+  "l1|sess-l1|host|$repo|background|401|working|100" \
+  "e1|sess-e1|host|$repo|background|0|done|900" \
+  "e2|sess-e2|host (2)|$repo|background|0|failed|950"
+out="$(ad attach host "$repo")"
+check 'by name: a live session wins over newer ended ones' "$T|attach|l1;" "$(calls)"
+out="$(ad list)"
+contains 'a blocked session (waiting on a decision) is running' "$(table "b1|sess-b1|host|$repo|background|0|blocked|100"; ad list)" "host	sess-b1	running"
+
+# ------------------------------------------------------------ reset's verbs ----
+table \
+  "w1|sess-w1|host|$repo|background|701|working|100" \
+  "u1|sess-u1|host|$repo|background|702|busy|100" \
+  "d1|sess-d1|host|$repo|background|703|idle|100" \
+  "q1|sess-q1|host|$repo|background|704|waiting|100" \
+  "k1|sess-k1|host|$repo|background|705|blocked|100" \
+  "n1|sess-n1|host|$repo|background|706|-|100" \
+  "e1|sess-e1|host|$repo|background|0|done|100"
+busy() { ad session-busy "$1" >/dev/null; echo $?; }
+check 'session-busy: a background state of working is mid-turn (exit 0)' 0 "$(busy sess-w1)"
+check 'session-busy: status busy is mid-turn (exit 0)' 0 "$(busy sess-u1)"
+check 'session-busy: idle is not (exit 1)' 1 "$(busy sess-d1)"
+check 'session-busy: waiting for input is not (exit 1)' 1 "$(busy sess-q1)"
+check 'session-busy: blocked on a decision is not (exit 1)' 1 "$(busy sess-k1)"
+check 'session-busy: an ended session is not (exit 1)' 1 "$(busy sess-e1)"
+check 'session-busy: running, and nothing says: unknown (exit 3)' 3 "$(busy sess-n1)"
+rm -f "$records"; table \
+  "r1|sess-r1|host|$repo|background|501|working|100" \
+  "r2|sess-r2|host (2)|$repo|background|502|working|200" \
+  "r0|sess-r0|host|$repo|background|0|done|50" \
+  "i1|sess-i1|reviewer|$repo|interactive|601|busy|300"
+out="$(ad session-stop sess-r2)"; rc=$?
+check 'session-stop: claude stop <short id> of that session (exit 0)' "0:$T|stop|r2;" "$rc:$(calls)"
+: > "$FAKE_CALLS"; out="$(ad session-stop sess-i1)"; rc=$?
+check 'session-stop of an interactive session: refused, nothing called' "1:" "$rc:$(calls)"
+: > "$FAKE_CALLS"; out="$(ad session-remove sess-r1)"; rc=$?
+check 'session-remove of a running session: refused, nothing called' "1:" "$rc:$(calls)"
+: > "$FAKE_CALLS"; out="$(ad session-remove sess-r0)"; rc=$?
+check 'session-remove of an ended session: claude rm <short id>' "0:$T|rm|r0;" "$rc:$(calls)"
+out="$(ad session-remove nope)"; rc=$?
+check 'session-remove of an unknown id: exit 1' 1 "$rc"
+out="$(ad record host "$repo")"
+check 'record: the running session the lookup picks (the other was stopped above)' "host	$repo	r1	sess-r1" "$(cat "$records")"
+out="$(ad list)"
+check 'list: the recorded session comes first' "host	sess-r1	running	$repo" "$(printf '%s\n' "$out" | head -n 1)"
+table "r0|sess-r0|host|$repo|background|0|done|50"
+out="$(ad record host "$repo")"
+check 'record with no running session: the record is cleared' "" "$(cat "$records")"
+contains 'record with no running session: says so' "$out" 'its record is cleared'
+contains 'supports: names the reset verbs' "$(ad supports | tr '\n' ' ')" 'record session-busy session-stop session-remove'
+
 out="$(ad frob host "$repo")"; rc=$?
 check 'an unknown verb: exit 3 (not supported)' 3 "$rc"
 out="$(ad attach)"; rc=$?
@@ -160,8 +325,9 @@ check 'a verb without name and folder: exit 2' 2 "$rc"
 out="$(ad attach host "$T/nope")"; rc=$?
 check 'a missing folder: exit 1' 1 "$rc"
 
-# Across every call above: never rm, never -c or --continue; in the code, never an action by name.
-all="$(cat "$T/all-calls" 2>/dev/null)"
+# Across every call above: never rm (but the one session-remove asked for), never -c or
+# --continue; in the code, never an action by name.
+all="$(grep -v '|rm|r0$' "$T/all-calls" 2>/dev/null)"
 lacks 'never claude rm' "$all" '|rm|'
 lacks 'never -c' "$all" '|-c'
 lacks 'never --continue' "$all" '|--continue'

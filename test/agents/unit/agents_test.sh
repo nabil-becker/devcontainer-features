@@ -27,12 +27,21 @@ bin="$T/bin"; mkdir -p "$bin"
 cp "$agents_sh" "$bin/agents"; chmod +x "$bin/agents"
 # The fake adapter: sessions in $FAKE_SESSIONS (name<TAB>id<TAB>state<TAB>folder, newest first);
 # FAKE_UNSUPPORTED (a space-separated list of verbs) answers exit 3, FAKE_FAIL exit 1; every call
-# is recorded in $FAKE_CALLS as "verb|name|folder|arg|arg...".
+# is recorded in $FAKE_CALLS as "verb|name|folder|arg|arg..."; FAKE_LIST_ERR makes `list` fail
+# (exit 1) with that message on stderr, as an adapter whose CLI cannot be read does. `hint`
+# prints how to resume by hand and is not recorded.
 cat > "$bin/agent-adapter-fake" <<'FAKE'
 #!/usr/bin/env bash
 verb="$1"; shift
 case " ${FAKE_UNSUPPORTED:-} " in *" $verb "*) echo "fake: $verb not supported" >&2; exit 3 ;; esac
 case " ${FAKE_FAIL:-} " in *" $verb "*) exit 1 ;; esac
+if [ "$verb" = list ] && [ -n "${FAKE_LIST_ERR:-}" ]; then echo "list" >> "$FAKE_CALLS"; echo "agent-adapter-fake: $FAKE_LIST_ERR" >&2; exit 1; fi
+if [ "$verb" = hint ]; then echo "resume it by hand: cd $2 && fake --resume (pick $1)"; exit 0; fi
+case "$verb" in
+  session-busy) case " ${FAKE_BUSY:-} " in *" $1 "*) exit 0 ;; esac; exit 1 ;;
+  session-stop) echo "session-stop|$1" >> "$FAKE_CALLS"; sed -i "s/^\([^\t]*\t$1\t\)running\t/\1stopped\t/" "$FAKE_SESSIONS"; exit 0 ;;
+  session-remove) echo "session-remove|$1" >> "$FAKE_CALLS"; sed -i "/^[^\t]*\t$1\t/d" "$FAKE_SESSIONS"; exit 0 ;;
+esac
 if [ "$verb" = list ]; then echo "list" >> "$FAKE_CALLS"; cat "$FAKE_SESSIONS" 2>/dev/null; exit 0; fi
 if [ "$verb" = supports ]; then echo start-bg; exit 0; fi
 name="$1" folder="$2"; shift 2
@@ -53,9 +62,9 @@ chmod +x "$bin/agent-adapter-fake"
 repo="$T/repo"; mkdir -p "$repo/.devcontainer" "$repo/rooms/review" "$repo/sub"
 export FAKE_SESSIONS="$T/sessions" FAKE_CALLS="$T/calls" AGENTS_STATE_DIR="$T/state" AGENTS_START_ID=start-1
 export AGENTS_SETTLE_INTERVAL=0 AGENTS_SETTLE_TIMEOUT=0
-unset AGENTS_FILE AGENTS_FILE_TASK_VAR AGENTS_TTY
+unset AGENTS_FILE AGENTS_FILE_TASK_VAR AGENTS_TTY CLAUDE_CODE_CHILD_SESSION
 write_list() { cat > "$repo/.devcontainer/agents.yml"; }
-reset() { : > "$T/sessions"; : > "$T/calls"; rm -rf "$T/state"; unset FAKE_UNSUPPORTED FAKE_FAIL; }
+reset() { : > "$T/sessions"; : > "$T/calls"; rm -rf "$T/state"; unset FAKE_UNSUPPORTED FAKE_FAIL FAKE_LIST_ERR FAKE_BUSY; }
 run() { (cd "${DIRIN:-$repo}" && PATH="$bin:$PATH" agents "$@" 2>&1); }
 calls() { grep -v '^list$' "$T/calls" | tr '\n' ';'; }
 
@@ -249,6 +258,41 @@ contains 'list unsupported: the second run says why' "$out" 'started earlier in 
 out="$(AGENTS_TTY=0 AGENTS_START_ID=start-2 run start host)"
 check 'list unsupported: a new container start starts it again' "start-bg|host|$repo|--|--remote-control;" "$(calls)"
 
+# the listing failed (not "cannot list"): never a fresh start, never a second copy
+reset; printf 'host\tid-old\tstopped\t%s\n' "$repo" > "$T/sessions"; export FAKE_LIST_ERR='the session list could not be read: timed out after 30s'
+for tty in 1 0; do
+  out="$(AGENTS_TTY=$tty run start host)"; rc=$?
+  check "listing failed, resident start (terminal $tty): exit 1" 1 "$rc"
+  check "listing failed, resident start (terminal $tty): nothing started, woken or attached" "" "$(calls)"
+  contains "listing failed, resident start (terminal $tty): the adapter's reason" "$out" 'host: the fake sessions could not be listed (the session list could not be read: timed out after 30s); starting nothing'
+  contains "listing failed, resident start (terminal $tty): how to resume by hand" "$out" "agents: host: resume it by hand: cd $repo && fake --resume (pick host)"
+done
+out="$(AGENTS_TTY=1 run start host --resume)"; rc=$?
+check 'listing failed, resident --resume: nothing started, exit 1' "1:" "$rc:$(calls)"
+out="$(AGENTS_TTY=0 run start host --new --yes)"; rc=$?
+check 'listing failed, resident --new: nothing stopped or started, exit 1' "1:" "$rc:$(calls)"
+out="$(run up --no-wait)"; rc=$?
+check 'listing failed, up: exit 1' 1 "$rc"
+check 'listing failed, up: no resident started' "" "$(calls)"
+contains 'listing failed, up: the hint' "$out" 'fake --resume (pick host)'
+out="$(run up --post-start)"; rc=$?
+check 'listing failed, up --post-start: the container start goes on' 0 "$rc"
+check 'listing failed, up --post-start: no resident started' "" "$(calls)"
+contains 'listing failed, up --post-start: says so' "$out" 'did not start'
+export FAKE_UNSUPPORTED=hint
+out="$(AGENTS_TTY=0 run start host)"; rc=$?
+contains 'listing failed, no hint from the adapter: a general line' "$out" 'check with fake itself whether it runs'
+check 'listing failed, no hint from the adapter: still nothing started' "1:" "$rc:$(calls)"
+unset FAKE_UNSUPPORTED
+export FAKE_FAIL=resume; : > "$T/calls"
+out="$(AGENTS_TTY=1 run start reviewer --resume)"; rc=$?
+check 'listing failed, on-demand --resume that fails: exit 1' 1 "$rc"
+check 'listing failed, on-demand --resume that fails: never a fresh session in its place' "" "$(calls)"
+unset FAKE_FAIL
+: > "$T/calls"
+out="$(AGENTS_TTY=1 run start reviewer)"; rc=$?
+check 'listing failed, on-demand plain start: a new session as always' "new|reviewer|$repo/rooms/review|--|--model|sonnet;" "$(calls)"
+
 reset; printf 'host\tid-old\trunning\t%s\n' "$repo" > "$T/sessions"
 out="$(printf 'y\n' | AGENTS_TTY=1 run start host --new)"; rc=$?
 contains '--new asks first' "$out" 'Stop host (id-old) and start a fresh session? [y/N]'
@@ -340,14 +384,24 @@ out="$(run list)"; rc=$?
 check 'list: exit 0' 0 "$rc"
 contains 'list: a header' "$out" 'NAME'
 contains 'list: a running resident with its id' "$out" "$(printf '%-16s %-10s %-8s %-9s %-38s %s' host resident fake running id-old .)"
-contains 'list: a stopped on-demand agent' "$out" "$(printf '%-16s %-10s %-8s %-9s %-38s %s' reviewer on-demand fake stopped id-r rooms/review)"
+contains 'list: an on-demand agent with only a stopped session is none (not yesterday'"'"'s session)' "$out" "$(printf '%-16s %-10s %-8s %-9s %-38s %s' reviewer on-demand fake none - rooms/review)"
 contains 'list: no adapter' "$out" 'no-adapter'
 contains 'list: no folder' "$out" 'no-folder'
 out="$(run list --json)"
 contains 'list --json: an array of objects' "$out" '[{"name":"host","kind":"resident","cli":"fake","folder":".","state":"running","id":"id-old","extras":0},'
+reset; printf 'reviewer\tid-r2\trunning\t%s/rooms/review\nreviewer\tid-r\tstopped\t%s/rooms/review\n' "$repo" "$repo" > "$T/sessions"
+out="$(run list)"
+contains 'list: an on-demand agent with a running session shows it' "$out" "$(printf '%-16s %-10s %-8s %-9s %-38s %s' reviewer on-demand fake running id-r2 rooms/review)"
 export FAKE_UNSUPPORTED=list
 out="$(run list --json)"
 contains 'list: unknown when the adapter cannot list' "$out" '"state":"unknown"'
+reset; export FAKE_LIST_ERR="'fake agents' exited 1: error: unknown option '--json'"
+out="$(run list)"; rc=$?
+check 'list, the listing failed: exit 0 (the list is still shown)' 0 "$rc"
+contains 'list, the listing failed: state error, not unknown' "$out" "$(printf '%-16s %-10s %-8s %-9s %-38s %s' host resident fake error - .)"
+contains 'list, the listing failed: the adapter'"'"'s message, once' "$out" "the fake sessions could not be listed: 'fake agents' exited 1: error: unknown option '--json'"
+out="$(run list --json 2>/dev/null)"
+contains 'list --json, the listing failed: state and message' "$out" '"state":"error","id":"","extras":0,"error":"'"'"'fake agents'"'"' exited 1: error: unknown option '"'"'--json'"'"'"}'
 reset; printf 'host\tid-old\trunning\t%s\n' "$repo" > "$T/sessions"
 out="$(run stop host)"; rc=$?
 check 'stop: the adapter stop' "stop|host|$repo|--|--remote-control;" "$(calls)"
@@ -366,6 +420,104 @@ out="$(run logs host)"; rc=$?
 check 'logs unsupported: exit 3' 3 "$rc"
 out="$(run frobnicate)"; rc=$?
 check 'an unknown verb: exit 2' 2 "$rc"
+
+# ------------------------------------------------------------------ reset ----
+cp "$repo/.devcontainer/agents.yml" "$T/list.before-reset"
+write_list <<'YAML'
+agents:
+  - name: host
+    cli: fake
+    kind: resident
+  - name: reviewer
+    cli: fake
+    kind: resident
+    folder: rooms/review
+  - name: pair
+    cli: fake
+    kind: on-demand
+YAML
+mkdir -p "$T/elsewhere"
+sessions_for_reset() {
+  printf '%s\n' \
+    "host	id-h1	running	$repo" \
+    "host (2)	id-h2	running	$repo" \
+    "host	id-h0	stopped	$repo" \
+    "pair	id-p0	stopped	$repo" \
+    "stranger	id-x	running	$repo" \
+    "old-stranger	id-x0	stopped	$repo" \
+    "host	id-y	running	$T/elsewhere" \
+    "host	id-y0	stopped	$T/elsewhere" \
+    "reviewer	id-r0	stopped	$repo/rooms/review" > "$T/sessions"
+}
+reset; sessions_for_reset; cp "$T/sessions" "$T/sessions.before"
+out="$(run reset host)"; rc=$?
+check 'reset: a dry run by default (exit 0)' 0 "$rc"
+check 'reset dry run: nothing called' "" "$(calls)"
+check 'reset dry run: the sessions unchanged' "$(cat "$T/sessions.before")" "$(cat "$T/sessions")"
+contains 'reset dry run: says so' "$out" 'a dry run, nothing changed; add --yes'
+contains 'reset plan: keeps the session the agent is' "$out" "$(printf '%-16s %-38s %-8s %-9s' host id-h1 running keep)"
+contains 'reset plan: stops the duplicate' "$out" "$(printf '%-16s %-38s %-8s %-9s' host id-h2 running stop)"
+contains 'reset plan: an ended session kept without --purge' "$out" "$(printf '%-16s %-38s %-8s %-9s' host id-h0 stopped keep)"
+contains 'reset plan: a session of no listed agent is reported, untouched' "$out" "$(printf '%-16s %-38s %-8s %-9s' '(stranger)' id-x running untouched)"
+lacks 'reset plan: another folder is not in the plan' "$out" 'id-y'
+lacks 'reset plan: another listed agent (not named) is not in the plan' "$out" 'id-p0'
+out="$(run reset host --yes)"; rc=$?
+check 'reset tidy: exit 0' 0 "$rc"
+check 'reset tidy: stops only the duplicate, then records the agent' "session-stop|id-h2;record|host|$repo|--;" "$(calls)"
+reset; sessions_for_reset
+out="$(run reset host --purge --yes)"; rc=$?
+check 'reset --purge: stops the duplicate, removes only the agent'"'"'s ended session in its folder' "session-stop|id-h2;session-remove|id-h0;record|host|$repo|--;" "$(calls)"
+contains 'reset --purge: other folders and unlisted sessions still there' "$(cut -f2 "$T/sessions" | tr '\n' ' ')" 'id-p0 id-x id-x0 id-y id-y0'
+reset; sessions_for_reset
+out="$(run reset host --purge --include-unlisted --yes)"
+check 'reset --include-unlisted: the folder'"'"'s other sessions too, never another folder' "session-stop|id-h2;session-remove|id-h0;session-stop|id-x;session-remove|id-x0;record|host|$repo|--;" "$(calls)"
+reset; sessions_for_reset
+out="$(run reset --all --yes)"; rc=$?
+check 'reset --all: each listed agent; a resident with no running session is started (woken)' \
+  "session-stop|id-h2;record|host|$repo|--;record|reviewer|$repo/rooms/review|--;record|pair|$repo|--;wake|reviewer|$repo/rooms/review|--;" "$(calls)"
+out="$(run reset host --all)"; rc=$?
+check 'reset: names and --all together: exit 2' 2 "$rc"
+out="$(run reset)"; rc=$?
+check 'reset without names: exit 2' 2 "$rc"
+reset; sessions_for_reset
+out="$(CLAUDE_CODE_CHILD_SESSION=1 run reset host --yes)"; rc=$?
+check 'reset inside a Claude Code session: refused (exit 2)' 2 "$rc"
+check 'reset inside a Claude Code session: nothing called' "" "$(calls)"
+contains 'reset inside a Claude Code session: says where to run it' "$out" 'run it from a container terminal or task devcontainer:shell'
+out="$(CLAUDE_CODE_CHILD_SESSION=1 run reset host --yes --force)"; rc=$?
+check 'reset inside a session --force: goes ahead' "session-stop|id-h2;record|host|$repo|--;" "$(calls)"
+# a session mid-turn is not stopped
+reset; sessions_for_reset; export FAKE_BUSY=id-h2
+out="$(run reset host --yes)"; rc=$?
+check 'reset, a duplicate mid-turn: exit 1' 1 "$rc"
+check 'reset, a duplicate mid-turn: not stopped' "" "$(calls)"
+contains 'reset, a duplicate mid-turn: says which and why' "$out" "$(printf '%-16s %-38s %-8s %-9s' host id-h2 running refused) would stop it, but it is mid-turn right now (busy)"
+: > "$T/calls"
+out="$(run reset host --yes --force)"; rc=$?
+check 'reset, a duplicate mid-turn, --force: stopped' "session-stop|id-h2;record|host|$repo|--;" "$(calls)"
+reset; sessions_for_reset; export FAKE_UNSUPPORTED=session-busy
+out="$(run reset host --yes)"; rc=$?
+check 'reset, an adapter that cannot tell: not busy, stopped' "0:session-stop|id-h2;record|host|$repo|--;" "$rc:$(calls)"
+contains 'reset, an adapter that cannot tell: says so' "$out" 'whether it is mid-turn is unknown (fake does not say)'
+# uncommitted changes in the folder
+if command -v git >/dev/null 2>&1; then
+  reset; sessions_for_reset
+  git -C "$repo" init -q && printf 'a\n' > "$repo/tracked" && git -C "$repo" add tracked &&
+    git -C "$repo" -c user.name=t -c user.email=t@invalid commit -qm t && printf 'b\n' > "$repo/tracked"
+  out="$(run reset host --yes)"; rc=$?
+  check 'reset, uncommitted changes, plain: the duplicate stopped (exit 0)' "0:session-stop|id-h2;record|host|$repo|--;" "$rc:$(calls)"
+  contains 'reset, uncommitted changes, plain: a warning naming the folder' "$out" "warning: uncommitted changes in $repo"
+  reset; sessions_for_reset
+  out="$(run reset host --purge --yes)"; rc=$?
+  check 'reset --purge, uncommitted changes: exit 1' 1 "$rc"
+  check 'reset --purge, uncommitted changes: the stop goes ahead, the removal does not' "session-stop|id-h2;record|host|$repo|--;" "$(calls)"
+  contains 'reset --purge, uncommitted changes: says which folder' "$out" "would remove it (its conversation), but $repo has uncommitted changes (git status)"
+  reset; sessions_for_reset
+  out="$(run reset host --purge --yes --force)"
+  check 'reset --purge, uncommitted changes, --force: goes ahead' "session-stop|id-h2;session-remove|id-h0;record|host|$repo|--;" "$(calls)"
+  rm -rf "$repo/.git" "$repo/tracked"
+fi
+cp "$T/list.before-reset" "$repo/.devcontainer/agents.yml"
 
 # ------------------------------------------------- the Feature Taskfile ----
 if command -v task >/dev/null 2>&1; then

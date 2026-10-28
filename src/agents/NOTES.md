@@ -84,10 +84,11 @@ it differs from both.
 | `task agents -- <name> --resume` | the same | resume its latest conversation (refused while that one runs) |
 | `task agents -- <name> --new` | stop the running session and start a fresh one, after a yes/no question (`--yes` skips it), then attach | the same as plain |
 | `task agents:up` | start every resident not running, attach none (the postStartCommand) | skipped |
-| `task agents:list` | name, kind, CLI, state (`running`, `stopped`, `failed`, `none`; `+N` extra running sessions), id, folder; `-- --json` for agents | the same |
+| `task agents:list` | name, kind, CLI, state (`running`, `stopped`, `failed`, `none`; `+N` extra running sessions; `unknown` when the CLI cannot list, `error` when listing failed, with the adapter's reason below the table and as `"error"` in `--json`), id, folder; `-- --json` for agents | `running` with its id, else `none` (a stopped conversation is what `--resume` opens, not a state) |
 | `task agents:stop -- <name>` | stop it; the conversation is kept. `-- <name> --extras` stops only the extra sessions | stop a running one, if the adapter can |
 | `task agents:logs -- <name>` | recent output | recent output, if it ran in the background |
 | `task agents:check` | read and check the list, print it | the same |
+| `task agents:reset -- <name>... \| --all` | keep its running session, stop the others (conversations kept), record it again, start it if none runs; `--purge` also removes its ended sessions. A dry run unless `--yes` (below) | the same, nothing started |
 | `task agents:version` | the Feature version and the list in use | |
 
 Extra CLI flags follow the name: `task agents -- reviewer --effort high`; after `--` everything
@@ -113,6 +114,35 @@ start that fails is said and the start goes on. `task agents:up -- --no-wait` sk
 Exit codes of `agents`: 0 done, 1 failed, 2 bad use (unknown agent, broken or missing list,
 refused), 3 the CLI cannot do it.
 
+## Reset (1.0.1)
+
+`task agents:reset -- <name>... | --all [--purge] [--include-unlisted] [--yes] [--force]` puts the listed agents'
+sessions in order, from a container terminal:
+
+- **Per agent:** its running session is kept (the one `task agents -- <name>` would attach: the adapter's recorded one
+  first), every other running session of it is stopped (`claude stop`, conversation kept), the adapter records the kept
+  one again, and a resident left with none running is started (woken with its latest conversation, or fresh).
+- **`--purge`** also removes the agent's ended sessions (`claude rm`; Claude Code keeps the transcript and a worktree
+  with unpushed work, and says so), so it starts from scratch. Continuity is then what the repository records, not the
+  conversation.
+- **Scope:** only the agents in the list and their folders, never every session the CLI knows (another repository's
+  sessions in the same container are not looked at). A session in those folders that belongs to no listed agent is
+  reported as `untouched`; `--include-unlisted` treats it like a duplicate (stopped; removed with `--purge`).
+- **A dry run by default:** the plan, one line per session (agent, session id, state, action, why), and nothing
+  changed. `--yes` applies it; on a terminal it asks instead.
+- **Refused, unless `--force`:**
+  - stopping a session that is mid-turn right now (the adapter's `session-busy`; Claude Code: status `busy` or state
+    `working`; idle, waiting for input or blocked on a decision is not busy). The plan names the session. An adapter
+    that cannot tell counts it as not busy and says so;
+  - with `--purge`, removing a session (its conversation) where the folder has uncommitted changes (`git status`,
+    tracked files). On a plain reset, and for the stops of a purge, uncommitted changes are a warning in the plan;
+  - any stop or removal from inside a Claude Code session (`CLAUDE_CODE_CHILD_SESSION=1`, which Claude Code sets for
+    its tools' commands), which may be one it would stop: run it from a container terminal or `task
+    devcontainer:shell`.
+- An adapter without the optional verbs: `session-busy` missing counts as not busy (said);
+  `session-stop` missing leaves the duplicate running (said, exit 1);
+  `session-remove` missing skips `--purge` with a note; `record` missing is skipped.
+
 ## The adapter contract
 
 Each CLI Feature installs one executable on PATH, `agent-adapter-<cli>`; `agents` calls it,
@@ -130,6 +160,14 @@ agent-adapter-<cli> <verb> <name> <folder> [--extras] [-- args...]
   logs       print recent output
 agent-adapter-<cli> list       one line per session of this CLI, newest first:
                                name<TAB>id<TAB>state<TAB>folder (state: running | stopped | failed)
+agent-adapter-<cli> hint <name> <folder>
+                               optional: how to find and resume the agent by hand, printed when
+                               its list fails (exit 3 or missing: a general line instead)
+agent-adapter-<cli> <verb> <name> <folder>, optional (exit 3 or missing: skipped):
+  record                       record the agent's running session as the agent's, or clear its record
+agent-adapter-<cli> session-busy <id>     exit 0 mid-turn now, 1 not (idle, waiting, ended), 3 cannot tell
+agent-adapter-<cli> session-stop <id>     stop that session (the id `list` printed); conversation kept
+agent-adapter-<cli> session-remove <id>   remove that ended session from the CLI's list
 agent-adapter-<cli> supports   the verbs it supports, one per line
 Exit: 0 done, 1 failed, 2 bad use, 3 not supported by this CLI.
 ```
@@ -150,6 +188,14 @@ second copy of something that may be running:
 | `resume` | `new` |
 | `list` | the agent counts as not running; a resident is started at most once per container start (a marker under `/var/lib/devcontainer-features/agents`, keyed by the start of the container's PID 1), and the verb says that "make sure it runs" cannot be promised |
 | `stop`, `logs` | say so; exit 3 |
+
+**When `list` fails** (any exit but 0 and 3: the CLI is there but its list could not be read) it is
+not "cannot list": the agent's state is `error`, and nothing is started on a guess, since the agent
+may be running or have a conversation to resume. `task agents -- <name>` and `agents:up` start no
+resident, say the adapter's reason, print how to resume by hand (the adapter's `hint`, for Claude
+Code `claude agents` and `cd <folder> && claude --resume`) and exit 1 (`agents up --post-start` still
+lets the container start go on). An on-demand plain start opens a new session as always; `--resume`
+never turns into a new session (Claude Code's adapter opens its own picker instead).
 
 ## State
 
@@ -223,6 +269,11 @@ so they live here and each CLI Feature adds only its adapter.
 ## Version and upgrade
 
 `ghcr.io/nabil-becker/devcontainer-features/agents:1` follows 1.x; rebuild to update. 1.0.0 is the
-first release. It replaces claude-code's `claude-host`, `claude-fleet` and `claude-host-pin` and
+first release. 1.0.1: `task agents:reset` (above); a `list` that fails is state `error` and starts nothing (it showed `unknown`
+and started residents as fresh sessions), with the adapter's reason and how to resume by hand; an
+on-demand agent shows `none` unless a session runs (it showed yesterday's stopped one). Pair it with
+claude-code 1.8.0, whose adapter reads the list sturdily and gives the reason and the hint, and finds an agent
+again after Claude Code retitles its session (with 1.7.0 a retitled resident looked stopped and was started a second
+time; `/rename <agent name>` in that session was the workaround and is no longer needed). It replaces claude-code's `claude-host`, `claude-fleet` and `claude-host-pin` and
 the `SESSIONS` / `HOST_SESSION` settings, which claude-code 2.0 removes; the migration is in
 [docs/migrations/agents.md](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/migrations/agents.md).

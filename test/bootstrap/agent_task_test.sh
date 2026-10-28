@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Docker-free test of how `task devcontainer:agent` and `devcontainer:agent:list`
+# Docker-free test of how `task devcontainer:agent`, `devcontainer:agent:list` and `:agent:reset`
 # (bootstrap/devcontainer.yml) hand the agent name, its flags and AGENTS_FILE to the agents
 # Feature's `agents` command: inside the container directly, from the host through the exec
 # task (--dry shows the command, nothing runs); and that the deprecated devcontainer:claude and
@@ -46,11 +46,17 @@ check 'inside: AGENTS_FILE reaches the command as AGENTS_FILE_TASK_VAR (spaces k
 out="$(inside devcontainer:agent:list -- --json)"
 check 'inside: agent:list runs agents list with its arguments' 'agents list --json' "$(head -n 1 "$T/agents")"
 
+out="$(inside devcontainer:agent:reset AGENTS_FILE=ops/agents.yml -- host --purge --yes)"
+check 'inside: agent:reset runs agents reset with its arguments' 'agents reset host --purge --yes' "$(head -n 1 "$T/agents")"
+check 'inside: agent:reset hands AGENTS_FILE on' 'file=ops/agents.yml' "$(tail -n 1 "$T/agents")"
+
 out="$(fromhost devcontainer:agent --dry -- host --new)"
 contains 'host: goes through the exec task' "$out" 'devcontainer:exec CMD='
 contains 'host: the command is agents start with the arguments' "$out" 'agents start host --new'
 out="$(fromhost devcontainer:agent:list --dry)"
 contains 'host: agent:list through the exec task' "$out" 'agents list'
+out="$(fromhost devcontainer:agent:reset --dry -- --all)"
+contains 'host: agent:reset through the exec task' "$out" 'agents reset --all'
 
 out="$(inside devcontainer:claude)"; rc=$?
 check 'devcontainer:claude still runs claude-host' 0 "$rc"

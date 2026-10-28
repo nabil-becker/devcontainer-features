@@ -17,6 +17,7 @@ Claude Code (https://code.claude.com/docs) as a member of this collection's ecos
 |-----|-----|-----|-----|
 | installTaskfile | Also install this Feature's Taskfile into /usr/local/share/go-task/includes.d so its tasks appear under the <id>: namespace of a root Taskfile that includes /usr/local/share/go-task/features.yml (see the go-task Feature). | boolean | true |
 | install | How the claude binary gets there. 'auto': keep a claude already in the image (official Feature, base image) and only add the ecosystem pieces, else install the native binary. 'native': always install the verified native binary at /usr/local/bin/claude (wins over an npm install on PATH). 'none': never install the binary, only the pieces. | string | auto |
+| additionalDirectories | Comma-separated folders every Claude session in the container may read and edit besides the one it starts in (Claude Code's permissions.additionalDirectories), written at build time to the managed-settings drop-in /etc/claude-code/managed-settings.d/50-devcontainer-features-claude-code.json, so no wrapper adding --add-dir is needed and the user's own settings are not touched. Absolute paths, or ~/... for the remote user's home (expanded at build time); a relative path fails the build. Empty: nothing is written. File access only: unlike --add-dir, a folder listed here does not load its CLAUDE.md, skills or other .claude/ configuration. | string | - |
 | version | Native binary version to install (e.g. '2.1.286'), or a release channel: 'stable' or 'latest'. Ignored when an existing claude is kept (install=auto) or install=none. | string | stable |
 
 ## Customizations
@@ -24,6 +25,20 @@ Claude Code (https://code.claude.com/docs) as a member of this collection's ecos
 ### VS Code Extensions
 
 - `anthropic.claude-code`
+
+## Changes in 1.8.0
+
+- **`additionalDirectories`** (new option): folders every Claude session may read and edit, without a
+  wrapper adding `--add-dir` (below).
+- **`agent-adapter-claude` reads the session list sturdily**: the JSON array is taken even when other
+  lines come before or after it; a read that times out or prints nothing is tried once more with a
+  longer time-out; when it fails, the message says why (the exit code or the time-out, and Claude
+  Code's own first line), and names a wrapper in front of `claude` when Claude Code answers
+  `unknown option`. `resume` on an unreadable list opens Claude Code's own picker, never a new
+  session; a new `hint` verb tells the `agents` Feature how to resume by hand.
+- **The adapter keeps its own record of each agent's session**, so a session Claude Code retitles after a prompt is
+  still the agent's (1.7.0 found it by name only, so a retitled resident looked stopped and was started again), and
+  adds the verbs `record`, `session-busy`, `session-stop` and `session-remove` for `task agents:reset`.
 
 ## Deprecated in 1.7.0: claude-host, claude-fleet, claude-host-pin
 
@@ -47,9 +62,10 @@ else should. The contract (verbs, exit codes) is in the `agents` Feature's notes
 | `start-bg` | `cd <folder> && claude --bg --name <name> <args>`; waits until the session is listed and prints its id |
 | `wake` | the agent's newest stopped or failed session, by its full id: `cd <folder> && claude --bg --resume <session id>` (the same id and conversation; Claude Code 2.1.308 says `woke session ...`) |
 | `attach` | `claude attach <id>` of its newest running session; an interactive one is refused with the pid and tty of the terminal that holds it |
-| `resume` | `cd <folder> && claude --resume <session id> <args>` of its newest session; refused while that session runs (a second process on one transcript) |
+| `resume` | `cd <folder> && claude --resume <session id> <args>` of its newest session; refused while that session runs (a second process on one transcript). When the list cannot be read: `claude --resume <args>`, Claude Code's own picker (1.8.0) |
 | `new` | `cd <folder> && claude --name <name> <args>` |
 | `list` | `claude agents --json --all`: name, session id, state (a pid is running; failed; anything else stopped), folder, newest first |
+| `hint` | how to find and resume the agent by hand (`claude agents`; `cd <folder> && claude --resume`, pick it), for when the list cannot be read (1.8.0) |
 | `stop` | `claude stop <id>` of its newest running session; `--extras` stops every other running one instead. Never `claude rm`. |
 | `logs` | `claude logs <id>` |
 
@@ -63,10 +79,92 @@ A stopped session is woken by its full id with `--bg --resume`; `--bg -c` and `-
 survives `/clear`, so nothing has to be written back. The JSON is read with `sed` (no jq or python
 in the Feature), as `claude-host` does. Needs Claude Code 2.1.290 or later (session names).
 
+**Records (1.8.0).** Claude Code can retitle a background session after a prompt, so the name given with `--name`
+does not always stay (a resident started as `framework` was listed as "d47 d50 personalization medallion"). No setting
+turns that off, and there is no command to rename a session from outside (Claude Code's docs: `-n`/`--name`, `/rename`
+and `Ctrl+R` in agent view; a name set with `/rename` is kept). So the adapter records, when it starts, wakes or opens
+an agent's session, the agent's name and folder with the session's short job id and full session id, in
+`$CLAUDE_CONFIG_DIR/agent-adapter-claude/agents.tsv` (the Feature's volume, so it survives a rebuild; folder 700,
+file 600; `AGENT_ADAPTER_CLAUDE_STATE` moves it; never in the repository, and not a pin: nothing has to be kept by
+hand). `new` chooses the session id itself (`--session-id`) and records it before the session starts. A recorded
+session still in `claude agents --json --all` is the agent's whatever its name now is, and `list` prints it under the
+agent's name and folder, before the agent's other sessions:
+
+- found by its job id with a new session id (a `/clear` starts a new conversation in the same job): followed, the
+  record updated, and said on stderr;
+- found by its session id under a new job id (a wake that started a copy): followed, updated, said;
+- not listed any more (removed): the name and folder find the agent, as before, and that is said.
+
+Matching by name, a running session (a pid, or a background state of working, blocked, busy, waiting or idle) always
+wins over ended ones (done, stopped, failed); an ended one is woken only when none runs. `start-bg` refuses when the
+agent's recorded session runs (never a second one).
+
+| Verb | What it runs |
+| --- | --- |
+| `record` | records the agent's running session (the one the lookup picks), or clears its record when none runs |
+| `session-busy <id>` | exit 0 when that session is mid-turn: `status` `busy` (a live process) or background `state` `working`; exit 1 when it is idle, `waiting` for input, `blocked` on a decision or ended; exit 3 when a running session says neither |
+| `session-stop <id>` | `claude stop` of the session with that id (from `list`); an interactive one is refused |
+| `session-remove <id>` | `claude rm` of that ended session (Claude Code keeps the transcript and a worktree with unpushed work); a running one is refused |
+
+**Reading the list (1.8.0).** `claude agents --json --all` runs within
+`AGENT_ADAPTER_CLAUDE_TIMEOUT` seconds (default 30), its output to files (a process that keeps a pipe
+open cannot hang it); plain `--json` is asked only when Claude Code refuses `--all` as unknown (an
+older release), since a list without the stopped sessions would wake nothing. The array is taken
+from the first line starting with `[` through its end, so a notice before or after it does no harm.
+A read that timed out or printed nothing is tried once more after `AGENT_ADAPTER_CLAUDE_PAUSE`
+seconds (default 3) with three times the time-out; a quick error with a message is not, since it
+would not change. A failure says the call, its exit code or time-out and its first line (cut to 160
+characters), for example
+
+```
+agent-adapter-claude: the session list could not be read: 'claude agents --json --all' exited 1: error: unknown option '--json'. A wrapper or alias in front of claude may be rewriting its arguments: claude here is /usr/local/bin/claude.
+```
+
+That one is what a wrapper putting `--add-dir <dir>` before every argument causes: `--add-dir`
+takes any number of folders, swallows `agents`, and plain `claude` refuses `--json`. Drop the
+wrapper and use the `additionalDirectories` option instead.
+
 Not verified against a live `claude --bg` in CI: the unit tests (`task test:claude-unit`) use a
 fake `claude`; the calls rest on the facts checked live on Claude Code 2.1.308 (the agents
 proposal, section 7). A background session in a folder Claude Code has never trusted fails to
 start (`Workspace not trusted`): run `claude` there once and accept.
+
+## Additional working directories (`additionalDirectories`, 1.8.0)
+
+`"additionalDirectories": "/workspaces/shared, ~/notes"` gives every Claude session in the container
+those folders as working directories (read and edit them as it does the folder it starts in), the
+persistent form of `--add-dir`. The Feature writes them at build time as Claude Code's
+`permissions.additionalDirectories` to a managed-settings drop-in the image owns,
+`/etc/claude-code/managed-settings.d/50-devcontainer-features-claude-code.json`:
+
+```json
+{"permissions":{"additionalDirectories":["/workspaces/shared","/home/vscode/notes"]}}
+```
+
+- **Why there:** the user's own `settings.json` (in the Feature's volume) is never rewritten, and a
+  rebuild writes the file afresh, so a folder taken out of the option is gone again. Claude Code
+  combines lists across settings files, so folders from the user's, the project's or local settings
+  still apply beside these; managed settings need no workspace trust (a project's
+  `.claude/settings.json` list does).
+- **Paths:** comma-separated; absolute, or `~` / `~/...`, which the Feature expands at build time to
+  the remote user's home (the file holds absolute paths only). Spaces inside a path are kept, spaces
+  around a comma dropped. A relative path or `~user` fails the build with the reason. A folder need
+  not exist at build time (a mount appears later). Empty (the default): nothing is written.
+- **File access only:** unlike `--add-dir`, a folder listed in settings does not load its
+  `CLAUDE.md`, skills, subagents or other `.claude/` configuration (Claude Code's permissions docs,
+  "Additional directories grant file access, not configuration"). A repository that relied on that
+  keeps `--add-dir` for that one session, or moves the configuration into the repository.
+- **Limit:** managed settings rank by source, and by default (`managedSourcesBehavior`
+  `first-wins`) Claude Code uses only the highest source that holds a policy. When your organization
+  delivers server-managed settings (the claude.ai admin console) or an MDM policy, this file is
+  skipped and the folders do not apply; `/status` shows the `Setting sources` it used. That is not
+  verified here; tell us if it happens.
+
+**Migrating from a wrapper:** a repository that wraps `claude` (for example a `/usr/local/bin/claude`
+that runs the real one with `--add-dir <dir>` first) drops the wrapper and sets this option to the
+same folders. Such a wrapper also breaks every `claude <command>` (`--add-dir` swallows the
+command's name; `claude agents --json` then fails with `unknown option '--json'`), which is what
+`task agents:list` showed as `error`.
 
 ## Augment, don't duplicate
 
@@ -91,6 +189,7 @@ version and verifies nothing, which is why this installer still exists.
 What the Feature adds in both cases:
 
 - `agent-adapter-claude` on PATH (1.7.0, above).
+- With `additionalDirectories` set, the managed-settings drop-in under `/etc/claude-code/managed-settings.d` (1.8.0, above).
 - `claude-host` on PATH (deprecated in 1.7.0, see the top): start or resume **one** session by its UUID. With
   `HOST_SESSION=<uuid>` set it runs `claude --resume <uuid>` when that
   session's transcript exists for the current directory, else

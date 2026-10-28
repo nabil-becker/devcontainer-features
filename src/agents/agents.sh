@@ -9,6 +9,7 @@
 #   agents stop <name> [--extras]
 #   agents logs <name>
 #   agents check
+#   agents reset <name>... | --all [--purge] [--include-unlisted] [--yes] [--force]
 #
 # The list (the agent list) is a small YAML file, .devcontainer/agents.yml unless
 # AGENTS_FILE names another path, relative to the repository root (the nearest folder at
@@ -34,11 +35,15 @@
 #
 # Adapters (the contract, docs/proposals/agents.md section 5): each CLI Feature installs
 #   agent-adapter-<cli> <verb> <name> <folder> [--extras] [-- args...]
-# with the verbs start-bg, wake, attach, resume, new, list, stop, logs, supports. Exit 0
+# with the verbs start-bg, wake, attach, resume, new, list, stop, logs, supports, and the
+# optional hint, record and (`agent-adapter-<cli> <verb> <id>`) session-busy, session-stop, session-remove. Exit 0
 # done, 1 failed, 2 bad use, 3 not supported by this CLI; `list` prints
 # name<TAB>id<TAB>state<TAB>folder per session, newest first (state running, stopped or
 # failed). An unsupported verb falls back as section 6 says and says so in one line;
-# a fallback never starts a second copy of something that may be running.
+# a fallback never starts a second copy of something that may be running. A `list` that
+# fails (any exit but 0 and 3) is not "cannot list": the agent's state is error, a resident
+# is not started (the adapter's optional `hint <name> <folder>` says how to resume by hand),
+# and nothing turns into a fresh session in its place.
 #
 # Exit: 0 done, 1 failed, 2 bad use (unknown agent, bad list, refused), 3 the CLI cannot.
 set -uo pipefail
@@ -331,26 +336,36 @@ adapter_of() {
   fi
 }
 
-declare -A LISTS=() LIST_RC=()
-# sessions_of <cli>: the adapter's list, read once per run (LISTS, LIST_RC; 3 = cannot list).
+declare -A LISTS=() LIST_RC=() LIST_ERR=()
+# sessions_of <cli>: the adapter's list, read once per run (LISTS, LIST_RC: 0 read, 3 the CLI
+# cannot list, anything else the listing failed; LIST_ERR: what the adapter said, one line).
 sessions_of() {
-  local cli="$1" out rc
+  local cli="$1" out rc errf err=''
   [ -n "${LIST_RC[$cli]:-}" ] && return 0
-  out="$("$ADAPTER" list </dev/null)"; rc=$?
-  LISTS[$cli]="$out" LIST_RC[$cli]="$rc"
+  errf="$(mktemp 2>/dev/null)" || errf=''
+  out="$("$ADAPTER" list </dev/null 2>"${errf:-/dev/null}")"; rc=$?
+  if [ -n "$errf" ]; then
+    err="$(tr -d '\r' < "$errf" | sed '/^[[:space:]]*$/d; s/^agent-adapter-[A-Za-z0-9_-]*: //' | head -n 3 | tr '\n' ' ' | cut -c1-400)"
+    [ "$rc" -eq 0 ] && cat "$errf" >&2
+    rm -f "$errf"
+  fi
+  LISTS[$cli]="$out" LIST_RC[$cli]="$rc" LIST_ERR[$cli]="${err% }"
 }
 reread() { unset 'LIST_RC[$1]'; sessions_of "$1"; }
 
-# state_of <i>: STATE (running, stopped, failed, none, unknown), SID (the id) and EXTRAS
-# (how many more running sessions the agent has) from the adapter's list; a session is
-# the agent's when its folder is the agent's and its name is the agent's name, or the
-# name with a collision number, "host (2)".
+# state_of <i>: STATE (running, stopped, failed, none, unknown, error), SID (the id) and
+# EXTRAS (how many more running sessions the agent has) from the adapter's list; a session
+# is the agent's when its folder is the agent's and its name is the agent's name, or the
+# name with a collision number, "host (2)". unknown: the CLI cannot list (exit 3, the
+# agreed fallback); error: the listing failed (returns 1; nothing may be started on it). An
+# on-demand agent shows only a running session; otherwise none (its stopped ones are only
+# what --resume reaches).
 state_of() {
   local i="$1" cli="${CLI[$1]}" nm id st fo first='' firstst='' running=0 runid=''
   sessions_of "$cli"
   STATE=none SID='' EXTRAS=0
   if [ "${LIST_RC[$cli]}" = 3 ]; then STATE=unknown; return 0; fi
-  if [ "${LIST_RC[$cli]}" != 0 ]; then STATE=unknown; return 1; fi
+  if [ "${LIST_RC[$cli]}" != 0 ]; then STATE=error; return 1; fi
   while IFS=$'\t' read -r nm id st fo; do
     [ -n "${nm:-}" ] || continue
     [ "$fo" = "$DIR" ] || continue
@@ -361,9 +376,22 @@ state_of() {
     [ -z "$first" ] && { first="$id"; firstst="$st"; }
   done <<< "${LISTS[$cli]}"
   if [ "$running" -gt 0 ]; then STATE=running SID="$runid" EXTRAS=$((running - 1))
-  elif [ -n "$first" ]; then STATE="$firstst" SID="$first"
+  elif [ -n "$first" ] && [ "${KIND[i]}" != on-demand ]; then STATE="$firstst" SID="$first"
   fi
   return 0
+}
+
+# list_failed <i>: say that the agent's sessions could not be listed (the adapter's reason),
+# that nothing was started, and how to find and resume it by hand (the adapter's hint verb,
+# else a general line).
+list_failed() {
+  local i="$1" cli="${CLI[$1]}" h
+  warn "${NAME[i]}: the $cli sessions could not be listed${LIST_ERR[$cli]:+ (${LIST_ERR[$cli]})}; starting nothing, since it may be running or have a conversation to resume."
+  if h="$("$ADAPTER" hint "${NAME[i]}" "$DIR" </dev/null 2>/dev/null)" && [ -n "$h" ]; then
+    printf '%s\n' "$h" | sed "s/^/agents: ${NAME[i]}: /" >&2
+  else
+    warn "${NAME[i]}: check with $cli itself whether it runs, and resume its conversation by hand if it does not."
+  fi
 }
 
 call() { # call <verb> <i> [adapter flags]: the adapter for entry i, CLI args after --
@@ -396,7 +424,7 @@ marked() { [ -e "$(marker "$1")" ]; }
 # what it did. Returns 0 running, 1 failed, 3 the CLI has no background mode.
 make_run() {
   local i="$1" nm="${NAME[$1]}" rc
-  state_of "$i" || { warn "$nm: the adapter could not list sessions; starting nothing (it may be running)."; return 1; }
+  state_of "$i" || { list_failed "$i"; return 1; }
   case "$STATE" in
     running)
       echo "$nm: running ($SID)"
@@ -450,7 +478,7 @@ cmd_start() {
   adapter_of "$i" || exit 1
   if [ "${KIND[i]}" = resident ]; then
     if [ "$mode" = new ]; then
-      state_of "$i" || die 1 "$name: the adapter could not list sessions; starting nothing."
+      state_of "$i" || { list_failed "$i"; exit 1; }
       if [ "$STATE" = running ]; then
         if [ -z "$yes" ]; then
           has_tty || die 2 "$name: --new stops the running session ($SID) and starts a fresh one; it asks first, so run it from a terminal or add --yes."
@@ -579,7 +607,8 @@ settle() {
 json_str() { local s="$1"; s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; printf '"%s"' "$s"; }
 
 cmd_list() {
-  local json='' i first=1 st a
+  local json='' i first=1 st a c
+  declare -A failed=()
   for a in "$@"; do
     case "$a" in --json) json=1 ;; *) die 2 "list: unknown argument '$a' (--json)" ;; esac
   done
@@ -589,7 +618,9 @@ cmd_list() {
   for ((i = 1; i <= N; i++)); do
     STATE='' SID='' EXTRAS=0
     if adapter_of "$i" 2>/dev/null; then
-      state_of "$i" || STATE=unknown
+      if ! state_of "$i"; then
+        c="${LIST_ERR[${CLI[i]}]}"; failed[${CLI[i]}]="${c:-the listing failed}"
+      fi
     elif [ -z "$(command -v "agent-adapter-${CLI[i]}" 2>/dev/null)" ]; then
       STATE=no-adapter
     else
@@ -599,14 +630,19 @@ cmd_list() {
     if [ -n "$json" ]; then
       [ -z "$first" ] && printf ','
       first=''
-      printf '{"name":%s,"kind":%s,"cli":%s,"folder":%s,"state":%s,"id":%s,"extras":%d}' \
+      printf '{"name":%s,"kind":%s,"cli":%s,"folder":%s,"state":%s,"id":%s,"extras":%d' \
         "$(json_str "${NAME[i]}")" "$(json_str "${KIND[i]}")" "$(json_str "${CLI[i]}")" \
         "$(json_str "${FOLDER[i]}")" "$(json_str "$STATE")" "$(json_str "$SID")" "$EXTRAS"
+      [ "$STATE" = error ] && printf ',"error":%s' "$(json_str "${failed[${CLI[i]}]}")"
+      printf '}'
     else
       printf '%-16s %-10s %-8s %-9s %-38s %s\n' "${NAME[i]}" "${KIND[i]}" "${CLI[i]}" "$st" "${SID:--}" "${FOLDER[i]}"
     fi
   done
   [ -n "$json" ] && printf ']\n'
+  for c in "${!failed[@]}"; do
+    warn "the $c sessions could not be listed: ${failed[$c]}"
+  done
   return 0
 }
 
@@ -651,6 +687,164 @@ cmd_check() {
   done
 }
 
+# ------------------------------------------------------------------- reset ----
+# reset: tidy the listed agents' sessions, from a container terminal (never from inside a
+# session it would stop). Scope is always the agents in the list and their folders, never every
+# session the CLI knows. Per agent: its running session the lookup picks is kept, every other
+# running one is stopped (conversations kept), its record is set again (adapter `record`), and
+# a resident left with no running session is started (woken with its conversation, or fresh
+# after --purge). --purge also removes (adapter `session-remove`) the agent's ended sessions.
+# Sessions in those folders that belong to no listed agent are reported and left alone, unless
+# --include-unlisted. A dry run unless --yes (or a yes on a terminal). Refused unless --force: a
+# stop of a session mid-turn (adapter `session-busy`; one it cannot tell about counts as not
+# busy, with a note) and a removal where the folder has uncommitted changes (tracked files); a
+# stop there only warns.
+
+# owner_of <cli> <name> <folder>: the index of the listed agent the session belongs to, or none.
+owner_of() {
+  local j
+  for ((j = 1; j <= N; j++)); do
+    [ "${CLI[j]}" = "$1" ] && [ -n "${ADIR[j]:-}" ] && [ "${ADIR[j]}" = "$3" ] || continue
+    case "$2" in "${NAME[j]}") echo "$j"; return 0 ;; "${NAME[j]} ("*")") [[ "$2" =~ \([0-9]+\)$ ]] && { echo "$j"; return 0; } ;; esac
+  done
+}
+
+plan_add() { PL_CLI+=("$1"); PL_ID+=("$2"); PL_AGENT+=("$3"); PL_STATE+=("$4"); PL_FOLDER+=("$5"); PL_ACT+=("$6"); PL_WHY+=("$7"); }
+
+cmd_reset() {
+  local purge='' all='' unlisted='' yes='' force='' a i k rc=0 refused=0 changes=0 nm id st fo owner kept cli d ans
+  local -a names=() sel=() starts=()
+  PASS=()
+  for a in "$@"; do
+    case "$a" in
+      --purge) purge=1 ;; --all) all=1 ;; --include-unlisted) unlisted=1 ;; --yes) yes=1 ;; --force) force=1 ;;
+      -*) die 2 "reset: unknown argument '$a' (--all, --purge, --include-unlisted, --yes, --force)" ;;
+      *) names+=("$a") ;;
+    esac
+  done
+  if [ -n "$all" ] && [ "${#names[@]}" -gt 0 ]; then die 2 "reset: name agents or give --all, not both."; fi
+  if [ -z "$all" ] && [ "${#names[@]}" -eq 0 ]; then
+    die 2 "reset needs agent names or --all: agents reset <name>... | --all [--purge] [--include-unlisted] [--yes] [--force]"
+  fi
+  load_list
+  local -a ADIR=() AADP=()
+  declare -A CLIADP=() FOLDERS=()
+  for ((i = 1; i <= N; i++)); do
+    if adapter_of "$i" 2>/dev/null; then ADIR[i]="$DIR" AADP[i]="$ADAPTER" CLIADP[${CLI[i]}]="$ADAPTER"; fi
+  done
+  if [ -n "$all" ]; then
+    for ((i = 1; i <= N; i++)); do sel+=("$i"); done
+  else
+    for a in "${names[@]}"; do find_agent "$a"; sel+=("$AI"); done
+  fi
+  PL_CLI=() PL_ID=() PL_AGENT=() PL_STATE=() PL_FOLDER=() PL_ACT=() PL_WHY=()
+  for i in "${sel[@]}"; do
+    if [ -z "${ADIR[i]:-}" ]; then adapter_of "$i" || true; rc=1; continue; fi
+    cli="${CLI[i]}" ADAPTER="${AADP[i]}" DIR="${ADIR[i]}"
+    sessions_of "$cli"
+    case "${LIST_RC[$cli]}" in
+      0) ;;
+      3) warn "${NAME[i]}: $cli cannot list its sessions; nothing to reset."; rc=1; continue ;;
+      *) warn "${NAME[i]}: the $cli sessions could not be listed${LIST_ERR[$cli]:+ (${LIST_ERR[$cli]})}; nothing reset."; rc=1; continue ;;
+    esac
+    FOLDERS["$cli"$'\t'"$DIR"]=1
+    kept=''
+    while IFS=$'\t' read -r nm id st fo; do
+      [ -n "${nm:-}" ] || continue
+      owner="$(owner_of "$cli" "$nm" "$fo")"
+      [ "$owner" = "$i" ] || continue
+      if [ "$st" = running ]; then
+        if [ -z "$kept" ]; then kept="$id"; plan_add "$cli" "$id" "${NAME[i]}" "$st" "$fo" keep 'the session the agent is'
+        else plan_add "$cli" "$id" "${NAME[i]}" "$st" "$fo" stop 'a second running session (its conversation is kept)'; fi
+      elif [ -n "$purge" ]; then plan_add "$cli" "$id" "${NAME[i]}" "$st" "$fo" remove 'ended (--purge)'
+      else plan_add "$cli" "$id" "${NAME[i]}" "$st" "$fo" keep 'ended; its conversation is kept'
+      fi
+    done <<< "${LISTS[$cli]}"
+    if [ "${KIND[i]}" = resident ] && [ -z "$kept" ]; then starts+=("$i"); fi
+  done
+  # sessions in those folders that belong to no listed agent
+  for k in "${!FOLDERS[@]}"; do
+    cli="${k%%$'\t'*}" d="${k#*$'\t'}"
+    while IFS=$'\t' read -r nm id st fo; do
+      [ -n "${nm:-}" ] && [ "$fo" = "$d" ] || continue
+      [ -z "$(owner_of "$cli" "$nm" "$fo")" ] || continue
+      if [ -z "$unlisted" ]; then plan_add "$cli" "$id" "($nm)" "$st" "$fo" untouched 'belongs to no listed agent (--include-unlisted to include it)'
+      elif [ "$st" = running ]; then plan_add "$cli" "$id" "($nm)" "$st" "$fo" stop 'belongs to no listed agent (--include-unlisted)'
+      elif [ -n "$purge" ]; then plan_add "$cli" "$id" "($nm)" "$st" "$fo" remove 'belongs to no listed agent, ended (--include-unlisted --purge)'
+      else plan_add "$cli" "$id" "($nm)" "$st" "$fo" keep 'belongs to no listed agent, ended'
+      fi
+    done <<< "${LISTS[$cli]}"
+  done
+  # a session mid-turn is not stopped; uncommitted changes warn, and refuse a removal
+  for ((k = 0; k < ${#PL_ID[@]}; k++)); do
+    case "${PL_ACT[k]}" in stop | remove) ;; *) continue ;; esac
+    if [ "${PL_ACT[k]}" = stop ]; then
+      "${CLIADP[${PL_CLI[k]}]}" session-busy "${PL_ID[k]}" </dev/null >/dev/null 2>&1; a=$?
+      case "$a" in
+        0)
+          if [ -n "$force" ]; then PL_WHY[k]="${PL_WHY[k]}; mid-turn right now (--force)"
+          else PL_WHY[k]="would stop it, but it is mid-turn right now (busy); wait until it is idle, or --force" PL_ACT[k]=refused; refused=1; continue
+          fi ;;
+        1) ;;
+        *) PL_WHY[k]="${PL_WHY[k]}; whether it is mid-turn is unknown (${PL_CLI[k]} does not say)" ;;
+      esac
+    fi
+    if [ -n "$(git -C "${PL_FOLDER[k]}" status --porcelain --untracked-files=no 2>/dev/null | head -n 1)" ]; then
+      if [ "${PL_ACT[k]}" = remove ] && [ -z "$force" ]; then
+        PL_WHY[k]="would remove it (its conversation), but ${PL_FOLDER[k]} has uncommitted changes (git status); commit or stash them, or --force" PL_ACT[k]=refused; refused=1
+      else
+        PL_WHY[k]="${PL_WHY[k]}; warning: uncommitted changes in ${PL_FOLDER[k]}${force:+ (--force)}"
+      fi
+    fi
+  done
+  for ((k = 0; k < ${#PL_ID[@]}; k++)); do case "${PL_ACT[k]}" in stop | remove) changes=$((changes + 1)) ;; esac; done
+  printf '%-16s %-38s %-8s %-9s %s\n' AGENT SESSION STATE ACTION WHY
+  for ((k = 0; k < ${#PL_ID[@]}; k++)); do
+    printf '%-16s %-38s %-8s %-9s %s\n' "${PL_AGENT[k]}" "${PL_ID[k]}" "${PL_STATE[k]}" "${PL_ACT[k]}" "${PL_WHY[k]}"
+  done
+  for i in "${starts[@]+"${starts[@]}"}"; do
+    printf '%-16s %-38s %-8s %-9s %s\n' "${NAME[i]}" - - start "a resident with no running session: woken with its latest conversation, else a fresh one"
+  done
+  if [ "$changes" -eq 0 ] && [ "${#starts[@]}" -eq 0 ]; then
+    echo "agents: reset: nothing to stop, remove or start."
+    [ "$refused" -eq 0 ] || exit 1
+    exit "$rc"
+  fi
+  if [ "$changes" -gt 0 ] && [ "${CLAUDE_CODE_CHILD_SESSION:-}" = 1 ] && [ -z "$force" ]; then
+    die 2 "reset stops or removes sessions, and this runs inside a Claude Code session (CLAUDE_CODE_CHILD_SESSION=1), maybe one of them; run it from a container terminal or task devcontainer:shell (--force goes ahead)."
+  fi
+  if [ -z "$yes" ]; then
+    if ! has_tty; then echo "agents: reset: a dry run, nothing changed; add --yes to do the above."; exit "$rc"; fi
+    printf 'Do the above? [y/N] '
+    ans=''; read -r ans || ans=''
+    case "$ans" in y | Y | yes | YES | Yes) ;; *) echo "agents: reset: nothing changed."; exit 0 ;; esac
+  fi
+  for ((k = 0; k < ${#PL_ID[@]}; k++)); do
+    case "${PL_ACT[k]}" in
+      stop)
+        "${CLIADP[${PL_CLI[k]}]}" session-stop "${PL_ID[k]}" </dev/null; a=$?
+        case "$a" in 0) ;; 3) warn "${PL_CLI[k]} cannot stop a session by id; ${PL_ID[k]} left running."; rc=1 ;; *) rc=1 ;; esac ;;
+      remove)
+        "${CLIADP[${PL_CLI[k]}]}" session-remove "${PL_ID[k]}" </dev/null; a=$?
+        case "$a" in 0) ;; 3) warn "${PL_CLI[k]} cannot remove sessions; ${PL_ID[k]} kept (--purge skipped)." ;; *) rc=1 ;; esac ;;
+    esac
+  done
+  for i in "${sel[@]}"; do
+    [ -n "${ADIR[i]:-}" ] && [ "${LIST_RC[${CLI[i]}]:-1}" = 0 ] || continue
+    ADAPTER="${AADP[i]}" DIR="${ADIR[i]}"
+    call record "$i" </dev/null; a=$?
+    [ "$a" -eq 0 ] || [ "$a" -eq 3 ] || rc=1
+  done
+  for i in "${starts[@]+"${starts[@]}"}"; do
+    ADAPTER="${AADP[i]}" DIR="${ADIR[i]}"
+    reread "${CLI[i]}"
+    make_run "$i"; a=$?
+    case "$a" in 0) ;; 3) echo "${NAME[i]}: skipped, ${CLI[i]} has no background mode" ;; *) rc=1 ;; esac
+  done
+  [ "$refused" -eq 0 ] || rc=1
+  exit "$rc"
+}
+
 verb="${1:-}"
 [ $# -gt 0 ] && shift
 case "$verb" in
@@ -660,7 +854,8 @@ case "$verb" in
   stop) cmd_stop "$@" ;;
   logs) cmd_logs "$@" ;;
   check) cmd_check ;;
+  reset) cmd_reset "$@" ;;
   -h | --help | help) usage ;;
   '') usage >&2; exit 2 ;;
-  *) die 2 "unknown verb '$verb' (start, up, list, stop, logs, check)" ;;
+  *) die 2 "unknown verb '$verb' (start, up, list, stop, logs, check, reset)" ;;
 esac

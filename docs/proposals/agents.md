@@ -30,6 +30,20 @@ Where the build differs from the text below, the build is what ships:
 - **This repository** lists `host` as `on-demand` with `--remote-control` (D2) and adds the Feature to its devhost;
   `SESSIONS`, `HOST_SESSION` and the pin hook stay until 2.0 (section 8).
 - The consumer migration note is `docs/migrations/agents.md`.
+- **agents 1.0.1, claude-code 1.8.0 (2026-10-28):** a `list` that fails (exit 1, not 3) is a state of its own,
+  `error`: section 6's "counts as not running, start once" applies only to exit 3; on `error` no resident is started,
+  the adapter's reason and an optional adapter verb `hint <name> <folder>` (how to resume by hand) are printed, and
+  on-demand `--resume` never becomes `new` (Claude Code's adapter opens `claude --resume`, its picker). `agents:list`
+  shows an on-demand agent as `running` or `none` only. The Claude Code adapter reads the list past surrounding lines,
+  retries a time-out or an empty answer once, and names the cause; the trigger was a consumer's `claude` wrapper that
+  put `--add-dir` first, which the new claude-code option `additionalDirectories` replaces.
+- **Identity, as built (same release):** "identity is the name" did not hold: Claude Code retitles a background
+  session after a prompt. The Claude Code adapter records each agent's session (job id and session id, in its volume)
+  at start, wake and new, and finds it by that record first, the name and folder second; `list` prints a recorded
+  session under its agent's name. `agents reset` (with the optional verbs `record`, `session-stop`, `session-remove`)
+  tidies an agent's sessions, scoped to the listed agents and their folders, a dry run unless `--yes`; it does not stop
+  a session mid-turn (optional verb `session-busy`) nor, with `--purge`, remove one where the folder has uncommitted
+  changes (a plain reset warns), unless `--force`.
 
 ## 1. The direction (given, not reopened)
 
