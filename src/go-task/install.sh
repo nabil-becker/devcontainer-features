@@ -3,6 +3,11 @@
 # environment variables (see devcontainer-feature.json): VERSION.
 set -euo pipefail
 
+# Every download goes through dcf_curl (dcf-curl.sh, the collection's retry helper, vendored from
+# src/common): curl with --retry and, on curl 7.71+, --retry-all-errors.
+# shellcheck source=src/go-task/dcf-curl.sh
+. "$(cd "$(dirname "$0")" && pwd)/dcf-curl.sh"
+
 VERSION="${VERSION:-latest}"
 
 if [ "$(id -u)" -ne 0 ]; then
@@ -37,7 +42,7 @@ esac
 # Resolve "latest" through the GitHub redirect rather than the API (no token,
 # no rate limit): releases/latest 302s to releases/tag/v<version>.
 if [ "$VERSION" = "latest" ]; then
-  VERSION="$(curl -fsSIL -o /dev/null -w '%{url_effective}' https://github.com/go-task/task/releases/latest | sed -E 's#.*/tag/v?##')"
+  VERSION="$(dcf_curl -fsSIL -o /dev/null -w '%{url_effective}' https://github.com/go-task/task/releases/latest | sed -E 's#.*/tag/v?##')"
 fi
 VERSION="${VERSION#v}"
 if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]]; then
@@ -51,8 +56,8 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
 echo "go-task: downloading Task v${VERSION} (${asset})..."
-curl -fsSL -o "$tmp/$asset" "$base_url/$asset"
-curl -fsSL -o "$tmp/task_checksums.txt" "$base_url/task_checksums.txt"
+dcf_curl -fsSL -o "$tmp/$asset" "$base_url/$asset"
+dcf_curl -fsSL -o "$tmp/task_checksums.txt" "$base_url/task_checksums.txt"
 (cd "$tmp" && grep " ${asset}\$" task_checksums.txt | sha256sum -c -)
 
 mkdir -p "$tmp/task"

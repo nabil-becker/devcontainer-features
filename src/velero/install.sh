@@ -4,6 +4,11 @@
 # environment variables (see devcontainer-feature.json): VERSION.
 set -euo pipefail
 
+# Every download goes through dcf_curl (dcf-curl.sh, the collection's retry helper, vendored from
+# src/common): curl with --retry and, on curl 7.71+, --retry-all-errors.
+# shellcheck source=src/velero/dcf-curl.sh
+. "$(cd "$(dirname "$0")" && pwd)/dcf-curl.sh"
+
 VERSION="${VERSION:-latest}"
 repo="vmware-tanzu/velero"
 
@@ -38,7 +43,7 @@ esac
 # Resolve "latest" through the GitHub redirect rather than the API (no token,
 # no rate limit): releases/latest 302s to releases/tag/v<version>.
 if [ "$VERSION" = "latest" ]; then
-  VERSION="$(curl -fsSIL -o /dev/null -w '%{url_effective}' "https://github.com/$repo/releases/latest" | sed -E 's#.*/tag/v?##')"
+  VERSION="$(dcf_curl -fsSIL -o /dev/null -w '%{url_effective}' "https://github.com/$repo/releases/latest" | sed -E 's#.*/tag/v?##')"
 fi
 VERSION="${VERSION#v}"
 if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]]; then
@@ -53,8 +58,8 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
 echo "velero: downloading Velero v${VERSION} (${asset})..."
-curl -fsSL -o "$tmp/$asset" "$base_url/$asset"
-curl -fsSL -o "$tmp/CHECKSUM" "$base_url/CHECKSUM"
+dcf_curl -fsSL -o "$tmp/$asset" "$base_url/$asset"
+dcf_curl -fsSL -o "$tmp/CHECKSUM" "$base_url/CHECKSUM"
 (cd "$tmp" && grep -E "  ${asset}\$" CHECKSUM | sha256sum -c -)
 
 tar -xzf "$tmp/$asset" -C "$tmp" "${dist}/velero"

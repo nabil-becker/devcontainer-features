@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Installs the collection's shared helpers on PATH. Today one: dcf-persist
 # (dcf-persist.sh), the script behind every <id>-setup post-create hook that
-# makes a tool's state directory usable by the remote user. The other
+# makes a tool's state directory usable by the remote user. The other helper,
+# dcf-curl.sh, is sourced at build time from each installer's own copy and is
+# not installed. The other
 # Features carry a verbatim copy and install it themselves, so this Feature
 # is for a repo's own scripts and as the canonical source; installing over
 # an identical copy is fine. Feature options arrive as upper-cased

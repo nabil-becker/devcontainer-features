@@ -108,6 +108,18 @@ sha256_check() { # <file> <expected-hex>
   [ "$actual" = "$2" ] || die "SHA-256 mismatch for $1 (expected $2, got $actual)"
 }
 
+# dcf_curl (dcf-curl.sh, the collection's retry helper vendored from
+# src/common) sits next to this script: in the Feature folder at build time,
+# in host/ where the bootstrap vendors both. Loaded only when Node.js is
+# downloaded, so every other verb runs without it.
+load_dcf_curl() {
+  local here
+  here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  [ -r "$here/dcf-curl.sh" ] || die "dcf-curl.sh is missing next to $here/devcontainer-cli.sh (re-run the bootstrap)"
+  # shellcheck source=src/devcontainer-cli/dcf-curl.sh
+  . "$here/dcf-curl.sh"
+}
+
 # download_node <version> <parent-dir>: verified nodejs.org build extracted
 # to <parent-dir>/node-v<version>-<os>-<arch>; prints that directory.
 download_node() {
@@ -118,8 +130,9 @@ download_node() {
     echo "Downloading portable Node.js v${version} (cached under $parent)..." >&2
     url="https://nodejs.org/dist/v${version}"
     tmp="$(mktemp -d)"
-    curl -fsSL -o "$tmp/$dist.tar.gz" "$url/$dist.tar.gz"
-    curl -fsSL -o "$tmp/SHASUMS256.txt" "$url/SHASUMS256.txt"
+    load_dcf_curl
+    dcf_curl -fsSL -o "$tmp/$dist.tar.gz" "$url/$dist.tar.gz"
+    dcf_curl -fsSL -o "$tmp/SHASUMS256.txt" "$url/SHASUMS256.txt"
     expected="$(grep " ${dist}.tar.gz\$" "$tmp/SHASUMS256.txt" | cut -d' ' -f1)"
     [ -n "$expected" ] || die "$dist.tar.gz not found in SHASUMS256.txt"
     sha256_check "$tmp/$dist.tar.gz" "$expected"

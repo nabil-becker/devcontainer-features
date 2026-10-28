@@ -1,6 +1,6 @@
 {
   "id": "cloud-folder",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "name": "Cloud folder",
   "description": "One fixed path in the devcontainer (mountPoint, default /mnt/cloud-folder) for a shared document folder that must never go in git, such as a SharePoint or OneDrive folder, filled by one of two modes. host: the devcontainer-cli launcher bind-mounts the host folder named by DCF_HOST_CLOUD_FOLDER (a folder a sync client keeps on the host) at /mnt/cloud-folder-host, and mountPoint links to it. sync: rclone (installed pinned and checksum-verified, only when absent) runs bisync between the remote and the folder, on demand and on a timer started at each start, with the token, config and sync state in the Feature's own volume; nothing privileged, so it works on a cluster. auto picks host when a host folder is mounted, else sync when a remote is signed in. A post-start hook (cloud-folder-setup) reports on every start; cloud-folder:status exits non-zero when the folder is missing, unwritable, never synced or its last sync failed, and cloud-folder:shutdown-check refuses a stop while a sync runs or local changes wait. Plus the Feature Taskfile (version, status, setup, login, sync, start, stop, shutdown-check).",
   "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/cloud-folder",
