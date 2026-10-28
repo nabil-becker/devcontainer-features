@@ -41,7 +41,9 @@ Where the build differs from the text below, the build is what ships:
   session after a prompt. The Claude Code adapter records each agent's session (job id and session id, in its volume)
   at start, wake and new, and finds it by that record first, the name and folder second; `list` prints a recorded
   session under its agent's name. `agents reset` (with the optional verbs `record`, `session-stop`, `session-remove`)
-  tidies an agent's sessions, scoped to the listed agents and their folders, a dry run unless `--yes`.
+  tidies an agent's sessions, scoped to the listed agents and their folders, a dry run unless `--yes`; it does not stop
+  a session mid-turn (optional verb `session-busy`) nor, with `--purge`, remove one where the folder has uncommitted
+  changes (a plain reset warns), unless `--force`.
 
 ## 1. The direction (given, not reopened)
 

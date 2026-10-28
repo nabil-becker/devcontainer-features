@@ -80,3 +80,5 @@ numbering and a row below.
 | [0029](0029-key-rotation-is-one-command-and-keeps-the-old-key-registered-unless-revoked.md) | Key rotation is one command, and it keeps the old key registered unless revoked | accepted | 2026-10-24 |
 | [0030](0030-claude-fleet-waits-for-restored-sessions-and-stops-extras-but-never-removes-them.md) | claude-fleet waits for restored sessions, and stops extras but never removes them | accepted | 2026-10-24 |
 | [0031](0031-the-launcher-grants-fuse-on-request-and-the-cloud-folder-mode-is-chosen-in-the-container.md) | The launcher grants FUSE on request, and the cloud-folder mode is chosen in the container | accepted | 2026-10-27 |
+| [0032](0032-extra-working-folders-are-written-to-claude-codes-managed-settings-not-the-users-settings-file.md) | Extra working folders are written to Claude Code's managed settings, not the user's settings file | accepted | 2026-10-28 |
+| [0033](0033-the-agent-adapter-remembers-the-session-id-and-a-reset-never-deletes-by-default.md) | The agent adapter remembers the session id, and a reset never deletes by default | accepted | 2026-10-28 |

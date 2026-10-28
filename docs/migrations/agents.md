@@ -91,8 +91,9 @@ What you see changes; nothing to edit unless you wrap `claude`.
 - **`task agents:reset -- <name>... | --all`** (`task devcontainer:agent:reset` from the host, devcontainer-cli 1.14.0)
   puts the agents' sessions in order instead of a script of your own: per agent the running session is kept, the other
   running ones are stopped (conversations kept), the record set again, a resident with none running started;
-  `--purge` also removes the ended ones. Only the listed agents and their folders; a dry run unless `--yes`; refused
-  from inside a Claude Code session and where a folder has uncommitted changes (`--force`). After the duplicates of a
+  `--purge` also removes the ended ones. Only the listed agents and their folders; a dry run unless `--yes`. It does
+  not stop a session that is mid-turn, and with `--purge` does not remove a session where the folder has uncommitted
+  changes (a plain reset only warns about them); `--force` overrides both. Refused from inside a Claude Code session. After the duplicates of a
   retitled agent: `task agents:reset -- --all`, read the plan, then `-- --all --yes`.
 - **A wrapper around `claude`** that puts `--add-dir <dir>` before every argument breaks
   `claude agents --json` (`--add-dir` swallows `agents`; Claude Code answers `unknown option
