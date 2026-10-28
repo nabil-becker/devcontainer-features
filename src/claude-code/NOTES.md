@@ -1,3 +1,17 @@
+## Changes in 1.8.3
+
+- **A woken agent runs with its options from `agents.yml`, and keeps its name.** Claude Code puts a background
+  session's saved options (the flags it was started with) back when it is woken with a bare `claude --bg --resume
+  <session id>` or `claude attach <id>`, and starts a copy under a new id when any flag is given with `--resume`
+  (Claude Code 2.1.308). `wake`, and `attach` of an ended session, now compare those saved options with what
+  `start-bg` passes (`--name <name>` and the agent's args): the same, the session is woken bare (same id, same
+  conversation); different, or not readable, it is woken with `--name <name>` and the args, so it never runs without
+  its `--agent`, `--settings` or name (a copy, said on stderr, recorded as the agent's). The same when the
+  session's own state in Claude Code's job file still says running although the list shows it ended (after a
+  rebuild), where a bare wake would start a copy without any options. `attach` of an ended session
+  wakes it that way first, then attaches. Reported after a rebuild, where three residents came back without their
+  agent definition and register identity, listed by id rather than name.
+
 ## Changes in 1.8.0
 
 - **`additionalDirectories`** (new option): folders every Claude session may read and edit, without a
@@ -32,8 +46,8 @@ else should. The contract (verbs, exit codes) is in the `agents` Feature's notes
 | Verb | What it runs |
 | --- | --- |
 | `start-bg` | `cd <folder> && claude --bg --name <name> <args>`; waits until the session is listed and prints its id |
-| `wake` | the agent's newest stopped or failed session, by its full id: `cd <folder> && claude --bg --resume <session id>` (the same id and conversation; Claude Code 2.1.308 says `woke session ...`) |
-| `attach` | `claude attach <id>` of its newest running session; an interactive one is refused with the pid and tty of the terminal that holds it |
+| `wake` | the agent's newest stopped or failed session, by its full id: `cd <folder> && claude --bg --resume <session id>` (the same id and conversation; Claude Code 2.1.308 says `woke session ... with its saved options (--name, ...)`) when its saved options are `--name <name> <args>`; otherwise `... --resume <session id> --name <name> <args>`, which Claude Code starts as a copy with those options (1.8.3) |
+| `attach` | `claude attach <id>` of its newest running session; an interactive one is refused with the pid and tty of the terminal that holds it. With none running, `claude attach <id>` of its newest ended one when its saved options are the agent's (Claude Code restarts it with them), else it is woken as `wake` does and then attached (1.8.3) |
 | `resume` | `cd <folder> && claude --resume <session id> <args>` of its newest session; refused while that session runs (a second process on one transcript). When the list cannot be read: `claude --resume <args>`, Claude Code's own picker (1.8.0) |
 | `new` | `cd <folder> && claude --name <name> <args>` |
 | `list` | `claude agents --json --all`: name, session id, state (a pid is running; failed; anything else stopped), folder, newest first |
@@ -47,7 +61,16 @@ number (`host (2)`). `attach`, `stop` and `logs` take the session's short `id` f
 full `sessionId` when there is none), never the name: `claude attach host` also matches part of a
 name (`host-review`) and works only while the session runs, and `claude stop` takes an id only.
 A stopped session is woken by its full id with `--bg --resume`; `--bg -c` and `--bg --resume
-<name>` start copies, so the adapter never uses them. The name is set with `--name` at start and
+<name>` start copies, so the adapter never uses them. **Saved options (1.8.3).** Claude Code keeps the flags a background
+session was started with (`respawnFlags` in `$CLAUDE_CONFIG_DIR/jobs/<id>/state.json`) and puts them back on a bare
+wake; a flag given with `--bg --resume` starts a copy under a new id instead (`the flags you passed started a copy
+as <id>`). So the adapter wakes bare only when the saved options are exactly `--name <name>` and the agent's args,
+and its own `"state"` in that file is an ended one (`stopped`, `done`, `failed`), and otherwise passes them,
+accepting a copy rather than an agent without its options. The state matters after a rebuild: the volume keeps the
+last state (`running`) of a session whose process is gone, the list shows it ended, and a bare wake would make Claude
+Code take it for a live session and start a copy with no options at all (no name, so listed by id). `attach` of an
+ended session follows the same rule before it runs `claude attach <id>`. That file is Claude Code's
+own, not a documented interface: when it cannot be read the adapter passes the options. The name is set with `--name` at start and
 survives `/clear`, so nothing has to be written back. The JSON is read with `sed` (no jq or python
 in the Feature), as `claude-host` does. Needs Claude Code 2.1.290 or later (session names).
 
