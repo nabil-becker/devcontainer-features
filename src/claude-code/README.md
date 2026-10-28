@@ -26,6 +26,12 @@ Claude Code (https://code.claude.com/docs) as a member of this collection's ecos
 
 - `anthropic.claude-code`
 
+## Changes in 1.8.4
+
+- **The example pins Node.** "Augment, don't duplicate" now shows the node Feature with
+  `"version": "24"` instead of its moving `lts` default, which broke builds when Node 26.13.0
+  became LTS. Documentation only; the Feature itself is unchanged.
+
 ## Changes in 1.8.3
 
 - **A woken agent runs with its options from `agents.yml`, and keeps its name.** Claude Code puts a background
@@ -197,11 +203,15 @@ composes with the official Feature:
 
 ```json
 "features": {
-  "ghcr.io/devcontainers/features/node:1": {},
+  "ghcr.io/devcontainers/features/node:1": { "version": "24" },
   "ghcr.io/anthropics/devcontainer-features/claude-code:1": {},
   "ghcr.io/nabil-becker/devcontainer-features/claude-code:1": {}
 }
 ```
+
+Pin Node to a major rather than the node Feature's default `lts`: when a new LTS lands, `lts`
+moves with it on the day, and Node 26.13.0 (2026-10-28) broke builds that way (it needs
+`libatomic1`, which Debian bookworm images lack, and its checksum was briefly unreadable).
 
 `installsAfter` orders this one after the official Feature (and after the
 `node` Feature it needs). On its own, or with `install: native`, it installs
