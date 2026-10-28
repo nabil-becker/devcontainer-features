@@ -15,6 +15,9 @@
 #     stop       claude stop <id> of its newest running session; --extras: every other one
 #     logs       claude logs <id> of its newest session
 #     hint       how to find and resume the agent by hand (when the list cannot be read)
+#     record     record the agent's running session as the agent's (or clear its record)
+#   agent-adapter-claude session-stop <id>     claude stop that session (the list's id)
+#   agent-adapter-claude session-remove <id>   claude rm that ended session (never a running one)
 #   agent-adapter-claude list       name<TAB>session id<TAB>state<TAB>folder, newest first
 #   agent-adapter-claude supports   the verbs above, one per line
 # Exit: 0 done, 1 failed, 2 bad use, 3 not supported.
@@ -112,7 +115,7 @@ sessions() {
     if [ "${pid:-0}" -gt 0 ]; then st=running
     else
       case "${st,,}" in
-        running | idle | busy | working | waiting | starting) st=running ;;
+        running | idle | busy | working | waiting | blocked | starting) st=running ;;
         fail* | error* | crash*) st=failed ;;
         *) st=stopped ;;
       esac
@@ -122,33 +125,140 @@ sessions() {
   done < <(printf '%s' "$out" | sed 's/}[[:space:]]*,[[:space:]]*{/}\n{/g') | sort -t $'\t' -k8,8nr
 }
 
-# mine [state]: the agent's sessions (NAME in FOLDER), newest first, optionally one state.
+# ------------------------------------------------------------------ records ----
+# Claude Code may retitle a background session after a prompt (the name given with --name
+# does not always stay), so the name alone does not find the agent again. The adapter records
+# which session is the agent's when it starts, wakes or opens one: agent name, folder, the
+# session's short job id and its full session id, one line each, in
+#   $AGENT_ADAPTER_CLAUDE_STATE/agents.tsv  (default $CLAUDE_CONFIG_DIR/agent-adapter-claude,
+#   the claude-code Feature's volume, so it survives a rebuild; folder 700, file 600)
+# never in the repository. A recorded session still listed is the agent's whatever its name
+# now is: by its job id (which stays across /clear, while the session id changes), else by
+# its session id (a wake that continued under a new job id). Otherwise the name and folder
+# find it, as before.
+state_dir() { printf '%s' "${AGENT_ADAPTER_CLAUDE_STATE:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/agent-adapter-claude}"; }
+RECORDS="$(state_dir)/agents.tsv"
+
+# rec_get <name> <folder>: RID and RSID of the agent's record (empty when none).
+rec_get() {
+  RID='' RSID=''
+  [ -r "$RECORDS" ] || return 0
+  local line
+  line="$(awk -F'\t' -v n="$1" -v f="$2" '$1 == n && $2 == f { l = $0 } END { if (l != "") print l }' "$RECORDS")"
+  [ -n "$line" ] || return 0
+  RID="$(printf '%s' "$line" | cut -f3)" RSID="$(printf '%s' "$line" | cut -f4)"
+}
+
+# rec_del <name> <folder>: remove the agent's record (never fatal).
+rec_del() {
+  [ -e "$RECORDS" ] || return 0
+  local tmp
+  tmp="$(umask 077 && mktemp "$(state_dir)/.agents.XXXXXX" 2>/dev/null)" || return 0
+  if ! { awk -F'\t' -v n="$1" -v f="$2" '!($1 == n && $2 == f)' "$RECORDS" > "$tmp" && chmod 600 "$tmp" && mv -f "$tmp" "$RECORDS"; }; then
+    rm -f "$tmp"
+  fi
+}
+
+# rec_put <name> <folder> <id> <session id>: replace the agent's record (never fatal).
+rec_put() {
+  local d tmp
+  d="$(state_dir)"
+  if ! (umask 077 && mkdir -p "$d") 2>/dev/null; then note "$1: could not keep its session record under $d."; return 0; fi
+  chmod 700 "$d" 2>/dev/null || true
+  tmp="$(umask 077 && mktemp "$d/.agents.XXXXXX" 2>/dev/null)" || { note "$1: could not keep its session record under $d."; return 0; }
+  { [ -r "$RECORDS" ] && awk -F'\t' -v n="$1" -v f="$2" '!($1 == n && $2 == f)' "$RECORDS"
+    printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4"; } > "$tmp"
+  chmod 600 "$tmp" 2>/dev/null || true
+  mv -f "$tmp" "$RECORDS" || { rm -f "$tmp"; note "$1: could not keep its session record under $d."; }
+}
+
+# apply_records: the session lines on stdin with every recorded session given its agent's
+# name and folder (by job id, else session id), so a retitled session still reads as the agent,
+# and an R in a ninth column.
+apply_records() {
+  if [ -r "$RECORDS" ]; then
+    awk -F'\t' -v OFS='\t' 'NR == FNR { if ($3 != "") byid[$3] = $1 "\t" $2; if ($4 != "") bysid[$4] = $1 "\t" $2; next }
+      { r = ($5 in byid) ? byid[$5] : (($2 in bysid) ? bysid[$2] : "")
+        if (r != "") { split(r, p, "\t"); $1 = p[1]; $4 = p[2]; print $0 "\tR"; next }
+        print }' "$RECORDS" -
+  else
+    cat
+  fi
+}
+
+# resolve_record: for the agent (NAME in FOLDER), REC_SID is its recorded session's id in ALL
+# (empty when it has no record or the session is gone); says on stderr how a changed or missing
+# session was resolved, and keeps the record current.
+resolve_record() {
+  local line id sid
+  REC_SID=''
+  rec_get "$NAME" "$FOLDER"
+  [ -n "$RID$RSID" ] || return 0
+  line="$(printf '%s\n' "$ALL" | awk -F'\t' -v i="$RID" 'i != "" && $5 == i' | head -n 1)"
+  if [ -n "$line" ]; then
+    sid="$(col "$line" 2)"
+    if [ "$sid" != "$RSID" ]; then
+      note "$NAME: its session $RID now holds session id $sid (was $RSID, a /clear starts a new one); following the job id."
+      rec_put "$NAME" "$FOLDER" "$RID" "$sid"
+    fi
+    REC_SID="$sid"; return 0
+  fi
+  line="$(printf '%s\n' "$ALL" | awk -F'\t' -v s="$RSID" 's != "" && $2 == s' | head -n 1)"
+  if [ -n "$line" ]; then
+    id="$(col "$line" 5)"
+    note "$NAME: its session $RSID now runs as job $id (was $RID); following the session id."
+    rec_put "$NAME" "$FOLDER" "$id" "$RSID"
+    REC_SID="$RSID"; return 0
+  fi
+  note "$NAME: its recorded session (${RID:-$RSID}) is no longer listed; finding it by name and folder."
+}
+
+# mine [state]: the agent's sessions, optionally one state: its recorded session first (by id,
+# whatever its name now is), then those with its name ("<name> (2)" too) in its folder, newest
+# first. Callers take a running one before an ended one: a live session always wins.
 mine() {
-  local want="${1:-}" nm rest st fo
-  [ -n "${ALL+x}" ] || ALL="$(sessions)" || return 1
+  local want="${1:-}" nm rest st fo sid first='' others=''
+  if [ -z "${ALL+x}" ]; then ALL="$(sessions | apply_records)" || return 1; fi
+  [ -n "${REC_SID+x}" ] || resolve_record
   while IFS=$'\t' read -r nm rest; do
     [ -n "$nm" ] || continue
-    st="$(printf '%s' "$rest" | cut -f2)" fo="$(printf '%s' "$rest" | cut -f3)"
+    sid="$(printf '%s' "$rest" | cut -f1)" st="$(printf '%s' "$rest" | cut -f2)" fo="$(printf '%s' "$rest" | cut -f3)"
+    [ -z "$want" ] || [ "$st" = "$want" ] || continue
+    if [ -n "$REC_SID" ] && [ "$sid" = "$REC_SID" ]; then first="$nm"$'\t'"$rest"; continue; fi
     [ "$fo" = "$FOLDER" ] || continue
     case "$nm" in "$NAME") ;; "$NAME ("*")") [[ "$nm" =~ \([0-9]+\)$ ]] || continue ;; *) continue ;; esac
-    [ -z "$want" ] || [ "$st" = "$want" ] || continue
-    printf '%s\t%s\n' "$nm" "$rest"
+    others="$others$nm"$'\t'"$rest"$'\n'
   done <<< "$ALL"
+  [ -z "$first" ] || printf '%s\n' "$first"
+  printf '%s' "$others"
 }
 col() { printf '%s\n' "$1" | head -n 1 | cut -f"$2"; }
 
-# wait_running: after a --bg start, wait (AGENT_ADAPTER_WAIT seconds, default 10) until the
-# session is in the list, and print its session id.
+# wait_running <ids before> [<session id>]: after a --bg start or wake, wait (AGENT_ADAPTER_WAIT
+# seconds, default 10) until the session runs: the given session id, else a running session
+# with the agent's name in its folder that was not listed before. Record it as the agent's and
+# print its session id.
 wait_running() {
-  local left="${AGENT_ADAPTER_WAIT:-10}" got
+  local before="$1" want="${2:-}" left="${AGENT_ADAPTER_WAIT:-10}" all got
   while :; do
-    unset ALL
-    got="$(mine running)" || { note "$NAME: started, but its session list cannot be read to confirm it."; return 0; }
-    [ -n "$got" ] && { col "$got" 2; return 0; }
-    [ "$left" -le 0 ] && { note "$NAME: started, but not in 'claude agents' yet."; return 0; }
+    if all="$(sessions)"; then
+      got=''
+      [ -n "$want" ] && got="$(printf '%s\n' "$all" | awk -F'\t' -v s="$want" '$2 == s && $3 == "running"' | head -n 1)"
+      [ -n "$got" ] || got="$(printf '%s\n' "$all" | awk -F'\t' -v n="$NAME" -v f="$FOLDER" -v b="$before" '
+        BEGIN { split(b, x, " "); for (k in x) old[x[k]] = 1 }
+        $3 == "running" && $4 == f && ($1 == n || index($1, n " (") == 1) && !($2 in old)' | head -n 1)"
+      if [ -n "$got" ]; then
+        rec_put "$NAME" "$FOLDER" "$(col "$got" 5)" "$(col "$got" 2)"
+        col "$got" 2; return 0
+      fi
+    else
+      note "$NAME: started, but its session list cannot be read to confirm and record it."; return 0
+    fi
+    [ "$left" -le 0 ] && { note "$NAME: started, but not in 'claude agents' yet; not recorded."; return 0; }
     sleep 1; left=$((left - 1))
   done
 }
+ids_now() { sessions 2>/dev/null | cut -f2 | tr '\n' ' '; }
 
 extras_note() { # extras_note <running lines>
   local n; n="$(printf '%s\n' "$1" | grep -c .)"
@@ -159,12 +269,34 @@ extras_note() { # extras_note <running lines>
 verb="${1:-}"
 [ $# -gt 0 ] && shift
 case "$verb" in
-  supports) printf '%s\n' start-bg wake attach resume new list stop logs hint supports; exit 0 ;;
+  supports) printf '%s\n' start-bg wake attach resume new list stop logs hint record session-stop session-remove supports; exit 0 ;;
   list)
+    # newest first, an agent's recorded session before the others (it is the one the agent is)
     ALL="$(sessions)" || exit 1
-    printf '%s\n' "$ALL" | awk -F'\t' 'NF { print $1 "\t" $2 "\t" $3 "\t" $4 }'
+    ALL="$(printf '%s\n' "$ALL" | apply_records)"
+    printf '%s\n' "$ALL" | awk -F'\t' 'NF && $9 == "R" { print $1 "\t" $2 "\t" $3 "\t" $4 }'
+    printf '%s\n' "$ALL" | awk -F'\t' 'NF && $9 != "R" { print $1 "\t" $2 "\t" $3 "\t" $4 }'
     exit 0 ;;
-  start-bg | wake | attach | resume | new | stop | logs | hint) ;;
+  session-stop | session-remove)
+    # by the id `list` printed (the full session id), whatever agent it belongs to
+    [ $# -ge 1 ] || die 2 "$verb needs the session id from list"
+    want="$1"
+    ALL="$(sessions)" || exit 1
+    s="$(printf '%s\n' "$ALL" | awk -F'\t' -v w="$want" '$2 == w || $5 == w' | head -n 1)"
+    [ -n "$s" ] || die 1 "no session $want in 'claude agents --json --all'."
+    if [ "$verb" = session-stop ]; then
+      [ "$(col "$s" 3)" = running ] || { echo "$want: not running"; exit 0; }
+      [ "$(col "$s" 6)" = interactive ] && die 1 "$want: held by a terminal (pid $(col "$s" 7)); end it there."
+      claude stop "$(col "$s" 5)" </dev/null >/dev/null || die 1 "'claude stop $(col "$s" 5)' failed."
+      echo "$want: stopped (its conversation is kept)"
+    else
+      [ "$(col "$s" 3)" = running ] && die 1 "$want: running; stop it first."
+      # claude rm keeps the transcript and a worktree with unpushed work, and says so
+      claude rm "$(col "$s" 5)" </dev/null >&2 || die 1 "'claude rm $(col "$s" 5)' failed."
+      echo "$want: removed from the session list"
+    fi
+    exit 0 ;;
+  start-bg | wake | attach | resume | new | stop | logs | hint | record) ;;
   '') die 2 "usage: agent-adapter-claude <verb> <name> <folder> [-- claude args]" ;;
   *) die 3 "'$verb' is not supported" ;;
 esac
@@ -183,6 +315,19 @@ given="$FOLDER"
 FOLDER="$(cd "$FOLDER" 2>/dev/null && pwd -P)" || die 1 "folder '$given' does not exist"
 case "$verb" in
   start-bg | new) ;;
+  record)
+    # record the session the agent is now: its running one (recorded first), else none
+    ALL="$(sessions)" || exit 1
+    ALL="$(printf '%s\n' "$ALL" | apply_records)"; resolve_record
+    run="$(mine running | head -n 1)"
+    if [ -n "$run" ]; then
+      rec_put "$NAME" "$FOLDER" "$(col "$run" 5)" "$(col "$run" 2)"
+      echo "$NAME: recorded $(col "$run" 2)"
+    else
+      rec_del "$NAME" "$FOLDER"
+      echo "$NAME: no running session; its record is cleared (the next start or wake records one)"
+    fi
+    exit 0 ;;
   hint)
     # how to find the agent's conversation by hand when its sessions cannot be listed
     echo "see whether $NAME runs: claude agents (its view lists the background sessions; attach from there)"
@@ -197,17 +342,29 @@ case "$verb" in
     fi ;;
   *) ALL="$(sessions)" || exit 1 ;;
 esac
+if [ -n "${ALL+x}" ]; then ALL="$(printf '%s\n' "$ALL" | apply_records)"; resolve_record; fi
 
 case "$verb" in
   start-bg)
+    before=''
+    if ALL="$(sessions 2>/dev/null)"; then
+      before="$(printf '%s\n' "$ALL" | cut -f2 | tr '\n' ' ')"
+      ALL="$(printf '%s\n' "$ALL" | apply_records)"
+      resolve_record
+      run="$(mine running)"
+      if [ -n "$REC_SID" ] && [ "$(col "$run" 2)" = "$REC_SID" ]; then
+        die 1 "$NAME: its recorded session $REC_SID runs ($(col "$run" 1)); not starting a second one."
+      fi
+    fi
     (cd "$FOLDER" && claude --bg --name "$NAME" "$@" </dev/null >&2) || die 1 "$NAME: 'claude --bg' failed (a folder never trusted fails with 'Workspace not trusted': run claude there once and accept)."
-    wait_running ;;
+    wait_running "$before" ;;
   wake)
     got="$(mine)"
     s="$(printf '%s\n' "$got" | awk -F'\t' '$3 == "stopped" || $3 == "failed"' | head -n 1)"
     [ -n "$s" ] || die 1 "$NAME: no stopped session to wake in $FOLDER."
+    before="$(printf '%s\n' "$ALL" | cut -f2 | tr '\n' ' ')"
     (cd "$FOLDER" && claude --bg --resume "$(col "$s" 2)" </dev/null >&2) || die 1 "$NAME: 'claude --bg --resume' failed."
-    wait_running ;;
+    wait_running "$before" "$(col "$s" 2)" ;;
   attach)
     run="$(mine running)"
     if [ -z "$run" ]; then
@@ -230,6 +387,14 @@ case "$verb" in
     fi
     cd "$FOLDER" && exec claude --resume "$(col "$s" 2)" "$@" ;;
   new)
+    # a session id chosen here, so the new conversation is recorded before it starts
+    sid=''
+    case " $* " in *" --session-id "* | *" --session-id="*) ;; *)
+      sid="$(tr -d '\n' < /proc/sys/kernel/random/uuid 2>/dev/null || uuidgen 2>/dev/null || true)" ;; esac
+    if [ -n "$sid" ]; then
+      rec_put "$NAME" "$FOLDER" "$sid" "$sid"
+      cd "$FOLDER" && exec claude --name "$NAME" --session-id "$sid" "$@"
+    fi
     cd "$FOLDER" && exec claude --name "$NAME" "$@" ;;
   stop)
     run="$(mine running)"

@@ -37,6 +37,11 @@ Where the build differs from the text below, the build is what ships:
   shows an on-demand agent as `running` or `none` only. The Claude Code adapter reads the list past surrounding lines,
   retries a time-out or an empty answer once, and names the cause; the trigger was a consumer's `claude` wrapper that
   put `--add-dir` first, which the new claude-code option `additionalDirectories` replaces.
+- **Identity, as built (same release):** "identity is the name" did not hold: Claude Code retitles a background
+  session after a prompt. The Claude Code adapter records each agent's session (job id and session id, in its volume)
+  at start, wake and new, and finds it by that record first, the name and folder second; `list` prints a recorded
+  session under its agent's name. `agents reset` (with the optional verbs `record`, `session-stop`, `session-remove`)
+  tidies an agent's sessions, scoped to the listed agents and their folders, a dry run unless `--yes`.
 
 ## 1. The direction (given, not reopened)
 

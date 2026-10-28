@@ -70,7 +70,7 @@ nothing is pinned.
    - a join script of your own and its tests (the `agents` and adapter unit tests in this
      collection cover the same cases with a fake `claude`).
 
-## agents 1.0.1 and claude-code 1.8.0: when the session list cannot be read
+## agents 1.0.1, claude-code 1.8.0, devcontainer-cli 1.14.0: a list that cannot be read, a retitled session, reset
 
 What you see changes; nothing to edit unless you wrap `claude`.
 
@@ -84,6 +84,16 @@ What you see changes; nothing to edit unless you wrap `claude`.
   the agents lost their context. `--resume` of an on-demand agent opens Claude Code's own picker
   instead of failing.
 - An on-demand agent shows **`none`** unless a session runs (it showed its last stopped session).
+- **A retitled session is still the agent's.** Claude Code can retitle a background session after a prompt; with
+  claude-code 1.7.0 the agent then looked stopped, and `task devcontainer:agent -- <name>` started a second session
+  beside the live one. 1.8.0 records each agent's session (in the Feature's volume) and finds it by that record. Until
+  you take it, `/rename <agent name>` in each agent's session is the workaround; after it, not needed.
+- **`task agents:reset -- <name>... | --all`** (`task devcontainer:agent:reset` from the host, devcontainer-cli 1.14.0)
+  puts the agents' sessions in order instead of a script of your own: per agent the running session is kept, the other
+  running ones are stopped (conversations kept), the record set again, a resident with none running started;
+  `--purge` also removes the ended ones. Only the listed agents and their folders; a dry run unless `--yes`; refused
+  from inside a Claude Code session and where a folder has uncommitted changes (`--force`). After the duplicates of a
+  retitled agent: `task agents:reset -- --all`, read the plan, then `-- --all --yes`.
 - **A wrapper around `claude`** that puts `--add-dir <dir>` before every argument breaks
   `claude agents --json` (`--add-dir` swallows `agents`; Claude Code answers `unknown option
   '--json'`), and the message now says a wrapper may be the cause. Drop the wrapper and set the

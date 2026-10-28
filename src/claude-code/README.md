@@ -36,6 +36,9 @@ Claude Code (https://code.claude.com/docs) as a member of this collection's ecos
   Code's own first line), and names a wrapper in front of `claude` when Claude Code answers
   `unknown option`. `resume` on an unreadable list opens Claude Code's own picker, never a new
   session; a new `hint` verb tells the `agents` Feature how to resume by hand.
+- **The adapter keeps its own record of each agent's session**, so a session Claude Code retitles after a prompt is
+  still the agent's (1.7.0 found it by name only, so a retitled resident looked stopped and was started again), and
+  adds the verbs `record`, `session-stop` and `session-remove` for `task agents:reset`.
 
 ## Deprecated in 1.7.0: claude-host, claude-fleet, claude-host-pin
 
@@ -75,6 +78,32 @@ A stopped session is woken by its full id with `--bg --resume`; `--bg -c` and `-
 <name>` start copies, so the adapter never uses them. The name is set with `--name` at start and
 survives `/clear`, so nothing has to be written back. The JSON is read with `sed` (no jq or python
 in the Feature), as `claude-host` does. Needs Claude Code 2.1.290 or later (session names).
+
+**Records (1.8.0).** Claude Code can retitle a background session after a prompt, so the name given with `--name`
+does not always stay (a resident started as `framework` was listed as "d47 d50 personalization medallion"). No setting
+turns that off, and there is no command to rename a session from outside (Claude Code's docs: `-n`/`--name`, `/rename`
+and `Ctrl+R` in agent view; a name set with `/rename` is kept). So the adapter records, when it starts, wakes or opens
+an agent's session, the agent's name and folder with the session's short job id and full session id, in
+`$CLAUDE_CONFIG_DIR/agent-adapter-claude/agents.tsv` (the Feature's volume, so it survives a rebuild; folder 700,
+file 600; `AGENT_ADAPTER_CLAUDE_STATE` moves it; never in the repository, and not a pin: nothing has to be kept by
+hand). `new` chooses the session id itself (`--session-id`) and records it before the session starts. A recorded
+session still in `claude agents --json --all` is the agent's whatever its name now is, and `list` prints it under the
+agent's name and folder, before the agent's other sessions:
+
+- found by its job id with a new session id (a `/clear` starts a new conversation in the same job): followed, the
+  record updated, and said on stderr;
+- found by its session id under a new job id (a wake that started a copy): followed, updated, said;
+- not listed any more (removed): the name and folder find the agent, as before, and that is said.
+
+Matching by name, a running session (a pid, or a background state of working, blocked, busy, waiting or idle) always
+wins over ended ones (done, stopped, failed); an ended one is woken only when none runs. `start-bg` refuses when the
+agent's recorded session runs (never a second one).
+
+| Verb | What it runs |
+| --- | --- |
+| `record` | records the agent's running session (the one the lookup picks), or clears its record when none runs |
+| `session-stop <id>` | `claude stop` of the session with that id (from `list`); an interactive one is refused |
+| `session-remove <id>` | `claude rm` of that ended session (Claude Code keeps the transcript and a worktree with unpushed work); a running one is refused |
 
 **Reading the list (1.8.0).** `claude agents --json --all` runs within
 `AGENT_ADAPTER_CLAUDE_TIMEOUT` seconds (default 30), its output to files (a process that keeps a pipe

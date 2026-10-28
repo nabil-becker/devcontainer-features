@@ -84,6 +84,10 @@ chmod +x "$bin/claude"
 
 repo="$T/repo"; mkdir -p "$repo/rooms/review"
 export FAKE_TABLE="$T/table" FAKE_CALLS="$T/calls" FAKE_READS="$T/reads" AGENT_ADAPTER_WAIT=0 AGENT_ADAPTER_CLAUDE_PAUSE=0
+# the adapter's records go to a scratch config folder, never the real one
+export CLAUDE_CONFIG_DIR="$T/config"
+unset AGENT_ADAPTER_CLAUDE_STATE
+records="$T/config/agent-adapter-claude/agents.tsv"
 table() { # rows: id sid name cwd kind pid state started
   : > "$FAKE_TABLE"; : > "$FAKE_CALLS"
   local r; for r in "$@"; do printf '%s\n' "$r" | tr '|' '\t' >> "$FAKE_TABLE"; done
@@ -187,7 +191,12 @@ contains 'supports: names hint' "$(ad supports)" 'hint'
 
 table
 out="$(ad new reviewer "$repo/rooms/review" -- --model sonnet)"
-check 'new: claude --name <name> <args> in the folder' "$repo/rooms/review|--name|reviewer|--model|sonnet;" "$(calls)"
+got="$(calls)"; nsid="$(printf '%s' "$got" | cut -d'|' -f5)"
+check 'new: claude --name <name> --session-id <a new id> <args> in the folder' "$repo/rooms/review|--name|reviewer|--session-id|$nsid|--model|sonnet;" "$got"
+check 'new: the chosen session id is recorded before it starts' "reviewer	$repo/rooms/review	$nsid	$nsid" "$(grep '^reviewer	' "$records")"
+: > "$FAKE_CALLS"
+out="$(ad new reviewer "$repo/rooms/review" -- --session-id given)"
+check 'new: a --session-id of its own is left alone' "$repo/rooms/review|--name|reviewer|--session-id|given;" "$(calls)"
 
 table "a1|sess-a1|host|$repo|background|201|-|1000" "a7|sess-a7|host (2)|$repo|background|207|-|7000"
 out="$(ad stop host "$repo")"
@@ -203,6 +212,94 @@ table "a1|sess-a1|host|$repo|background|0|done|1000" "a2|sess-a2|host|$repo|back
 out="$(ad logs host "$repo")"
 check 'logs: the running session first, by its id' "$T|logs|a2;" "$(calls)"
 
+# ------------------------------------------------ a session Claude Code retitles ----
+# Claude Code may retitle a background session after a prompt: the session started as "host"
+# is then listed under another name. The record (job id, session id) still finds it.
+rm -f "$records"; table \
+  "o1|sess-o1|host|$repo|background|0|done|100" \
+  "o2|sess-o2|host|$repo|background|0|failed|200"
+out="$(cd "$T" && PATH="$bin:$PATH" agent-adapter-claude start-bg host "$repo" 2>/dev/null)"
+newid="$(awk -F'\t' '$3 == "host" && $6 != 0 { print $1 }' "$FAKE_TABLE")"
+newsid="$(awk -F'\t' '$3 == "host" && $6 != 0 { print $2 }' "$FAKE_TABLE")"
+check 'start-bg: the new session recorded (name, folder, job id, session id)' "host	$repo	$newid	$newsid" "$(cat "$records")"
+check 'the record file is the user'"'"'s only (600)' 600 "$(stat -c %a "$records")"
+check 'the record folder is the user'"'"'s only (700)' 700 "$(stat -c %a "$(dirname "$records")")"
+# the first real prompt: Claude Code retitles it
+awk -F'\t' -v OFS='\t' -v i="$newid" '$1 == i { $3 = "d47 d50 personalization medallion" } { print }' "$FAKE_TABLE" > "$FAKE_TABLE.n" && mv "$FAKE_TABLE.n" "$FAKE_TABLE"
+out="$(ad list)"
+contains 'retitled: list shows it as the agent, running' "$out" "host	$newsid	running	$repo"
+lacks 'retitled: list does not show the new title' "$out" 'personalization'
+: > "$FAKE_CALLS"
+out="$(ad attach host "$repo")"
+check 'retitled, ended sessions by its name beside it: attach the live recorded one' "$T|attach|$newid;" "$(calls)"
+: > "$FAKE_CALLS"
+out="$(ad start-bg host "$repo")"; rc=$?
+check 'retitled: start-bg refuses a second session (exit 1)' 1 "$rc"
+check 'retitled: start-bg starts nothing' "" "$(calls)"
+contains 'retitled: start-bg says why' "$out" "its recorded session $newsid runs"
+# end to end: the agents command over this adapter
+cp "$root/src/agents/agents.sh" "$bin/agents"; chmod +x "$bin/agents"
+mkdir -p "$repo/.devcontainer"
+printf 'agents:\n  - name: host\n    cli: claude\n    kind: resident\n' > "$repo/.devcontainer/agents.yml"
+: > "$FAKE_CALLS"
+out="$(cd "$repo" && AGENTS_TTY=1 AGENTS_STATE_DIR="$T/agents-state" PATH="$bin:$PATH" agents start host 2>&1)"; rc=$?
+check 'agents start of a retitled resident: attaches to it, no second session' "$repo|attach|$newid;" "$(calls)"
+contains 'agents start of a retitled resident: says it runs' "$out" "host: running ($newsid)"
+out="$(cd "$repo" && AGENTS_STATE_DIR="$T/agents-state" PATH="$bin:$PATH" agents list 2>&1)"
+contains 'agents list of a retitled resident: running with its id' "$out" "$(printf '%-16s %-10s %-8s %-9s %-38s %s' host resident claude running "$newsid" .)"
+: > "$FAKE_CALLS"
+out="$(cd "$repo" && AGENTS_STATE_DIR="$T/agents-state" PATH="$bin:$PATH" agents up --no-wait 2>&1)"
+check 'agents up with a retitled resident: starts nothing' "" "$(calls)"
+# /clear in that session: the same job id, a new session id
+awk -F'\t' -v OFS='\t' -v i="$newid" '$1 == i { $2 = "sess-cleared" } { print }' "$FAKE_TABLE" > "$FAKE_TABLE.n" && mv "$FAKE_TABLE.n" "$FAKE_TABLE"
+: > "$FAKE_CALLS"
+out="$(ad attach host "$repo")"
+check 'a /clear (new session id, same job id): still attached by its job id' "$T|attach|$newid;" "$(calls)"
+contains 'a /clear: says how it was resolved' "$out" "now holds session id sess-cleared"
+check 'a /clear: the record follows' "host	$repo	$newid	sess-cleared" "$(cat "$records")"
+# the recorded session is gone (removed): back to name and folder
+awk -F'\t' -v i="$newid" '$1 != i' "$FAKE_TABLE" > "$FAKE_TABLE.n" && mv "$FAKE_TABLE.n" "$FAKE_TABLE"
+printf 'o3\tsess-o3\thost\t%s\tbackground\t303\t-\t300\n' "$repo" >> "$FAKE_TABLE"
+: > "$FAKE_CALLS"
+out="$(ad attach host "$repo")"
+check 'the recorded session no longer listed: found by name and folder' "$T|attach|o3;" "$(calls)"
+contains 'the recorded session no longer listed: says so' "$out" 'is no longer listed; finding it by name and folder'
+# no record: a live session by the name wins over newer ended ones
+rm -f "$records"; table \
+  "l1|sess-l1|host|$repo|background|401|working|100" \
+  "e1|sess-e1|host|$repo|background|0|done|900" \
+  "e2|sess-e2|host (2)|$repo|background|0|failed|950"
+out="$(ad attach host "$repo")"
+check 'by name: a live session wins over newer ended ones' "$T|attach|l1;" "$(calls)"
+out="$(ad list)"
+contains 'a blocked session (waiting on a decision) is running' "$(table "b1|sess-b1|host|$repo|background|0|blocked|100"; ad list)" "host	sess-b1	running"
+
+# ------------------------------------------------------------ reset's verbs ----
+rm -f "$records"; table \
+  "r1|sess-r1|host|$repo|background|501|working|100" \
+  "r2|sess-r2|host (2)|$repo|background|502|working|200" \
+  "r0|sess-r0|host|$repo|background|0|done|50" \
+  "i1|sess-i1|reviewer|$repo|interactive|601|busy|300"
+out="$(ad session-stop sess-r2)"; rc=$?
+check 'session-stop: claude stop <short id> of that session (exit 0)' "0:$T|stop|r2;" "$rc:$(calls)"
+: > "$FAKE_CALLS"; out="$(ad session-stop sess-i1)"; rc=$?
+check 'session-stop of an interactive session: refused, nothing called' "1:" "$rc:$(calls)"
+: > "$FAKE_CALLS"; out="$(ad session-remove sess-r1)"; rc=$?
+check 'session-remove of a running session: refused, nothing called' "1:" "$rc:$(calls)"
+: > "$FAKE_CALLS"; out="$(ad session-remove sess-r0)"; rc=$?
+check 'session-remove of an ended session: claude rm <short id>' "0:$T|rm|r0;" "$rc:$(calls)"
+out="$(ad session-remove nope)"; rc=$?
+check 'session-remove of an unknown id: exit 1' 1 "$rc"
+out="$(ad record host "$repo")"
+check 'record: the running session the lookup picks (the other was stopped above)' "host	$repo	r1	sess-r1" "$(cat "$records")"
+out="$(ad list)"
+check 'list: the recorded session comes first' "host	sess-r1	running	$repo" "$(printf '%s\n' "$out" | head -n 1)"
+table "r0|sess-r0|host|$repo|background|0|done|50"
+out="$(ad record host "$repo")"
+check 'record with no running session: the record is cleared' "" "$(cat "$records")"
+contains 'record with no running session: says so' "$out" 'its record is cleared'
+contains 'supports: names the reset verbs' "$(ad supports | tr '\n' ' ')" 'record session-stop session-remove'
+
 out="$(ad frob host "$repo")"; rc=$?
 check 'an unknown verb: exit 3 (not supported)' 3 "$rc"
 out="$(ad attach)"; rc=$?
@@ -210,8 +307,9 @@ check 'a verb without name and folder: exit 2' 2 "$rc"
 out="$(ad attach host "$T/nope")"; rc=$?
 check 'a missing folder: exit 1' 1 "$rc"
 
-# Across every call above: never rm, never -c or --continue; in the code, never an action by name.
-all="$(cat "$T/all-calls" 2>/dev/null)"
+# Across every call above: never rm (but the one session-remove asked for), never -c or
+# --continue; in the code, never an action by name.
+all="$(grep -v '|rm|r0$' "$T/all-calls" 2>/dev/null)"
 lacks 'never claude rm' "$all" '|rm|'
 lacks 'never -c' "$all" '|-c'
 lacks 'never --continue' "$all" '|--continue'
