@@ -137,6 +137,32 @@ To try an unpublished change, reference the Feature folder locally
 (`"./features/<id>": {}`); the CLI only accepts local Features that live
 under the `.devcontainer/` folder, so copy or link it there.
 
+## Agentic shared experience (proposal)
+
+Initial work toward a Dev Container Feature providing normalized session-state
+storage across agent tools. This is a **draft contract**, not an installable
+Feature: there is no storage service, CLI, or integration with existing agents
+yet, and no changes to their current session storage.
+
+- [Session schema](schemas/agentic-shared-experience/session.schema.json):
+  a versioned envelope with stable session and workspace identifiers, originating
+  agent, timestamps, lifecycle status, and a JSON state checkpoint.
+- [Example checkpoint](schemas/agentic-shared-experience/session.example.json):
+  synthetic data illustrating the proposed format.
+
+The envelope normalizes identity and lifecycle metadata; the `state` payload is
+still agent-specific. Adapters may keep namespaced metadata in `extensions`.
+Identifiers are opaque values, never paths or executable commands. Consumers
+must enable JSON Schema `date-time` format validation and separately enforce
+`updatedAt >= createdAt`; JSON Schema alone does not compare timestamps.
+
+Before implementing the Feature, decide the persistence backend, mount location
+and ownership (including non-root access and survival across container rebuilds),
+atomic writes and concurrent-update handling, supported agent adapters, schema
+migrations, and retention/export behavior. Session contents can include sensitive
+project data: the intended store should be private, outside version control,
+with no credentials stored and no automatic remote upload.
+
 ## Bootstrap a repo
 
 Windows is the primary host (PowerShell 7 + Task + Docker Desktop or
