@@ -97,6 +97,7 @@ read_agents() {
 sessions() {
   local out entry name sid id cwd pid kind st started LIST='' REASON='' AGAIN=0 t="${AGENT_ADAPTER_CLAUDE_TIMEOUT:-30}"
   case "$t" in '' | *[!0-9]*) t=30 ;; esac
+  command -v claude >/dev/null 2>&1 || { note "the session list could not be read: claude is not installed (not on PATH)."; return 1; }
   if ! read_agents "$t"; then
     local ok=''
     if [ "$AGAIN" = 1 ]; then
