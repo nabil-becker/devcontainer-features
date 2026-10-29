@@ -363,7 +363,7 @@ out="$(cd "$repo" && AGENTS_TTY=1 AGENTS_STATE_DIR="$T/agents-state" PATH="$bin:
 check 'agents start of a retitled resident: attaches to it, no second session' "$repo|attach|$newid;" "$(calls)"
 contains 'agents start of a retitled resident: says it runs' "$out" "host: running ($newsid)"
 out="$(cd "$repo" && AGENTS_STATE_DIR="$T/agents-state" PATH="$bin:$PATH" agents list 2>&1)"
-contains 'agents list of a retitled resident: running with its id' "$out" "$(printf '%-16s %-10s %-8s %-9s %-38s %s' host resident claude running "$newsid" .)"
+contains 'agents list of a retitled resident: running with its id' "$out" "$(printf '%-16s %-10s %-10s %-8s %-9s %-24s %-38s %s' host resident stateful claude running "held session:$newsid" "$newsid" .)"
 : > "$FAKE_CALLS"
 out="$(cd "$repo" && AGENTS_STATE_DIR="$T/agents-state" PATH="$bin:$PATH" agents up --no-wait 2>&1)"
 check 'agents up with a retitled resident: starts nothing' "" "$(calls)"
