@@ -1,6 +1,6 @@
 {
   "id": "go-task",
-  "version": "1.1.3",
+  "version": "1.2.0",
   "name": "Task (go-task)",
   "description": "Installs Task (https://taskfile.dev), the Taskfile task runner, as a sha256-verified release binary at /usr/local/bin/task with bash/zsh completions.",
   "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/go-task",
@@ -11,10 +11,25 @@
       "default": true,
       "description": "Also install this Feature's Taskfile into /usr/local/share/go-task/includes.d so its tasks appear under the <id>: namespace of a root Taskfile that includes /usr/local/share/go-task/features.yml (see the go-task Feature)."
     },
+    "taskAliases": {
+      "type": "boolean",
+      "default": false,
+      "description": "Opt in to team task aliases: install the task-aliases generator and a sha256-verified yq (one more download), and include the generated aliases in the features include (flattened). A team file (teamAliasesFile) maps short names to existing tasks; `task go-task:aliases` regenerates the wrappers, each alias shows in `task --list`. See the Feature's notes."
+    },
+    "teamAliasesFile": {
+      "type": "string",
+      "default": ".devcontainer/task-aliases.yml",
+      "description": "Path of the team aliases file, relative to the folder of the root Taskfile (or absolute). Absent file means no aliases. Only read when taskAliases is true."
+    },
     "version": {
       "type": "string",
       "default": "latest",
       "description": "Task release to install (e.g. '3.54.0', with or without a leading 'v'), or 'latest'."
+    },
+    "yqVersion": {
+      "type": "string",
+      "default": "4.54.1",
+      "description": "yq release the aliases generator uses (e.g. '4.54.1', with or without a leading 'v'), or 'latest' (resolves to the newest release at build time). Only installed when taskAliases is true."
     }
   },
   "installsAfter": [

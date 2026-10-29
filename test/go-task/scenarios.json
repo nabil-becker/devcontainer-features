@@ -7,5 +7,14 @@
       }
     },
     "remoteUser": "vscode"
+  },
+  "aliases": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "go-task": {
+        "taskAliases": true
+      }
+    },
+    "remoteUser": "vscode"
   }
 }

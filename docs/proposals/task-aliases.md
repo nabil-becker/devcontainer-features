@@ -1,6 +1,6 @@
 # Proposal: the go-task Feature makes aliases easy to specify
 
-Status: draft, for the Operator to confirm. The shape in section 1 was decided by the Operator on 2026-10-28; the rest is this draft's reading of it. Nothing here is built.
+Status: draft, for the Operator to confirm. The shape in section 1 was decided by the Operator on 2026-10-28; the rest is this draft's reading of it. Slice 1 is built (go-task 1.2.0); the rest is not.
 
 Who this serves: every engineer, who wants the team's words (the lexicon, or a theme) as task names, and the Operator, who wants their own shortcuts, without hand-wiring includes in each repository.
 
@@ -172,6 +172,8 @@ Items 1 to 3 were decided on 2026-10-28 (section 1). Items 4 to 8 are settled wh
 3. **Default for `taskAliases`:** off (recommended, because of the extra download) or on.
 4. **Finding the workspace and the root Taskfile at start:** the post-start hook runs in the workspace folder; to confirm it is also the folder of the root Taskfile in both consumers (the office, DSNP).
 5. **Include aliases:** whether Task's JSON listing exposes them; if not, the generator reads the root Taskfile's `includes:` itself (section 7); also what Task does when a wrapper has the same name as an include alias (the slice 1 tests answer this).
+
+   **Answered (slice 1, Task 3.54.0, tested in `test/go-task/unit/aliases_test.sh`).** (4) The generator resolves the team file against the root Taskfile's folder, read from the `location` of `task --list-all --json`, so it does not depend on the hook's working directory (it also works from a sub folder); that both consumers keep the root Taskfile in the workspace folder is not checked here (their repositories are outside this checkout). (5) The JSON listing does expose include aliases: with `includes: dc: {aliases: [dcx]}` the task `dc:up` lists `"aliases": ["dcx:up"]`, so the generator needs no `yq` read of `includes:`. A wrapper named like an included task (`dc:up`) or like a root task makes Task fail every run (exit 203, "Found multiple tasks"), so those are refused; a wrapper named like a task alias (`rl`, `dcx:up`) does not fail but silently takes the name over from the alias, so it is refused too. Nested flatten (`features.yml` flattening the aliases file) works. Also found: a call's `vars:` do not override a static `vars:` default of the target in Task 3.54 (`{{.P | default ...}}` in the target does take them); NOTES says so.
 6. **Warnings at start:** where they show (the post-start log is easy to miss); candidate: also one line in the next `task --list`'s generated header, or the devhost briefing. Left to slice 3.
 7. **Descriptions:** `desc` default is "alias for <target>"; with fixed variables, show them ("alias for timesheet:week PERSON=me")? Recommended yes.
 8. **Layers of the host's own tasks:** this repository's devhost aliases (for example the lexicon's words) would be this repository's own team file; whether it commits one is a separate backlog item once slice 1 lands.

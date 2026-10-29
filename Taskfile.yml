@@ -80,7 +80,7 @@ tasks:
           echo "generated READMEs are up to date"
 
   lint:
-    desc: 'shellcheck every shell script, yamllint every YAML file (.yamllint), PSScriptAnalyzer every PowerShell file, the vendored copies of src/common/*.sh (in src/ and local-features/) identical to the canonical ones, every download in a Feature script through dcf_curl (common:curl-check), and the Docker-free unit tests (the dcf_curl retry helper, devhost tooling, the git Feature''s .git-dirs mapping, the ssh-agent Feature''s setup script, the cloud-folder Feature''s status and sync, the agents Feature''s list and verbs, the claude-code Feature''s agent adapter, live-session rule and claude-fleet, the host launcher and its agent task) (CI runs exactly this inside .devcontainer/ci; the tools must be installed - this repo''s devcontainer has them, at the pinned versions).'
+    desc: 'shellcheck every shell script, yamllint every YAML file (.yamllint), PSScriptAnalyzer every PowerShell file, the vendored copies of src/common/*.sh (in src/ and local-features/) identical to the canonical ones, every download in a Feature script through dcf_curl (common:curl-check), and the Docker-free unit tests (the dcf_curl retry helper, the go-task Feature''s team task aliases, devhost tooling, the git Feature''s .git-dirs mapping, the ssh-agent Feature''s setup script, the cloud-folder Feature''s status and sync, the agents Feature''s list and verbs, the claude-code Feature''s agent adapter, live-session rule and claude-fleet, the host launcher and its agent task) (CI runs exactly this inside .devcontainer/ci; the tools must be installed - this repo''s devcontainer has them, at the pinned versions).'
     cmds:
       - shellcheck -x src/*/*.sh local-features/*/*.sh local-features/*/share/bin/*.sh local-features/*/share/jobs/*/*.sh test/*/*.sh test/*/unit/*.sh test/bootstrap/*.sh bootstrap/*.sh bootstrap/host/*.sh .githooks/* .devcontainer/*.sh
       - yamllint --strict .
@@ -90,6 +90,7 @@ tasks:
       - task: common:curl-check
       - task: taskfiles:check
       - task: test:common-unit
+      - task: test:go-task-unit
       - task: test:devhost
       - task: test:git-unit
       - task: test:bootstrap
@@ -257,6 +258,11 @@ tasks:
     desc: 'Docker-free test of the download helper src/common/dcf-curl.sh: the retry flags (--retry-all-errors when curl has it, read without SIGPIPE; dropped on an older curl), the arguments passed through, curl --help read once; then the real curl against a local server that cuts the first connection mid-transfer (curl exit 56) and mid-TLS-handshake (exit 35, needs openssl): plain curl --retry gives up, dcf_curl gets the file; part of lint. Needs python3.'
     cmds:
       - bash test/common/unit/dcf_curl_test.sh
+
+  test:go-task-unit:
+    desc: 'Docker-free test of the go-task Feature''s team task aliases: the task-aliases generator over the real task and yq in a temp workspace (the format and every rejected case, golden output with quoting, shadowing a real task, a task alias and an include alias refused, a missing target broken, an alias to an alias refused, never fatal with bad YAML, no team file, no Taskfile, no yq or task, regeneration idempotent and after a change, the flattened include reaching task --list, task <alias> passing its fixed vars, Task 3.54''s duplicate-name failure that is why shadows are refused) and task-features-registry (features.yml byte-identical with taskAliases off, the flattened include with it on); part of lint. Needs task; yq from PATH or the pinned release downloaded through dcf_curl.'
+    cmds:
+      - bash test/go-task/unit/aliases_test.sh
 
   taskfiles:check:
     desc: 'Fail if a Feature Taskfile (src/<id>/taskfile.yml or local-features/<id>/taskfile.yml) breaks the mechanical rules: every task runs in the directory task was started from (dir: ''{{"{{"}}.USER_WORKING_DIR{{"}}"}}''; included through features.yml it would otherwise run in /usr/local/share/go-task/includes.d), every task has a desc, and the first task is version (NFR-2).'
