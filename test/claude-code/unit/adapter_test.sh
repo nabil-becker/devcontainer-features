@@ -399,8 +399,8 @@ saved_opts a8 --name host
 out="$(ad wake host "$repo")"; rc=$?
 check 'wake: a done session with a live pid is stopped by its id, then woken bare (exit 0)' "0:$T|stop|a8;$repo|--bg|--resume|sess-a8;" "$rc:$(calls)"
 check 'wake: a done session with a live pid: no copy was started' 0 "$(grep -c '^c' "$FAKE_TABLE")"
-lacks 'wake: never stops another session' "$(cat "$FAKE_CALLS")" 'z1'
-lacks 'wake: never stops a session of another folder' "$(cat "$FAKE_CALLS")" 'z2'
+lacks 'wake: never stops another session' "$(cat "$FAKE_CALLS")" '|stop|z1'
+lacks 'wake: never stops a session of another folder' "$(cat "$FAKE_CALLS")" '|stop|z2'
 check 'wake: the other sessions keep their pids' '778 779' "$(awk -F'\t' '$1 ~ /^z/ { printf "%s%s", s, $6; s = " " }' "$FAKE_TABLE")"
 
 # Claude Code saves the options in a fixed order (--name, --settings, --agent, --model), not the
