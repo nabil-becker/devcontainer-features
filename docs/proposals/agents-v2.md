@@ -1,6 +1,6 @@
 # Proposal: agents version 2, an agent defined in one place
 
-Status: Proposed 2026-10-29; Operator decided version 2.0.0 (exclusive lease for every stateful agent). The four recommended answers in section 2 and the open questions in section 13 await the Operator's ruling on the proposal as a whole. Nothing here is built. Backlog: `fleet-design-rethink` (this proposal absorbs part of it, section 11) and `agents-file-decisions` (still open; section 11 says what v2 assumes).
+Status: Proposed 2026-10-29; Operator decided version 2.0.0 (exclusive lease for every stateful agent) and accepted the recommendations on 2026-10-29. The open questions in section 13 still await rulings. Nothing here is built. Backlog: `fleet-design-rethink` (this proposal absorbs part of it, section 11) and `agents-file-decisions` (still open; section 11 says what v2 assumes).
 
 Who this serves: the Operator, who rules on it, and the maintainers of a framework that consumes the agents Feature. They will write two integrations (one that registers an agent and its identity, one that makes it reachable) against the contract in section 7, and want a repository to define an agent completely in its one list. The engineers who start agents in a devcontainer get the same verbs they have today, plus an exclusive copy per stateful agent.
 
@@ -286,9 +286,9 @@ The CLI contract is unchanged (verbs, arguments, exit codes, the fallbacks). Two
 | `AGENTS_DEFINITION=tooling` | `--agent tooling`, placed before the list's `args` | Passed by `start-bg`, `new`, `wake` and `resume` alike. Refused when `args` already holds `--agent` (the list check already does). |
 | `AGENTS_ENV_FILE` | the adapter writes `<state>/settings/<agent>.json` (`{"env":{"K":"V",...}}`, mode 600, JSON-escaped by the adapter, no jq) and passes `--settings <that path>` | Settings `env` is how Claude Code exports variables to a session's tools, hooks and MCP servers. The path is stable per agent, so the flag is identical between runs. |
 
-Why a settings file and not the process environment: a background session is started by Claude Code's supervisor, not by the `claude --bg` client, so whether the client's environment reaches the session is unproven (open question 1); a settings file is a documented route and `--bg` keeps its flags. The adapter would use the environment as well when question 1 shows it works, but would not rely on it.
+Why a settings file and not the process environment: a background session is started by Claude Code's supervisor, not by the `claude --bg` client, so the client's environment does not reach the session (checked); a settings file is a documented route and `--bg` keeps its flags. The client's environment does not reach the session (checked, section 13), so the settings file is the only route.
 
-How this fits the adapter's saved-options rule: Claude Code puts back the options a background session was started with (`respawnFlags`) on a bare `wake`, and the adapter wakes bare only when those equal what `start-bg` passes. `want_flags` therefore has to include `--agent <definition>` and `--settings <path>` in the same order as a start. Because the path is stable, a bare wake re-reads the **current** file, which the adapter rewrites from the env file before every wake; so a changed identity reaches a woken session. A session started under 1.x with its `--settings` JSON in `args` has different saved options, so its first wake after the move to `definition` falls to the existing "wake with the agent's options, which may start a copy" path, said on stderr; `agents stop --extras` removes the copy. Open question 4 asks whether Claude Code merges two `--settings` flags, which decides what happens when a list keeps its own `--settings` in `args` beside an integration's env.
+How this fits the adapter's saved-options rule: Claude Code puts back the options a background session was started with (`respawnFlags`) on a bare `wake`, and the adapter wakes bare only when those equal what `start-bg` passes. `want_flags` therefore has to include `--agent <definition>` and `--settings <path>` in the same order as a start. Because the path is stable, a bare wake re-reads the **current** file, which the adapter rewrites from the env file before every wake; so a changed identity reaches a woken session. A session started under 1.x with its `--settings` JSON in `args` has different saved options, so its first wake after the move to `definition` falls to the existing "wake with the agent's options, which may start a copy" path, said on stderr; `agents stop --extras` removes the copy. Claude Code does not merge two `--settings` flags (the last wins, section 13), so the list check refuses a `--settings` in `args` when `integrations` is set.
 
 All of this stays in `agent-adapter-claude`. `agents` never writes a Claude flag, and another CLI's adapter maps the same two inputs its own way (a different CLI has its own profile and environment mechanism).
 
@@ -391,13 +391,29 @@ A consumer that runs on-demand agents in several terminals (a reviewer, a pair) 
 
 ## 13. Open questions
 
-Facts to check on the real CLI (workstation, a trusted throwaway folder):
+Facts to check on the real CLI: the five that stood here are answered below.
 
-1. Does the environment of the `claude --bg` client reach the session's tools and hooks, or only that of the supervisor that spawns it? Decides whether the adapter may use the process environment as well as a settings file.
-2. Does `--settings <file>` with an `env` object reach Bash-tool commands, hooks and MCP servers of a **background** session, and is it re-read on `claude --bg --resume <id>` (a bare wake) after the file changed?
-3. Is `--agent <profile>` stored in a background session's saved options (`respawnFlags`) and put back by a bare wake? `want_flags` depends on it.
-4. Given `--settings` twice (one in the list's `args`, one from the adapter), do the two merge or does the last win? Decides whether a list may keep its own `--settings`.
-5. After `kill -9` of a background session, how long does `claude agents --json --all` keep a pid for it? Row 4 of the dead-holder table trusts "no running session"; a lagging pid makes a takeover late, never wrong.
+### Facts checked 2026-10-29 (Claude Code 2.1.308)
+
+Checked in a trusted throwaway folder (`projects[<path>].hasTrustDialogAccepted`, the Operator set it by hand); haiku sessions named `factcheck-*`, 3 sessions plus one accidental copy, all stopped by id. A first attempt in an untrusted folder was refused (`Workspace not trusted`), so: **extra fact, trust is honoured by `claude --bg`, and a subfolder (`<trusted>/run1`) is covered too.**
+
+| # | Fact | Verdict | Evidence |
+| --- | --- | --- | --- |
+| 1 | The `--bg` client's environment reaches the session | **no** | `FOO=bar1 claude --bg ...` then Bash `echo $FOO` printed it empty; the job's `state.json` has `providerEnv` holding only `CLAUDE_CONFIG_DIR` |
+| 2 | `--settings` env applies in a background session, and on a bare wake | **yes, both** | `--settings s1.json` (`{"env":{"SETA":"a1"}}`) gave `SETA=a1`. After the file was changed to `a2` and the session stopped, bare `claude --bg --resume <full id>` ("woke session ... with its saved options") with a prompt gave `SETA=a2`: the file is re-read |
+| 3 | `--agent` is stored and a bare wake keeps it | **yes** | `jobs/<short id>/state.json` `respawnFlags` = `--name factcheck-env --settings <path> --agent fcagent --model haiku`; the wake note listed the same four. The saved order is fixed (name, settings, agent, model), not the order given on the command line |
+| 4 | two `--settings` flags merge | **no, the last wins** | `--settings s1.json --settings s2.json` (SETA, SETB): the session saw `SETB=b1` and an empty `SETA`; `respawnFlags` kept only `s2.json` |
+| 5 | pid after `kill -9`; session id on a wake | **a zombie for under 0.5 s; id unchanged** | killed pid 721359 (verified: cwd and `claude agents --json` entry were my session's): `kill -0` succeeded once at 0 s (`/proc/<pid>/status` `State: Z`), failed from 0.5 s; the list showed no pid and `state` `done` by the next call (a few seconds). The session id stayed the same across stop and wake (`0da22bc8-25fc-...`) |
+
+Also seen: a session whose `state` is `done` is still a running process with a pid until it is stopped, and `claude --bg --resume <id>` of it started a copy under a new id (`0e93fa55`, empty saved options) instead of waking it; a prompt given with `--resume` on a stopped session did not start a copy and kept its saved options.
+
+What changes in the design:
+
+- **Section 7.1 (environment):** the process environment is not an option; the settings file is the only route (the "would use the environment as well" sentence is dropped). Open question 1 is answered.
+- **Section 7.1 (two `--settings`):** last wins, so a list's own `--settings` in `args` would silently cancel the integration's env; the list check refuses `--settings` in `args` whenever `integrations` is set. Open question 4 is answered.
+- **Section 7.1 (`want_flags`):** compare with the saved options in Claude Code's fixed order (name, settings, agent, model), not the start order; `--agent` is kept, so a bare wake works.
+- **Section 6 (dead-holder row 4):** a pid disappears within a second of `kill -9`, so the lag is negligible; `kill -0` right after can still succeed for under 0.5 s (zombie), which a second poll covers. Open question 5 is answered.
+- **Section 8 and the adapter:** the adapter wakes only a stopped session (`claude stop` first, never a `done` one with a live pid); a session id is stable across a wake, though the name and folder stay the key.
 
 Design points the Operator or the framework rules on:
 
