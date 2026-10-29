@@ -318,6 +318,17 @@ printf 'aliases: { viaenv: real }\n' > "$W/conf/env.yml"
 contains "GO_TASK_TEAM_ALIASES_FILE beats the option" "viaenv" "$(cd "$W" && GO_TASK_TEAM_ALIASES_FILE="$W/conf/env.yml" task-aliases generate 2>&1)"
 rm "$GO_TASK_SHARE/aliases.conf"
 
+# the exit status: strict (a hand run) fails on a bad alias, the default (container start) never does
+printf 'aliases: { good: real, bad: nosuch }\n' > "$team"
+(cd "$W" && task-aliases generate --strict >/dev/null 2>&1); check "strict: a broken alias exits 1" "1" "$?"
+(cd "$W" && task-aliases generate >/dev/null 2>&1); check "start run: a broken alias exits 0" "0" "$?"
+printf 'aliases: { Bad Name: real }\n' > "$team"
+(cd "$W" && task-aliases generate --strict >/dev/null 2>&1); check "strict: an invalid alias exits 1" "1" "$?"
+printf 'aliases: { good: real }\n' > "$team"
+(cd "$W" && task-aliases generate --strict >/dev/null 2>&1); check "strict: a clean file exits 0" "0" "$?"
+(cd "$W" && task-aliases generate >/dev/null 2>&1); check "start run: a clean file exits 0" "0" "$?"
+(cd "$W" && TASK_ALIASES_YQ=/nonexistent/yq task-aliases generate --strict >/dev/null 2>&1); check "strict: no yq exits 1" "1" "$?"
+
 echo
 echo "go-task aliases: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

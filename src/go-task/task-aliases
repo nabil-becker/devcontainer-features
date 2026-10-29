@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 # task-aliases: team task aliases for the go-task Feature (docs/proposals/task-aliases.md).
 #
-#   task-aliases generate [--team FILE] [--out FILE]
+#   task-aliases generate [--strict] [--team FILE] [--out FILE]
 #
 # Reads the team file (aliases: name -> an existing task, optional desc and fixed vars), checks every
 # alias against `task --list-all --json` of the root Taskfile, and writes one wrapper task per
 # accepted alias into the generated file that features.yml includes (flattened), so each alias shows
 # in `task --list`. Prints the report (alias, target, layer, status, note).
 #
-# Never fatal: always exits 0 (2 only for a usage error), and always leaves a valid generated file
+# Never fatal by default: exits 0 (2 only for a usage error), so a run at container start cannot block
+# startup. With --strict (what `task go-task:aliases` passes) it exits 1 when any alias is not generated
+# or the generator could not run (no yq, no readable root Taskfile). Always leaves a valid generated file
 # (`tasks: {}` at worst). The file is data, never code: no command field, vars are plain scalars,
 # every emitted value is a single-quoted YAML scalar, names and targets match a fixed pattern, and
 # nothing is evaluated or sourced.
@@ -23,15 +25,17 @@ default_out="$state/aliases.yml"
 name_re='^[a-z][a-z0-9_-]*(:[a-z][a-z0-9_-]*)*$'
 var_re='^[A-Za-z_][A-Za-z0-9_]*$'
 
-usage() { echo "usage: task-aliases generate [--team FILE] [--out FILE]" >&2; exit 2; }
+usage() { echo "usage: task-aliases generate [--strict] [--team FILE] [--out FILE]" >&2; exit 2; }
 
 cmd="${1:-}"
 [ "$cmd" = generate ] || usage
 shift
 team="${GO_TASK_TEAM_ALIASES_FILE:-}"
 out="$default_out"
+strict=0
 while [ $# -gt 0 ]; do
   case "$1" in
+    --strict) strict=1; shift ;;
     --team) team="${2:-}"; shift 2 || usage ;;
     --out) out="${2:-}"; shift 2 || usage ;;
     *) usage ;;
@@ -73,7 +77,7 @@ write_out "$body" || true   # first an empty file: a stale one cannot break the 
 rows=()
 add_row() { rows+=("$1|${2//[[:cntrl:] ]/?}|$3|$4"); } # alias|target|status|note
 q() { local s="${1//\'/\'\'}"; printf "'%s'" "$s"; } # a single-quoted YAML scalar
-finish() {
+finish() { # [fail]: with "fail" (the generator could not run), --strict exits 1 too
   local ok=0 r
   printf '%-24s %-28s %-8s %s\n' ALIAS TARGET STATUS NOTE
   for r in "${rows[@]:-}"; do
@@ -83,12 +87,13 @@ finish() {
     printf '%-24s %-28s %-8s %s\n' "$a" "$t" "$s" "$n"
   done
   echo "aliases: $ok ok, $(( ${#rows[@]} - ok )) not generated (generated file: $out)"
+  [ "$strict" -eq 1 ] && { [ "${1:-}" = fail ] || [ "${#rows[@]}" -gt "$ok" ]; } && exit 1
   exit 0
 }
 
 if [ -z "$yq_bin" ] || ! "$yq_bin" --version >/dev/null 2>&1; then
   echo "task-aliases: yq not found (install the go-task Feature with taskAliases: true); no aliases generated" >&2
-  finish
+  finish fail
 fi
 y() { "$yq_bin" "$@"; }
 
@@ -97,7 +102,7 @@ listing="$(mktemp)"
 trap 'rm -f "$body" "$listing"' EXIT
 if ! "$task_bin" --list-all --json > "$listing" 2>/dev/null || ! y -p=json -oy -e '.tasks' "$listing" >/dev/null 2>&1; then
   echo "task-aliases: cannot read the tasks of the root Taskfile (task --list-all --json failed); no aliases generated" >&2
-  finish
+  finish fail
 fi
 real_tasks="$(y -p=json -oy -r '.tasks[].name' "$listing")"
 real_aliases="$(y -p=json -oy -r '.tasks[].aliases[]' "$listing")"

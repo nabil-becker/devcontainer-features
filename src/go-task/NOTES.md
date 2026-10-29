@@ -71,6 +71,11 @@ Run `task go-task:aliases`: it reads the file, checks every alias against the ro
 so each alias is in `task --list`. It prints a table (alias, target, status, note). Slice 1 runs it by
 hand; run it again after editing the file.
 
+The exit status: `task go-task:aliases` passes `--strict` and exits 1 when any alias is `invalid`,
+`broken` or `shadows`, or when yq or the root Taskfile cannot be read, so a bad alias is not missed
+in a terminal or a script. Without `--strict` (the default, for a run at container start) the
+generator always exits 0, so a bad alias never blocks startup; the valid ones are still written.
+
 - An alias points at an existing task only. Another alias is refused; a missing target is `broken`
   (no wrapper, nothing fails).
 - A name that is a real task, a Task `aliases:` entry of one, or an include alias (`dcx:up` when

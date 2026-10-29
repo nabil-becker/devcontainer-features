@@ -24,11 +24,11 @@ tasks:
 
   aliases:
     dir: '{{.USER_WORKING_DIR}}'
-    desc: 'Regenerate the team task aliases (needs the taskAliases option): read the team aliases file, check each alias against the root Taskfile, write one wrapper task per accepted alias and print the report (ok, shadows, broken, invalid). Run it again after editing the file.'
+    desc: 'Regenerate the team task aliases (needs the taskAliases option): read the team aliases file, check each alias against the root Taskfile, write one wrapper task per accepted alias and print the report (ok, shadows, broken, invalid). Run it again after editing the file. Exits non-zero when any alias is not generated.'
     cmds:
       - |
         if ! command -v task-aliases >/dev/null 2>&1; then
           echo "go-task:aliases: the taskAliases option is off (set it to true on the go-task Feature and rebuild)." >&2
           exit 1
         fi
-        task-aliases generate
+        task-aliases generate --strict
