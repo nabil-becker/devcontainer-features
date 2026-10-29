@@ -91,6 +91,12 @@ elif [ "$1" = --bg ] && [ "$2" = --resume ] && [ $# -gt 3 ]; then
   printf 'c%07d\tsess-c%s-0000-0000-0000-000000000000\t%s\t%s\tbackground\t%s\trunning\t%s\n' "$n" "$n" "$nm" "$(pwd -P)" "$((100 + n))" "$((2000 + n))" >> "$FAKE_TABLE"
   shift 3; saved "$(printf 'c%07d' "$n")" "$@"
   echo "note: background session keeps its own saved options, so the flags you passed started a copy as c$n." >&2
+elif [ "$1" = --bg ] && [ "$2" = --resume ] && [ -n "${FAKE_RESUME_GONE:-}" ]; then
+  # the session cannot be resumed: its job is left failed, with the detail Claude Code gives
+  d="$CLAUDE_CONFIG_DIR/jobs/$FAKE_RESUME_GONE"; mkdir -p "$d"
+  printf '{\n  "state": "failed",\n  "detail": "source session %s not found",\n  "respawnFlags": []\n}\n' "$3" > "$d/state.json"
+elif [ "$1" = --bg ] && [ "$2" = --resume ] && [ -n "${FAKE_RESUME_FAIL:-}" ]; then
+  echo "error: could not reach the daemon" >&2; exit 1
 elif [ "$1" = --bg ] && [ "$2" = --resume ]; then
   awk -F'\t' -v OFS='\t' -v s="$3" '$2 == s { $6 = 999; $7 = "running" } { print }' "$FAKE_TABLE" > "$FAKE_TABLE.n" && mv "$FAKE_TABLE.n" "$FAKE_TABLE"
 elif [ "$1" = rm ]; then
@@ -255,6 +261,18 @@ table "a8|sess-a8|host|$repo|background|0|failed|1500"
 SAVED_STATE='done' saved_opts a8 --name host
 out="$(ad wake host "$repo")"
 check 'wake: its state.json says done: bare' "$repo|--bg|--resume|sess-a8;" "$(calls)"
+# the session is gone: Claude Code leaves the job failed with detail "source session <id> not found"
+table "a8|sess-a8|host|$repo|background|0|failed|1500"
+saved_opts a8 --name host --agent host
+out="$(FAKE_RESUME_GONE=a8 ad wake host "$repo" -- --agent host)"; rc=$?
+check 'wake: the session is gone: started fresh with the agent'"'"'s args (exit 0)' "0:$repo|--bg|--resume|sess-a8;$repo|--bg|--name|host|--agent|host;" "$rc:$(calls)"
+contains 'wake: the session is gone: says so' "$out" 'session sess-a8 is gone; started fresh'
+check 'wake: the session is gone: the fresh session is recorded' 1 "$(grep -c "^host	$repo	b" "$records")"
+# any other resume failure still fails
+table "a8|sess-a8|host|$repo|background|0|failed|1500"
+saved_opts a8 --name host --agent host
+out="$(FAKE_RESUME_FAIL=1 ad wake host "$repo" -- --agent host)"; rc=$?
+check 'wake: another resume failure fails (exit 1), no fresh start' "1:$repo|--bg|--resume|sess-a8;" "$rc:$(calls)"
 table
 out="$(ad wake host "$repo")"; rc=$?
 check 'wake with nothing to wake: exit 1' 1 "$rc"
