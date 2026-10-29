@@ -30,7 +30,7 @@ Who the agents work for, and who they only deal with (interview-4 answer 7).
 | --- | --- |
 | The Operator | Served. Always one. Decides, merges, releases. Every agent serves the Operator, through the host. |
 | Other engineers | Served. They run their own sessions in the same devhost. |
-| Maintainers of the office and of software project 1 | Served, as consumers: they ask for changes through issues, and a wrapper found in their `.devcontainer/DEVCONTAINER_CONTRIBUTION.md` is a backlog item here. |
+| Maintainers of the office and of software project 1 | Served, as consumers: they ask for changes through issues, and a local workaround found in their `.devcontainer/DEVCONTAINER_CONTRIBUTION.md` is a backlog item here. |
 | Public contributors | Not served. The repository is public, so agents are polite to them (clear replies, no hostility, nothing leaked) but take no work from them that the Operator has not accepted. |
 
 ## Boundaries

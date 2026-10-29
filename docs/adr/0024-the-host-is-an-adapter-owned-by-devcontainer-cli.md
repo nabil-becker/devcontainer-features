@@ -88,3 +88,4 @@ Rejected by decision 3.
 |---|---|
 | 2026-10-23 | Proposed; the five decisions taken by the Operator, the rest open. |
 | 2026-10-23 | Accepted: the Operator answered the open questions; HOST_TYPE_PRIORITY, DCF_HOST_* instead of a profile file, windows-docker, key option, BOOTSTRAP_* settings. |
+| 2026-10-29 | Amendment 2026-10-29: the host is called a host type; "adapter" is reserved for the CLI adapter (LEXICON.md); the "backend, source or sink" wording is retired. The decision is unchanged. |
