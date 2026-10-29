@@ -5,9 +5,11 @@
 # Feature brings its own (agent-adapter-<cli>; the claude-code Feature has agent-adapter-claude).
 #
 # State: none that must survive a rebuild. The agents live in each CLI's own state (claude-code's
-# volume). /var/lib/devcontainer-features/agents holds only the once-per-container-start markers
-# used when an adapter cannot list its sessions; it is deliberately not a volume, and the markers
-# are keyed by the container start, so a stale one never counts.
+# volume). /var/lib/devcontainer-features/agents holds the once-per-container-start markers used
+# when an adapter cannot list its sessions, and leases/ (2.0), one folder per stateful agent that
+# runs. It is deliberately not a volume (NFR-1 exception, NOTES "State"): a lease that survived a
+# rebuild would be stale by definition, and markers and leases both record the container start,
+# so a stale one never counts.
 set -euo pipefail
 
 if [ "$(id -u)" -ne 0 ]; then
@@ -25,6 +27,10 @@ chmod 0644 /usr/local/share/agents-feature/version
 # Any user writes their markers here; the sticky bit keeps users out of each other's.
 mkdir -p /var/lib/devcontainer-features/agents
 chmod 1777 /var/lib/devcontainer-features/agents
+# The leases: no sticky bit, so a dead holder owned by another user (root at post-start, the
+# remote user in a terminal) can be taken over.
+mkdir -p /var/lib/devcontainer-features/agents/leases
+chmod 0777 /var/lib/devcontainer-features/agents/leases
 echo "agents: installed agents ${version:-unknown}"
 
 # ---------------------------------------------------- Feature Taskfile ----

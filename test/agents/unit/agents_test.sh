@@ -97,9 +97,9 @@ out="$(run check)"; rc=$?
 check 'check: a valid list exits 0' 0 "$rc"
 contains 'check: names the file and its source' "$out" "$repo/.devcontainer/agents.yml (from the default"
 contains 'check: counts the agents' "$out" '3 agent(s)'
-contains 'check: a flow list with quotes and a colon' "$out" 'host: cli fake, resident, folder ., args: [--model] [opus 4] [it'"'"'s] [--flag=a:b]'
-contains 'check: a block list of args' "$out" 'reviewer: cli fake, on-demand, folder rooms/review, args: [--effort] [high]'
-contains 'check: folder defaults to ., no args' "$out" 'pair: cli fake, on-demand, folder ., args: none'
+contains 'check: a flow list with quotes and a colon' "$out" 'host: cli fake, resident, stateful (identity host, lease container), folder ., args: [--model] [opus 4] [it'"'"'s] [--flag=a:b]'
+contains 'check: a block list of args' "$out" 'reviewer: cli fake, on-demand, stateful (identity reviewer, lease container), folder rooms/review, args: [--effort] [high]'
+contains 'check: folder defaults to ., no args' "$out" 'pair: cli fake, on-demand, stateful (identity pair, lease container), folder ., args: none'
 contains 'check: an unknown key is a warning with its line' "$out" "agents.yml:15: unknown key 'note' (ignored)"
 contains 'check: an unknown top-level key is a warning' "$out" "unknown top-level key 'other'"
 lacks 'check: a nested unknown key is skipped, not read' "$out" "'team'"
@@ -383,25 +383,25 @@ reset; printf 'host\tid-old\trunning\t%s\nreviewer\tid-r\tstopped\t%s/rooms/revi
 out="$(run list)"; rc=$?
 check 'list: exit 0' 0 "$rc"
 contains 'list: a header' "$out" 'NAME'
-contains 'list: a running resident with its id' "$out" "$(printf '%-16s %-10s %-8s %-9s %-38s %s' host resident fake running id-old .)"
-contains 'list: an on-demand agent with only a stopped session is none (not yesterday'"'"'s session)' "$out" "$(printf '%-16s %-10s %-8s %-9s %-38s %s' reviewer on-demand fake none - rooms/review)"
+contains 'list: a running resident with its id' "$out" "$(printf '%-16s %-10s %-10s %-8s %-9s %-24s %-38s %s' host resident stateful fake running free id-old .)"
+contains 'list: an on-demand agent with only a stopped session is none (not yesterday'"'"'s session)' "$out" "$(printf '%-16s %-10s %-10s %-8s %-9s %-24s %-38s %s' reviewer on-demand stateful fake none free - rooms/review)"
 contains 'list: no adapter' "$out" 'no-adapter'
 contains 'list: no folder' "$out" 'no-folder'
 out="$(run list --json)"
-contains 'list --json: an array of objects' "$out" '[{"name":"host","kind":"resident","cli":"fake","folder":".","state":"running","id":"id-old","extras":0},'
+contains 'list --json: an array of objects' "$out" '[{"name":"host","kind":"resident","cli":"fake","folder":".","state":"running","id":"id-old","extras":0,"lifecycle":"stateful","identity":"host","lease":"free","carrier":"none"},'
 reset; printf 'reviewer\tid-r2\trunning\t%s/rooms/review\nreviewer\tid-r\tstopped\t%s/rooms/review\n' "$repo" "$repo" > "$T/sessions"
 out="$(run list)"
-contains 'list: an on-demand agent with a running session shows it' "$out" "$(printf '%-16s %-10s %-8s %-9s %-38s %s' reviewer on-demand fake running id-r2 rooms/review)"
+contains 'list: an on-demand agent with a running session shows it' "$out" "$(printf '%-16s %-10s %-10s %-8s %-9s %-24s %-38s %s' reviewer on-demand stateful fake running free id-r2 rooms/review)"
 export FAKE_UNSUPPORTED=list
 out="$(run list --json)"
 contains 'list: unknown when the adapter cannot list' "$out" '"state":"unknown"'
 reset; export FAKE_LIST_ERR="'fake agents' exited 1: error: unknown option '--json'"
 out="$(run list)"; rc=$?
 check 'list, the listing failed: exit 0 (the list is still shown)' 0 "$rc"
-contains 'list, the listing failed: state error, not unknown' "$out" "$(printf '%-16s %-10s %-8s %-9s %-38s %s' host resident fake error - .)"
+contains 'list, the listing failed: state error, not unknown' "$out" "$(printf '%-16s %-10s %-10s %-8s %-9s %-24s %-38s %s' host resident stateful fake error free - .)"
 contains 'list, the listing failed: the adapter'"'"'s message, once' "$out" "the fake sessions could not be listed: 'fake agents' exited 1: error: unknown option '--json'"
 out="$(run list --json 2>/dev/null)"
-contains 'list --json, the listing failed: state and message' "$out" '"state":"error","id":"","extras":0,"error":"'"'"'fake agents'"'"' exited 1: error: unknown option '"'"'--json'"'"'"}'
+contains 'list --json, the listing failed: state and message' "$out" '"state":"error","id":"","extras":0,"error":"'"'"'fake agents'"'"' exited 1: error: unknown option '"'"'--json'"'"'","lifecycle":"stateful"'
 reset; printf 'host\tid-old\trunning\t%s\n' "$repo" > "$T/sessions"
 out="$(run stop host)"; rc=$?
 check 'stop: the adapter stop' "stop|host|$repo|--|--remote-control;" "$(calls)"
