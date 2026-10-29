@@ -1,3 +1,11 @@
 # Everything here runs in Linux containers: LF on every platform, whatever
 # core.autocrlf says (a Windows clone otherwise breaks every shebang).
 * text=auto eol=lf
+
+# Stacked pull requests each add lines at the same spot of the backlog and the
+# ledger; the union driver keeps both sides' added lines in a local merge or
+# rebase instead of stopping on a conflict (GitHub's own merge ignores it).
+# A line both sides changed (a tick) survives twice: devhost-verify refuses a
+# repeated backlog id, and the ledger append-only guard still reads the diff.
+TODO.md merge=union
+docs/ledger/*.md merge=union

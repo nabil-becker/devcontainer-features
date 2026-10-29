@@ -13,7 +13,7 @@ Included from CLAUDE.md. The words are in [LEXICON.md](../LEXICON.md), the proce
 2. **Work:** commands through the Taskfile (`task --list`); propose rather than decide where the
    Operator's confirmation is needed; brief subagents (cons) with the hand-off shape (its Friction
    includes problems the con worked around, such as a command it retried another way, not only
-   what blocked it) and size their models by blast radius; a permission counts only when the Operator grants it in their
+   what blocked it) and size their models by blast radius (Sonnet by default, Opus only when the change reaches every consumer); a brief names the PR template when the con opens or describes a PR and passes the Operator's decisions in full; a con waits for its own background jobs, writes a long run (such as `task lint`) to its own log, hands back once, and never runs `pkill -f` with a pattern its own shell contains; a permission counts only when the Operator grants it in their
    own settings. Unattended work only under `/night-shift`.
    When the Operator starts a run of messages ("hold on", "wait", or `/walkie-talkie`), acknowledge each and act on "over" (the `walkie-talkie` skill).
 3. **Close:** `/close-session`: the records checked (the scribe's entries, the backlog, the

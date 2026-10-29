@@ -95,6 +95,7 @@ tasks:
       - task: test:git-unit
       - task: test:bootstrap
       - task: test:shutdown
+      - task: test:psscriptanalyzer-files
       - task: test:host-type
       - task: test:bootstrap-dir
       - task: test:host-mounts
@@ -150,6 +151,11 @@ tasks:
     desc: 'Docker-free bash tests of the shutdown-check contract (bootstrap/SHUTDOWN.md): the default resolution snippet from bootstrap/devcontainer.yml against fake task and devhost-shutdown-check commands, the starter bootstrap/shutdown-check.sh in temp git repos, and the bash twin''s stop (127 message, refusal, FORCE, prepshutdown) with a stub engine and CLI; part of lint.'
     cmds:
       - bash test/bootstrap/shutdown_resolution_test.sh
+
+  test:psscriptanalyzer-files:
+    desc: 'Docker-free bash test that the PSScriptAnalyzer step checks tracked and non-ignored files only: a bad script in a git-ignored folder is not scanned, a bad tracked one still fails (test/lint/psscriptanalyzer_files_test.sh); part of lint.'
+    cmds:
+      - bash test/lint/psscriptanalyzer_files_test.sh
 
   test:host-type:
     desc: 'Docker-free bash tests of HOST_TYPE resolution in the bash twin (src/devcontainer-cli/devcontainer-cli.sh): explicit id, unknown id, auto and HOST_TYPE_PRIORITY (default and an organisation list), the DCF_HOST_* variables handed to the CLI, DEVCONTAINER_DOCKER_PATH still naming the engine; evidence faked with DCF_HOST_UNAME, DCF_HOST_PROC_VERSION and fake docker and devcontainer commands; part of lint. The PowerShell twin is covered by test:bootstrap.'
