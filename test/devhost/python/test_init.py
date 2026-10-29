@@ -13,7 +13,7 @@ EXPECTED = [
     "docs/night-shift/README.md", ".claude/skills/close-session/SKILL.md", ".claude/skills/ledger-review/SKILL.md",
     ".claude/skills/plant-a-seed/SKILL.md", ".claude/skills/plant-a-seed/INTERVIEW.md",
     ".claude/skills/drop-a-seed/SKILL.md", ".claude/skills/drop-a-seed/journalist.md",
-    ".claude/skills/night-shift/SKILL.md", ".claude/skills/walkie-talkie/SKILL.md", ".claude/skills/new-adr/SKILL.md", ".claude/skills/publish-site/SKILL.md",
+    ".claude/skills/night-shift/SKILL.md", ".claude/skills/walkie-talkie/SKILL.md", ".claude/skills/new-adr/SKILL.md", ".claude/skills/publish-site/SKILL.md", ".claude/skills/architecture-review/SKILL.md",
     ".claude/skills/shutdown-devhost/SKILL.md", ".claude/skills/restart-devhost/SKILL.md",
     ".devhost/.gitignore",
     ".devhost/CLAUDE.devhost.md", ".claude/settings.json", ".githooks/pre-commit", ".githooks/pre-push", ".gitignore",

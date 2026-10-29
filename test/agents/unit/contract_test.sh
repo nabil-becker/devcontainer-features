@@ -109,7 +109,7 @@ D="$repo"
 reset; run 0 check
 check "check: exit 0 on a list mixing both CLIs" 0 "$RC"
 contains "check: names a fakea agent" "$OUT" "a-res: cli fakea, resident"
-contains "check: names a fakeb agent with its args" "$OUT" "b-od: cli fakeb, on-demand, folder ., args: [--model] [small]"
+contains "check: names a fakeb agent with its args" "$OUT" "b-od: cli fakeb, on-demand, stateful (identity b-od, lease container), folder ., args: [--model] [small]"
 contains "check: counts four agents" "$OUT" "4 agent(s)"
 check "check: calls no adapter verb (only supports)" "" "$(calls "$CALLS_A")$(calls "$CALLS_B")"
 contains "check: shows fakea's capabilities on one line" "$OUT" "  fakea: start-bg wake attach resume new list stop logs"
