@@ -51,8 +51,26 @@
     // The agent list is .devcontainer/agents.yml: `task agents -- host` inside,
     // `task devcontainer:agent -- host` from the workstation.
     "./features/agents": {},
-    "./features/devhost": {}
+    "./features/devhost": {},
+    // The Operator's own personal OneDrive, mounted live at /mnt/cloud-folder
+    // (`task cloud-folder:login` once, with the personal Microsoft account).
+    // mount needs FUSE, granted per machine: DCF_HOST_FUSE=1 in
+    // .devcontainer/.env on the workstation (ADR 0031); remotePath narrows it
+    // to one folder of the drive.
+    "./features/cloud-folder": {
+      "mode": "mount",
+      "remoteType": "onedrive",
+      "driveType": "personal"
+    }
   },
+  // FUSE on request, per machine (ADR 0031): with DCF_HOST_FUSE=1 in
+  // .devcontainer/.env the launcher fills these three slots; otherwise each
+  // falls back to a harmless label.
+  "runArgs": [
+    "${localEnv:DCF_HOST_FUSE_DEVICE:--label=dcf.fuse.device=off}",
+    "${localEnv:DCF_HOST_FUSE_CAP:--label=dcf.fuse.cap=off}",
+    "${localEnv:DCF_HOST_FUSE_SECURITY:--label=dcf.fuse.security=off}"
+  ],
   // Host side, before every start: stage the Features, and make sure
   // ~/.git-dirs exists so the mount below never fails.
   "initializeCommand": {
@@ -75,7 +93,9 @@
     "DEVHOST_MONTHLY_TARGET": "200",
     // Ledger entries between reviews: 75 here, about one review a day at this
     // repository's entry rate (the Operator, ledger review 2026-10-21).
-    "DEVHOST_REVIEW_EVERY": "75"
+    "DEVHOST_REVIEW_EVERY": "75",
+    // 1 when DCF_HOST_FUSE=1 in .devcontainer/.env asked the launcher for FUSE
+    "DCF_HOST_FUSE": "${localEnv:DCF_HOST_FUSE}"
   },
   "postCreateCommand": "bash .devcontainer/post-create.sh",
   "remoteUser": "vscode",
