@@ -35,7 +35,7 @@ Delivery OS, whose learnings become a white paper: [docs/iterations.md](docs/ite
   the wrapper handles, and remove it with `git worktree remove` when merged.
 - **Consumers are the office (`Client Engagement Assesments`) and DSNP
   (`kgo__dsnp`)**, both under `..\..\kgo\`. Their `.devcontainer/DEVCONTAINER_CONTRIBUTION.md`
-  says what they adopt from each release. A wrapper found there is a backlog
+  says what they adopt from each release. A local workaround found there is a backlog
   item here.
 
 ## Tasks

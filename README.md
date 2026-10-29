@@ -19,7 +19,7 @@ installing Node.js, and a one-line bootstrap that wires both into any repo.
 | [`az`](src/az) | Augments the official `azure-cli` Feature: its login (`AZURE_CONFIG_DIR`) in a volume it owns, `az bicep` using the Bicep on PATH. |
 | [`kube-state`](src/kube-state) | Owns the kubeconfig (`KUBECONFIG`) the Kubernetes tools share, in a volume it owns, so velero and kubectl stop needing a hand-mounted `~/.kube`; installs no binary. |
 | [`phi-check`](src/phi-check) | A linter-style command that refuses files holding PHI (US SSNs, Medicare Beneficiary Identifiers, X12, HL7 v2, FHIR Patient data, and a record id or date of birth next to a diagnosis or a name label): `phi-check <path>...`, never printing the matched text, failing closed on binary and missing files, knowing nothing of git (the repository wires it into a hook or CI); the patterns are one importable module for other guards. Python 3 standard library only, nothing downloaded; Python comes through `dependsOn`. |
-| [`common`](src/common) | The shared helpers: `dcf-persist`, behind every Feature's post-create hook (make a state directory usable and say what backs it), for a repo's own scripts too; and `dcf-curl`, which every installer's downloads go through so a TLS reset or a cut connection is retried. |
+| [`common`](src/common) | The shared scripts: `dcf-persist`, behind every Feature's setup script (make a state directory usable and say what backs it), for a repo's own scripts too; and `dcf-curl`, which every installer's downloads go through so a TLS reset or a cut connection is retried. |
 | [`coder-cli`](src/coder-cli) | [Coder](https://coder.com) CLI from GitHub releases, verified against the release checksums. |
 | [`openbao`](src/openbao) | [OpenBao](https://openbao.org) CLI (`bao`), verified against the release checksums. |
 | [`velero`](src/velero) | [Velero](https://velero.io) CLI, verified against the release `CHECKSUM`. |
@@ -55,7 +55,7 @@ gap to close here (see [Contributing from a consuming repo](#contributing-from-a
 - **Augment, don't duplicate.** When an official Feature exists for a tool
   (Anthropic's `claude-code`, `devcontainers/features/git`), this collection's
   Feature of the same id orders itself after it (`installsAfter`) and adds
-  what the ecosystem needs around it: a launcher, a post-create hook, a
+  what the ecosystem needs around it: a start command, a setup script, a
   Taskfile. It installs the tool itself only when nothing else did, and then
   verified and pinnable. Wrappers are opt-in and generic (no repo paths).
 - **The checkout is the only thing on disk; each Feature owns its state.**
@@ -63,7 +63,7 @@ gap to close here (see [Contributing from a consuming repo](#contributing-from-a
   manages, or ephemeral inside the container. A Feature that has state
   (logins, transcripts, tool config) declares the variable that points at it
   and a named volume on `/var/lib/devcontainer-features/<id>`, like the
-  official docker-in-docker Feature does, and its post-create hook makes the
+  official docker-in-docker Feature does, and its setup script makes the
   directory usable by the remote user (`dcf-persist`, from `common`).
   Nothing to configure. A repo that wants that state on the host disk
   (survives container-engine resets, follows the machine) bind-mounts the
@@ -374,7 +374,7 @@ goes ahead with the line `no shutdown check defined; stopping`. A configured
 A repo that needs something its devcontainer does not provide asks here
 first: an [issue](https://github.com/nabil-becker/devcontainer-features/issues)
 for a missing Feature, option, task or host script, then a pull request
-following [CONTRIBUTING.md](CONTRIBUTING.md). A local wrapper in the
+following [CONTRIBUTING.md](CONTRIBUTING.md). A local workaround in the
 consuming repo is a stopgap that names the upstream issue it waits on, and
 goes away when the next release ships the functionality. Two things are
 not accepted upstream and stay local: anything that embeds the repo's own

@@ -7,7 +7,7 @@ description: "Build the repository's homepage (backlog, ledger, Features, record
 
 The page is built by `devhost-site` (`share/python/site.py`), which turns the tracked docs and
 records into one self-contained HTML page and knows nothing of where it is hosted. This skill
-is the host adapter for Claude artifacts; another host (GitHub Pages, a file share) takes the
+is the publish target for Claude artifacts; another target (GitHub Pages, a file share) takes the
 same file (`task devhost:site OUT=...`, and `devhost-site --standalone` for a full document).
 
 ## Rules

@@ -49,7 +49,7 @@ Open a "New Feature proposal" issue first. We accept two kinds of Feature:
   checksum-verified alternative to an unverified community Feature is fine).
 - **Augmentations**: the ecosystem pieces around a tool that an official
   Feature (or the base image) already installs - its persistent state, a
-  launcher, a post-create hook, a wrapper, a Taskfile - such as
+  start command, a setup script, a wrapper, a Taskfile - such as
   `claude-code`, `git`, `gh` and `az`. These carry the same id as the tool,
   order themselves after the official Feature with `installsAfter` (never
   `dependsOn`, which would force that Feature's install method on everyone),
@@ -61,7 +61,7 @@ A Feature whose tool keeps state (a login, a config dir, transcripts) owns
 that state: `containerEnv` sets the tool's directory variable to
 `/var/lib/devcontainer-features/<id>`, `mounts` declares a named volume
 `<id>-config-${devcontainerId}` on that target (the pattern of the official
-docker-in-docker Feature), and the `<id>-setup` hook calls
+docker-in-docker Feature), and the `<id>-setup` setup script calls
 `dcf-persist --label <id> "$VAR"` so the directory belongs to the remote
 user and the post-create log says what backs it. A repo overrides the volume
 with a host bind mount on the same target (its mount wins). Feature metadata
@@ -95,7 +95,7 @@ installer.
 3. **Order it with `installsAfter`, published Features only.** The CLI
    resolves every entry against the registry, so an unpublished Feature
    (including a new one of this collection) cannot be named until a release
-   has published it; make a hook that needs another Feature's work
+   has published it; make a setup script that needs another Feature's work
    self-sufficient instead. Check: `grep -A6 installsAfter
    src/<id>/devcontainer-feature.json`, and each
    `ghcr.io/nabil-becker/devcontainer-features/<x>` entry names a Feature
@@ -109,12 +109,12 @@ installer.
    `src/gh/devcontainer-feature.json` or `src/az/devcontainer-feature.json`.
    Check: `grep -n 'containerEnv\|mounts\|postCreateCommand'
    src/<id>/devcontainer-feature.json`.
-5. **Vendor the shared helpers.** A Feature with a `<id>-setup` hook carries a
+5. **Vendor the shared scripts.** A Feature with a `<id>-setup` setup script carries a
    verbatim `src/<id>/dcf-persist.sh`, installed by `install.sh` to
    `/usr/local/bin/dcf-persist`. A Feature that downloads carries a verbatim
    `src/<id>/dcf-curl.sh`, sourced at the top of `install.sh`, and every
    download is `dcf_curl` (curl with the retry flags; see
-   `src/common/NOTES.md`). Copy a helper in once with `cp src/common/<helper>
+   `src/common/NOTES.md`). Copy a shared script in once with `cp src/common/<script>
    src/<id>/`; after that `task common:sync` refreshes it. Check
    `task common:check` and `task common:curl-check` (both part of `task lint`).
 6. **Register the Taskfile.** `src/<id>/taskfile.yml` (rules under
@@ -173,7 +173,7 @@ them. Copy an existing Feature folder and keep to these rules.
 
 ```
 src/<id>/
-  devcontainer-feature.json   id, version, name, description, options, installsAfter, hooks
+  devcontainer-feature.json   id, version, name, description, options, installsAfter, devcontainer hooks
   install.sh                  the installer (bash, runs as root at image build)
   <name>.sh                   scripts the installer puts on PATH (as <name>, no extension)
   dcf-persist.sh              verbatim copy of src/common/dcf-persist.sh (task common:sync; lint checks it)
@@ -198,17 +198,17 @@ test/<id>/
   Feature it augments. Use `dependsOn` only for hard requirements. Both may
   only name Features that are already published: the CLI resolves every
   entry against the registry, and an unpublished one fails the build (so a
-  hook that needs another Feature's work done first, such as gh writing into
+  setup script that needs another Feature's work done first, such as gh writing into
   git's global config, makes itself sufficient instead of relying on order).
 - A Feature that must do something per container (make a mounted folder
   usable, mark a repo safe) declares `"postCreateCommand": "<id>-setup"`
-  and installs that script on PATH; the hook runs as the remote user from
+  and installs that script on PATH; the setup script runs as the remote user from
   the workspace folder, before the repo's own `postCreateCommand`. The same
   script is `task <id>:setup`. It is idempotent and never fatal: a problem
   is reported and the rest of post-create goes on. Features cannot set
   `remoteEnv`, only `containerEnv`; a repo's own `containerEnv` wins over
   the Feature's, which is how a repo points a tool elsewhere.
-- Helpers shared between Features live in `src/common/` and are vendored
+- Shared scripts live in `src/common/` and are vendored
   verbatim into each Feature that uses them (`task common:sync`): a
   published Feature folder must be self-contained, and `dependsOn` on a
   Feature of this collection cannot be resolved by `devcontainer features
@@ -354,7 +354,7 @@ You should not have to think about it:
 
 - `task repo:setup` activates the tracked [`.gitconfig`](.gitconfig) for
   your clone (`git config --local include.path ../.gitconfig`). That turns
-  on the repo hook `.githooks/prepare-commit-msg`, which adds the trailer to
+  on the git hook `.githooks/prepare-commit-msg`, which adds the trailer to
   every commit automatically, and defines `git cs` as `commit -s`. Only
   this clone's `.git/config` is touched, never your global git config.
 - VS Code's Source Control view signs off too
