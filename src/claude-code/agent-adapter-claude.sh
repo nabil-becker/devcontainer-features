@@ -600,7 +600,8 @@ case "$verb" in
     fi
     cd "$FOLDER" && exec claude --name "$NAME" "$@" ;;
   stop)
-    run="$(mine running)"
+    # running sessions, and finished ones whose process is still alive (listed stopped, with a pid)
+    run="$(mine | awk -F'\t' '$3 == "running" || ($3 == "stopped" && $7 + 0 > 0)')"
     [ -n "$run" ] || { echo "$NAME: not running"; exit 0; }
     if [ -n "$extras" ]; then targets="$(printf '%s\n' "$run" | tail -n +2)"
     else targets="$(printf '%s\n' "$run" | head -n 1)"; extras_note "$run"; fi

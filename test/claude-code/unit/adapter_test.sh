@@ -321,6 +321,9 @@ check 'stop --extras: the others, never the newest' "$T|stop|a1;" "$(calls)"
 table "a1|sess-a1|host|$repo|background|0|done|1000"
 out="$(ad stop host "$repo")"; rc=$?
 check 'stop when not running: exit 0, nothing called' "0:" "$rc:$(calls)"
+table "a1|sess-a1|host|$repo|background|201|done|1000"
+out="$(ad stop host "$repo")"; rc=$?
+check 'stop: a done session whose process is still alive is stopped by its id' "0:$T|stop|a1;" "$rc:$(calls)"
 
 table "a1|sess-a1|host|$repo|background|0|done|1000" "a2|sess-a2|host|$repo|background|201|-|500"
 out="$(ad logs host "$repo")"
