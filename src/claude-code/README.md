@@ -18,6 +18,7 @@ Claude Code (https://code.claude.com/docs) as a member of this collection's ecos
 | installTaskfile | Also install this Feature's Taskfile into /usr/local/share/go-task/includes.d so its tasks appear under the <id>: namespace of a root Taskfile that includes /usr/local/share/go-task/features.yml (see the go-task Feature). | boolean | true |
 | install | How the claude binary gets there. 'auto': keep a claude already in the image (official Feature, base image) and only add the ecosystem pieces, else install the native binary. 'native': always install the verified native binary at /usr/local/bin/claude (wins over an npm install on PATH). 'none': never install the binary, only the pieces. | string | auto |
 | additionalDirectories | Comma-separated folders every Claude session in the container may read and edit besides the one it starts in (Claude Code's permissions.additionalDirectories), written at build time to the managed-settings drop-in /etc/claude-code/managed-settings.d/50-devcontainer-features-claude-code.json, so no wrapper adding --add-dir is needed and the user's own settings are not touched. Absolute paths, or ~/... for the remote user's home (expanded at build time); a relative path fails the build. Empty: nothing is written. File access only: unlike --add-dir, a folder listed here does not load its CLAUDE.md, skills or other .claude/ configuration. | string | - |
+| remoteControl | Start every Claude agent the agents Feature runs with Remote Control on (--remote-control), so agents.yml need not repeat it in each agent's args. Applied by agent-adapter-claude to the sessions it starts or wakes, unless an agent's args already have --remote-control or --no-remote-control (the adapter's own per-agent opt-out). Per run: AGENT_ADAPTER_CLAUDE_REMOTE_CONTROL=0 or 1. | boolean | false |
 | version | Native binary version to install (e.g. '2.1.286'), or a release channel: 'stable' or 'latest'. Ignored when an existing claude is kept (install=auto) or install=none. | string | stable |
 
 ## Customizations
@@ -25,6 +26,22 @@ Claude Code (https://code.claude.com/docs) as a member of this collection's ecos
 ### VS Code Extensions
 
 - `anthropic.claude-code`
+
+## Changes in 1.8.8
+
+- **`remoteControl` option: Remote Control on for every agent.** `"remoteControl": true` makes the CLI adapter
+  (`agent-adapter-claude`) add `--remote-control` to every session it starts (`start-bg`, `new`) and to a wake that
+  starts it again, so `agents.yml` need not repeat `args: [--remote-control]` per agent. Default `false`: nothing
+  changes. The option is baked into `/usr/local/share/claude-code/remote-control`;
+  `AGENT_ADAPTER_CLAUDE_REMOTE_CONTROL=0` or `1` overrides it for one run
+  (`AGENT_ADAPTER_CLAUDE_REMOTE_CONTROL_FILE` moves the file, for tests).
+- **Per agent.** An agent whose args already have `--remote-control` is not given a second one. Claude Code has no
+  off flag, so `--no-remote-control` in an agent's `args` is the CLI adapter's own opt-out: the adapter removes it
+  and adds nothing (it is never passed to `claude`).
+- **Wake.** Claude Code's saved options are documented only as `--name`, `--settings`, `--agent`, `--model`; whether
+  it saves `--remote-control` was not checked in a real session. The bare-wake comparison therefore ignores
+  `--remote-control` on both sides, so turning the option on does not make every wake a copy. If Claude Code does
+  not save it, a bare wake brings the session back without Remote Control: to be checked on the workstation.
 
 ## Changes in 1.8.5
 

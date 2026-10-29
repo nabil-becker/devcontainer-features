@@ -3,7 +3,7 @@
 # pieces that make it part of this collection's ecosystem: agent-adapter-claude (the agents
 # Feature's adapter), the deprecated claude-host launcher and claude-fleet command, the post-create
 # setup of CLAUDE_CONFIG_DIR, and the Feature Taskfile. Feature options arrive as upper-cased environment variables (see
-# devcontainer-feature.json): INSTALL, VERSION, ADDITIONALDIRECTORIES, INSTALLTASKFILE.
+# devcontainer-feature.json): INSTALL, VERSION, ADDITIONALDIRECTORIES, REMOTECONTROL, INSTALLTASKFILE.
 #
 # State: devcontainer-feature.json points CLAUDE_CONFIG_DIR at
 # /var/lib/devcontainer-features/claude-code and mounts a named volume there,
@@ -168,6 +168,15 @@ if [ -z "$remote_home" ] && [ -n "${_REMOTE_USER:-}" ]; then
   remote_home="$(getent passwd "$_REMOTE_USER" 2>/dev/null | cut -d: -f6 || true)"
 fi
 bash "$feature_dir/claude-additional-dirs.sh" "${ADDITIONALDIRECTORIES:-}" "$remote_home"
+
+# ------------------------------------------------------- remote control ----
+# The remoteControl option is a file agent-adapter-claude reads at run time (1 or nothing).
+mkdir -p /usr/local/share/claude-code
+if [ "${REMOTECONTROL:-false}" = "true" ]; then
+  echo 1 > /usr/local/share/claude-code/remote-control
+else
+  rm -f /usr/local/share/claude-code/remote-control
+fi
 
 # ---------------------------------------------------- Feature Taskfile ----
 # Drop this Feature's taskfile.yml where the go-task Feature's registry picks
