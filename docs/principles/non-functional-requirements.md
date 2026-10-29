@@ -1,6 +1,6 @@
 # Non-functional requirements for Features
 
-Status: accepted by the Operator 2026-10-19 as the Feature principles FP-1 to FP-10; renamed non-functional requirements NFR-1 to NFR-10 on 2026-10-20 (same content and order); binding (ADR 0011). NFR-11 added 2026-10-29 (ADR 0035). Every work item that touches a Feature must meet them, or record a backlog item or a written exception in the Feature's NOTES; a failing requirement does not block a release. The proposal and its reasoning stay in `docs/proposals/feature-principles.md`, under the old FP ids.
+Status: accepted by the Operator 2026-10-19 as the Feature principles FP-1 to FP-10; renamed non-functional requirements NFR-1 to NFR-10 on 2026-10-20 (same content and order); binding (ADR 0011). NFR-11 added 2026-10-29 (ADR 0035). NFR-12 added 2026-10-29. Every work item that touches a Feature must meet them, or record a backlog item or a written exception in the Feature's NOTES; a failing requirement does not block a release. The proposal and its reasoning stay in `docs/proposals/feature-principles.md`, under the old FP ids.
 
 These are the requirements every Feature in this collection meets. Today they are implicit, spread over README, CONTRIBUTING and the code. They are what sets these Features apart from other Features for the same tool: this collection has its own Claude Code Feature because the others do not meet them.
 
@@ -8,7 +8,7 @@ They are checked, not aspirational. Each rule names how it is checked and whethe
 
 ## The principles at a glance
 
-Eleven requirements, grouped by the question each one answers.
+Twelve requirements, grouped by the question each one answers.
 
 ```mermaid
 flowchart LR
@@ -25,6 +25,7 @@ flowchart LR
     nfr6["NFR-6 one-way-to-configure"]
     nfr7["NFR-7 agent-ready"]
     nfr11["NFR-11 linter-cli-contract"]
+    nfr12["NFR-12 vendor-neutral-contracts"]
   end
   subgraph told["How it is explained"]
     nfr8["NFR-8 documented-to-the-standard"]
@@ -139,6 +140,14 @@ A Feature that ships its own check or transform tool MUST give it the linter CLI
 - **Checked by:** a test of the exit codes and of `-`, plus review for git knowledge. Partly automatable.
 - **Today:** phi-check is the first such tool (1.0.0, 2026-10-29). Features that install a third-party tool are out of scope: the contract is that tool's own.
 
+### NFR-12 vendor-neutral-contracts
+A contract this repository defines for agent CLIs (the adapter verbs, the agents list schema, the integration contract) MUST be met by at least two vendors' CLIs, or name its fallback (exit 3 and what the caller does instead); a design is checked against the capability matrix (`docs/proposals/agents-v2.md` section 14) before it is accepted.
+
+- **Why:** a contract written around one CLI's quirks (Claude's supervisor, its settings file, its list) leaves every consumer on another CLI with a wrapper to script around.
+- **Source:** the Operator, 2026-10-29; agents-v2 section 14.
+- **Checked by:** the contract tests against two fake adapters with different capabilities; review against the matrix. Partly automatable.
+- **Today:** one adapter, Claude; Copilot next.
+
 Where each requirement is checked, from each "Checked by" line: how far the check can be automated.
 
 ```mermaid
@@ -156,6 +165,7 @@ flowchart LR
     c8["NFR-8 docs standard; lint for headings and task names"]
     c9["NFR-9 review; a heading check is automatable"]
     c11["NFR-11 test of exit codes and stdin; review"]
+    c12["NFR-12 contract tests against two fake adapters; review against the matrix"]
   end
   subgraph review["Mostly review"]
     c4["NFR-4 review"]
@@ -184,6 +194,7 @@ flowchart LR
   subgraph newrule["New rule"]
     t7["NFR-7: interactive used in 8 Features;<br/>machine-readable output not written yet"]
     t11["NFR-11: phi-check, the first (2026-10-29)"]
+    t12["NFR-12: one adapter, Claude; Copilot next"]
   end
 ```
 

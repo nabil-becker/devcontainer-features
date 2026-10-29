@@ -40,6 +40,13 @@ The picture shows the one rule that keeps the layers apart: the Feature reads th
 
 - **Version 2.0.0, option b.** The lease is exclusive for **every** stateful agent, including lists with no integrations. A duplicate start joins or refuses instead of being reported. That changes behaviour for existing lists, so it is a major version, and section 12 is the written upgrade path for 1.x lists.
 
+- **Vendor-neutral contracts (2026-10-29, from section 14).**
+  1. Section 7.1 no longer says the settings file is the only route: each adapter picks its own route for the `env` output (Claude Code: a settings file, since its sessions run under a supervisor; CLIs whose session is a child process: the environment). Claude's facts stay as the Claude adapter's mapping. Refusal and error texts say "adapter", not "claude-code release".
+  2. Two new optional adapter verbs, answered with exit 3 when not supported: `trust <folder>` and `run-once` (section 7.1).
+  3. An agents-owned detached carrier (`process:<pid>`) is deferred. Adapters without a native background mode serve on-demand and ephemeral agents only; the lease's liveness check uses the adapter's list when it has one and otherwise the agents Feature's own record. Revisit when a consumer needs a resident agent on another CLI.
+  4. GitHub Copilot CLI is the second adapter, on-demand and ephemeral first (section 12, slice 6).
+  5. New requirement NFR-12 `vendor-neutral-contracts` in `docs/principles/non-functional-requirements.md`.
+
 ### Recommended by the host (the Operator has seen these four; they rule on the proposal as a whole)
 
 1. **`lifecycle` is a new key, not a third `kind` value.** `kind` says when it runs (`resident` at container start and kept, `on-demand` when asked); `lifecycle` says what it keeps (`stateful`: an identity, a lease and records; `ephemeral`: nothing, discarded). The two are independent, so a third `kind` would multiply values (`resident-stateful`, ...) and break every 1.x list that reads `kind`. `ephemeral` with `resident` is refused (section 5). A list without `lifecycle` reads as `stateful`, which is what a 1.x agent already was in practice: one named agent with a conversation.
@@ -277,7 +284,7 @@ The CLI contract is unchanged (verbs, arguments, exit codes, the fallbacks). Two
 | `AGENTS_DEFINITION` | the list's `definition`, empty when none |
 | `AGENTS_ENV_FILE` | path of the merged `KEY=VALUE` file, empty when there is none |
 
-`agent-adapter-<cli> supports` may print two more lines, `definition` and `env`, which are capabilities, not verbs. `agents` asks before a start. **If the list sets `definition`, or an integration produced env, and the adapter does not list the capability, the start is refused (exit 2) naming the claude-code release that adds it.** The alternative, starting a stateful agent without its identity variable, writes under the wrong identity, and a loud refusal is cheaper. A 1.x-shaped list needs neither, so the 1.8.x adapter keeps working with agents 2.0.0.
+`agent-adapter-<cli> supports` may print two more lines, `definition` and `env`, which are capabilities, not verbs. `agents` asks before a start. **If the list sets `definition`, or an integration produced env, and the adapter does not list the capability, the start is refused (exit 2) naming the adapter (and the release that adds it).** The alternative, starting a stateful agent without its identity variable, writes under the wrong identity, and a loud refusal is cheaper. A 1.x-shaped list needs neither, so the 1.8.x adapter keeps working with agents 2.0.0.
 
 **The Claude Code adapter** (claude-code 1.9.0) does the CLI-specific part:
 
@@ -286,11 +293,20 @@ The CLI contract is unchanged (verbs, arguments, exit codes, the fallbacks). Two
 | `AGENTS_DEFINITION=tooling` | `--agent tooling`, placed before the list's `args` | Passed by `start-bg`, `new`, `wake` and `resume` alike. Refused when `args` already holds `--agent` (the list check already does). |
 | `AGENTS_ENV_FILE` | the adapter writes `<state>/settings/<agent>.json` (`{"env":{"K":"V",...}}`, mode 600, JSON-escaped by the adapter, no jq) and passes `--settings <that path>` | Settings `env` is how Claude Code exports variables to a session's tools, hooks and MCP servers. The path is stable per agent, so the flag is identical between runs. |
 
-Why a settings file and not the process environment: a background session is started by Claude Code's supervisor, not by the `claude --bg` client, so the client's environment does not reach the session (checked); a settings file is a documented route and `--bg` keeps its flags. The client's environment does not reach the session (checked, section 13), so the settings file is the only route.
+**Each adapter picks its own route for the `env` output; the contract does not name one.** Claude Code uses a settings file because its background sessions are started by a supervisor, not by the `claude --bg` client, so the client's environment does not reach the session (checked, section 13); a settings file is a documented route and `--bg` keeps its flags. A CLI whose session is a child process of the adapter's call (Copilot, Codex, Gemini, OpenCode in 14.1) uses the environment: the adapter exports the variables from `AGENTS_ENV_FILE` into the CLI's process (and adds whatever the CLI needs to let them through, such as Codex's `shell_environment_policy`). The Claude facts above and below are the Claude adapter's mapping, not the contract.
 
 How this fits the adapter's saved-options rule: Claude Code puts back the options a background session was started with (`respawnFlags`) on a bare `wake`, and the adapter wakes bare only when those equal what `start-bg` passes. `want_flags` therefore has to include `--agent <definition>` and `--settings <path>` in the same order as a start. Because the path is stable, a bare wake re-reads the **current** file, which the adapter rewrites from the env file before every wake; so a changed identity reaches a woken session. A session started under 1.x with its `--settings` JSON in `args` has different saved options, so its first wake after the move to `definition` falls to the existing "wake with the agent's options, which may start a copy" path, said on stderr; `agents stop --extras` removes the copy. Claude Code does not merge two `--settings` flags (the last wins, section 13), so the list check refuses a `--settings` in `args` when `integrations` is set.
 
 All of this stays in `agent-adapter-claude`. `agents` never writes a Claude flag, and another CLI's adapter maps the same two inputs its own way (a different CLI has its own profile and environment mechanism).
+
+**Two optional verbs** (decided 2026-10-29; each answers exit 3 when the adapter does not support it, and `supports` lists them):
+
+| Verb | Meaning | Fallback on exit 3 |
+| --- | --- | --- |
+| `trust <folder>` | pre-approve a folder for unattended starts, each CLI its own way (Claude Code: its trust acceptance; Copilot: `trustedFolders` or `--trust-folder`; Codex: `trust_level`; Gemini: `GEMINI_CLI_TRUST_WORKSPACE`). `agents` never writes another vendor's trust file. | `agents check` names the folder as untrusted and the start refuses as today, saying the folder must be trusted by hand |
+| `run-once` | a non-interactive one-shot run (prompt in, exit when done), for ephemeral agents (`-p`, `exec`, `run`) | an ephemeral `--bg` start calls `start-bg`; an adapter with neither serves no ephemeral background run |
+
+**Carriers and liveness without a native background mode** (decided 2026-10-29). An agents-owned detached carrier (`process:<pid>`, 14.3 point 2) is deferred. An adapter with no native background mode (`start-bg` answers 3) serves **on-demand and ephemeral agents only**, and `check` refuses `kind: resident` for it. The lease's liveness check uses the adapter's list when it has one and otherwise the agents Feature's own record. Revisit when a consumer needs a resident agent on another CLI.
 
 ## 8. Join or refuse, and what the container start does
 
@@ -367,6 +383,8 @@ It does **not** absorb: what wakes a worker (backlog, schedule or events: the fr
 | 3 | The Claude Code adapter: `definition` to `--agent`, env to the settings file and `--settings`, `want_flags` and the bare wake, `supports` lines | claude-code **1.9.0** (adapter only; additive) | `adapter_test.sh` with the fake `claude` |
 | 4 | `--bg` for ephemeral agents, `stop --all`, `reset` sweeping stale leases of listed agents | agents **2.2.0** | the `--bg` and ephemeral-stop cases |
 | 5 | Consumers: the framework writes its two integrations against slice 2 and moves its list (drops its `--settings` args); this repository and DSNP and the office read `docs/migrations/agents.md` | none here | the framework's own |
+
+| 6 | The second adapter, GitHub Copilot CLI (`agent-adapter-copilot`), in its own CLI Feature (`copilot-cli`, name to settle), as slice 5 of the 1.x proposal put an adapter in the CLI's Feature: `new`, `resume`, `supports` (`definition`, `env`, `trust`, `run-once`), one-shot; exit 3 for every resident verb; first a check on the real CLI of the undocumented cells (shell env, `-p` trust) | new Feature, first release | the contract tests against two fake adapters with different capabilities (NFR-12), `adapter_test.sh` with a fake `copilot` |
 
 Slice 1 is the release the Operator decided (2.0.0); slices 2 to 4 are minors of 2.x, so a repository can take the lease alone. No devcontainer-cli change: `task devcontainer:agent` passes the flags through (`-- --bg`, `-- --deep`); a host-side task for `agents:leases` is a later minor if the Operator wants one. A release is due after slice 3, which the Operator starts; the framework cannot name the Feature until it is published.
 
