@@ -84,3 +84,4 @@ numbering and a row below.
 | [0033](0033-the-agent-adapter-remembers-the-session-id-and-a-reset-never-deletes-by-default.md) | The agent adapter remembers the session id, and a reset never deletes by default | accepted | 2026-10-28 |
 | [0034](0034-every-build-time-download-goes-through-the-vendored-dcf-curl-and-a-lint-check-enforces-it.md) | Every build-time download goes through the vendored `dcf_curl`, and a lint check enforces it | accepted | 2026-10-28 |
 | [0035](0035-a-feature-that-ships-a-check-or-transform-tool-gives-it-the-linter-cli-contract.md) | A Feature that ships a check or transform tool gives it the linter CLI contract | accepted | 2026-10-29 |
+| [0036](0036-a-stateful-agent-holds-an-exclusive-lease-and-integrations-plug-in-through-agent-integration-executables.md) | A stateful agent holds an exclusive lease, and integrations plug in through `agent-integration-<id>` executables | accepted | 2026-10-29 |
