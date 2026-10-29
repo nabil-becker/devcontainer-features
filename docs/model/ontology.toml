@@ -285,6 +285,11 @@ type = "product"
 term = "Feature"
 summary = "A Dev Container Feature in `src/<id>`: the deliverable of this repository, installed by a devcontainer."
 
+[linter-cli-contract]
+type = "product"
+term = "Linter CLI contract"
+summary = "The shape a Feature's own check or transform tool takes: paths and `-`, `path:line: rule` and `--format`, exits 0/1/2, exceptions in a file, no knowledge of git or hooks (NFR-11, ADR 0035)."
+
 [consuming-repo]
 type = "product"
 term = "Consuming repo"
