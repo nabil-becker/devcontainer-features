@@ -11,6 +11,14 @@
   `"version": "24"` instead of its moving `lts` default, which broke builds when Node 26.13.0
   became LTS. Documentation only; the Feature itself is unchanged.
 
+## Changes in 1.8.6
+
+- **A wake whose session is gone starts the agent fresh.** When `claude --bg --resume <session id>` fails
+  because the session no longer exists (the job's `state.json` says `detail: source session <id> not found`, or
+  claude printed it), `wake` (and `attach` of an ended session) starts the agent as `start-bg` does, with
+  `--name <name>` and its args, records it and prints its id; stderr says `session <id> is gone; started
+  fresh.` Any other wake failure still fails. Reported by a consumer whose resident stayed failed after a restart.
+
 ## Changes in 1.8.3
 
 - **A woken agent runs with its options from `agents.yml`, and keeps its name.** Claude Code puts a background
@@ -59,7 +67,7 @@ else should. The contract (verbs, exit codes) is in the `agents` Feature's notes
 | Verb | What it runs |
 | --- | --- |
 | `start-bg` | `cd <folder> && claude --bg --name <name> <args>`; waits until the session is listed and prints its id |
-| `wake` | the agent's newest stopped or failed session, by its full id: `cd <folder> && claude --bg --resume <session id>` (the same id and conversation; Claude Code 2.1.308 says `woke session ... with its saved options (--name, ...)`) when its saved options are `--name <name> <args>`; otherwise `... --resume <session id> --name <name> <args>`, which Claude Code starts as a copy with those options (1.8.3) |
+| `wake` | the agent's newest stopped or failed session, by its full id: `cd <folder> && claude --bg --resume <session id>` (the same id and conversation; Claude Code 2.1.308 says `woke session ... with its saved options (--name, ...)`) when its saved options are `--name <name> <args>`; otherwise `... --resume <session id> --name <name> <args>`, which Claude Code starts as a copy with those options (1.8.3). If the session is gone (`source session <id> not found`), the agent is started fresh as `start-bg` does, and stderr says so (1.8.6) |
 | `attach` | `claude attach <id>` of its newest running session; an interactive one is refused with the pid and tty of the terminal that holds it. With none running, `claude attach <id>` of its newest ended one when its saved options are the agent's (Claude Code restarts it with them), else it is woken as `wake` does and then attached (1.8.3) |
 | `resume` | `cd <folder> && claude --resume <session id> <args>` of its newest session; refused while that session runs (a second process on one transcript). When the list cannot be read: `claude --resume <args>`, Claude Code's own picker (1.8.0) |
 | `new` | `cd <folder> && claude --name <name> <args>` |

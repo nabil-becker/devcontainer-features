@@ -1,0 +1,30 @@
+{
+  "id": "phi-check",
+  "version": "1.0.0",
+  "name": "phi-check (refuse files that hold PHI)",
+  "description": "A linter-style command, `phi-check <path>...`, that refuses files holding protected health information: US Social Security numbers, Medicare Beneficiary Identifiers, X12, HL7 v2 and FHIR Patient data on sight, and a record id or date of birth next to a diagnosis, a name label or another id. It never prints the matched text, knows nothing of git or hooks (the repository wires it into pre-commit, a hook or CI), and fails closed (binary, missing and unreadable files are findings). Python 3 standard library only, nothing downloaded: Python comes through dependsOn on ghcr.io/devcontainers/features/python (os-provided, no tools). The patterns are one importable module, /usr/local/share/phi-check/phi_patterns.py, for other guards. Plus the Feature Taskfile.",
+  "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/phi-check",
+  "licenseURL": "https://github.com/nabil-becker/devcontainer-features/blob/main/LICENSE",
+  "options": {
+    "installTaskfile": {
+      "type": "boolean",
+      "default": true,
+      "description": "Also install this Feature's Taskfile into /usr/local/share/go-task/includes.d so its tasks appear under the <id>: namespace of a root Taskfile that includes /usr/local/share/go-task/features.yml (see the go-task Feature)."
+    },
+    "exceptions": {
+      "type": "string",
+      "default": ".phi-exceptions.txt",
+      "description": "The exceptions file phi-check reads when --exceptions is not given: one line per file, `<path> <YYYY-MM-DD> <why>`, for synthetic fixtures. Resolved against the current folder (or --cwd), so a bare name means the repository root when the tool runs from there. A missing default file is fine. Override per container with PHI_CHECK_EXCEPTIONS in containerEnv."
+    }
+  },
+  "dependsOn": {
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "os-provided",
+      "installTools": false
+    }
+  },
+  "installsAfter": [
+    "ghcr.io/nabil-becker/devcontainer-features/go-task",
+    "ghcr.io/devcontainers/features/common-utils"
+  ]
+}

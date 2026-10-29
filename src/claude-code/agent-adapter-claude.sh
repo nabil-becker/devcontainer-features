@@ -360,20 +360,48 @@ bare_ok() {
   return 1
 }
 
+# session_gone <session id> <claude output>: 0 when the resume failed because the session is gone:
+# what claude printed, or the state.json detail of any job (the failed resume may run under a new
+# short id), says `source session <id> not found` for this session. Any other failure returns 1.
+session_gone() {
+  local f
+  case "$2" in *"source session $1 not found"* | *"source session "*" not found"*) return 0 ;; esac
+  [ -n "$1" ] || return 1
+  for f in "$(jobs_dir)"/*/state.json; do
+    [ -r "$f" ] || continue
+    tr -d '\n\r' < "$f" | grep -qF "source session $1 not found" && return 0
+  done
+  return 1
+}
+
 # wake_session <session line> <args...>: wake that ended session in the background, bare when
 # bare_ok, else with --name <name> <args> (said on stderr); wait until it runs, record it and
-# print its session id (the copy's, when Claude Code started one).
+# print its session id (the copy's, when Claude Code started one). When the resume fails because
+# the session is gone (session_gone), start the agent fresh as start-bg does and say so; any
+# other failure fails.
 wake_session() {
-  local s="$1" sid short before WHY=''; shift
+  local s="$1" sid short before WHY='' out rc=0 got; shift
   sid="$(col "$s" 2)" short="$(col "$s" 5)"
   before="$(printf '%s\n' "$ALL" | cut -f2 | tr '\n' ' ')"
   if bare_ok "$short" "$@"; then
-    (cd "$FOLDER" && claude --bg --resume "$sid" </dev/null >&2) || die 1 "$NAME: 'claude --bg --resume' failed."
+    out="$(cd "$FOLDER" && claude --bg --resume "$sid" </dev/null 2>&1)" || rc=$?
   else
     note "$NAME: $WHY; waking it with the agent's options (--name and its args from the list), which Claude Code may start as a copy under a new id."
-    (cd "$FOLDER" && claude --bg --resume "$sid" --name "$NAME" "$@" </dev/null >&2) || die 1 "$NAME: 'claude --bg --resume' failed."
+    out="$(cd "$FOLDER" && claude --bg --resume "$sid" --name "$NAME" "$@" </dev/null 2>&1)" || rc=$?
   fi
-  wait_running "$before" "$sid"
+  [ -z "$out" ] || printf '%s\n' "$out" >&2
+  got=''
+  if [ "$rc" -eq 0 ]; then
+    got="$(wait_running "$before" "$sid")"
+    [ -z "$got" ] || { printf '%s\n' "$got"; return 0; }
+  fi
+  if session_gone "$sid" "$out"; then
+    note "$NAME: session $sid is gone; started fresh."
+    (cd "$FOLDER" && claude --bg --name "$NAME" "$@" </dev/null >&2) || die 1 "$NAME: session $sid is gone and 'claude --bg' failed."
+    wait_running "$before"; return 0
+  fi
+  [ "$rc" -eq 0 ] || die 1 "$NAME: 'claude --bg --resume' failed."
+  return 0
 }
 
 extras_note() { # extras_note <running lines>

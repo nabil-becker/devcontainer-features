@@ -1,0 +1,18 @@
+# Tasks contributed by the phi-check Feature (namespace: phi-check).
+version: '3'
+
+tasks:
+  version:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Show which phi-check runs and its version (updates come from rebuilding).'
+    cmds:
+      - command -v phi-check
+      - phi-check --version
+
+  check:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Refuse files that hold PHI: task phi-check:check FILE=<file or folder>. Prints path:line: rule, never the matched text; exit 0 clean, 1 findings, 2 usage error. Options after --, e.g. -- --format json, --no-exceptions.'
+    requires:
+      vars: [FILE]
+    cmds:
+      - phi-check {{.CLI_ARGS}} -- {{shellQuote .FILE}}
