@@ -73,5 +73,28 @@
       }
     },
     "remoteUser": "vscode"
+  },
+  "mount_fuse": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "go-task": {},
+      "cloud-folder": {
+        "mode": "mount",
+        "mountPoint": "/mnt/shared-live"
+      }
+    },
+    "runArgs": [
+      "--device=/dev/fuse",
+      "--cap-add=SYS_ADMIN",
+      "--security-opt=apparmor=unconfined"
+    ],
+    "remoteUser": "vscode"
+  },
+  "auto_no_fuse": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "cloud-folder": {}
+    },
+    "remoteUser": "vscode"
   }
 }

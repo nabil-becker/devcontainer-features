@@ -2,11 +2,13 @@
 # cloud-folder-setup: the cloud-folder Feature's postStartCommand (a host folder is mounted, or
 # not, per start; the sync timer is started per start), also behind every `task cloud-folder:*`.
 #
-#   cloud-folder-setup                 post-start: make the state volume usable, report on the
-#                                      folder, start the sync timer in sync mode (never fatal)
+#   cloud-folder-setup                 post-start: make the state volume usable, start the rclone
+#                                      mount in mount mode, report on the folder, start the sync
+#                                      timer in sync mode (never fatal)
 #   cloud-folder-setup status [--json] the report; exit 0 when the folder is usable, 1 when not
 #                                      (host: missing, not mounted, not writable; sync: no
-#                                      remote, never synced, last sync failed, not writable; or
+#                                      remote, never synced, last sync failed, not writable;
+#                                      mount: no remote, no FUSE, not mounted, uploads failed; or
 #                                      a mode this version does not know). --json: one object.
 #   cloud-folder-setup version         the Feature version, the mode, the mount point, rclone
 #   cloud-folder-setup login           sign in (interactive: a token pasted from `rclone
@@ -16,8 +18,14 @@
 #   cloud-folder-setup sync [--resync] [--force]
 #                                      one `rclone bisync` between the remote and the folder
 #                                      (the first run of a folder is a --resync on its own)
-#   cloud-folder-setup start | stop    the sync timer (one supervised loop, PID file in the
-#                                      volume; start is idempotent, stop waits for a running sync)
+#   cloud-folder-setup start | stop    sync mode: the sync timer (one supervised loop, PID file in
+#                                      the volume; start is idempotent, stop waits for a running
+#                                      sync). mount mode: the rclone mount (stop = unmount)
+#   cloud-folder-setup unmount [--force]
+#                                      mount mode: unmount once the VFS upload queue is empty
+#                                      (waits up to CLOUD_FOLDER_STOP_WAIT seconds); --force
+#                                      unmounts anyway (queued files upload at the next mount)
+#   cloud-folder-setup fuse-check      whether FUSE is usable here, and why not: exit 0 or 1
 #   cloud-folder-setup run             the timer loop itself (start runs it detached)
 #   cloud-folder-setup shutdown-check [SECONDS]
 #                                      for a repository's shutdown:check: exit 1 while a sync
@@ -27,7 +35,8 @@
 #                                      install.sh, as root: make MOUNT_POINT a symbolic link to
 #                                      HOST_MOUNT (nothing when they are the same path)
 #   cloud-folder-setup folder MOUNT_POINT
-#                                      install.sh, as root, mode sync: make MOUNT_POINT a folder
+#                                      install.sh, as root, mode sync or mount: make MOUNT_POINT a
+#                                      folder
 #
 # Host mode: the devcontainer-cli launcher bind-mounts the host folder named by
 # DCF_HOST_CLOUD_FOLDER at one fixed path, the host mount (/mnt/cloud-folder-host), and
@@ -42,13 +51,24 @@
 # Feature's volume (STATE_DIR), never in the workspace or the image; the token is never put on a
 # command line and never printed. rclone reads it from the config file (RCLONE_CONFIG).
 #
+# Mount mode: `rclone mount` of the remote on the folder the mount point leads to, with a VFS
+# cache of mode writes in the volume and rclone's remote control (--rc) on localhost only, with no
+# credentials, so only its read-only methods answer; status asks vfs/stats for the upload queue.
+# It needs FUSE, which only the launcher grants (DCF_HOST_FUSE=1, ADR 0031): /dev/fuse usable,
+# CAP_SYS_ADMIN in the bounding set, no AppArmor profile that denies mount, and fusermount3. auto
+# takes host, then mount, then sync (proposal section 10, decision 2).
+#
 # Nothing is written into the folder by a status: writability is the access check (test -w).
 # The sync writes one hidden marker there (.cloud-folder-bisync, excluded from the sync) that
 # tells a folder already synced from a new one (after a rebuild), which gets a --resync.
 # Test hooks (not options): DCF_CLOUD_FOLDER_MOUNTINFO names the mount table to read (default
 # /proc/self/mountinfo); DCF_CLOUD_FOLDER_HOST_MOUNT replaces the fixed host mount path;
 # DCF_CLOUD_FOLDER_STATE_DIR replaces the state volume's path; DCF_CLOUD_FOLDER_GRACE the
-# seconds a sync gets to stop gracefully (default 100).
+# seconds a sync gets to stop gracefully (default 100); DCF_CLOUD_FOLDER_FUSE_DEV,
+# DCF_CLOUD_FOLDER_PROC_STATUS, DCF_CLOUD_FOLDER_APPARMOR and DCF_CLOUD_FOLDER_FUSERMOUNT replace
+# /dev/fuse, /proc/self/status, /proc/self/attr/current and the fusermount names the FUSE check
+# reads; DCF_CLOUD_FOLDER_RC_ADDR the remote control's address (default 127.0.0.1:5572);
+# DCF_CLOUD_FOLDER_MOUNT_WAIT the seconds a mount gets to appear (default 15).
 set -u
 
 # Defaults baked by install.sh from the Feature options; CLOUD_FOLDER_* in the environment
@@ -69,6 +89,13 @@ sync_interval="${CLOUD_FOLDER_SYNC_INTERVAL:-${SYNCINTERVAL:-15m}}"
 rclone_version_option="${RCLONEVERSION:-}"
 state_dir="${DCF_CLOUD_FOLDER_STATE_DIR:-${STATE_DIR:-/var/lib/devcontainer-features/cloud-folder}}"
 grace="${DCF_CLOUD_FOLDER_GRACE:-100}"
+fuse_dev="${DCF_CLOUD_FOLDER_FUSE_DEV:-/dev/fuse}"
+proc_status="${DCF_CLOUD_FOLDER_PROC_STATUS:-/proc/self/status}"
+apparmor_attr="${DCF_CLOUD_FOLDER_APPARMOR:-/proc/self/attr/current}"
+fusermount_names="${DCF_CLOUD_FOLDER_FUSERMOUNT:-fusermount3 fusermount}"
+# Localhost only: rclone's remote control must never answer from outside the container.
+rc_addr="${DCF_CLOUD_FOLDER_RC_ADDR:-127.0.0.1:5572}"
+mount_wait="${DCF_CLOUD_FOLDER_MOUNT_WAIT:-15}"
 
 conf="$state_dir/rclone.conf"
 run_dir="$state_dir/run"
@@ -92,14 +119,25 @@ as_root() { # run a command as root: directly, or through passwordless sudo
 
 # is_mounted <path>: the path is the target of a mount. The mount table escapes space, tab,
 # newline and backslash as octal (\040, \011, \012, \134), so the path is encoded the same way.
-is_mounted() {
+mount_enc() {
   local enc="$1"
-  [ -r "$mountinfo" ] || return 1
   enc="${enc//\\/\\134}"
   enc="${enc// /\\040}"
   enc="${enc//$'\t'/\\011}"
   enc="${enc//$'\n'/\\012}"
-  CF_TARGET="$enc" awk '$5 == ENVIRON["CF_TARGET"] { found = 1 } END { exit !found }' "$mountinfo" 2>/dev/null
+  printf '%s' "$enc"
+}
+is_mounted() {
+  [ -r "$mountinfo" ] || return 1
+  CF_TARGET="$(mount_enc "$1")" awk '$5 == ENVIRON["CF_TARGET"] { found = 1 } END { exit !found }' "$mountinfo" 2>/dev/null
+}
+# mount_fstype <path>: the file system type of the last mount on the path (the one on top), from
+# the field after the separator "-" of its mountinfo line; empty when nothing is mounted there.
+# rclone's mount is fuse.rclone.
+mount_fstype() {
+  [ -r "$mountinfo" ] || return 0
+  CF_TARGET="$(mount_enc "$1")" awk '$5 == ENVIRON["CF_TARGET"] { t = ""; for (i = 7; i < NF; i++) if ($i == "-") { t = $(i + 1); break } }
+    END { print t }' "$mountinfo" 2>/dev/null
 }
 
 # real_path <path>: where the path leads, links followed (the last part need not exist).
@@ -146,7 +184,7 @@ make_folder() {
   if [ -n "${_REMOTE_USER:-}" ] && [ "${_REMOTE_USER}" != root ] && id -u "$_REMOTE_USER" >/dev/null 2>&1; then
     chown "$_REMOTE_USER:$(id -gn "$_REMOTE_USER")" "$mp" || return 1
   fi
-  say "mountPoint $mp is a folder, filled by the sync (it is handed to the remote user at start)"
+  say "mountPoint $mp is a folder, filled by the sync or the rclone mount (it is handed to the remote user at start)"
 }
 
 # ------------------------------------------------------------- processes ----
@@ -251,36 +289,135 @@ pending_count() {
   fi
 }
 
+# ------------------------------------------------------------------ FUSE ----
+# fuse_check: FUSE (yes | no), FUSE_WHY and FUSERMOUNT, from what the container was given: the
+# device (a character device this user can open for reading and writing; the device rules of the
+# engine refuse the open otherwise), CAP_SYS_ADMIN (bit 21) in the capability bounding set (what
+# the setuid fusermount3 needs to mount), an AppArmor profile that does not deny mount (Docker's
+# docker-default does), and fusermount3 (or fusermount) on PATH. Reads only; the device is opened
+# and closed. All four come from the launcher (DCF_HOST_FUSE=1) and the fuse3 package.
+fuse_check() {
+  local capbnd='' k v prof='' f
+  FUSE=no; FUSE_WHY=''; FUSERMOUNT=''
+  if [ ! -e "$fuse_dev" ]; then
+    FUSE_WHY="no $fuse_dev in the container (the launcher grants FUSE when the project sets DCF_HOST_FUSE=1)"; return 0
+  fi
+  if [ ! -c "$fuse_dev" ]; then FUSE_WHY="$fuse_dev is not a character device"; return 0; fi
+  if ! (exec 3<>"$fuse_dev") 2>/dev/null; then
+    FUSE_WHY="$fuse_dev cannot be opened for reading and writing (the engine's device rules deny it: --device=/dev/fuse)"; return 0
+  fi
+  if [ -r "$proc_status" ]; then
+    while read -r k v; do [ "$k" = CapBnd: ] && capbnd="$v"; done < "$proc_status"
+  fi
+  if [[ "$capbnd" =~ ^[0-9a-fA-F]{1,16}$ ]] && [ $(( (16#$capbnd >> 21) & 1 )) -eq 0 ]; then
+    FUSE_WHY="no CAP_SYS_ADMIN in the container's capability bounding set (--cap-add=SYS_ADMIN), which mounting needs"; return 0
+  fi
+  [ -r "$apparmor_attr" ] && read -r prof < "$apparmor_attr" 2>/dev/null
+  case "$prof" in
+    *-default*'(enforce)'*)
+      FUSE_WHY="the AppArmor profile ${prof%% *} denies mount (--security-opt=apparmor=unconfined)"; return 0 ;;
+  esac
+  for f in $fusermount_names; do
+    if command -v "$f" >/dev/null 2>&1; then FUSERMOUNT="$f"; break; fi
+  done
+  if [ -z "$FUSERMOUNT" ]; then
+    FUSE_WHY="no fusermount3 on PATH (the fuse3 package, which the Feature installs in mode auto and mount)"; return 0
+  fi
+  FUSE=yes; FUSE_WHY="$fuse_dev opens, CAP_SYS_ADMIN is in the bounding set, $FUSERMOUNT is on PATH"
+}
+
+# parse_vfs_stats: reads the reply of `rclone rc vfs/stats` (rclone's indented JSON) on stdin and
+# sets VFS_OK (yes when it is a vfs/stats reply), VFS_CACHE (off | minimal | writes | full, from
+# opt.CacheMode, a number in rclone 1.75 and a name in older releases), VFS_INPROG, VFS_QUEUED and
+# VFS_ERRORED (diskCache.uploadsInProgress, uploadsQueued and erroredFiles; empty when there is no
+# disk cache, which is cache mode off: no queue to read) and VFS_PENDING (in progress + queued).
+parse_vfs_stats() {
+  local out ok mode inprog queued errored
+  out="$(awk '
+    function num(s) { sub(/^[^:]*:[[:space:]]*/, "", s); gsub(/[^0-9]/, "", s); return s }
+    /^[[:space:]]*"fs"[[:space:]]*:/ { fs = 1 }
+    /^[[:space:]]*"uploadsInProgress"[[:space:]]*:/ { inprog = num($0) }
+    /^[[:space:]]*"uploadsQueued"[[:space:]]*:/ { queued = num($0) }
+    /^[[:space:]]*"erroredFiles"[[:space:]]*:/ { errored = num($0) }
+    /^[[:space:]]*"CacheMode"[[:space:]]*:/ { m = $0; sub(/^[^:]*:[[:space:]]*/, "", m); gsub(/[",[:space:]]/, "", m); mode = m }
+    END { printf "%d %s %s %s %s\n", fs, (mode == "" ? "-" : mode), (inprog == "" ? "-" : inprog), (queued == "" ? "-" : queued), (errored == "" ? "-" : errored) }')"
+  read -r ok mode inprog queued errored <<<"$out"
+  VFS_OK=no; VFS_CACHE=''; VFS_INPROG=''; VFS_QUEUED=''; VFS_ERRORED=''; VFS_PENDING=''
+  [ "${ok:-0}" = 1 ] || return 0
+  VFS_OK=yes
+  case "$mode" in 0) VFS_CACHE=off ;; 1) VFS_CACHE=minimal ;; 2) VFS_CACHE=writes ;; 3) VFS_CACHE=full ;; -) VFS_CACHE=unknown ;; *) VFS_CACHE="$mode" ;; esac
+  [ "$inprog" = - ] || VFS_INPROG="$inprog"
+  [ "$queued" = - ] || VFS_QUEUED="$queued"
+  [ "$errored" = - ] || VFS_ERRORED="$errored"
+  if [ -n "$VFS_INPROG" ] && [ -n "$VFS_QUEUED" ]; then VFS_PENDING=$((10#$VFS_INPROG + 10#$VFS_QUEUED)); fi
+}
+
+# vfs_query: ask the running mount's remote control for vfs/stats (no credentials: a read-only
+# method) and parse it. VFS_OK=no when it does not answer.
+vfs_query() {
+  local out
+  if out="$(timeout 10 rclone rc vfs/stats --url "http://$rc_addr/" 2>/dev/null)"; then
+    parse_vfs_stats <<<"$out"
+  else
+    parse_vfs_stats </dev/null
+  fi
+}
+
+# wait_uploads <seconds>: query until the upload queue is empty or the time is up; returns 0 when
+# it is empty, 1 when files are still pending, 2 when the queue cannot be read.
+wait_uploads() {
+  local max="$1" waited=0
+  while :; do
+    vfs_query
+    [ "$VFS_OK" = yes ] && [ -n "$VFS_PENDING" ] || return 2
+    [ "$VFS_PENDING" -eq 0 ] && return 0
+    [ "$waited" -ge "$max" ] && return 1
+    sleep 1; waited=$((waited + 1))
+  done
+}
+
+# mount_ours <pid>: alive and an `rclone mount` (the PID file may outlive its process).
+mount_ours() {
+  alive "${1:-}" || return 1
+  tr '\0' ' ' < "/proc/$1/cmdline" 2>/dev/null | grep -q 'rclone mount '
+}
+
 # ---------------------------------------------------------------- assess ----
-# resolve: sets the host facts (REAL, LINKED, PRESENT, MOUNTED, IS_DIR, EMPTY, WRITABLE) and the
-# mode: MODE_USED (host | sync | none) and WHY, or VERDICT=unknown-mode.
+# resolve: sets the host facts (REAL, LINKED, PRESENT, MOUNTED, RCLONE_MOUNTED, IS_DIR, EMPTY,
+# WRITABLE), the FUSE facts (fuse_check) and the mode: MODE_USED (host | mount | sync | none) and
+# WHY, or VERDICT=unknown-mode.
 resolve() {
-  PRESENT=no; MOUNTED=no; IS_DIR=no; EMPTY=unknown; WRITABLE=no; HINT=''; LINKED=no; VERDICT=''
+  PRESENT=no; MOUNTED=no; RCLONE_MOUNTED=no; IS_DIR=no; EMPTY=unknown; WRITABLE=no; HINT=''; LINKED=no; VERDICT=''
   REAL="$(real_path "$mount_point")"
   [ -L "$mount_point" ] && LINKED=yes
   [ -e "$mount_point" ] && PRESENT=yes
   [ -d "$mount_point" ] && IS_DIR=yes
   is_mounted "$REAL" && MOUNTED=yes
+  [ "$MOUNTED" = yes ] && [ "$(mount_fstype "$REAL")" = fuse.rclone ] && RCLONE_MOUNTED=yes
   if [ "$IS_DIR" = yes ] && [ -r "$mount_point" ] && [ -x "$mount_point" ]; then
     if [ -n "$(find -H "$mount_point" -mindepth 1 -maxdepth 1 ! -name "$marker_name" -print -quit 2>/dev/null)" ]; then EMPTY=no; else EMPTY=yes; fi
   fi
   [ "$IS_DIR" = yes ] && [ -w "$mount_point" ] && [ -x "$mount_point" ] && WRITABLE=yes
   conf_state
+  fuse_check
 
   case "$mode_option" in
-    host)
-      MODE_USED=host; WHY='set by the option or CLOUD_FOLDER_MODE' ;;
-    sync)
-      MODE_USED=sync; WHY='set by the option or CLOUD_FOLDER_MODE' ;;
+    host | sync | mount)
+      MODE_USED="$mode_option"; WHY='set by the option or CLOUD_FOLDER_MODE' ;;
     auto)
-      if [ "$MOUNTED" = yes ]; then MODE_USED=host; WHY="auto: something is mounted at $mount_point"
-      elif [ "$CONF" = ok ]; then MODE_USED=sync; WHY="auto: nothing is mounted at $mount_point, and a remote is configured"
-      else MODE_USED=none; WHY="auto: nothing is mounted at $mount_point, and no remote is configured"; fi ;;
-    mount)
-      MODE_USED=none; WHY="mode mount is not in this version of the Feature ($feature_version), which knows auto, host and sync; it comes later"
-      VERDICT=unknown-mode ;;
+      # host, then mount, then sync (decision 2). A folder that already holds a sync copy stays
+      # with sync: rclone would not mount over it, and its unsynced changes would be hidden.
+      if [ "$RCLONE_MOUNTED" = yes ]; then MODE_USED=mount; WHY="auto: rclone is mounted at $mount_point"
+      elif [ "$MOUNTED" = yes ]; then MODE_USED=host; WHY="auto: something is mounted at $mount_point"
+      elif [ "$CONF" != ok ]; then
+        MODE_USED=none; WHY="auto: nothing is mounted at $mount_point, and no remote is configured"
+        [ "$FUSE" = yes ] && WHY="$WHY (FUSE is usable, so a sign-in gives mount mode)"
+      elif [ "$FUSE" = yes ] && [ -f "$REAL/$marker_name" ]; then
+        MODE_USED=sync; WHY="auto: nothing is mounted at $mount_point and a remote is configured; FUSE is usable, but $REAL holds a sync copy, so sync stays (stop the timer, sync, empty the folder and run task cloud-folder:setup to move to mount)"
+      elif [ "$FUSE" = yes ]; then MODE_USED=mount; WHY="auto: nothing is mounted at $mount_point, a remote is configured and FUSE is usable"
+      else MODE_USED=sync; WHY="auto: nothing is mounted at $mount_point and a remote is configured; FUSE is not usable ($FUSE_WHY)"; fi ;;
     *)
-      MODE_USED=none; WHY="mode '$mode_option' is unknown (auto, host or sync)"
+      MODE_USED=none; WHY="mode '$mode_option' is unknown (auto, host, mount or sync)"
       VERDICT=unknown-mode ;;
   esac
 }
@@ -293,6 +430,7 @@ assess() {
   resolve
   [ "$VERDICT" = unknown-mode ] && return 0
   if [ "$MODE_USED" = sync ]; then assess_sync "${1:-}"; return 0; fi
+  if [ "$MODE_USED" = mount ]; then assess_mount "${1:-}"; return 0; fi
 
   if [ "$MOUNTED" = no ]; then
     if [ "$MODE_USED" = none ]; then VERDICT=no-source; else VERDICT=not-mounted; fi
@@ -326,8 +464,60 @@ assess() {
   VERDICT=ok
 }
 
+# check_reachable: REACHABLE yes | no (REACH_ERR) when a remote is configured and rclone is here.
+check_reachable() {
+  local err
+  [ "$CONF" = ok ] && [ "$RCLONE_OK" = yes ] || return 0
+  if err="$(timeout 30 env RCLONE_CONFIG="$conf" RCLONE_CACHE_DIR="$state_dir/cache" rclone lsjson --stat --contimeout 10s --timeout 15s --low-level-retries 1 --retries 1 "$remote" 2>&1 >/dev/null)"; then
+    REACHABLE=yes
+  else
+    REACHABLE=no; REACH_ERR="$(printf '%s\n' "$err" | grep -v '^[[:space:]]*$' | tail -n 1 | cut -c1-300)"
+  fi
+}
+
+# assess_mount [remote]: the verdict in mount mode (not-configured | no-rclone | no-fuse | mounting
+# | not-mounted | not-a-folder | unwritable | upload-errors | empty | ok). With "remote", the
+# remote is asked whether it answers; when rclone is mounted, vfs/stats is read.
+assess_mount() {
+  local p
+  MOUNT_PID=''; REACHABLE=unknown; REACH_ERR=''
+  parse_vfs_stats </dev/null
+  p="$(pid_of "$run_dir/mount.pid")"; mount_ours "$p" && MOUNT_PID="$p"
+  RCLONE_OK=no; command -v rclone >/dev/null 2>&1 && RCLONE_OK=yes
+  [ "${1:-}" = remote ] && check_reachable
+  [ "$RCLONE_MOUNTED" = yes ] && [ "$RCLONE_OK" = yes ] && vfs_query
+  case "$CONF" in
+    ok) ;;
+    unreadable) VERDICT=not-configured; HINT="$conf cannot be read by $(id -un 2>/dev/null || id -u): run task cloud-folder:setup (it hands the volume to this user)"; return 0 ;;
+    *) VERDICT=not-configured; HINT="no remote '$remote_name' with a sign-in in $conf: run task cloud-folder:login"; return 0 ;;
+  esac
+  if [ "$RCLONE_OK" = no ]; then VERDICT=no-rclone; HINT='rclone is not on PATH: rebuild with the Feature in mode auto or mount'; return 0; fi
+  if [ "$RCLONE_MOUNTED" = no ]; then
+    if [ "$MOUNTED" = yes ]; then
+      VERDICT=not-mounted; HINT="something other than rclone is mounted at $REAL (a host folder?): use mode host, or remove that mount"
+    elif [ "$FUSE" = no ]; then
+      VERDICT=no-fuse
+      HINT="$FUSE_WHY. Mount mode needs FUSE, which the launcher grants per machine: set DCF_HOST_FUSE=1 in .devcontainer/.env on the host (the repository's devcontainer.json needs the DCF_HOST_FUSE_* runArgs of the bootstrap template) and rebuild with task devcontainer:rebuild; or use mode sync, which needs nothing privileged"
+    elif [ -n "$MOUNT_PID" ]; then
+      VERDICT=mounting; HINT="rclone mount (pid $MOUNT_PID) is starting; log: $state_dir/mount.log"
+    elif [ "$IS_DIR" = yes ] && [ -n "$(find -H "$REAL" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
+      VERDICT=not-mounted; HINT="$REAL holds files (a sync copy?) and rclone will not mount over them: sync them, move them away, then task cloud-folder:start"
+    else
+      VERDICT=not-mounted; HINT="rclone is not mounted at $REAL: task cloud-folder:start mounts it (the post-start hook does at each start); log: $state_dir/mount.log"
+    fi
+    return 0
+  fi
+  if [ "$IS_DIR" = no ]; then VERDICT=not-a-folder; HINT="$mount_point does not lead to a folder"; return 0; fi
+  if [ "$WRITABLE" = no ]; then VERDICT=unwritable; HINT="$(id -un 2>/dev/null || id -u) cannot write to $mount_point: the mount was made by another user; task cloud-folder:stop, then task cloud-folder:start as this user"; return 0; fi
+  if [ -n "$VFS_ERRORED" ] && [ "$VFS_ERRORED" -gt 0 ]; then
+    VERDICT=upload-errors; HINT="$VFS_ERRORED file(s) failed to upload to the remote; they stay in the VFS cache ($state_dir/cache): read $state_dir/mount.log"; return 0
+  fi
+  if [ "$EMPTY" = yes ]; then VERDICT=empty; HINT="mounted, but the folder is empty: right for an empty remote folder; otherwise check remotePath"; return 0; fi
+  VERDICT=ok
+}
+
 assess_sync() {
-  local check_remote="${1:-}" p err
+  local check_remote="${1:-}" p
   read_record
   SYNC_PID=''; LOOP_PID=''; REACHABLE=unknown; REACH_ERR=''
   p="$(pid_of "$run_dir/sync.pid")"; ours "$p" && SYNC_PID="$p"
@@ -337,13 +527,7 @@ assess_sync() {
   PENDING="$(pending_count "$REAL")"
   NEEDS_RESYNC=no
   [ -n "$(find "$state_dir/bisync" -maxdepth 1 -name '*.lst-err' -print -quit 2>/dev/null)" ] && NEEDS_RESYNC=yes
-  if [ "$check_remote" = remote ] && [ "$CONF" = ok ] && [ "$RCLONE_OK" = yes ]; then
-    if err="$(timeout 30 env RCLONE_CONFIG="$conf" RCLONE_CACHE_DIR="$state_dir/cache" rclone lsjson --stat --contimeout 10s --timeout 15s --low-level-retries 1 --retries 1 "$remote" 2>&1 >/dev/null)"; then
-      REACHABLE=yes
-    else
-      REACHABLE=no; REACH_ERR="$(printf '%s\n' "$err" | grep -v '^[[:space:]]*$' | tail -n 1 | cut -c1-300)"
-    fi
-  fi
+  [ "$check_remote" = remote ] && check_reachable
 
   case "$CONF" in
     ok) ;;
@@ -404,6 +588,13 @@ print_json() {
       "$(json_bool "$([ -n "$SYNC_PID" ] && echo yes)")" "${SYNC_PID:-null}" "$(json_bool "$([ -n "$LOOP_PID" ] && echo yes)")" "${LOOP_PID:-null}" \
       "$(json_str "$sync_interval")" "${PENDING:-0}"
   fi
+  if [ "$MODE_USED" = mount ]; then
+    printf '"remote":%s,"remote_type":%s,"configured":%s,"auth":%s,"remote_reachable":%s,"rclone_mounted":%s,"mount_pid":%s,"rc_addr":%s,"rc_answers":%s,"cache_mode":%s,"uploads_in_progress":%s,"uploads_queued":%s,"uploads_pending":%s,"errored_files":%s,' \
+      "$(json_str "$remote")" "$(json_str "$remote_type")" "$(json_bool "$([ "$CONF" = ok ] && echo yes)")" "$(json_str "$CONF_AUTH")" \
+      "$(json_tri "$REACHABLE")" "$(json_bool "$RCLONE_MOUNTED")" "${MOUNT_PID:-null}" "$(json_str "$rc_addr")" "$(json_bool "$VFS_OK")" \
+      "$(if [ -n "$VFS_CACHE" ]; then json_str "$VFS_CACHE"; else printf null; fi)" "${VFS_INPROG:-null}" "${VFS_QUEUED:-null}" "${VFS_PENDING:-null}" "${VFS_ERRORED:-null}"
+  fi
+  printf '"fuse":%s,"fuse_why":%s,' "$(json_bool "$FUSE")" "$(json_str "$FUSE_WHY")"
   printf '"verdict":%s,"ok":%s,"hint":%s}\n' \
     "$(json_str "$VERDICT")" "$(if verdict_ok; then printf true; else printf false; fi)" "$(json_str "$HINT")"
 }
@@ -412,6 +603,7 @@ print_report() {
   local state
   say "mode $MODE_USED ($WHY)"
   if [ "$MODE_USED" = sync ]; then print_sync_report; return; fi
+  if [ "$MODE_USED" = mount ]; then print_mount_report; return; fi
   if [ "$MOUNTED" = yes ]; then state=mounted; elif [ "$PRESENT" = yes ]; then state='present, not mounted'; else state=missing; fi
   if [ "$LINKED" = yes ]; then say "mount point $mount_point -> $REAL: $state"
   else say "mount point $mount_point: $state"; fi
@@ -444,9 +636,39 @@ print_sync_report() {
   print_verdict
 }
 
+print_mount_report() {
+  local state auth reach q
+  case "$CONF_AUTH" in token) auth='signed in with a token' ;; client-credentials) auth='client credentials' ;; *) auth='no sign-in' ;; esac
+  case "$CONF" in ok) state="configured, $auth" ;; *) state="not configured ($CONF)" ;; esac
+  case "$REACHABLE" in yes) reach=reachable ;; no) reach="NOT reachable${REACH_ERR:+: $REACH_ERR}" ;; *) reach='reachability not checked' ;; esac
+  say "remote $remote (remoteType $remote_type${site_url:+, site $site_url}): $state; $reach"
+  if [ "$FUSE" = yes ]; then say "FUSE: usable ($FUSE_WHY)"; else say "FUSE: not usable ($FUSE_WHY)"; fi
+  if [ "$RCLONE_MOUNTED" = yes ]; then state="rclone mount${MOUNT_PID:+ (pid $MOUNT_PID)}"
+  elif [ -n "${MOUNT_PID:-}" ]; then state="rclone mount starting (pid $MOUNT_PID)"
+  else state='not mounted'; fi
+  if [ "$LINKED" = yes ]; then say "mount point $mount_point -> $REAL: $state"; else say "mount point $mount_point: $state"; fi
+  if [ "$RCLONE_MOUNTED" = yes ]; then
+    case "$EMPTY" in yes) state=empty ;; no) state='not empty' ;; *) state='cannot be listed' ;; esac
+    say "contents: $state; writable: $WRITABLE"
+    if [ "$VFS_OK" = yes ] && [ -n "$VFS_PENDING" ]; then
+      say "VFS cache ($VFS_CACHE): uploads in progress $VFS_INPROG, queued $VFS_QUEUED, failed ${VFS_ERRORED:-0}"
+    elif [ "$VFS_OK" = yes ]; then
+      say "VFS cache ($VFS_CACHE): no upload queue to read (cache mode off?): pending uploads unknown"
+    else
+      q="remote control on $rc_addr does not answer"
+      say "VFS cache: $q: pending uploads unknown"
+    fi
+  fi
+  print_verdict
+}
+
 print_verdict() {
   case "$VERDICT" in
-    ok) if [ "$MODE_USED" = sync ]; then say "ok: the folder is synced and writable"; else say "ok: the folder is mounted and writable"; fi ;;
+    ok) case "$MODE_USED" in
+          sync) say "ok: the folder is synced and writable" ;;
+          mount) say "ok: the remote is mounted and writable${VFS_PENDING:+ ($VFS_PENDING upload(s) pending)}" ;;
+          *) say "ok: the folder is mounted and writable" ;;
+        esac ;;
     empty) say "ok, but empty: ${HINT#*: }" ;;
     *) say "not usable ($VERDICT): ${HINT:-$WHY}" ;;
   esac
@@ -624,11 +846,106 @@ stop_timer() {
   say 'timer: stopped'
 }
 
-# shutdown_check [SECONDS]: exit 1 while a sync runs (after waiting) or local changes wait.
+# ----------------------------------------------------------------- mount ----
+# start_mount: `rclone mount` of the remote on the folder, detached (its own session), PID file in
+# the volume; idempotent. The VFS cache (mode writes, so the upload queue can be read; finding 5)
+# lives in the volume; the remote control listens on localhost only and has no credentials, so
+# only read-only methods such as vfs/stats answer. The config and token are read from the file.
+start_mount() {
+  local p i
+  resolve
+  if [ "$MODE_USED" != mount ]; then say "mount: not started (mode $MODE_USED)"; return 0; fi
+  if [ "$CONF" != ok ]; then say 'mount: not started, no remote is configured yet (task cloud-folder:login starts it)'; return 0; fi
+  command -v rclone >/dev/null 2>&1 || { say 'mount: not started, rclone is not on PATH'; return 3; }
+  if [ "$RCLONE_MOUNTED" = yes ]; then say "mount: already mounted at $REAL"; return 0; fi
+  p="$(pid_of "$run_dir/mount.pid")"
+  if mount_ours "$p"; then say "mount: rclone (pid $p) is already starting; task cloud-folder:status shows when it is up"; return 0; fi
+  if [ "$FUSE" = no ]; then say "mount: not started, FUSE is not usable: $FUSE_WHY"; return 1; fi
+  if [ "$MOUNTED" = yes ]; then say "mount: not started, something else is mounted at $REAL"; return 1; fi
+  prepare_state || { say "mount: not started, the state folder $state_dir is not writable"; return 1; }
+  ensure_local "$REAL" || return 1
+  if [ -n "$(find -H "$REAL" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
+    say "mount: not started, $REAL is not empty and rclone does not mount over files (a sync copy? sync it, then move it away)"
+    return 1
+  fi
+  if [ -f "$state_dir/mount.log" ] && [ "$(stat -c %s "$state_dir/mount.log" 2>/dev/null || echo 0)" -gt 1048576 ]; then
+    mv -f "$state_dir/mount.log" "$state_dir/mount.log.1"
+  fi
+  local -a args=(mount "$remote" "$REAL" --vfs-cache-mode writes --cache-dir "$state_dir/cache"
+    --rc --rc-addr "$rc_addr" --log-file "$state_dir/mount.log" --log-level INFO)
+  # Not --daemon: the PID must be this process's, for the PID file and the stop.
+  if command -v setsid >/dev/null 2>&1; then
+    (umask 077; RCLONE_CONFIG="$conf" setsid rclone "${args[@]}" </dev/null >/dev/null 2>&1 & echo "$!" > "$run_dir/mount.pid")
+  else
+    (umask 077; RCLONE_CONFIG="$conf" nohup rclone "${args[@]}" </dev/null >/dev/null 2>&1 & echo "$!" > "$run_dir/mount.pid")
+  fi
+  p="$(pid_of "$run_dir/mount.pid")"
+  i=0
+  while [ "$i" -lt $((mount_wait * 4)) ]; do
+    [ "$(mount_fstype "$REAL")" = fuse.rclone ] && { say "mount: $remote mounted at $REAL (pid $p, VFS cache writes, remote control $rc_addr); log: $state_dir/mount.log"; return 0; }
+    alive "$p" || break
+    sleep 0.25; i=$((i + 1))
+  done
+  if alive "$p"; then say "mount: rclone (pid $p) has not mounted $REAL after ${mount_wait}s; task cloud-folder:status shows when it does; log: $state_dir/mount.log"; return 1; fi
+  rm -f -- "$run_dir/mount.pid"
+  say "mount: rclone exited without mounting: $(grep -E 'ERROR|CRITICAL|Fatal' "$state_dir/mount.log" 2>/dev/null | tail -n 1 | sed -E 's/^[0-9\/]+ [0-9:]+ //' | cut -c1-300); log: $state_dir/mount.log"
+  return 1
+}
+
+# stop_mount [--force]: unmount once the upload queue is empty (waiting up to
+# CLOUD_FOLDER_STOP_WAIT seconds, default 120); refuse while files are pending or the queue cannot
+# be read, unless --force (rclone uploads what is left in the VFS cache at the next mount).
+stop_mount() {
+  local force=no a p i max rc=0
+  max="${CLOUD_FOLDER_STOP_WAIT:-120}"
+  for a in "$@"; do
+    case "$a" in --force) force=yes ;; *) echo "cloud-folder: unmount: unknown argument '$a' (--force)" >&2; return 2 ;; esac
+  done
+  resolve
+  p="$(pid_of "$run_dir/mount.pid")"; mount_ours "$p" || p=''
+  if [ "$RCLONE_MOUNTED" = no ] && [ -z "$p" ]; then
+    rm -f -- "$run_dir/mount.pid"
+    say 'mount: not mounted'
+    return 0
+  fi
+  if [ "$force" = no ] && [ "$RCLONE_MOUNTED" = yes ]; then
+    wait_uploads "$max" || rc=$?
+    if [ "$rc" -eq 2 ]; then
+      say "mount: not unmounted, the upload queue cannot be read (remote control on $rc_addr does not answer); task cloud-folder:unmount -- --force unmounts anyway (queued files upload at the next mount)"
+      return 1
+    fi
+    if [ "$rc" -eq 1 ]; then
+      say "mount: not unmounted, $VFS_PENDING upload(s) still pending after ${max}s; wait and try again, or task cloud-folder:unmount -- --force (they upload at the next mount)"
+      return 1
+    fi
+  fi
+  if [ "$RCLONE_MOUNTED" = yes ]; then
+    if [ -n "$FUSERMOUNT" ]; then "$FUSERMOUNT" -u "$REAL" 2>/dev/null || as_root umount "$REAL" 2>/dev/null
+    else as_root umount "$REAL" 2>/dev/null; fi
+  fi
+  if [ -n "$p" ]; then
+    i=0
+    while alive "$p" && [ "$i" -lt 40 ]; do sleep 0.25; i=$((i + 1)); done
+    alive "$p" && kill -TERM "$p" 2>/dev/null
+    i=0
+    while alive "$p" && [ "$i" -lt 40 ]; do sleep 0.25; i=$((i + 1)); done
+  fi
+  if [ "$(mount_fstype "$REAL")" = fuse.rclone ]; then say "mount: $REAL is still mounted (busy? a shell or editor inside it)"; return 1; fi
+  rm -f -- "$run_dir/mount.pid"
+  say "mount: unmounted $REAL"
+}
+
+# start_any / stop_any: what `start` and `stop` mean in the mode in use.
+start_any() { resolve; if [ "$MODE_USED" = mount ]; then start_mount; else start_timer; fi; }
+stop_any() { resolve; if [ "$MODE_USED" = mount ]; then stop_mount "$@"; else stop_timer; fi; }
+
+# shutdown_check [SECONDS]: exit 1 while a sync runs (after waiting) or local changes wait; in
+# mount mode, while uploads are pending (after waiting) or the queue cannot be read.
 shutdown_check() {
   local max="${1:-${CLOUD_FOLDER_SHUTDOWN_WAIT:-60}}" waited=0 p rc=0
   case "$max" in '' | *[!0-9]*) echo "cloud-folder: shutdown-check: SECONDS must be a number" >&2; return 2 ;; esac
   resolve
+  if [ "$MODE_USED" = mount ]; then shutdown_check_mount "$max"; return $?; fi
   if [ "$MODE_USED" != sync ]; then say "shutdown check: mode $MODE_USED, no sync in flight"; return 0; fi
   p="$(pid_of "$run_dir/sync.pid")"
   if ours "$p"; then
@@ -655,6 +972,27 @@ shutdown_check() {
   if [ -n "$LAST_RESULT" ] && [ "$LAST_RESULT" != ok ]; then say "note: the last sync ended $LAST_RESULT (task cloud-folder:status)."; fi
   [ "$rc" -eq 0 ] && say "shutdown check: no sync running, nothing changed since the last sync${LAST_TIME:+ ($LAST_TIME)}: safe to stop"
   return "$rc"
+}
+
+shutdown_check_mount() {
+  local max="$1" rc=0
+  if [ "$RCLONE_MOUNTED" = no ]; then say "shutdown check: mode mount, nothing mounted: no upload in flight"; return 0; fi
+  if command -v rclone >/dev/null 2>&1; then
+    vfs_query
+    if [ "$VFS_OK" = yes ] && [ -n "$VFS_PENDING" ] && [ "$VFS_PENDING" -gt 0 ]; then
+      say "shutdown check: $VFS_PENDING upload(s) pending; waiting up to ${max}s for them"
+    fi
+    wait_uploads "$max" || rc=$?
+  else
+    rc=2
+  fi
+  case "$rc" in
+    2) say "REFUSE: the upload queue cannot be read (rclone's remote control on $rc_addr does not answer), so a stop could cut uploads short; task cloud-folder:status, or stop with FORCE=1."; return 1 ;;
+    1) say "REFUSE: $VFS_PENDING upload(s) still pending after ${max}s; wait and run the check again (task cloud-folder:status), or stop with FORCE=1 (they upload at the next mount)."; return 1 ;;
+  esac
+  [ -n "$VFS_ERRORED" ] && [ "$VFS_ERRORED" -gt 0 ] && say "note: $VFS_ERRORED file(s) failed to upload (task cloud-folder:status)."
+  say "shutdown check: mode mount, no upload pending: safe to stop"
+  return 0
 }
 
 # ----------------------------------------------------------------- login ----
@@ -801,7 +1139,7 @@ do_login() {
   else
     say "signed in, but $remote does not answer yet (a wrong remotePath? it must exist on the remote); task cloud-folder:status shows the error"
   fi
-  start_timer
+  start_any
   return 0
 }
 
@@ -813,6 +1151,7 @@ case "$cmd" in
     prepare_state verbose || true
     resolve
     [ "$MODE_USED" = sync ] && ensure_local "$REAL" >/dev/null 2>&1
+    [ "$MODE_USED" = mount ] && start_mount
     assess remote
     print_report
     [ "$MODE_USED" = sync ] && start_timer
@@ -832,13 +1171,19 @@ case "$cmd" in
   version)
     resolve
     say "Feature $feature_version; mode option $mode_option (in use: $MODE_USED); mount point $mount_point; host mount $host_mount; state $state_dir"
+    if [ "$FUSE" = yes ]; then say "FUSE: usable"; else say "FUSE: not usable ($FUSE_WHY)"; fi
     if command -v rclone >/dev/null 2>&1; then say "rclone: $(rclone version 2>/dev/null | head -n 1)${rclone_version_option:+ (option rcloneVersion $rclone_version_option)}"
     else say "rclone: not installed (mode host needs none)"; fi
     exit 0 ;;
   login) do_login; exit $? ;;
   sync) do_sync "$@"; exit $? ;;
-  start) start_timer; exit $? ;;
-  stop) stop_timer; exit $? ;;
+  start) start_any; exit $? ;;
+  stop) stop_any "$@"; exit $? ;;
+  unmount) stop_mount "$@"; exit $? ;;
+  fuse-check)
+    fuse_check
+    if [ "$FUSE" = yes ]; then say "FUSE usable: $FUSE_WHY"; exit 0; fi
+    say "FUSE not usable: $FUSE_WHY"; exit 1 ;;
   run) run_loop; exit $? ;;
   shutdown-check)
     [ $# -le 1 ] || { echo "usage: cloud-folder-setup shutdown-check [SECONDS]" >&2; exit 2; }
@@ -852,6 +1197,6 @@ case "$cmd" in
     make_folder "$1"
     exit $? ;;
   *)
-    echo "usage: cloud-folder-setup [status [--json] | version | login | sync [--resync] [--force] | start | stop | shutdown-check [SECONDS] | link MOUNT_POINT HOST_MOUNT | folder MOUNT_POINT]" >&2
+    echo "usage: cloud-folder-setup [status [--json] | version | login | sync [--resync] [--force] | start | stop | unmount [--force] | fuse-check | shutdown-check [SECONDS] | link MOUNT_POINT HOST_MOUNT | folder MOUNT_POINT]" >&2
     exit 2 ;;
 esac

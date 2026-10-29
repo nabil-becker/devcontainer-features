@@ -1,8 +1,8 @@
 {
   "id": "cloud-folder",
-  "version": "1.1.2",
+  "version": "1.2.0",
   "name": "Cloud folder",
-  "description": "One fixed path in the devcontainer (mountPoint, default /mnt/cloud-folder) for a shared document folder that must never go in git, such as a SharePoint or OneDrive folder, filled by one of two modes. host: the devcontainer-cli launcher bind-mounts the host folder named by DCF_HOST_CLOUD_FOLDER (a folder a sync client keeps on the host) at /mnt/cloud-folder-host, and mountPoint links to it. sync: rclone (installed pinned and checksum-verified, only when absent) runs bisync between the remote and the folder, on demand and on a timer started at each start, with the token, config and sync state in the Feature's own volume; nothing privileged, so it works on a cluster. auto picks host when a host folder is mounted, else sync when a remote is signed in. A post-start hook (cloud-folder-setup) reports on every start; cloud-folder:status exits non-zero when the folder is missing, unwritable, never synced or its last sync failed, and cloud-folder:shutdown-check refuses a stop while a sync runs or local changes wait. Plus the Feature Taskfile (version, status, setup, login, sync, start, stop, shutdown-check).",
+  "description": "One fixed path in the devcontainer (mountPoint, default /mnt/cloud-folder) for a shared document folder that must never go in git, such as a SharePoint or OneDrive folder, filled by one of three modes. host: the devcontainer-cli launcher bind-mounts the host folder named by DCF_HOST_CLOUD_FOLDER (a folder a sync client keeps on the host) at /mnt/cloud-folder-host, and mountPoint links to it. sync: rclone (installed pinned and checksum-verified, only when absent) runs bisync between the remote and the folder, on demand and on a timer started at each start, with the token, config and sync state in the Feature's own volume; nothing privileged, so it works on a cluster. mount: rclone mount of the remote with a VFS cache (mode writes) in the volume, when the launcher granted FUSE on this machine (DCF_HOST_FUSE=1; fuse3 is installed in modes auto and mount). auto picks host when a host folder is mounted, else mount when FUSE is usable and a remote is signed in, else sync when a remote is signed in. A post-start hook (cloud-folder-setup) reports on every start; cloud-folder:status exits non-zero when the folder is missing, unwritable, never synced or its last sync failed, and cloud-folder:shutdown-check refuses a stop while a sync runs, local changes wait or mounted uploads are pending. Plus the Feature Taskfile (version, status, setup, login, sync, start, stop, unmount, shutdown-check).",
   "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/cloud-folder",
   "licenseURL": "https://github.com/nabil-becker/devcontainer-features/blob/main/LICENSE",
   "options": {
@@ -16,15 +16,16 @@
       "enum": [
         "auto",
         "host",
+        "mount",
         "sync"
       ],
       "default": "auto",
-      "description": "Where the folder comes from. host: a bind mount the launcher adds from DCF_HOST_CLOUD_FOLDER (no rclone). sync: rclone bisync between the remote and the folder, on a timer and on demand (mountPoint is then a plain folder, no link). auto: host when something is mounted at the mount point, else sync when a remote is signed in (task cloud-folder:login), else it reports that there is no source and never pretends. The mount mode comes in a later version. Override per container with CLOUD_FOLDER_MODE in containerEnv, or per call on the task."
+      "description": "Where the folder comes from. host: a bind mount the launcher adds from DCF_HOST_CLOUD_FOLDER (no rclone). sync: rclone bisync between the remote and the folder, on a timer and on demand (mountPoint is then a plain folder, no link). mount: rclone mount of the remote on the folder (mountPoint is then a plain folder, no link), with a VFS cache of mode writes in the Feature volume; needs FUSE, which the devcontainer-cli launcher grants only when the project asks (DCF_HOST_FUSE=1 in .devcontainer/.env, with the bootstrap template's runArgs). auto: host when something is mounted at the mount point, else mount when FUSE is usable and a remote is signed in (task cloud-folder:login), else sync when a remote is signed in, else it reports that there is no source and never pretends. Override per container with CLOUD_FOLDER_MODE in containerEnv, or per call on the task."
     },
     "mountPoint": {
       "type": "string",
       "default": "/mnt/cloud-folder",
-      "description": "Absolute path where the folder appears in the container. In auto and host, the launcher always mounts the host folder at /mnt/cloud-folder-host and mountPoint is a symbolic link to it when it is another path (in auto, a sync fills the folder the link leads to). In sync, mountPoint is a plain folder, no link. The install refuses a mountPoint that already exists in the image as a folder with content (auto, host) or as a file."
+      "description": "Absolute path where the folder appears in the container. In auto and host, the launcher always mounts the host folder at /mnt/cloud-folder-host and mountPoint is a symbolic link to it when it is another path (in auto, a sync or the rclone mount fills the folder the link leads to). In sync and mount, mountPoint is a plain folder, no link. The install refuses a mountPoint that already exists in the image as a folder with content (auto, host) or as a file."
     },
     "remoteType": {
       "type": "string",
@@ -33,7 +34,7 @@
         "onedrive"
       ],
       "default": "sharepoint",
-      "description": "sync: what the remote is. sharepoint: a document library of the SharePoint site siteUrl (the only kind the client-credentials sign-in of a cluster can use). onedrive: the signed-in person's own OneDrive. Both use rclone's onedrive backend. Override with CLOUD_FOLDER_REMOTE_TYPE."
+      "description": "sync and mount: what the remote is. sharepoint: a document library of the SharePoint site siteUrl (the only kind the client-credentials sign-in of a cluster can use). onedrive: the signed-in person's own OneDrive. Both use rclone's onedrive backend. Override with CLOUD_FOLDER_REMOTE_TYPE."
     },
     "driveType": {
       "type": "string",
@@ -43,17 +44,17 @@
         "documentLibrary"
       ],
       "default": "documentLibrary",
-      "description": "sync: rclone's drive_type for the remote, written at login; the drive lookup at login replaces it with what the drive reports. Override with CLOUD_FOLDER_DRIVE_TYPE."
+      "description": "sync and mount: rclone's drive_type for the remote, written at login; the drive lookup at login replaces it with what the drive reports. Override with CLOUD_FOLDER_DRIVE_TYPE."
     },
     "siteUrl": {
       "type": "string",
       "default": "",
-      "description": "sync, remoteType sharepoint: the site's URL, for example https://<tenant>.sharepoint.com/sites/<site>; login finds the site's document library from it. Override with CLOUD_FOLDER_SITE_URL."
+      "description": "sync and mount, remoteType sharepoint: the site's URL, for example https://<tenant>.sharepoint.com/sites/<site>; login finds the site's document library from it. Override with CLOUD_FOLDER_SITE_URL."
     },
     "remotePath": {
       "type": "string",
       "default": "",
-      "description": "sync: the folder inside the drive (document library) to sync, for example Shared/Recordings; empty means the whole drive. It must exist on the remote. Override with CLOUD_FOLDER_REMOTE_PATH."
+      "description": "sync and mount: the folder inside the drive (document library) to sync or mount, for example Shared/Recordings; empty means the whole drive. It must exist on the remote. Override with CLOUD_FOLDER_REMOTE_PATH."
     },
     "syncInterval": {
       "type": "string",
@@ -63,7 +64,7 @@
     "rcloneVersion": {
       "type": "string",
       "default": "1.75.2",
-      "description": "The rclone release to install for sync (with or without a leading v), or 'latest'. The default is pinned with its sha256 per architecture in this Feature; another version is verified against the release's SHA256SUMS. Not installed in mode host, nor when the image already has rclone (that one is kept)."
+      "description": "The rclone release to install for sync and mount (with or without a leading v), or 'latest'. The default is pinned with its sha256 per architecture in this Feature; another version is verified against the release's SHA256SUMS. Not installed in mode host, nor when the image already has rclone (that one is kept)."
     }
   },
   "containerEnv": {

@@ -6,7 +6,7 @@ documents kept in a SharePoint or OneDrive folder. Agents and people read and wr
 normal directory, and `task cloud-folder:status` says whether it is really there before anyone
 writes into it.
 
-This version (1.1.2) fills it in one of two ways:
+This version (1.2.0) fills it in one of three ways:
 
 - **host mode**: the folder a sync client (OneDrive) keeps on the host is bind-mounted by the
   launcher (the `devcontainer-cli` Feature and its bootstrap) at one fixed path, the host mount
@@ -15,6 +15,13 @@ This version (1.1.2) fills it in one of two ways:
   document library, or a person's OneDrive) and the folder, on a timer and on demand. It needs
   nothing privileged, so it works where there is no Windows host, such as a Kubernetes cluster.
   The sign-in, the rclone config and the sync state live in the Feature's own volume.
+- **mount mode**: `rclone mount` of the remote on the folder, a live view, with a VFS cache in the
+  Feature's volume. It needs FUSE, which the launcher grants per machine only when the project
+  asks (`DCF_HOST_FUSE=1`); where it is not granted (a cluster that refuses FUSE), `auto` uses
+  sync instead.
+
+`auto` (the default) takes host when a host folder is mounted, else mount when FUSE is usable and a
+remote is signed in, else sync when a remote is signed in.
 
 What it installs:
 
@@ -24,13 +31,19 @@ What it installs:
   Feature (`rclone-checksums.txt`, amd64 and arm64) for the default version, or against the
   release's `SHA256SUMS` for another version. The `SHA256SUMS` file is also PGP-signed by the
   publisher; the signature is not checked. `curl` and `unzip` are installed with apt when missing.
+- `fuse3` (for `fusermount3`, which `rclone mount` calls), with apt, in modes `auto` and `mount`
+  only, and only when the image has neither `fusermount3` nor `fusermount`. `auto` needs it too
+  because whether FUSE is granted is known only at each start, per machine, long after the build;
+  without the launcher's grant the setuid `fusermount3` can mount nothing. In `auto` a failed
+  install is a warning (auto then never picks mount); in `mount` it fails the build.
 - `cloud-folder-setup` (the `postStartCommand`, also behind the tasks) and `dcf-persist` (the
   collection's state-folder helper) in `/usr/local/bin`, its option defaults in
   `/usr/local/share/cloud-folder-feature/options.env`, and the Feature Taskfile.
 - The mount point: in `auto` and `host`, a symbolic link from `mountPoint` to the host mount (none
   when `mountPoint` is `/mnt/cloud-folder-host` itself); no folder is created at either path, so
   when nothing is mounted the status fails and no one writes into a bare folder by mistake. In
-  `sync`, `mountPoint` is a plain folder of the image, filled by the sync; no link.
+  `sync` and `mount`, `mountPoint` is a plain folder of the image, filled by the sync or with the
+  rclone mount on it; no link.
 
 ## How the folder gets there
 
@@ -38,16 +51,19 @@ What it installs:
  HOST (launcher: devcontainer-cli)            DEVCONTAINER
  .devcontainer/.env:
    DCF_HOST_CLOUD_FOLDER=<synced folder>
+   DCF_HOST_FUSE=1 (only where mount is wanted)
  task devcontainer:up
    --mount type=bind,source=<folder>, ---->  /mnt/cloud-folder-host        host mode
      target=/mnt/cloud-folder-host             ^ link made at build (auto, host)
-                                             /mnt/cloud-folder  (mountPoint)
-                                               ^ in sync mode: filled by rclone bisync,
-                                               | or (auto, no host folder) the folder the link leads to
+   DCF_HOST_FUSE_* -> runArgs: /dev/fuse,    /mnt/cloud-folder  (mountPoint)
+     SYS_ADMIN, apparmor=unconfined            ^ sync mode: filled by rclone bisync
+                                               ^ mount mode: rclone mount on it (FUSE)
+                                               | (auto, no host folder: the folder the link leads to)
  SharePoint / OneDrive  <---- rclone bisync --+  timer (every syncInterval) and task cloud-folder:sync
+                        <---- rclone mount ---+  VFS cache (writes); rc on 127.0.0.1:5572 (vfs/stats)
                                              volume cloud-folder-<id> at /var/lib/devcontainer-features/cloud-folder:
-                                               rclone.conf (600: the token), bisync/ (listings),
-                                               run/ (PID files), last-sync, sync.log, timer.log
+                                               rclone.conf (600: the token), bisync/ (listings), cache/,
+                                               run/ (PID files), last-sync, sync.log, timer.log, mount.log
 ```
 
 ### Host mode
@@ -69,6 +85,32 @@ What it installs:
 The Feature decides nothing from the variable: "mounted" means the path the mount point leads to
 (through the link, so the host mount) is the target of a mount in the container's mount table.
 The variable only names the source in the report.
+
+### Mount mode
+
+1. On each machine that should have it, set `DCF_HOST_FUSE=1` in `.devcontainer/.env` on the
+   host and keep the bootstrap template's three `runArgs` lines in `devcontainer.json`; then
+   `task devcontainer:rebuild` (devcontainer-cli 1.15.0 or later). The launcher fills the lines
+   with `--device=/dev/fuse`, `--cap-add=SYS_ADMIN` and `--security-opt=apparmor=unconfined`;
+   unasked, each is a harmless label and the container gets no privilege (ADR 0031). Map
+   `DCF_HOST_FUSE` with `containerEnv` so a report can name it.
+2. Set `mode` `mount` (or leave `auto`), `siteUrl` and `remotePath` as for sync, and run
+   `task cloud-folder:login` once. The post-start hook then mounts the remote at each start
+   (`task cloud-folder:start` mounts it now, `stop` or `unmount` unmounts it).
+
+The mount runs `rclone mount <remote> <folder> --vfs-cache-mode writes --cache-dir <volume>/cache
+--rc --rc-addr 127.0.0.1:5572`, detached, with its PID file in the volume and its log in
+`mount.log`. Cache mode `writes` keeps written files in the volume's cache until they are uploaded,
+so the upload queue can be read; rclone uploads what is left in the cache at the next mount after
+a stop. The remote control listens on localhost only and has no credentials, so only its
+read-only methods answer (`vfs/stats`, which `status` reads; a method such as `core/quit` is
+refused). rclone does not mount over a folder with files: a folder that holds a sync copy (`auto`
+moving from sync to mount) stays with sync until it is synced and emptied.
+
+`cloud-folder-setup fuse-check` says whether FUSE is usable and, if not, which part is missing:
+no `/dev/fuse`, a device the engine's rules do not open, no `CAP_SYS_ADMIN` in the capability
+bounding set, an AppArmor profile that denies mount (Docker's `docker-default`), or no
+`fusermount3`. `auto` reads the same check; `status` and `version` print it.
 
 ### Sync mode
 
@@ -133,7 +175,9 @@ then SIGTERM; `task cloud-folder:start` starts it again. No container `entrypoin
 In sync mode it exits `1` (refusing the stop) while a sync runs, after waiting up to SECONDS
 (default 60, or `CLOUD_FOLDER_SHUTDOWN_WAIT`) for it to end, and while files in the folder
 changed since the last successful sync started, saying to run `task cloud-folder:sync` first. In
-host mode, or when nothing is in flight, it exits `0`. Add it to the repository's check, for
+mount mode it exits `1` while uploads are pending (`vfs/stats`: in progress plus queued) after
+waiting up to SECONDS for them, and when the queue cannot be read (the remote control does not
+answer); nothing mounted passes. In host mode, or when nothing is in flight, it exits `0`. Add it to the repository's check, for
 example in `.devcontainer/shutdown-check.sh` at its TODO:
 
 ```sh
@@ -148,13 +192,15 @@ or, in a `shutdown:check` task, `- cloud-folder-setup shutdown-check 60`. `FORCE
 ## Options
 
 - `mode` (default `auto`): `host` expects a host folder mounted at the mount point. `sync` syncs
-  with rclone. `auto` uses `host` when something is mounted there, else `sync` when a remote is
-  signed in (a `[cloud-folder]` remote with a token or client credentials in the volume's config),
-  else it reports "no source" and fails the status, and never pretends. The `mount` mode
-  (`rclone mount`) comes in a later version. Override without a rebuild with `CLOUD_FOLDER_MODE`
+  with rclone. `mount` mounts the remote with rclone (needs FUSE, see "Mount mode"). `auto` uses
+  `host` when something other than rclone is mounted there, else `mount` when FUSE is usable and a
+  remote is signed in (a `[cloud-folder]` remote with a token or client credentials in the
+  volume's config), else `sync` when a remote is signed in, else it reports "no source" and fails
+  the status, and never pretends. Override without a rebuild with `CLOUD_FOLDER_MODE`
   in `containerEnv`, or for one call with `task cloud-folder:status CLOUD_FOLDER_MODE=sync`. The
-  layout is fixed at build: with `mode` `sync` the mount point is a folder; with `auto` it stays the
-  link, and a sync fills the folder the link leads to (`/mnt/cloud-folder-host`, created at start).
+  layout is fixed at build: with `mode` `sync` or `mount` the mount point is a folder; with `auto`
+  it stays the link, and a sync or the mount fills the folder the link leads to
+  (`/mnt/cloud-folder-host`, created at start).
 - `mountPoint` (default `/mnt/cloud-folder`): where the folder appears, an absolute path, and the
   only place you name it. In `auto` and `host` the install makes it a symbolic link to the host
   mount and refuses, failing the build with the reason, when it already exists in the image as a
@@ -249,7 +295,10 @@ task cloud-folder:sync              # cloud-folder: sync ok in 3s
 - sync mode: the remote and whether it is configured (and how: token or client credentials, never
   the token itself) and reachable (one `rclone lsjson --stat`, at most 30 s); the local folder,
   whether it is empty and writable, and the number of files changed since the last sync; the last
-  sync's time and result; whether a sync and the timer are running.
+  sync's time and result; whether a sync and the timer are running;
+- mount mode: the remote as above, whether FUSE is usable (and why not), whether rclone is mounted
+  (and its PID), and the VFS upload queue from `vfs/stats` (in progress, queued, failed; "unknown"
+  when the remote control does not answer).
 
 It exits:
 
@@ -260,7 +309,9 @@ It exits:
   signed in (`not-configured`), never synced in this folder (`never-synced`, or `syncing` while the
   first sync runs), the last sync failed (`sync-failed`, with the first error line and what to do
   about bisync's delete guard or an emptied folder), or bisync set its listings aside
-  (`needs-resync`); or the mode is not one this version knows. So a repository's start-up check
+  (`needs-resync`); in mount mode no remote signed in, no FUSE (`no-fuse`, naming what is missing
+  and `DCF_HOST_FUSE=1`), not mounted (`not-mounted`, or `mounting` while rclone starts), or files
+  that failed to upload (`upload-errors`); or the mode is not one this version knows. So a repository's start-up check
   (`task cloud-folder:status` in its own check) can stop before agents write into the wrong
   place. An unreachable remote is reported but does not fail the status on its own: the local
   copy is still there;
@@ -269,7 +320,10 @@ It exits:
 The `--json` object has `mode`, `mount_point`, `real_path`, `linked`, `mounted`, `empty`,
 `writable`, `verdict`, `ok`, `hint`, and in sync mode also `remote`, `remote_type`, `configured`,
 `auth`, `remote_reachable`, `last_sync`, `last_result`, `last_rc`, `sync_running`, `sync_pid`,
-`timer_running`, `timer_pid`, `interval` and `pending`.
+`timer_running`, `timer_pid`, `interval` and `pending`; in mount mode `remote`, `remote_type`,
+`configured`, `auth`, `remote_reachable`, `rclone_mounted`, `mount_pid`, `rc_addr`, `rc_answers`,
+`cache_mode`, `uploads_in_progress`, `uploads_queued`, `uploads_pending` and `errored_files`
+(`null` when unknown); in every mode `fuse` and `fuse_why`.
 
 A status writes nothing into the folder: writability is the access check (`test -w`). The sync
 writes the one hidden marker.
@@ -297,7 +351,10 @@ All in `cloud-folder`:
   variables are set.
 - `sync`: one bisync now; `-- --resync` forces a resync, `-- --force` lets a sync through bisync's
   delete guard when the deletion is meant.
-- `start`, `stop`: the timer.
+- `start`, `stop`: the timer (sync mode), or the rclone mount (mount mode; `stop` unmounts as
+  `unmount` does).
+- `unmount`: mount mode: unmount once the upload queue is empty (waiting up to
+  `CLOUD_FOLDER_STOP_WAIT` seconds, default 120); `-- --force` unmounts anyway.
 - `shutdown-check`: for a repository's `shutdown:check`; `WAIT=<seconds>`.
 
 `CLOUD_FOLDER_*` on the command line, in a `.env` file or in the environment (in that order)
@@ -343,6 +400,13 @@ override the options for one call.
 - **The timer's processes** are children of the container's first process once their starter
   exits; a container without an init that reaps them keeps the ended ones as zombies until it
   stops (harmless; `init: true` in `devcontainer.json` avoids it).
+- **Mount mode needs the launcher's grant.** Opened straight in VS Code, or on a machine without
+  `DCF_HOST_FUSE=1`, there is no FUSE and `auto` uses sync. A cluster that refuses FUSE gets sync
+  the same way. `--cap-add=SYS_ADMIN` and an unconfined AppArmor profile widen what the container
+  may do; ask for them only where a live view is worth it.
+- **What counts as pending in mount mode**: rclone's `uploadsInProgress` plus `uploadsQueued`.
+  rclone documents them as counters only (proposal "Still open" 4); a file still open for writing
+  is not in the queue until it is closed, so close editors before a stop.
 - **Unverified (no SharePoint was available when this was built; the tests use a local remote):**
   - the drive lookup against a real site (rclone's non-interactive config with `config_type=url`;
     exercised here only up to the Graph call, which a fake token got refused);
@@ -356,20 +420,28 @@ override the options for one call.
   - rclone with a read-only config (a secret mounted read-only): not supported; the config must
     be in the writable volume (proposal "Still open" 5);
   - the graceful stop of a real bisync by SIGINT from the timer (bisync's documented "Graceful
-    Shutdown"; the tests use a fake).
+    Shutdown"; the tests use a fake);
+  - the FUSE grant on Docker Desktop, wslc and a cluster (proposal "Still open" 6): the unit tests
+    fake the device and the mount, and the `mount_fuse` scenario runs the real mount only where the
+    test's engine has `/dev/fuse`.
 
 ## Why it exists
 
 The two Features for rclone published on containers.dev (checked 2026-10-27:
 `ghcr.io/devcontainers-extra/features/rclone` and
 `ghcr.io/devcontainer-community/devcontainer-features/rclone.org`) install the binary only: none
-configures a remote, signs in, mounts or syncs, and none covers OneDrive, SharePoint or a host
-folder. This Feature gives the folder one fixed path, fills it from a host folder or with rclone
-bisync, keeps the sign-in in its own volume, and has a status and a shutdown check a repository
+configures a remote, signs in, mounts or syncs, and none covers OneDrive, SharePoint, FUSE or a
+host folder. This Feature gives the folder one fixed path, fills it from a host folder, with rclone
+bisync or with an rclone mount, keeps the sign-in in its own volume, and has a status and a shutdown check a repository
 can trust. It installs rclone only when absent and orders itself after those Features.
 
 ## Version and upgrade
 
+- `1.2.0`: mount mode (`rclone mount` with a VFS cache of mode `writes` in the volume, the remote
+  control on localhost), `auto` taking host, then mount, then sync, `fuse-check`, `unmount`,
+  `status` reading `vfs/stats`, and the shutdown check refusing pending uploads; `fuse3` in modes
+  `auto` and `mount`. The host side is `devcontainer-cli` 1.15.0 (`DCF_HOST_FUSE`). Host and sync
+  mode are unchanged; `status --json` gains `fuse` and `fuse_why`.
 - `1.1.2`: the rclone downloads go through `dcf_curl`, the collection's download helper vendored
   from `common`, instead of this Feature's own retry flags; it also retries a refused connection
   (`--retry-connrefused`). No option or behavior change.
@@ -385,7 +457,7 @@ can trust. It installs rclone only when absent and orders itself after those Fea
 - `1.0.0`: host mode only.
 
 The host side lives in `devcontainer-cli` 1.12.0 or later (`DCF_HOST_CLOUD_FOLDER`). Pin the
-Feature with `:1`. A later minor version adds the `mount` mode.
+Feature with `:1`. Mount mode needs `devcontainer-cli` 1.15.0 or later (`DCF_HOST_FUSE`).
 
 To pin another rclone version without a network lookup at build, add its two digests to
 `rclone-checksums.txt` (check them against both the publisher's and the GitHub release's

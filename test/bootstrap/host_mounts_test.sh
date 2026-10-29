@@ -6,7 +6,8 @@
 # devcontainer.json already declares its target (JSONC: comments, trailing commas, objects,
 # --config), HOST_MOUNTS=false, no mount for build/exec/read-configuration, what `host`
 # lists, the SSH agent socket mount, and the cloud folder (DCF_HOST_CLOUD_FOLDER, a Windows path,
-# a missing folder, the fixed target). A stub `devcontainer` first on PATH records its arguments, one per line.
+# a missing folder, the fixed target), and FUSE on request (DCF_HOST_FUSE: the three grant
+# variables or none, the argument list unchanged, the runArgs lines checked). A stub `devcontainer` first on PATH records its arguments, one per line.
 # Part of `task lint` (`task test:host-mounts`). CLI_SH points the tests at another copy of the
 # script (used to show a test fails when the code it covers is broken).
 set -u
@@ -224,6 +225,59 @@ ws="$(new_ws "$plain")"; run linux "$ws" DCF_HOST_CLOUD_FOLDER="$win" -- up
 check 'the CLI sees DCF_HOST_CLOUD_FOLDER unchanged (containerEnv maps it)' "DCF_HOST_CLOUD_FOLDER=$win" "$args"
 ws="$(new_ws "$plain")"; run linux "$ws" -- up
 check 'the CLI sees DCF_HOST_CLOUD_FOLDER empty when unset' 'DCF_HOST_CLOUD_FOLDER=' "$args"
+
+# --- FUSE on request (cloud-folder proposal, slice 3; ADR 0031): DCF_HOST_FUSE=1 sets the three
+# DCF_HOST_FUSE_* variables the repository's runArgs read; unset, they are removed. The CLI's own
+# argument list is the same either way (it has no option for run arguments).
+# shellcheck disable=SC2016  # ${localEnv:...} is JSON text, not ours to expand
+slots='{
+  "runArgs": [
+    "${localEnv:DCF_HOST_FUSE_DEVICE:--label=dcf.fuse.device=off}",
+    "${localEnv:DCF_HOST_FUSE_CAP:--label=dcf.fuse.cap=off}",
+    "${localEnv:DCF_HOST_FUSE_SECURITY:--label=dcf.fuse.security=off}"
+  ]
+}'
+# shellcheck disable=SC2016  # the stub's own variable
+printf '#!/bin/sh\nfor a in "$@"; do echo "$a"; done > "$DCF_TEST_RECORD"\nenv | grep "^DCF_HOST_FUSE" > "$DCF_TEST_RECORD.env"\n' > "$bin/devcontainer"
+fuse_env() { sort "$T/rec.env" 2>/dev/null; }
+ws="$(new_ws "$slots")"; run linux "$ws" -- up
+no_fuse_args="$args"
+check 'no request: DCF_HOST_FUSE empty, no grant variables' 'DCF_HOST_FUSE=' "$(fuse_env)"
+check 'no request: no warning' 0 "$(grep -c 'DCF_HOST_FUSE' <<<"$out")"
+ws="$(new_ws "$slots")"; run linux "$ws" DCF_HOST_FUSE_DEVICE=--privileged DCF_HOST_FUSE_CAP=--cap-add=ALL -- up
+check 'no request: grant variables from the environment are removed, never passed on' 'DCF_HOST_FUSE=' "$(fuse_env)"
+for v in 1 true yes; do
+  ws="$(new_ws "$slots")"; run linux "$ws" DCF_HOST_FUSE="$v" -- up
+  check "DCF_HOST_FUSE=$v: the three grant variables" "DCF_HOST_FUSE=1
+DCF_HOST_FUSE_CAP=--cap-add=SYS_ADMIN
+DCF_HOST_FUSE_DEVICE=--device=/dev/fuse
+DCF_HOST_FUSE_SECURITY=--security-opt=apparmor=unconfined" "$(fuse_env)"
+done
+# The workspace folder and the mounts' sources differ per run (fresh folders): compare the rest.
+same_shape() { grep -v -e "^$T/" -e '^type=bind' <<<"$1"; }
+check 'DCF_HOST_FUSE=1: the CLI argument list is the same as without (workspace path aside)' "$(same_shape "$no_fuse_args")" "$(same_shape "$args")"
+check 'DCF_HOST_FUSE=1: no --privileged anywhere' 0 "$(grep -c -e '--privileged' <<<"$args")"
+check 'DCF_HOST_FUSE=1 with the runArgs lines: no warning' 0 "$(grep -c 'FUSE does not reach' <<<"$out")"
+ws="$(new_ws "$slots")"; run linux "$ws" DCF_HOST_FUSE=yes-please -- up
+check 'DCF_HOST_FUSE with another value: no grant' 'DCF_HOST_FUSE=' "$(fuse_env)"
+ws="$(new_ws "$plain")"; run linux "$ws" DCF_HOST_FUSE=1 -- up
+check 'DCF_HOST_FUSE=1 without the runArgs lines: one warning naming them' 1 "$(grep -c 'has no runArgs reading DCF_HOST_FUSE_DEVICE DCF_HOST_FUSE_CAP DCF_HOST_FUSE_SECURITY' <<<"$out")"
+# shellcheck disable=SC2016  # JSON text
+ws="$(new_ws '{
+  // "runArgs": ["${localEnv:DCF_HOST_FUSE_DEVICE:--label=a}"]
+  "runArgs": ["${localEnv:DCF_HOST_FUSE_CAP:--label=b}", "${localEnv:DCF_HOST_FUSE_SECURITY:--label=c}"]
+}')"; run linux "$ws" DCF_HOST_FUSE=1 -- up
+check 'a runArgs line in a comment does not count' 1 "$(grep -c 'has no runArgs reading DCF_HOST_FUSE_DEVICE (' <<<"$out")"
+ws="$(new_ws '')"; mkdir -p "$ws/.devcontainer"; cp "$here/../../bootstrap/devcontainer.json" "$ws/.devcontainer/devcontainer.json"
+run linux "$ws" DCF_HOST_FUSE=1 -- up
+check "the bootstrap template carries the three runArgs lines" 0 "$(grep -c 'FUSE does not reach' <<<"$out")"
+run linux "$ws" -- build
+check 'build: no warning' 0 "$(grep -c 'FUSE does not reach' <<<"$out")"
+ws="$(new_ws "$plain")"; run linux "$ws" DCF_HOST_FUSE=1 -- host
+check 'host shows the grant' 'DCF_HOST_FUSE      : 1 (runArgs get: --device=/dev/fuse --cap-add=SYS_ADMIN --security-opt=apparmor=unconfined)' "$(grep '^DCF_HOST_FUSE ' <<<"$out")"
+check 'host warns when the runArgs lines are missing' 1 "$(grep -c 'FUSE does not reach' <<<"$out")"
+ws="$(new_ws "$plain")"; run linux "$ws" -- host
+check 'host shows no grant when not asked' 'DCF_HOST_FUSE      : (unset: no FUSE grant)' "$(grep '^DCF_HOST_FUSE ' <<<"$out")"
 
 echo
 echo "$pass passed, $fail failed"
