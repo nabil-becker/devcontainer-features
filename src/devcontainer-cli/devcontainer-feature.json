@@ -1,6 +1,6 @@
 {
   "id": "devcontainer-cli",
-  "version": "1.15.0",
+  "version": "1.16.0",
   "name": "Dev Container CLI",
   "description": "Installs @devcontainers/cli as /usr/local/bin/devcontainer, backed by a private, sha256-verified Node.js under /opt/devcontainer-cli that is NOT added to PATH - so `devcontainer up/build/exec/features test` work inside a container without a system-wide Node.js. Pair with docker-in-docker (needed for features test and nested `up` on Windows/macOS hosts) or docker-outside-of-docker (Linux hosts, same paths).",
   "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/devcontainer-cli",

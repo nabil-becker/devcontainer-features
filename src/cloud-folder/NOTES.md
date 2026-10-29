@@ -1,3 +1,15 @@
+## Changes in 1.3.0
+
+- **One sign-in command, wherever it runs.** `task cloud-folder:login` now runs rclone's own browser
+  sign-in (`rclone authorize "onedrive" --auth-no-open-browser`) in the container instead of
+  asking for a token from another machine with the same rclone version. Sign in in any browser and
+  paste back the address it fails to open (`http://localhost:53682/?code=...`), or, from the
+  workstation with `devcontainer-cli` 1.16.0, let the launcher relay the browser into the container.
+  A pasted token is still accepted at the same prompt, and `-- --token` asks for nothing else. See
+  "Signing in". `login` takes `-- --relay` (the launcher's) and `-- --token`;
+  `CLOUD_FOLDER_LOGIN_TIMEOUT` bounds the wait (default 600 s). The token is still written only into
+  the volume's `rclone.conf`.
+
 ## What it gives you
 
 One fixed path in the container, `/mnt/cloud-folder` by default (option `mountPoint`), for a
@@ -6,7 +18,7 @@ documents kept in a SharePoint or OneDrive folder. Agents and people read and wr
 normal directory, and `task cloud-folder:status` says whether it is really there before anyone
 writes into it.
 
-This version (1.2.0) fills it in one of three ways:
+This version (1.3.0) fills it in one of three ways:
 
 - **host mode**: the folder a sync client (OneDrive) keeps on the host is bind-mounted by the
   launcher (the `devcontainer-cli` Feature and its bootstrap) at one fixed path, the host mount
@@ -116,14 +128,8 @@ bounding set, an AppArmor profile that denies mount (Docker's `docker-default`),
 
 1. Set the options: `mode` `sync` (or leave `auto`), `siteUrl` (the SharePoint site) and
    `remotePath` (the folder inside its document library; it must exist), and rebuild.
-2. Sign in once: `task cloud-folder:login`. The container has no browser, so it tells you to run
-   `rclone authorize "onedrive"` on a machine that has one, **with the same rclone version** (it
-   prints the version and its download link; a mismatch is the usual cause of a token that will
-   not paste). Sign in in the browser; rclone prints one line of JSON between
-   `Paste the following into your remote machine --->` and `<---End paste`. Paste that line at the
-   prompt: it is read without echo and written only into the volume's `rclone.conf` (mode 600).
-   Both `remoteType`s use rclone's `onedrive` backend, so the `authorize` argument is always
-   `"onedrive"`.
+2. Sign in once: `task cloud-folder:login`, in the container or on the workstation (see
+   "Signing in").
 3. Login then finds the drive: for `sharepoint`, the site's document library from `siteUrl`
    (through rclone's own non-interactive config); when the site has more than one library it
    lists them and asks which (or set `CLOUD_FOLDER_DRIVE_ID` to the drive id and log in again);
@@ -131,6 +137,69 @@ bounding set, an AppArmor profile that denies mount (Docker's `docker-default`),
    round is the first sync.
 4. From then on the timer syncs every `syncInterval` (default 15 minutes); `task cloud-folder:sync`
    syncs now.
+
+### Signing in
+
+One command, `task cloud-folder:login`, in the container or (with `devcontainer-cli` 1.16.0 or
+later and the bootstrap's `cloud-folder` include in the root Taskfile) on the workstation, from the
+repository's checkout. It picks the route itself; the workstation's operating system does not
+matter.
+
+Why it needs a route at all: rclone signs in with the browser flow of its own app registration,
+which lets Microsoft send the browser back only to `http://localhost:53682/`. rclone listens there,
+inside the container; the container has no browser, and the workstation's `localhost:53682` is not
+the container's.
+
+```mermaid
+flowchart LR
+  B[browser on the workstation] -->|1 sign-in| M[Microsoft]
+  M -->|2 redirect to localhost:53682/?code=| B
+  B -->|3a relay: launcher listener 127.0.0.1:53682| R[docker exec + /dev/tcp]
+  R --> C[rclone authorize in the container :53682]
+  B -.->|3b paste: copy the failed address| P[login prompt in the container]
+  P -->|requests it on 127.0.0.1:53682| C
+  C -->|token| V[(volume rclone.conf, mode 600)]
+```
+
+1. **From the workstation (the relay, the default there).** The launcher finds the running
+   devcontainer, opens a listener on the workstation's `127.0.0.1:53682` for the sign-in only,
+   starts this login in the container (`cloud-folder-setup login --relay`), and opens your default
+   browser at the sign-in. Each request the browser makes to `localhost:53682` (the start page, then
+   Microsoft's redirect with the code) is relayed into the container through `<engine> exec -i` and
+   bash's `/dev/tcp` to rclone's listener: no port mapping, no socat, nothing in
+   `devcontainer.json`. The listener closes when the login ends, fails, or after
+   `CLOUD_FOLDER_LOGIN_TIMEOUT` seconds. When `53682` is already taken on the workstation (another
+   sign-in, a local rclone), or on Linux and macOS there is no `python3` for the listener, it says
+   so and continues with the paste route on the same terminal. `task cloud-folder:login -- --paste`
+   chooses that route.
+2. **In the container (paste back).** `task cloud-folder:login` there prints Microsoft's sign-in
+   address. Open it in a browser on any machine and sign in. The browser then fails to open
+   `http://localhost:53682/?code=...` ("cannot be reached"): that is expected. Copy that whole
+   address from the address bar and paste it at the prompt (with or without `http://`); the login
+   requests it on rclone's listener in the container, so rclone receives the code as if the browser
+   had reached it, gets the token and the login carries on. An address from an earlier attempt is
+   refused (rclone checks it belongs to this sign-in); start again with the new address.
+3. **A token from rclone elsewhere.** The same prompt accepts the one-line token that
+   `rclone authorize "onedrive"` prints between `Paste the following into your remote machine --->`
+   and `<---End paste` on a machine with a browser (use the version login prints).
+   `task cloud-folder:login -- --token` asks only for that. From the workstation,
+   `task cloud-folder:login -- --workstation-rclone` does it for you: the launcher downloads the
+   pinned rclone (the repository's `rcloneVersion` in `devcontainer.json`, else this Feature's
+   default) once into its cache, verifies the zip against the release's `SHA256SUMS`, runs
+   `rclone authorize "onedrive"` there (it opens the browser itself) and hands the token to the
+   container's login on stdin, never as an argument.
+
+Whatever the route, the token is read without echo on a terminal, never put on a command line, and
+written only into the volume's `rclone.conf` (mode 600); rclone's output while signing in goes to a
+private folder in the volume that is removed at once. Both `remoteType`s use rclone's `onedrive`
+backend, so `authorize` always gets `"onedrive"`.
+
+The workstation command needs the root Taskfile to include the launcher's `cloud-folder.yml`
+(the bootstrap's template does; the bootstrap prints the lines for an existing Taskfile). Inside
+the container that include is left out, because this Feature sets `RCLONE_CONFIG` there, so its own
+`cloud-folder:login` is the only one (two tasks of one name would stop every task of the
+repository). Without the include, `task devcontainer:cloud-folder-login` is the same command on the
+workstation.
 
 **How a sync works.** One `rclone bisync <remote> <folder>` with:
 
@@ -347,8 +416,8 @@ All in `cloud-folder`:
 - `status`: the report above; `-- --json` for agents.
 - `setup`: re-run the post-start hook (the volume handed to this user, the report, the timer
   started in sync mode); never fails.
-- `login` (interactive): sign in, see "Sync mode". Without a prompt when the client-credentials
-  variables are set.
+- `login` (interactive): sign in, see "Signing in" (`-- --token`: a token only; `-- --relay`: the
+  launcher's). Without a prompt when the client-credentials variables are set.
 - `sync`: one bisync now; `-- --resync` forces a resync, `-- --force` lets a sync through bisync's
   delete guard when the deletion is meant.
 - `start`, `stop`: the timer (sync mode), or the rclone mount (mount mode; `stop` unmounts as
@@ -374,8 +443,13 @@ override the options for one call.
 - **Files on demand** (host mode): a sync client that keeps files online-only shows them in the
   folder but may fetch them only when opened; mark the folder "always keep on this device".
 - **No device-code sign-in.** rclone documents only the browser flow and, headless, `rclone
-  authorize` on another machine (proposal finding 1); login follows that.
-- **"Couldn't decode" or "not the token"** when pasting: the two rclone versions differ. Use the
+  authorize` on another machine (proposal finding 1); login runs the browser flow in the container
+  and gets the browser's redirect to it by the relay or by pasting the address.
+- **The relay and the browser.** Microsoft sends the browser to `localhost`; a browser that tries
+  `::1` first falls back to `127.0.0.1`, where the launcher listens. A sign-in left half done keeps
+  rclone's listener in the container until the timeout; a second login meanwhile says rclone cannot
+  listen (`address already in use`).
+- **"Couldn't decode" or "not the token"** when pasting a token: the two rclone versions differ. Use the
   version login prints on both sides. Login accepts the one-line JSON token that
   `rclone authorize "onedrive"` prints (one argument); the base64 blob printed when `authorize`
   gets a second argument is refused.
@@ -408,6 +482,10 @@ override the options for one call.
   rclone documents them as counters only (proposal "Still open" 4); a file still open for writing
   is not in the queue until it is closed, so close editors before a stop.
 - **Unverified (no SharePoint was available when this was built; the tests use a local remote):**
+  - the browser sign-in end to end (1.3.0): rclone 1.75.2's `--auth-no-open-browser` link, its
+    `/auth` redirect and the code taken from a pasted address, the relay from Windows (PowerShell,
+    Docker Desktop and `wslc exec -i`), macOS and Linux, and `--workstation-rclone` on each; the
+    tests play rclone's flow with a fake on a local port and the container with stubs;
   - the drive lookup against a real site (rclone's non-interactive config with `config_type=url`;
     exercised here only up to the Graph call, which a fake token got refused);
   - **the client-credentials sign-in** for a cluster: `CLOUD_FOLDER_CLIENT_ID`,
@@ -437,6 +515,9 @@ can trust. It installs rclone only when absent and orders itself after those Fea
 
 ## Version and upgrade
 
+- `1.3.0`: `login` signs in with rclone's browser flow in the container (paste back the address, or
+  the launcher's relay from the workstation with `devcontainer-cli` 1.16.0); a token is still
+  accepted, `-- --token` asks only for it. No option change.
 - `1.2.0`: mount mode (`rclone mount` with a VFS cache of mode `writes` in the volume, the remote
   control on localhost), `auto` taking host, then mount, then sync, `fuse-check`, `unmount`,
   `status` reading `vfs/stats`, and the shutdown check refusing pending uploads; `fuse3` in modes

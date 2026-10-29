@@ -31,11 +31,11 @@ tasks:
 
   login:
     dir: '{{.USER_WORKING_DIR}}'
-    desc: 'Sign in for sync mode. Interactive: run `rclone authorize "onedrive"` (the same rclone version, which this prints) on a machine with a browser and paste the token it prints; it is read without echo and written only into the Feature volume''s rclone.conf (mode 600). Then finds the drive from siteUrl (remoteType sharepoint) or the person''s OneDrive, checks the remote answers and starts the timer. With CLOUD_FOLDER_CLIENT_ID, CLOUD_FOLDER_TENANT and CLOUD_FOLDER_CLIENT_SECRET_FILE (or CLOUD_FOLDER_CLIENT_SECRET) in the environment it uses client credentials instead, without a prompt (unverified, see the Feature NOTES). CLOUD_FOLDER_DRIVE_ID skips the drive lookup.'
+    desc: 'Sign in for sync and mount mode, the same command in the container and (devcontainer-cli 1.16.0 or later, with the bootstrap''s cloud-folder include) on the workstation, where the launcher relays the browser into the container. Here it runs rclone authorize "onedrive" in the container with the browser not opened and prints the sign-in address; sign in in any browser, then paste the address the browser fails to open afterwards (http://localhost:53682/?code=...), or the one-line token from rclone authorize "onedrive" on a machine with a browser. Read without echo; the token goes only into the Feature volume''s rclone.conf (mode 600). Then finds the drive from siteUrl (remoteType sharepoint) or the person''s OneDrive, checks the remote answers and starts the timer. `-- --token` asks for the token only; `-- --relay` is the launcher''s (it waits for the relayed browser). CLOUD_FOLDER_LOGIN_TIMEOUT (seconds, default 600) bounds the wait. With CLOUD_FOLDER_CLIENT_ID, CLOUD_FOLDER_TENANT and CLOUD_FOLDER_CLIENT_SECRET_FILE (or CLOUD_FOLDER_CLIENT_SECRET) in the environment it uses client credentials instead, without a prompt (unverified, see the Feature NOTES). CLOUD_FOLDER_DRIVE_ID skips the drive lookup.'
     interactive: true
     vars: *cf
     cmds:
-      - '{{.CF}}cloud-folder-setup login'
+      - '{{.CF}}cloud-folder-setup login {{.CLI_ARGS}}'
 
   sync:
     dir: '{{.USER_WORKING_DIR}}'

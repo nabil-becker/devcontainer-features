@@ -51,6 +51,7 @@ new_repo; run --
 check 'default: exits 0' 0 "$rc"
 check 'default: vendors devcontainer.yml' yes "$([ -f "$T/repo/.devcontainer/cli_bootstrap.ignore/devcontainer.yml" ] && echo yes)"
 check 'default: vendors the bash twin, executable' yes "$([ -x "$T/repo/.devcontainer/cli_bootstrap.ignore/host/devcontainer-cli.sh" ] && echo yes)"
+check 'default: vendors cloud-folder.yml (task cloud-folder:login on the workstation)' yes "$([ -f "$T/repo/.devcontainer/cli_bootstrap.ignore/cloud-folder.yml" ] && echo yes)"
 check 'default: vendors the download helper next to the bash twin' yes "$([ -f "$T/repo/.devcontainer/cli_bootstrap.ignore/host/dcf-curl.sh" ] && echo yes)"
 check 'default: no ./bootstrap in the repo' no "$([ -e "$T/repo/bootstrap" ] && echo yes || echo no)"
 contains 'default: prints the folder used' "$out" 'folder    .devcontainer/cli_bootstrap.ignore/'
@@ -63,6 +64,8 @@ check 'default: no migration note' no "$(case "$out" in *MIGRATION*) echo yes ;;
 if command -v task > /dev/null 2>&1; then
   tl="$(cd "$T/repo" && env -u BOOTSTRAP_DIR task --list-all 2>&1)"
   contains 'default: real task resolves the vendored include' "$tl" 'devcontainer:up'
+  tl="$(cd "$T/repo" && env -u BOOTSTRAP_DIR -u RCLONE_CONFIG -u DEVCONTAINER_IN_CONTAINER task --list-all 2>&1)"
+  contains 'default: on the workstation task cloud-folder:login is the launcher' "$tl" 'cloud-folder:login'
 fi
 # the bash twin is found next to the vendored devcontainer.yml (the _BASH_CLI lookup)
 snippet="$(grep -F 'f="{{.TASKFILE_DIR}}/host/devcontainer-cli.sh"' "$T/repo/.devcontainer/cli_bootstrap.ignore/devcontainer.yml" | head -1)"

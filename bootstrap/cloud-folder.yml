@@ -1,0 +1,21 @@
+# task cloud-folder:login on the workstation: the same name as the cloud-folder Feature's task in
+# the container, so one command signs in wherever it runs. Vendored with devcontainer.yml by the
+# bootstrap and included from the root Taskfile as
+#   includes:
+#     cloud-folder:
+#       taskfile: '{{if or (eq (.RCLONE_CONFIG | default "") "/var/lib/devcontainer-features/cloud-folder/rclone.conf") (eq (.DEVCONTAINER_IN_CONTAINER | default "") "1")}}./.devcontainer/cli_bootstrap.ignore/none.yml{{else}}./.devcontainer/cli_bootstrap.ignore/cloud-folder.yml{{end}}'
+#       optional: true
+# Inside the container the cloud-folder Feature's containerEnv sets RCLONE_CONFIG to that path (every
+# version of the Feature), so this file is left out there and the Feature's own cloud-folder:login
+# (from features.yml) is the only one: two tasks of one name would stop every task of the
+# repository ("Found multiple tasks"). On the workstation features.yml does not exist, so this is
+# the only one. DEVCONTAINER_IN_CONTAINER=1 leaves it out too (a container without the Feature).
+# It needs the launcher included as `devcontainer` (the bootstrap's name).
+version: '3'
+
+tasks:
+  login:
+    desc: 'Sign in the cloud-folder Feature''s remote (SharePoint or OneDrive) from the workstation: the same command as in the container. Runs task devcontainer:cloud-folder-login: a listener on this workstation''s 127.0.0.1:53682, only for the sign-in, relays the browser into the running devcontainer, whose login runs rclone authorize there; your default browser opens the sign-in; the listener closes when the login ends, fails or times out. -- --paste signs in by pasting the address instead; -- --workstation-rclone runs the pinned rclone (downloaded once, verified) here and hands its token to the container.'
+    interactive: true
+    cmds:
+      - task: :devcontainer:cloud-folder-login

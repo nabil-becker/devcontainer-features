@@ -945,8 +945,13 @@ function Exit-DevcontainerBuildLock {
     try { $Lock.ReleaseMutex() } finally { $Lock.Dispose() }
 }
 
-function Invoke-DevcontainerCliProcess {
-    <# .SYNOPSIS One @devcontainers/cli call; its exit code is left in $script:CliExitCode (no throw for a failing CLI). #>
+function Get-DevcontainerCliInvocation {
+    <#
+    .SYNOPSIS
+        The program and arguments of one @devcontainers/cli call (Exe, Arguments), with the host
+        mounts for `up`, --docker-path and the DCF_HOST_* environment set up as for every call.
+        Invoke-DevcontainerCliProcess runs it on the console; the cloud-folder login reads its output.
+    #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Subcommand,
@@ -955,8 +960,7 @@ function Invoke-DevcontainerCliProcess {
         [string]$CommandB64,
         [string]$NodeVersion,
         [string]$CliVersion,
-        [string]$DockerPath,
-        [string]$InputFile
+        [string]$DockerPath
     )
 
     $WorkspaceFolder = (Resolve-Path $WorkspaceFolder).Path
@@ -1008,6 +1012,27 @@ function Invoke-DevcontainerCliProcess {
     else {
         $cliArgs += $Arguments
     }
+    return [pscustomobject]@{ Exe = $exe; Arguments = [string[]]$cliArgs }
+}
+
+function Invoke-DevcontainerCliProcess {
+    <# .SYNOPSIS One @devcontainers/cli call; its exit code is left in $script:CliExitCode (no throw for a failing CLI). #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Subcommand,
+        [Parameter(Mandatory)][string]$WorkspaceFolder,
+        [string[]]$Arguments = @(),
+        [string]$CommandB64,
+        [string]$NodeVersion,
+        [string]$CliVersion,
+        [string]$DockerPath,
+        [string]$InputFile
+    )
+
+    $inv = Get-DevcontainerCliInvocation -Subcommand $Subcommand -WorkspaceFolder $WorkspaceFolder -Arguments $Arguments `
+        -CommandB64 $CommandB64 -NodeVersion $NodeVersion -CliVersion $CliVersion -DockerPath $DockerPath
+    $exe = $inv.Exe
+    $cliArgs = $inv.Arguments
 
     # Not returned: the CLI's own output must reach the console (a pipeline
     # would capture it, and Out-Host would take away an interactive terminal).
@@ -1117,6 +1142,315 @@ function Import-SshKey {
     if ($script:CliExitCode -ne 0) { throw "ssh-key-import: loading the keys failed (exit $($script:CliExitCode))." }
 }
 
+# ------------------------------------------------------ cloud-folder login ----
+# task cloud-folder:login from the workstation (devcontainer:cloud-folder-login): the cloud-folder
+# Feature's sign-in, which runs `rclone authorize "onedrive"` in the container, reached from this
+# workstation's browser. Microsoft sends the browser after the sign-in to the fixed
+# http://localhost:53682/ (rclone's app registration allows only that address), which here does not
+# reach the container. Three routes, as in the bash twin (devcontainer-cli.sh, "cloud-folder login"):
+# the relay (default: a listener on 127.0.0.1:53682 for the sign-in only, each request relayed into
+# the container through `<engine> exec -i` and bash's /dev/tcp), --paste, and --workstation-rclone.
+# Test hooks: DCF_CLOUD_FOLDER_LOGIN_PORT, DCF_CLOUD_FOLDER_LOGIN_CONTAINER_PORT, DCF_BROWSER,
+# DCF_RCLONE_DOWNLOADS.
+# The cloud-folder Feature's rcloneVersion default (CloudFolderLogin.Tests.ps1 checks it matches).
+$script:CloudFolderRcloneDefault = '1.75.2'
+
+function Get-LauncherCacheRoot {
+    <# .SYNOPSIS The launcher's download cache: %LOCALAPPDATA%\devcontainer-features on Windows, else ${XDG_CACHE_HOME:-~/.cache}/devcontainer-features (as the bash twin). #>
+    [CmdletBinding()]
+    param()
+    if ($IsWindows) { return (Join-Path $env:LOCALAPPDATA 'devcontainer-features') }
+    $base = if ($env:XDG_CACHE_HOME) { $env:XDG_CACHE_HOME } else { Join-Path $HOME '.cache' }
+    return (Join-Path $base 'devcontainer-features')
+}
+
+function Get-CloudFolderRcloneVersion {
+    <# .SYNOPSIS The cloud-folder rcloneVersion in the repository's devcontainer.json, else the Feature's default; "latest" asks the publisher. #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$WorkspaceFolder)
+    $v = ''
+    $file = Get-DevcontainerConfigFile -WorkspaceFolder $WorkspaceFolder
+    if ($file) {
+        $text = ConvertTo-JsonWithoutComment -Text (Get-Content -LiteralPath $file -Raw)
+        $m = [regex]::Match($text, '"rcloneVersion"\s*:\s*"([^"]*)"')
+        if ($m.Success) { $v = $m.Groups[1].Value }
+    }
+    $v = $v -replace '^v', ''
+    if ($v -eq 'latest') {
+        $base = Get-SettingOrEnv '' 'DCF_RCLONE_DOWNLOADS' 'https://downloads.rclone.org'
+        $file = [System.IO.Path]::GetTempFileName()
+        try {
+            Invoke-DcfDownload -Uri "$base/version.txt" -OutFile $file
+            $m = [regex]::Match((Get-Content -LiteralPath $file -Raw), 'rclone v?([0-9][0-9.]*)')
+            if (-not $m.Success) { throw 'cloud-folder-login: rcloneVersion latest: the publisher did not say which version that is.' }
+            $v = $m.Groups[1].Value
+        }
+        finally { Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue }
+    }
+    if (-not $v) { $v = $script:CloudFolderRcloneDefault }
+    return $v
+}
+
+function Get-WorkstationRclone {
+    <#
+    .SYNOPSIS
+        The rclone release for this workstation in the launcher cache (downloaded once, verified
+        against the release's SHA256SUMS); returns the executable's path. Throws on a mismatch.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Version)
+    $os = if ($IsWindows) { 'windows' } elseif ($IsMacOS) { 'osx' } else { 'linux' }
+    $arch = switch ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture) {
+        'X64' { 'amd64' } 'Arm64' { 'arm64' } default { throw "cloud-folder-login: no rclone build for $_ here (amd64, arm64)." }
+    }
+    $exeName = if ($IsWindows) { 'rclone.exe' } else { 'rclone' }
+    $dir = Join-Path (Get-LauncherCacheRoot) "rclone/v$Version"
+    $exe = Join-Path $dir $exeName
+    if (Test-Path -LiteralPath $exe -PathType Leaf) { return $exe }
+
+    $asset = "rclone-v$Version-$os-$arch.zip"
+    $base = (Get-SettingOrEnv '' 'DCF_RCLONE_DOWNLOADS' 'https://downloads.rclone.org') + "/v$Version"
+    $tmp = Join-Path ([System.IO.Path]::GetTempPath()) "dcf-rclone-$([guid]::NewGuid().ToString('N'))"
+    New-Item -ItemType Directory -Path $tmp -Force | Out-Null
+    Write-Host "cloud-folder-login: downloading rclone v$Version ($asset, once; cached under $dir)..."
+    try {
+        try {
+            Invoke-DcfDownload -Uri "$base/$asset" -OutFile (Join-Path $tmp $asset)
+            # Saved to a file and read as text: for this file Invoke-WebRequest's .Content is bytes.
+            Invoke-DcfDownload -Uri "$base/SHA256SUMS" -OutFile (Join-Path $tmp 'SHA256SUMS')
+        }
+        catch { throw "cloud-folder-login: could not download rclone v$Version from $base ($($_.Exception.Message))" }
+        $sums = Get-Content -LiteralPath (Join-Path $tmp 'SHA256SUMS') -Raw
+        $line = $sums -split "`n" | Where-Object { $_ -match ('^\s*[0-9a-fA-F]{64}\s+' + [regex]::Escape($asset) + '\s*$') } | Select-Object -First 1
+        if (-not $line) { throw "cloud-folder-login: $asset is not in the release's SHA256SUMS." }
+        $expected = ($line.Trim() -split '\s+')[0].ToLowerInvariant()
+        $actual = (Get-FileHash -LiteralPath (Join-Path $tmp $asset) -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actual -ne $expected) { throw "cloud-folder-login: SHA-256 mismatch for $asset (expected $expected, got $actual); nothing kept." }
+        Expand-Archive -LiteralPath (Join-Path $tmp $asset) -DestinationPath (Join-Path $tmp 'x') -Force
+        $found = Join-Path $tmp "x/rclone-v$Version-$os-$arch/$exeName"
+        if (-not (Test-Path -LiteralPath $found -PathType Leaf)) { throw "cloud-folder-login: $asset has no rclone-v$Version-$os-$arch/$exeName." }
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        Move-Item -LiteralPath $found -Destination $exe -Force
+        if (-not $IsWindows) { & chmod 0755 $exe }
+    }
+    finally { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue }
+    return $exe
+}
+
+function Open-Browser {
+    <# .SYNOPSIS Opens the address in the default browser (DCF_BROWSER: another command), without waiting. #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Url)
+    try {
+        if ($env:DCF_BROWSER) { Start-Process -FilePath $env:DCF_BROWSER -ArgumentList @($Url) | Out-Null }
+        else { Start-Process -FilePath $Url | Out-Null }
+    }
+    catch { Write-Host "cloud-folder-login: open this address in your browser: $Url" }
+}
+
+function Invoke-CloudFolderRelayRequest {
+    <#
+    .SYNOPSIS
+        One request of the browser: read from the workstation listener, made HTTP/1.0 with
+        Connection: close (so rclone answers and closes), written into the container through
+        `<engine> exec -i <id> bash -c` to /dev/tcp/127.0.0.1/<port>, and the answer copied back.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][System.Net.Sockets.TcpClient]$Client,
+        [Parameter(Mandatory)][string]$Engine,
+        [Parameter(Mandatory)][string]$ContainerId,
+        [Parameter(Mandatory)][int]$ContainerPort
+    )
+    try {
+        $stream = $Client.GetStream()
+        $stream.ReadTimeout = 10000
+        $buf = [byte[]]::new(65536)
+        $data = [System.IO.MemoryStream]::new()
+        $ascii = [System.Text.Encoding]::ASCII
+        while ($data.Length -lt 65536) {
+            $n = $stream.Read($buf, 0, $buf.Length)
+            if ($n -le 0) { break }
+            $data.Write($buf, 0, $n)
+            if ($ascii.GetString($data.ToArray()).Contains("`r`n`r`n")) { break }
+        }
+        $head = ($ascii.GetString($data.ToArray()) -split "`r`n`r`n", 2)[0] -split "`r`n"
+        $first = $head[0] -split ' '
+        if ($first.Count -lt 2) { return }
+        $lines = @("$($first[0]) $($first[1]) HTTP/1.0")
+        $lines += @($head | Select-Object -Skip 1 | Where-Object { $_ -and (($_ -split ':', 2)[0].Trim().ToLowerInvariant() -notin 'connection', 'keep-alive') })
+        $lines += 'Connection: close'
+        $request = $ascii.GetBytes(($lines -join "`r`n") + "`r`n`r`n")
+
+        $psi = [System.Diagnostics.ProcessStartInfo]::new($Engine)
+        foreach ($a in @('exec', '-i', $ContainerId, 'bash', '-c', "exec 3<>/dev/tcp/127.0.0.1/$ContainerPort || exit 1; cat <&3 & cat >&3; wait")) { $psi.ArgumentList.Add($a) }
+        $psi.UseShellExecute = $false
+        $psi.RedirectStandardInput = $true
+        $psi.RedirectStandardOutput = $true
+        $psi.CreateNoWindow = $true
+        $answer = [System.IO.MemoryStream]::new()
+        try {
+            $p = [System.Diagnostics.Process]::Start($psi)
+            $p.StandardInput.BaseStream.Write($request, 0, $request.Length)
+            $p.StandardInput.Close()
+            $p.StandardOutput.BaseStream.CopyTo($answer)
+            [void]$p.WaitForExit(30000)
+        }
+        catch { $answer.SetLength(0) }
+        $bytes = $answer.ToArray()
+        if ($bytes.Length -eq 0) {
+            $bytes = $ascii.GetBytes("HTTP/1.0 502 Bad Gateway`r`nContent-Type: text/plain`r`n`r`nThe devcontainer did not answer (is task cloud-folder:login still running?).`n")
+        }
+        $stream.Write($bytes, 0, $bytes.Length)
+    }
+    catch { Write-Verbose "cloud-folder-login: a relayed request failed: $($_.Exception.Message)" }
+    finally { $Client.Close() }
+}
+
+function Invoke-CloudFolderLoginRelay {
+    <#
+    .SYNOPSIS
+        The relay route: listens on 127.0.0.1:53682 for the sign-in only, starts `cloud-folder-setup
+        login --relay` in the container, opens the browser at the link it prints, relays every
+        request, and closes the listener when the login ends, fails or times out. A busy port falls
+        back to the paste route. The exit code is left in $script:CliExitCode.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$WorkspaceFolder,
+        [Parameter(Mandatory)][string]$ContainerId,
+        [string]$NodeVersion,
+        [string]$CliVersion,
+        [string]$DockerPath
+    )
+    $port = [int](Get-SettingOrEnv '' 'DCF_CLOUD_FOLDER_LOGIN_PORT' '53682')
+    $cport = [int](Get-SettingOrEnv '' 'DCF_CLOUD_FOLDER_LOGIN_CONTAINER_PORT' '53682')
+    $timeout = [int](Get-SettingOrEnv '' 'CLOUD_FOLDER_LOGIN_TIMEOUT' '600')
+    $common = @{ WorkspaceFolder = $WorkspaceFolder; NodeVersion = $NodeVersion; CliVersion = $CliVersion; DockerPath = $DockerPath }
+    $engine = Resolve-DockerPath -DockerPath $DockerPath
+    if (-not $engine) { $engine = 'docker' }
+
+    $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $port)
+    try { $listener.Start() }
+    catch {
+        Write-Host "cloud-folder-login: port $port on this workstation is in use (another sign-in, or a local rclone?), so the browser's redirect cannot be relayed; signing in by pasting the address instead."
+        Invoke-DevcontainerCliProcess -Subcommand exec @common -Arguments @('cloud-folder-setup', 'login')
+        return
+    }
+    $proc = $null
+    try {
+        Write-Host "cloud-folder-login: relaying 127.0.0.1:$port on this workstation into the devcontainer for the sign-in (closed when it ends, at the latest after ${timeout}s)."
+        $inv = Get-DevcontainerCliInvocation -Subcommand exec @common -Arguments @('env', "CLOUD_FOLDER_LOGIN_TIMEOUT=$timeout", 'cloud-folder-setup', 'login', '--relay')
+        $psi = [System.Diagnostics.ProcessStartInfo]::new($inv.Exe)
+        foreach ($a in $inv.Arguments) { $psi.ArgumentList.Add($a) }
+        $psi.UseShellExecute = $false
+        $psi.RedirectStandardInput = $true
+        $psi.RedirectStandardOutput = $true
+        $proc = [System.Diagnostics.Process]::Start($psi)
+        $proc.StandardInput.Close()
+        # The container's login stops at the same timeout; this one is the backstop.
+        $deadline = [datetime]::UtcNow.AddSeconds($timeout + 15)
+        $opened = $false
+        $next = $proc.StandardOutput.ReadLineAsync()
+        while ($true) {
+            if ($next.IsCompleted) {
+                $line = $next.Result
+                if ($null -eq $line) { break }
+                Write-Host $line
+                if (-not $opened -and $line -match 'sign-in URL: (http://\S+)') {
+                    $url = $Matches[1] -replace ":$cport/", ":$port/"
+                    Write-Host "cloud-folder-login: opening the sign-in in your browser: $url"
+                    Open-Browser -Url $url
+                    $opened = $true
+                }
+                $next = $proc.StandardOutput.ReadLineAsync()
+                continue
+            }
+            if ($listener.Pending()) {
+                Invoke-CloudFolderRelayRequest -Client $listener.AcceptTcpClient() -Engine $engine -ContainerId $ContainerId -ContainerPort $cport
+                continue
+            }
+            if ([datetime]::UtcNow -gt $deadline) {
+                Write-Host "cloud-folder-login: no sign-in within ${timeout}s; stopping."
+                try { $proc.Kill($true) } catch { Write-Verbose 'the login had ended' }
+                break
+            }
+            Start-Sleep -Milliseconds 50
+        }
+        $proc.WaitForExit()
+        $script:CliExitCode = $proc.ExitCode
+    }
+    finally {
+        $listener.Stop()
+        if ($proc -and -not $proc.HasExited) { try { $proc.Kill($true) } catch { Write-Verbose 'the login had ended' } }
+        Write-Host "cloud-folder-login: the relay on 127.0.0.1:$port is closed."
+    }
+}
+
+function Invoke-CloudFolderLogin {
+    <#
+    .SYNOPSIS
+        task devcontainer:cloud-folder-login (and task cloud-folder:login on the workstation): the
+        cloud-folder Feature's sign-in through the running devcontainer. Arguments: none (the
+        relay), --paste, or --workstation-rclone. The exit code is left in $script:CliExitCode.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$WorkspaceFolder,
+        [string[]]$Arguments = @(),
+        [string]$NodeVersion,
+        [string]$CliVersion,
+        [string]$DockerPath
+    )
+    $route = 'relay'
+    foreach ($a in $Arguments) {
+        switch ($a) {
+            '--paste' { $route = 'paste' }
+            '--workstation-rclone' { $route = 'workstation' }
+            default { throw "cloud-folder-login: unknown argument '$a' (--paste, --workstation-rclone)." }
+        }
+    }
+    $folder = (Resolve-Path $WorkspaceFolder).Path
+    $common = @{ WorkspaceFolder = $folder; NodeVersion = $NodeVersion; CliVersion = $CliVersion; DockerPath = $DockerPath }
+    $ids = @(Get-RunningDevcontainerId -WorkspaceFolder $folder -DockerPath $DockerPath)
+    if ($ids.Count -eq 0) { throw "No running devcontainer for $folder. Start it with: task dc:start" }
+
+    switch ($route) {
+        'paste' { Invoke-DevcontainerCliProcess -Subcommand exec @common -Arguments @('cloud-folder-setup', 'login') }
+        'relay' { Invoke-CloudFolderLoginRelay @common -ContainerId $ids[0] }
+        'workstation' {
+            $v = Get-CloudFolderRcloneVersion -WorkspaceFolder $folder
+            $rclone = Get-WorkstationRclone -Version $v
+            Write-Host "cloud-folder-login: signing in with rclone v$v on this workstation: rclone authorize `"onedrive`" opens your browser."
+            # Its notices (the link) reach the console; its standard output, which holds the token, is kept here.
+            $out = @(& $rclone authorize onedrive)
+            $rc = $LASTEXITCODE
+            $token = $null
+            for ($i = 0; $i -lt $out.Count; $i++) {
+                if ($out[$i] -match '^Paste the following into your remote machine --->') {
+                    $token = @($out | Select-Object -Skip ($i + 1) | Where-Object { $_.Trim() } | Select-Object -First 1)[0]
+                    break
+                }
+            }
+            $out = $null
+            if ($rc -ne 0 -or -not $token -or $token -match '^<---End paste') {
+                throw "cloud-folder-login: rclone authorize did not give a token (exit $rc; its messages are above)."
+            }
+            $file = [System.IO.Path]::GetTempFileName()
+            try {
+                [System.IO.File]::WriteAllText($file, "$token`n")
+                $token = $null
+                Write-Host 'cloud-folder-login: handing the token to the devcontainer (on stdin, never as an argument).'
+                Invoke-DevcontainerCliProcess -Subcommand exec @common -Arguments @('cloud-folder-setup', 'login', '--token') -InputFile $file
+            }
+            finally { Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue }
+        }
+    }
+    if ($script:CliExitCode -eq 127) {
+        [Console]::Error.WriteLine('cloud-folder-login: the devcontainer has no cloud-folder-setup: add the cloud-folder Feature (1.3.0 or later) to its devcontainer.json and rebuild.')
+    }
+}
+
 function Invoke-DevcontainerCli {
     [CmdletBinding()]
     param(
@@ -1142,6 +1476,13 @@ function Invoke-DevcontainerCli {
     # `ssh-key-import` is not a CLI subcommand: the key file is Arguments[0].
     if ($Subcommand -eq 'ssh-key-import') {
         Import-SshKey -WorkspaceFolder $WorkspaceFolder -KeyFile ($Arguments | Select-Object -First 1) -NodeVersion $NodeVersion -CliVersion $CliVersion -DockerPath $DockerPath
+        return
+    }
+
+    # `cloud-folder-login` is not a CLI subcommand: the cloud-folder Feature's sign-in from here.
+    if ($Subcommand -eq 'cloud-folder-login') {
+        Invoke-CloudFolderLogin -WorkspaceFolder $WorkspaceFolder -Arguments $Arguments -NodeVersion $NodeVersion -CliVersion $CliVersion -DockerPath $DockerPath
+        if ($script:CliExitCode -ne 0) { exit $script:CliExitCode }
         return
     }
 
@@ -1192,4 +1533,4 @@ function Invoke-DevcontainerCli {
     exit $rc
 }
 
-Export-ModuleMember -Function Get-HostTypeId, Get-DefaultHostTypePriority, Resolve-HostType, Resolve-SshAgent, Resolve-HostProfile, Initialize-HostEnvironment, Test-FuseRequested, Get-FuseRunArgument, Get-FuseSlotMissing, Write-FuseSlotWarning, Get-DevcontainerConfigFile, Get-HostMount, Test-CloudFolderMount, ConvertTo-MountArgument, ConvertTo-JsonWithoutComment, Get-ConfiguredMountTarget, Test-HostMountsEnabled, Resolve-HostMount, Initialize-HostMountSource, Get-HostMountArgument, Show-HostProfile, Import-SshKey, Clear-HostProfileCache, Get-SettingOrEnv, ConvertFrom-TaskCliArgString, Get-PortableNodeDir, Invoke-DcfDownload, Get-DevcontainersCliEntrypoint, Remove-DevcontainersCli, Resolve-DockerPath, Get-WorkspaceFolderVariant, Get-RunningDevcontainerId, Stop-Devcontainer, Test-BuildSubcommand, Enter-DevcontainerBuildLock, Exit-DevcontainerBuildLock, Invoke-DevcontainerCliProcess, Invoke-DevcontainerCli
+Export-ModuleMember -Function Get-HostTypeId, Get-DefaultHostTypePriority, Resolve-HostType, Resolve-SshAgent, Resolve-HostProfile, Initialize-HostEnvironment, Test-FuseRequested, Get-FuseRunArgument, Get-FuseSlotMissing, Write-FuseSlotWarning, Get-DevcontainerConfigFile, Get-HostMount, Test-CloudFolderMount, ConvertTo-MountArgument, ConvertTo-JsonWithoutComment, Get-ConfiguredMountTarget, Test-HostMountsEnabled, Resolve-HostMount, Initialize-HostMountSource, Get-HostMountArgument, Show-HostProfile, Import-SshKey, Clear-HostProfileCache, Get-SettingOrEnv, ConvertFrom-TaskCliArgString, Get-PortableNodeDir, Invoke-DcfDownload, Get-DevcontainersCliEntrypoint, Remove-DevcontainersCli, Resolve-DockerPath, Get-WorkspaceFolderVariant, Get-RunningDevcontainerId, Stop-Devcontainer, Test-BuildSubcommand, Enter-DevcontainerBuildLock, Exit-DevcontainerBuildLock, Get-DevcontainerCliInvocation, Invoke-DevcontainerCliProcess, Get-LauncherCacheRoot, Get-CloudFolderRcloneVersion, Get-WorkstationRclone, Open-Browser, Invoke-CloudFolderRelayRequest, Invoke-CloudFolderLoginRelay, Invoke-CloudFolderLogin, Invoke-DevcontainerCli

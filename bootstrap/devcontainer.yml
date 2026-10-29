@@ -74,6 +74,8 @@
 #                              repository's runArgs read (the bootstrap's devcontainer.json has
 #                              the lines; `up` warns when they are missing). Unset = no grant,
 #                              never by default. Takes effect at the next rebuild.
+#   CLOUD_FOLDER_LOGIN_TIMEOUT for `cloud-folder-login`: the seconds the sign-in relay stays
+#                              open (default 600).
 #   DEVCONTAINER_NODE_VERSION  portable Node.js version (default in the scripts).
 #   DEVCONTAINER_CLI_VERSION   @devcontainers/cli version (default: latest).
 #   DEVCONTAINER_HOMES         host folder for bind-mounted tool state
@@ -214,6 +216,16 @@ tasks:
         vars:
           SUBCOMMAND: ssh-key-import
           ARGS: '{{.FILE | shellQuote}}'
+
+  cloud-folder-login:
+    desc: 'Sign in the cloud-folder Feature''s remote (SharePoint or OneDrive) from the workstation; also task cloud-folder:login when the root Taskfile includes the launcher''s cloud-folder.yml. The devcontainer must run (task devcontainer:start). Default: a listener on this workstation''s 127.0.0.1:53682 (the fixed address rclone''s sign-in returns to), only for the sign-in, relays each request of the browser into the container through `<engine> exec` and bash''s /dev/tcp (no port mapping, nothing in devcontainer.json), the container''s login runs rclone authorize there, and the default browser opens the sign-in; the listener closes when the login ends, fails or after CLOUD_FOLDER_LOGIN_TIMEOUT seconds (default 600). When 53682 is busy here (or, on Linux and macOS, there is no python3 for the listener) it says so and takes the paste route. -- --paste: sign in by pasting the address the browser fails to open afterwards. -- --workstation-rclone: download the pinned rclone (the repository''s cloud-folder rcloneVersion, else the Feature''s default) once into the launcher cache, verified against the release''s SHA256SUMS, run rclone authorize "onedrive" here and hand the token to the container on stdin. Inside the container it runs the Feature''s login directly.'
+    interactive: true
+    cmds:
+      - cmd: '{{if ._IN_CONTAINER}}cloud-folder-setup login {{.CLI_ARGS}}{{else}}:{{end}}'
+      - cmd: '{{if ._IN_CONTAINER}}:{{else}}pwsh -NoLogo -NoProfile -File ''{{.TASKFILE_DIR}}/host/Invoke-DevcontainerCli.ps1'' -WorkspaceFolder ''{{.WORKSPACE_FOLDER}}'' {{._PS_SETTINGS}} {{._PS_HOST_SETTINGS}} -Subcommand cloud-folder-login -CliArgsB64 ''{{.CLI_ARGS | splitArgs | toJson | b64enc}}''{{end}}'
+        platforms: [windows]
+      - cmd: '{{if ._IN_CONTAINER}}:{{else}}{{._SH_SETTINGS}} bash ''{{._BASH_CLI}}'' run cloud-folder-login --workspace-folder ''{{.WORKSPACE_FOLDER}}'' -- {{.CLI_ARGS}}{{end}}'
+        platforms: [linux, darwin]
 
   run:
     desc: 'Internal: run CMD inside the devcontainer - directly when Task already runs inside it, through the exec task (which starts the container first) from the host. What claude and similar "inside" tasks use.'

@@ -23,7 +23,8 @@
     Breaks the chicken-and-egg between "the devcontainer tasks live in the
     devcontainer-features repo" and "I don't have that repo checked out":
 
-      1. Vendors bootstrap/devcontainer.yml, bootstrap/host/* (the PowerShell
+      1. Vendors bootstrap/devcontainer.yml, bootstrap/cloud-folder.yml (task
+         cloud-folder:login on the workstation), bootstrap/host/* (the PowerShell
          flavour) and the devcontainer-cli Feature's devcontainer-cli.sh (the
          bash flavour, with dcf-curl.sh, its download helper) into the bootstrap folder (default
          .devcontainer/cli_bootstrap.ignore/, see -BootstrapDir) - always
@@ -179,6 +180,7 @@ if ($DockerPath) { Write-Host "  engine    DEVCONTAINER_DOCKER_PATH=$DockerPath"
 #    devcontainer-cli Feature's own script, vendored next to the PowerShell.
 $vendored = [ordered]@{
     'bootstrap/devcontainer.yml'                   = '{BD}/devcontainer.yml'
+    'bootstrap/cloud-folder.yml'                   = '{BD}/cloud-folder.yml'
     'bootstrap/host/DevcontainerCli.psm1'          = '{BD}/host/DevcontainerCli.psm1'
     'bootstrap/host/Invoke-DevcontainerCli.ps1'    = '{BD}/host/Invoke-DevcontainerCli.ps1'
     'bootstrap/host/Initialize-DevcontainerCli.ps1' = '{BD}/host/Initialize-DevcontainerCli.ps1'
@@ -325,6 +327,18 @@ clone is the bootstrap one-liner, because $BootstrapDir/ is git-ignored):
       taskfile: /usr/local/share/go-task/features.yml
       optional: true
       flatten: true
+"@
+}
+
+if ((Get-Content $taskfile -Raw) -notmatch [regex]::Escape("$BootstrapDir/cloud-folder.yml")) {
+    Write-Host @"
+NOTE: Taskfile.yml does not include $BootstrapDir/cloud-folder.yml, so task cloud-folder:login works only inside the
+container (task devcontainer:cloud-folder-login signs in from here). For the same command on the workstation, add
+under includes (inside the container the cloud-folder Feature's RCLONE_CONFIG leaves it out, so its own task wins):
+
+    cloud-folder:
+      taskfile: '{{if or (eq (.RCLONE_CONFIG | default "") "/var/lib/devcontainer-features/cloud-folder/rclone.conf") (eq (.DEVCONTAINER_IN_CONTAINER | default "") "1")}}./$BootstrapDir/none.yml{{else}}./$BootstrapDir/cloud-folder.yml{{end}}'
+      optional: true
 "@
 }
 
