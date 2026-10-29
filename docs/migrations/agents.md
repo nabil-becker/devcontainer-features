@@ -102,6 +102,48 @@ What you see changes; nothing to edit unless you wrap `claude`.
   folders, through a managed-settings file. It grants file access only; `--add-dir` also loaded the
   folder's `CLAUDE.md` and skills.
 
+## agents 1.x to 2.0.0: one live copy per stateful agent
+
+agents 2.0.0 gives every stateful agent an exclusive lease: a start through `agents` takes it
+first, so a second start of a resident joins the running one and a second start of an on-demand
+agent is refused while the first runs. Every entry of a 1.x list is stateful. The design is in
+[the agents v2 proposal](../proposals/agents-v2.md), sections 5, 6, 8 and 12.
+
+**Most repositories edit nothing.** What changes for a list with none of the new keys:
+
+| What | 1.x | 2.0.0 | What to do |
+| --- | --- | --- | --- |
+| An entry without `lifecycle` | not a concept | `stateful`, `lease: container`, `identity` = its name | nothing |
+| A resident started twice | the second attaches | the same, under the lease: two concurrent starts are one start and one join | nothing |
+| An on-demand agent started in a second terminal while one runs | a second session | **refused** (exit 2), naming the holder | add `lifecycle: ephemeral` to an agent you run several of at once; its `--resume` is then refused |
+| Duplicate sessions started outside `agents` | reported (`+N`) | still reported | nothing |
+| First start after the upgrade | | a session already running is adopted; nothing restarts | nothing |
+| A container restart | residents woken or started | the same; the old lease is dead (another container start) and taken over | nothing |
+| `task agents:list` | `NAME KIND CLI STATE ID FOLDER` | adds `LIFECYCLE` and `LEASE` | a script reads `-- --json`, whose fields are only added to |
+| `agents` / `task agents` with no name | the usage, exit 2 | the same, unless one agent is marked `default: true` | nothing; mark one to start it with no name |
+| State | the markers folder | the same folder plus `leases/`, no volume | nothing |
+| claude-code | the 1.8.x adapter | the same adapter works | nothing |
+| Pin | `agents:1` | `agents:2` | change the Feature reference; `agents:1` never moves to 2 |
+
+Steps:
+
+1. Change `ghcr.io/nabil-becker/devcontainer-features/agents:1` to `agents:2` in
+   `.devcontainer/devcontainer.json` and rebuild.
+2. If anyone runs one on-demand agent in several terminals at once (a reviewer, a pair), give it
+   `lifecycle: ephemeral`, or give each copy its own entry.
+3. Optionally mark the agent you start most `default: true`; `task agents` with no name (from the
+   host, `task devcontainer:agent` with no name) then starts it.
+4. A refused start names the holder. If that holder is gone (a crashed terminal, an agent stopped
+   outside `agents`) and the lease was not taken over on its own, `task agents:release -- <name>`
+   frees it; `task agents:leases` shows every lease. `--force` frees a live one, which lets a
+   second copy start.
+
+The new keys `identity` and `definition` are read, checked and shown in 2.0.0 but not yet handed
+to the CLI; keep the CLI profile (`--agent ...`) in `args` until the release that passes
+`definition` (a later 2.x with claude-code 1.9.0). A list may not set both. A 2.x list on a 1.x
+install reads the new keys as unknown (a warning) and takes no lease: the pin prevents that.
+Each consumer's `.devcontainer/DEVCONTAINER_CONTRIBUTION.md` carries the line.
+
 ## What still works until claude-code 2.0
 
 `claude-host`, `claude-fleet`, `claude-host-pin`, `task claude-code:host`, `task
