@@ -138,10 +138,32 @@ if ($BootstrapDir -in @('', '.', '.devcontainer')) { Invoke-BadBootstrapDir 'wou
 if (($BootstrapDir -split '/') -contains '..') { Invoke-BadBootstrapDir 'escapes the repository (..)' }
 $GitignoreBootstrap = -not $NoGitignore -and ((Resolve-Setting '' 'BOOTSTRAP_GITIGNORE' '') -notmatch '^(false|0|no)$')
 
+# Inlined from bootstrap/host/DevcontainerCli.psm1 (Invoke-DcfDownload): this script cannot import the module
+# before it has fetched it, as bootstrap.sh inlines its curl flags. The two must stay alike.
+function Invoke-DcfDownload {
+    # Invoke-WebRequest's own -MaximumRetryCount retries only HTTP statuses (408, 429, 5xx), never a reset
+    # connection or a cut transfer, so retry on any exception: 4 attempts in all, a pause between them, a
+    # partial -OutFile removed before each retry, the last error rethrown. Returns the response without -OutFile.
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Uri, [string]$OutFile, [int]$RetryIntervalSec = 2)
+    for ($attempt = 1; ; $attempt++) {
+        try {
+            if ($OutFile) { Invoke-WebRequest -UseBasicParsing -Uri $Uri -OutFile $OutFile }
+            else { return Invoke-WebRequest -UseBasicParsing -Uri $Uri }
+            return
+        }
+        catch {
+            if ($OutFile) { Remove-Item -LiteralPath $OutFile -Force -ErrorAction SilentlyContinue }
+            if ($attempt -ge 4) { throw }
+            Start-Sleep -Seconds $RetryIntervalSec
+        }
+    }
+}
+
 function Get-SourceFile([string]$RelativePath, [string]$Destination) {
     New-Item -ItemType Directory -Path (Split-Path $Destination -Parent) -Force | Out-Null
     if ($Source -match '^https?://') {
-        Invoke-WebRequest -UseBasicParsing -MaximumRetryCount 3 -RetryIntervalSec 2 -Uri "$Source/$RelativePath" -OutFile $Destination
+        Invoke-DcfDownload -Uri "$Source/$RelativePath" -OutFile $Destination
     }
     else {
         Copy-Item -LiteralPath (Join-Path $Source $RelativePath) -Destination $Destination -Force
