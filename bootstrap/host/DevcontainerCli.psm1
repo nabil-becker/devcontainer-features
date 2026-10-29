@@ -97,6 +97,26 @@ function ConvertFrom-TaskCliArgString {
     return , [string[]]@($json | ConvertFrom-Json | Where-Object { $null -ne $_ -and $_ -ne '' })
 }
 
+function Invoke-DcfDownload {
+    # Invoke-WebRequest's own -MaximumRetryCount retries only HTTP statuses (408, 429, 5xx), never a reset
+    # connection or a cut transfer, so retry on any exception: 4 attempts in all, a pause between them, a
+    # partial -OutFile removed before each retry, the last error rethrown. Returns the response without -OutFile.
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Uri, [string]$OutFile, [int]$RetryIntervalSec = 2)
+    for ($attempt = 1; ; $attempt++) {
+        try {
+            if ($OutFile) { Invoke-WebRequest -UseBasicParsing -Uri $Uri -OutFile $OutFile }
+            else { return Invoke-WebRequest -UseBasicParsing -Uri $Uri }
+            return
+        }
+        catch {
+            if ($OutFile) { Remove-Item -LiteralPath $OutFile -Force -ErrorAction SilentlyContinue }
+            if ($attempt -ge 4) { throw }
+            Start-Sleep -Seconds $RetryIntervalSec
+        }
+    }
+}
+
 function Get-PortableNodeDir {
     [CmdletBinding()]
     param([string]$Version)
@@ -111,8 +131,8 @@ function Get-PortableNodeDir {
     $zipName = "node-v$Version-win-x64.zip"
     $zipPath = Join-Path $script:CacheRoot $zipName
     try {
-        Invoke-WebRequest -UseBasicParsing -Uri "https://nodejs.org/dist/v$Version/$zipName" -OutFile $zipPath
-        $sums = (Invoke-WebRequest -UseBasicParsing -Uri "https://nodejs.org/dist/v$Version/SHASUMS256.txt").Content
+        Invoke-DcfDownload -Uri "https://nodejs.org/dist/v$Version/$zipName" -OutFile $zipPath
+        $sums = (Invoke-DcfDownload -Uri "https://nodejs.org/dist/v$Version/SHASUMS256.txt").Content
         $line = $sums -split "`n" | Where-Object { $_ -match ('\s' + [regex]::Escape($zipName) + '\s*$') } | Select-Object -First 1
         if (-not $line) { throw "Could not find $zipName in nodejs.org SHASUMS256.txt for v$Version." }
         $expected = ($line.Trim() -split '\s+')[0].ToLowerInvariant()
@@ -1172,4 +1192,4 @@ function Invoke-DevcontainerCli {
     exit $rc
 }
 
-Export-ModuleMember -Function Get-HostTypeId, Get-DefaultHostTypePriority, Resolve-HostType, Resolve-SshAgent, Resolve-HostProfile, Initialize-HostEnvironment, Test-FuseRequested, Get-FuseRunArgument, Get-FuseSlotMissing, Write-FuseSlotWarning, Get-DevcontainerConfigFile, Get-HostMount, Test-CloudFolderMount, ConvertTo-MountArgument, ConvertTo-JsonWithoutComment, Get-ConfiguredMountTarget, Test-HostMountsEnabled, Resolve-HostMount, Initialize-HostMountSource, Get-HostMountArgument, Show-HostProfile, Import-SshKey, Clear-HostProfileCache, Get-SettingOrEnv, ConvertFrom-TaskCliArgString, Get-PortableNodeDir, Get-DevcontainersCliEntrypoint, Remove-DevcontainersCli, Resolve-DockerPath, Get-WorkspaceFolderVariant, Get-RunningDevcontainerId, Stop-Devcontainer, Test-BuildSubcommand, Enter-DevcontainerBuildLock, Exit-DevcontainerBuildLock, Invoke-DevcontainerCliProcess, Invoke-DevcontainerCli
+Export-ModuleMember -Function Get-HostTypeId, Get-DefaultHostTypePriority, Resolve-HostType, Resolve-SshAgent, Resolve-HostProfile, Initialize-HostEnvironment, Test-FuseRequested, Get-FuseRunArgument, Get-FuseSlotMissing, Write-FuseSlotWarning, Get-DevcontainerConfigFile, Get-HostMount, Test-CloudFolderMount, ConvertTo-MountArgument, ConvertTo-JsonWithoutComment, Get-ConfiguredMountTarget, Test-HostMountsEnabled, Resolve-HostMount, Initialize-HostMountSource, Get-HostMountArgument, Show-HostProfile, Import-SshKey, Clear-HostProfileCache, Get-SettingOrEnv, ConvertFrom-TaskCliArgString, Get-PortableNodeDir, Invoke-DcfDownload, Get-DevcontainersCliEntrypoint, Remove-DevcontainersCli, Resolve-DockerPath, Get-WorkspaceFolderVariant, Get-RunningDevcontainerId, Stop-Devcontainer, Test-BuildSubcommand, Enter-DevcontainerBuildLock, Exit-DevcontainerBuildLock, Invoke-DevcontainerCliProcess, Invoke-DevcontainerCli

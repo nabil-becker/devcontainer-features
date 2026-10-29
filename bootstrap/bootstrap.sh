@@ -93,10 +93,16 @@ case "no_gitignore:${no_gitignore:-}:${BOOTSTRAP_GITIGNORE:-}" in
   *) gitignore_bootstrap=true ;;
 esac
 
+# Retry a dropped connection: this script arrives by curl | bash, so it cannot use the
+# Features' vendored dcf_curl; same flags as src/common/dcf-curl.sh (--retry-all-errors when
+# curl has it, 7.71+, so a TLS reset (35) or a cut transfer (56) is retried too).
+curl_retry=(--retry 3 --retry-delay 2 --retry-connrefused)
+case "$(curl --help all 2>&1 || true)" in *--retry-all-errors*) curl_retry+=(--retry-all-errors) ;; esac
+
 get_source_file() { # <relative> <destination>
   mkdir -p "$(dirname "$2")"
   case "$source" in
-    http://* | https://*) curl -fsSL -o "$2" "$source/$1" ;;
+    http://* | https://*) curl "${curl_retry[@]}" -fsSL -o "$2" "$source/$1" ;;
     *) cp -f "$source/$1" "$2" ;;
   esac
 }

@@ -1043,3 +1043,17 @@ exit 0
         }
     }
 }
+
+Describe 'Host bootstrap downloads retry a dropped connection' {
+    It 'every Invoke-WebRequest in <_> sits inside Invoke-DcfDownload' -ForEach @('bootstrap/bootstrap.ps1', 'bootstrap/host/DevcontainerCli.psm1') {
+        $file = Join-Path $PSScriptRoot "../../$_"
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($file, [ref]$null, [ref]$null)
+        $calls = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Invoke-WebRequest' }, $true)
+        $calls.Count | Should -BeGreaterThan 0
+        foreach ($c in $calls) {
+            $p = $c.Parent
+            while ($p -and -not ($p -is [System.Management.Automation.Language.FunctionDefinitionAst])) { $p = $p.Parent }
+            $p.Name | Should -Be 'Invoke-DcfDownload'
+        }
+    }
+}
