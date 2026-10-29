@@ -23,7 +23,8 @@
       "ssh-agent": {},
       "cloud-folder": {},
       "az": {},
-      "kube-state": {}
+      "kube-state": {},
+      "phi-check": {}
     },
     "remoteUser": "vscode"
   }

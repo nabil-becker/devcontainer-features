@@ -80,7 +80,7 @@ tasks:
           echo "generated READMEs are up to date"
 
   lint:
-    desc: 'shellcheck every shell script, yamllint every YAML file (.yamllint), PSScriptAnalyzer every PowerShell file, the vendored copies of src/common/*.sh (in src/ and local-features/) identical to the canonical ones, every download in a Feature script through dcf_curl (common:curl-check), and the Docker-free unit tests (the dcf_curl retry helper, devhost tooling, the git Feature''s .git-dirs mapping, the ssh-agent Feature''s setup script, the cloud-folder Feature''s status and sync, the agents Feature''s list and verbs, the claude-code Feature''s agent adapter, live-session rule and claude-fleet, the host launcher and its agent task) (CI runs exactly this inside .devcontainer/ci; the tools must be installed - this repo''s devcontainer has them, at the pinned versions).'
+    desc: 'shellcheck every shell script, yamllint every YAML file (.yamllint), PSScriptAnalyzer every PowerShell file, the vendored copies of src/common/*.sh (in src/ and local-features/) identical to the canonical ones, every download in a Feature script through dcf_curl (common:curl-check), and the Docker-free unit tests (the dcf_curl retry helper, devhost tooling, the git Feature''s .git-dirs mapping, the ssh-agent Feature''s setup script, the cloud-folder Feature''s status and sync, the agents Feature''s list and verbs, the claude-code Feature''s agent adapter, live-session rule and claude-fleet, the phi-check Feature''s patterns and command, the host launcher and its agent task) (CI runs exactly this inside .devcontainer/ci; the tools must be installed - this repo''s devcontainer has them, at the pinned versions).'
     cmds:
       - shellcheck -x src/*/*.sh local-features/*/*.sh local-features/*/share/bin/*.sh local-features/*/share/jobs/*/*.sh test/*/*.sh test/*/unit/*.sh test/bootstrap/*.sh bootstrap/*.sh bootstrap/host/*.sh .githooks/* .devcontainer/*.sh
       - yamllint --strict .
@@ -102,6 +102,7 @@ tasks:
       - task: test:cloud-folder-unit
       - task: test:agents-unit
       - task: test:claude-unit
+      - task: test:phi-check-unit
       - task: test:claude-fleet-task
       - task: test:agent-task
 
@@ -112,6 +113,11 @@ tasks:
       - bash test/claude-code/unit/adapter_test.sh
       - bash test/claude-code/unit/additional_dirs_test.sh
       - bash test/claude-code/unit/musl_test.sh
+
+  test:phi-check-unit:
+    desc: 'Docker-free tests of the phi-check Feature (src/phi-check): every rule with a positive and a near-miss case (never-issued SSN ranges, a lower-case MBI, an ICD code list, an NPI, a date, a name or a diagnosis word alone, an anchor outside the three-line window), no output line in any format holding the matched value, a binary or missing path failing closed, exit 2 on bad usage, the exceptions file skipping only the listed path and reporting a malformed line, --no-exceptions, standard input with --stdin-filename, the importable module; then a mutation check that three deliberately broken patterns each fail the suite; part of lint. Needs python3.'
+    cmds:
+      - bash test/phi-check/unit/phi_check_test.sh
 
   test:agents-unit:
     desc: 'Docker-free tests of the agents Feature''s agents command: the agent list (the YAML subset, required keys, unknown keys warned, errors with file and line), AGENTS_FILE from the task variable, .env, .devcontainer/.env, the environment or the default (a missing file named with its source), each verb per kind (start, --resume, --new and its question, up, list, stop, logs), the no-terminal rule, the fallbacks when the adapter answers exit 3, a listing that fails (state error, nothing started, the hint, never a fresh session), an on-demand agent shown none unless running, reset (a dry run by default, duplicates stopped, --purge, only listed agents and their folders, unlisted sessions untouched, a session mid-turn not stopped, uncommitted changes a warning and with --purge a refusal, --force, refused inside a Claude Code session, --all), the once-per-container-start marker, and the Feature Taskfile; a fake adapter keeps sessions in a file and records every call; part of lint. Needs task for the Taskfile part.'

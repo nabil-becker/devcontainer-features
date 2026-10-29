@@ -38,6 +38,7 @@ jobs:
           - cloud-folder
           - az
           - kube-state
+          - phi-check
         baseImage:
           - debian:latest
           - ubuntu:latest
@@ -79,6 +80,7 @@ jobs:
           - cloud-folder
           - az
           - kube-state
+          - phi-check
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 

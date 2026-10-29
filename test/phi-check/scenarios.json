@@ -1,0 +1,28 @@
+{
+  "with_tasks": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "go-task": {},
+      "phi-check": {}
+    },
+    "remoteUser": "vscode"
+  },
+  "custom_exceptions": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "phi-check": {
+        "exceptions": "fixtures/phi-ok.txt"
+      }
+    },
+    "remoteUser": "vscode"
+  },
+  "no_taskfile": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "phi-check": {
+        "installTaskfile": false
+      }
+    },
+    "remoteUser": "vscode"
+  }
+}
