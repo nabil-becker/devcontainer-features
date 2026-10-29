@@ -35,6 +35,12 @@ E
 check "yq installed privately, pinned" bash -c "/usr/local/share/go-task/yq --version | grep -F v4.54.1"
 check "task-aliases on PATH" command -v task-aliases
 check "features.yml includes the generated aliases, flattened" bash -c "grep -A3 'task-aliases:' /usr/local/share/go-task/features.yml | grep -F 'flatten: true'"
+# The devcontainer CLI remaps the remote user's UID after install.sh ran, so the build-time owner of
+# the state folder may be stale; go-task-setup is the postCreateCommand that fixes it. The test
+# harness may not run post-create hooks, so it is called here explicitly.
+check "go-task-setup on PATH" command -v go-task-setup
+check "go-task-setup hands the state folder over" bash -c "go-task-setup | grep -F '/var/lib/devcontainer-features/go-task'"
+check "the state folder is owner-only" bash -c "[ \"\$(stat -c %a /var/lib/devcontainer-features/go-task)\" = 700 ] && [ \"\$(stat -c %a /var/lib/devcontainer-features/go-task/aliases.yml)\" = 600 ]"
 check "the generated file is writable by the remote user" test -w /var/lib/devcontainer-features/go-task/aliases.yml
 check "task --list works before any generation" bash -c "cd $ws && task --list"
 check "go-task:aliases generates and reports" bash -c "cd $ws/sub && task go-task:aliases | grep -E '^aliases: 2 ok, 2 not generated'"

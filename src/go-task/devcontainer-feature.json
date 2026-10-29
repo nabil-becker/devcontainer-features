@@ -32,6 +32,7 @@
       "description": "yq release the aliases generator uses (e.g. '4.54.1', with or without a leading 'v'), or 'latest' (resolves to the newest release at build time). Only installed when taskAliases is true."
     }
   },
+  "postCreateCommand": "go-task-setup",
   "installsAfter": [
     "ghcr.io/devcontainers/features/common-utils"
   ]

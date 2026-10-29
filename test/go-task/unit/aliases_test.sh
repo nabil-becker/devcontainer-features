@@ -329,6 +329,22 @@ printf 'aliases: { good: real }\n' > "$team"
 (cd "$W" && task-aliases generate >/dev/null 2>&1); check "start run: a clean file exits 0" "0" "$?"
 (cd "$W" && TASK_ALIASES_YQ=/nonexistent/yq task-aliases generate --strict >/dev/null 2>&1); check "strict: no yq exits 1" "1" "$?"
 
+# --- go-task-setup (the postCreateCommand): marker off is silent, on restricts modes
+setup="$src/go-task-setup.sh"
+S="$T/setup"; mkdir -p "$S/share" "$S/state"
+printf 'x: 1\n' > "$S/state/aliases.yml"; chmod 0755 "$S/state"; chmod 0644 "$S/state/aliases.yml"
+out="$(GO_TASK_SHARE="$S/share" GO_TASK_STATE="$S/state" bash "$setup" 2>&1)"; rc=$?
+check "setup, aliases off: exit 0" "0" "$rc"
+check "setup, aliases off: says nothing" "" "$out"
+check "setup, aliases off: modes untouched" "755 644" "$(stat -c '%a %a' "$S/state" | head -1 | cut -d' ' -f1) $(stat -c %a "$S/state/aliases.yml")"
+: > "$S/share/aliases.enabled"
+out="$(GO_TASK_SHARE="$S/share" GO_TASK_STATE="$S/state" bash "$setup" 2>&1)"; rc=$?
+check "setup, aliases on: exit 0" "0" "$rc"
+contains "setup, aliases on: reports the folder" "go-task: $S/state (" "$out"
+check "setup, aliases on: folder 0700, file 0600" "700 600" "$(stat -c %a "$S/state") $(stat -c %a "$S/state/aliases.yml")"
+rm -rf "$S/state"
+GO_TASK_SHARE="$S/share" GO_TASK_STATE="$S/state" bash "$setup" >/dev/null 2>&1; check "setup creates a missing folder, 0700" "700" "$(stat -c %a "$S/state")"
+
 echo
 echo "go-task aliases: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

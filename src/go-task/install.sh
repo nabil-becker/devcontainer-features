@@ -137,6 +137,12 @@ else
   rm -f "$share/aliases.enabled"
 fi
 
+# go-task-setup is the postCreateCommand: with taskAliases on it hands the state folder to the
+# current user at every create (the build-time chown above goes stale when the devcontainer CLI
+# remaps the remote user's UID); with it off it does nothing. dcf-persist is the vendored helper.
+install -m 0755 "$(cd "$(dirname "$0")" && pwd)/dcf-persist.sh" /usr/local/bin/dcf-persist
+install -m 0755 "$(cd "$(dirname "$0")" && pwd)/go-task-setup.sh" /usr/local/bin/go-task-setup
+
 # ------------------------------------------------ Feature Taskfile registry ----
 # Other Features from this collection drop a taskfile.yml into includes.d/;
 # task-features-registry turns that folder into one includable Taskfile. It

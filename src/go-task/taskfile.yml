@@ -32,3 +32,9 @@ tasks:
           exit 1
         fi
         task-aliases generate --strict
+
+  setup:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Re-run the post-create setup: with the taskAliases option on, hand the folder of the generated aliases Taskfile to the current user and keep it owner-only (idempotent; does nothing with the option off).'
+    cmds:
+      - go-task-setup
