@@ -793,6 +793,124 @@ Describe 'The up argument list carries the host mounts' -Skip:$IsWindows {
     }
 }
 
+# FUSE on request (cloud-folder proposal, slice 3; ADR 0031), the counterpart of the FUSE part of
+# test/bootstrap/host_mounts_test.sh: DCF_HOST_FUSE=1 sets the three DCF_HOST_FUSE_* variables the
+# repository's runArgs read, unset removes them, and the CLI's argument list is the same either way.
+Describe 'FUSE on request (DCF_HOST_FUSE)' -Skip:$IsWindows {
+    BeforeAll {
+        $script:FuseEnvNames = 'HOST_TYPE', 'HOST_MOUNTS', 'DEVCONTAINER_DOCKER_PATH', 'HOME', 'SSH_AUTH_SOCK', 'SSH_AGENT_MODE', 'DCF_HOST_TYPE', 'DCF_HOST_HOME', 'DCF_HOST_SSH_AGENT', 'DCF_HOST_CLOUD_FOLDER', 'DCF_HOST_FUSE', 'DCF_HOST_FUSE_DEVICE', 'DCF_HOST_FUSE_CAP', 'DCF_HOST_FUSE_SECURITY'
+        $script:FuseSavedEnv = @{}
+        foreach ($n in $script:FuseEnvNames) { $script:FuseSavedEnv[$n] = [Environment]::GetEnvironmentVariable($n) }
+        $script:FuseSavedPath = $env:PATH
+        $script:FuseBin = Join-Path $TestDrive 'fuse-bin'
+        New-Item -ItemType Directory -Path $script:FuseBin | Out-Null
+        $script:FuseRec = Join-Path $TestDrive 'fuse-args.txt'
+        Set-Content (Join-Path $script:FuseBin 'devcontainer') "#!/bin/sh`nfor a in `"`$@`"; do echo `"`$a`"; done > '$($script:FuseRec)'`nenv | grep '^DCF_HOST_FUSE' | sort > '$($script:FuseRec).env'"
+        chmod +x (Join-Path $script:FuseBin 'devcontainer')
+        Set-Content (Join-Path $script:FuseBin 'docker') "#!/bin/sh`nexit 0"
+        chmod +x (Join-Path $script:FuseBin 'docker')
+        $script:Slots = @'
+{
+  "runArgs": [
+    "${localEnv:DCF_HOST_FUSE_DEVICE:--label=dcf.fuse.device=off}",
+    "${localEnv:DCF_HOST_FUSE_CAP:--label=dcf.fuse.cap=off}",
+    "${localEnv:DCF_HOST_FUSE_SECURITY:--label=dcf.fuse.security=off}"
+  ]
+}
+'@
+        function Get-FuseWorkspace {
+            param([string]$Json)
+            $ws = Join-Path $TestDrive ('fws-' + [guid]::NewGuid().ToString('N'))
+            New-Item -ItemType Directory -Path (Join-Path $ws '.devcontainer') -Force | Out-Null
+            if ($Json) { [System.IO.File]::WriteAllText((Join-Path $ws '.devcontainer/devcontainer.json'), $Json) }
+            $ws
+        }
+        function Invoke-FuseRecorded {
+            param([string]$Json = $script:Slots)
+            $ws = Get-FuseWorkspace $Json
+            Remove-Item $script:FuseRec, "$($script:FuseRec).env" -ErrorAction SilentlyContinue
+            Invoke-DevcontainerCliProcess -Subcommand up -WorkspaceFolder $ws 6>$null 3>$null
+            [pscustomobject]@{
+                Args = @(Get-Content $script:FuseRec | ForEach-Object { $_.Replace($ws, 'WS') })
+                Env = @(Get-Content "$($script:FuseRec).env" -ErrorAction SilentlyContinue)
+            }
+        }
+    }
+    BeforeEach {
+        foreach ($n in $script:FuseEnvNames) { [Environment]::SetEnvironmentVariable($n, $null) }
+        $env:PATH = $script:FuseBin + [System.IO.Path]::PathSeparator + $script:FuseSavedPath
+        $env:HOME = Join-Path $TestDrive 'fuse-home'
+        $env:HOST_TYPE = 'linux'
+        Clear-HostProfileCache
+    }
+    AfterAll {
+        foreach ($n in $script:FuseEnvNames) { [Environment]::SetEnvironmentVariable($n, $script:FuseSavedEnv[$n]) }
+        $env:PATH = $script:FuseSavedPath
+    }
+
+    It 'Test-FuseRequested accepts <Value>: <Expected>' -ForEach @(
+        @{ Value = '1'; Expected = $true }, @{ Value = 'true'; Expected = $true }, @{ Value = 'Yes'; Expected = $true }, @{ Value = 'on'; Expected = $true }
+        @{ Value = ''; Expected = $false }, @{ Value = '0'; Expected = $false }, @{ Value = 'yes-please'; Expected = $false }
+    ) {
+        $env:DCF_HOST_FUSE = $Value
+        Test-FuseRequested | Should -Be $Expected
+    }
+
+    It 'Get-FuseRunArgument: the three grant arguments, or none' {
+        $g = Get-FuseRunArgument -Requested $true
+        @($g.Keys) | Should -Be @('DCF_HOST_FUSE_DEVICE', 'DCF_HOST_FUSE_CAP', 'DCF_HOST_FUSE_SECURITY')
+        @($g.Values) | Should -Be @('--device=/dev/fuse', '--cap-add=SYS_ADMIN', '--security-opt=apparmor=unconfined')
+        (Get-FuseRunArgument -Requested $false).Count | Should -Be 0
+    }
+
+    It 'no request: DCF_HOST_FUSE empty and no grant variables, even when the environment had some' {
+        $env:DCF_HOST_FUSE_DEVICE = '--privileged'
+        $r = Invoke-FuseRecorded
+        @($r.Env | Where-Object { $_ -like 'DCF_HOST_FUSE_*' }) | Should -HaveCount 0
+        @($r.Env | Where-Object { $_ -like 'DCF_HOST_FUSE=?*' }) | Should -HaveCount 0
+    }
+
+    It 'DCF_HOST_FUSE=1: the CLI sees the three grant variables, and its argument list is unchanged' {
+        $without = (Invoke-FuseRecorded).Args
+        $env:DCF_HOST_FUSE = '1'
+        Clear-HostProfileCache
+        $r = Invoke-FuseRecorded
+        $r.Env | Should -Be @('DCF_HOST_FUSE=1', 'DCF_HOST_FUSE_CAP=--cap-add=SYS_ADMIN', 'DCF_HOST_FUSE_DEVICE=--device=/dev/fuse', 'DCF_HOST_FUSE_SECURITY=--security-opt=apparmor=unconfined')
+        $r.Args | Should -Be $without
+        $r.Args | Should -Not -Contain '--privileged'
+    }
+
+    It 'Get-FuseSlotMissing: none for the slots and the bootstrap template, all three for a plain file, a commented line counts as missing' {
+        @(Get-FuseSlotMissing -WorkspaceFolder (Get-FuseWorkspace $script:Slots)) | Should -HaveCount 0
+        $tpl = Get-FuseWorkspace ''
+        Copy-Item (Join-Path $PSScriptRoot '../../bootstrap/devcontainer.json') (Join-Path $tpl '.devcontainer/devcontainer.json')
+        @(Get-FuseSlotMissing -WorkspaceFolder $tpl) | Should -HaveCount 0
+        @(Get-FuseSlotMissing -WorkspaceFolder (Get-FuseWorkspace '{ "name": "plain" }')) | Should -Be @('DCF_HOST_FUSE_DEVICE', 'DCF_HOST_FUSE_CAP', 'DCF_HOST_FUSE_SECURITY')
+        $commented = "{`n  // `"`${localEnv:DCF_HOST_FUSE_DEVICE:--label=a}`"`n  `"runArgs`": [`"`${localEnv:DCF_HOST_FUSE_CAP:--label=b}`", `"`${localEnv:DCF_HOST_FUSE_SECURITY:--label=c}`"]`n}"
+        @(Get-FuseSlotMissing -WorkspaceFolder (Get-FuseWorkspace $commented)) | Should -Be @('DCF_HOST_FUSE_DEVICE')
+        @(Get-FuseSlotMissing -WorkspaceFolder (Get-FuseWorkspace '')) | Should -HaveCount 0
+    }
+
+    It 'warns when FUSE is asked for and the runArgs lines are missing, never otherwise' {
+        $env:DCF_HOST_FUSE = '1'
+        $w = Write-FuseSlotWarning -WorkspaceFolder (Get-FuseWorkspace '{ }') 3>&1
+        "$w" | Should -Match 'has no runArgs reading DCF_HOST_FUSE_DEVICE DCF_HOST_FUSE_CAP DCF_HOST_FUSE_SECURITY'
+        @(Write-FuseSlotWarning -WorkspaceFolder (Get-FuseWorkspace $script:Slots) 3>&1) | Should -HaveCount 0
+        $env:DCF_HOST_FUSE = $null
+        @(Write-FuseSlotWarning -WorkspaceFolder (Get-FuseWorkspace '{ }') 3>&1) | Should -HaveCount 0
+    }
+
+    It 'host prints the grant, or that there is none' {
+        $env:DCF_HOST_FUSE = '1'
+        $text = (Show-HostProfile -WorkspaceFolder (Get-FuseWorkspace $script:Slots) 6>&1 3>$null | ForEach-Object { $_.MessageData.Message }) -join "`n"
+        $text | Should -Match 'DCF_HOST_FUSE      : 1 \(runArgs get: --device=/dev/fuse --cap-add=SYS_ADMIN --security-opt=apparmor=unconfined\)'
+        $env:DCF_HOST_FUSE = $null
+        Clear-HostProfileCache
+        $text = (Show-HostProfile -WorkspaceFolder (Get-FuseWorkspace $script:Slots) 6>&1 3>$null | ForEach-Object { $_.MessageData.Message }) -join "`n"
+        $text | Should -Match 'DCF_HOST_FUSE      : \(unset: no FUSE grant\)'
+    }
+}
+
 # ssh-key-import (task devcontainer:ssh-key-import): the key file reaches `devcontainer exec` on stdin and
 # never in its arguments. A stub `devcontainer` records each call's arguments and stdin; a stub `docker`
 # answers `ps -q` (the Windows branch runs the portable node.exe instead, so these run on Linux/macOS).

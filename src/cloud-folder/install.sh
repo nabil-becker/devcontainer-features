@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Installs the cloud-folder Feature's pieces: rclone (for the sync mode; pinned and
-# checksum-verified, only when absent), cloud-folder-setup (the postStartCommand, also behind
+# Installs the cloud-folder Feature's pieces: rclone (for the sync and mount modes; pinned and
+# checksum-verified, only when absent), fuse3 (for the mount mode, in modes auto and mount, only
+# when no fusermount3 is there), cloud-folder-setup (the postStartCommand, also behind
 # every `task cloud-folder:*`), dcf-persist (the collection's state-folder helper) and the
 # Feature Taskfile. Feature options arrive as upper-cased environment variables (see
 # devcontainer-feature.json): MODE, MOUNTPOINT, REMOTETYPE, DRIVETYPE, SITEURL, REMOTEPATH,
@@ -13,8 +14,16 @@
 #               consumer names the path once. Neither path is created as a folder: when nothing
 #               is mounted the link dangles and the folder is absent. In auto, when no host
 #               folder is mounted and a remote is configured, the sync mode fills the folder the
-#               link leads to (cloud-folder-setup creates it at start).
-#   sync        mountPoint is a plain folder of the image, filled by `rclone bisync`; no link.
+#               link leads to (cloud-folder-setup creates it at start), and so does the mount
+#               mode, when the launcher granted FUSE.
+#   sync, mount mountPoint is a plain folder of the image, filled by `rclone bisync` or with
+#               `rclone mount` on it; no link.
+#
+# fuse3 (fusermount3, which rclone mount calls): in modes mount and auto, from apt, only when the
+# image has neither fusermount3 nor fusermount. auto needs it too because whether FUSE is granted
+# is known only at each start, per machine (the launcher's DCF_HOST_FUSE), long after the build.
+# Without /dev/fuse and CAP_SYS_ADMIN, which only that grant gives, the setuid fusermount3 can
+# mount nothing. Not installed in modes host and sync.
 #
 # rclone: downloaded from the publisher (downloads.rclone.org) as the release zip, verified
 # against the sha256 pinned in rclone-checksums.txt for that version and architecture or, for
@@ -47,8 +56,8 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 case "$MODE" in
-  auto | host | sync) ;;
-  *) echo "cloud-folder: option mode '$MODE' is not known to this version (auto, host or sync)." >&2; exit 1 ;;
+  auto | host | sync | mount) ;;
+  *) echo "cloud-folder: option mode '$MODE' is not known to this version (auto, host, mount or sync)." >&2; exit 1 ;;
 esac
 case "$MOUNTPOINT" in
   /?*) ;;
@@ -141,6 +150,30 @@ else
   install_rclone
 fi
 
+# ------------------------------------------------------------------ fuse3 ----
+install_fuse3() {
+  if command -v fusermount3 >/dev/null 2>&1 || command -v fusermount >/dev/null 2>&1; then
+    echo "cloud-folder: keeping the fusermount already in the image ($(command -v fusermount3 2>/dev/null || command -v fusermount))"
+    return 0
+  fi
+  if ! command -v apt-get >/dev/null 2>&1; then
+    echo "cloud-folder: no fusermount3 and no apt-get to install fuse3; mount mode will say FUSE is not usable." >&2
+    return 1
+  fi
+  # Explicit returns: in auto this runs under `||`, where set -e does not stop a failed step.
+  apt-get update -qq || return 1
+  apt-get install -y -qq --no-install-recommends fuse3 || return 1
+  rm -rf /var/lib/apt/lists/*
+  command -v fusermount3 >/dev/null 2>&1 || return 1
+  echo "cloud-folder: fuse3 installed ($(command -v fusermount3))"
+}
+
+case "$MODE" in
+  mount) install_fuse3 ;;
+  # auto: a missing fuse3 only rules mount out at start (cloud-folder:status says why), never the build.
+  auto) install_fuse3 || echo "cloud-folder: continuing without fuse3: auto will use host or sync." >&2 ;;
+esac
+
 # ------------------------------------------------------- ecosystem pieces ----
 # cloud-folder-setup reads its option defaults from options.env, so the hook and the tasks
 # agree; CLOUD_FOLDER_* in the environment override them.
@@ -170,7 +203,7 @@ mkdir -p "$STATE_DIR"
 
 # The mount point. A refusal (a folder with content, or a file, where the link must go; a file
 # where the folder must go) fails the build with the reason.
-if [ "$MODE" = sync ]; then
+if [ "$MODE" = sync ] || [ "$MODE" = mount ]; then
   /usr/local/bin/cloud-folder-setup folder "$MOUNTPOINT"
 else
   /usr/local/bin/cloud-folder-setup link "$MOUNTPOINT" "$HOST_MOUNT"

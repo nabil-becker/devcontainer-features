@@ -17,14 +17,14 @@ tasks:
 
   status:
     dir: '{{.USER_WORKING_DIR}}'
-    desc: 'Report on the cloud folder: the mode in use and why; in host mode whether the mount point is mounted, empty and writable; in sync mode the remote (configured, reachable; no token is printed), the last sync (time, result), whether a sync or the timer runs, and the files changed since the last sync. Exit 0 when the folder is usable (an empty folder is reported, not failed), 1 when it is missing, not mounted, not writable, has no remote, was never synced, its last sync failed, or the mode is unknown, so a start-up check can stop. `-- --json` prints one JSON object for agents. Writes nothing into the folder.'
+    desc: 'Report on the cloud folder: the mode in use and why; in host mode whether the mount point is mounted, empty and writable; in sync mode the remote (configured, reachable; no token is printed), the last sync (time, result), whether a sync or the timer runs, and the files changed since the last sync; in mount mode the remote, whether FUSE is usable and why not, whether rclone is mounted, and the VFS upload queue (in progress, queued, failed) from rclone''s remote control. Exit 0 when the folder is usable (an empty folder is reported, not failed), 1 when it is missing, not mounted, not writable, has no remote, was never synced, its last sync failed, has no FUSE (mount), has failed uploads, or the mode is unknown, so a start-up check can stop. `-- --json` prints one JSON object for agents. Writes nothing into the folder.'
     vars: *cf
     cmds:
       - '{{.CF}}cloud-folder-setup status {{.CLI_ARGS}}'
 
   setup:
     dir: '{{.USER_WORKING_DIR}}'
-    desc: 'Re-run the post-start hook: hand the state volume (and in sync mode the folder) to this user, the same report as status, and in sync mode start the timer if it is not running. Never fatal (exit 0).'
+    desc: 'Re-run the post-start hook: hand the state volume (and in sync and mount mode the folder) to this user, mount the remote in mount mode if it is not mounted, the same report as status, and in sync mode start the timer if it is not running. Never fatal (exit 0).'
     vars: *cf
     cmds:
       - '{{.CF}}cloud-folder-setup'
@@ -46,21 +46,28 @@ tasks:
 
   start:
     dir: '{{.USER_WORKING_DIR}}'
-    desc: 'Start the sync timer (one loop, every syncInterval; the post-start hook does this in sync mode). Idempotent: a running timer is left as it is. syncInterval 0 starts none.'
+    desc: 'Sync mode: start the sync timer (one loop, every syncInterval). Mount mode: mount the remote with rclone (needs FUSE). The post-start hook does this. Idempotent: a running timer or mount is left as it is. syncInterval 0 starts no timer.'
     vars: *cf
     cmds:
       - '{{.CF}}cloud-folder-setup start'
 
   stop:
     dir: '{{.USER_WORKING_DIR}}'
-    desc: 'Stop the sync timer; a sync that is running gets bisync''s graceful shutdown first (up to about 100 s). Exit 1 when it is still finishing after CLOUD_FOLDER_STOP_WAIT seconds (default 120).'
+    desc: 'Sync mode: stop the sync timer; a sync that is running gets bisync''s graceful shutdown first (up to about 100 s). Mount mode: unmount, as cloud-folder:unmount does. Exit 1 when it is still finishing after CLOUD_FOLDER_STOP_WAIT seconds (default 120).'
     vars: *cf
     cmds:
       - '{{.CF}}cloud-folder-setup stop'
 
+  unmount:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Mount mode: unmount the remote once the VFS upload queue is empty, waiting up to CLOUD_FOLDER_STOP_WAIT seconds (default 120); exit 1 while uploads are pending or the queue cannot be read. `-- --force` unmounts anyway: rclone uploads what is left in the cache at the next mount.'
+    vars: *cf
+    cmds:
+      - '{{.CF}}cloud-folder-setup unmount {{.CLI_ARGS}}'
+
   shutdown-check:
     dir: '{{.USER_WORKING_DIR}}'
-    desc: 'For a repository''s shutdown:check (bootstrap/SHUTDOWN.md): exit 1 while a sync runs (after waiting up to WAIT seconds, default 60) or while files in the folder changed since the last successful sync; exit 0 otherwise, and in host mode.'
+    desc: 'For a repository''s shutdown:check (bootstrap/SHUTDOWN.md): exit 1 while a sync runs (after waiting up to WAIT seconds, default 60) or while files in the folder changed since the last successful sync; in mount mode while uploads are pending after waiting, or the upload queue cannot be read; exit 0 otherwise, and in host mode.'
     vars:
       CF: '{{if .CLOUD_FOLDER_MODE}}CLOUD_FOLDER_MODE={{shellQuote .CLOUD_FOLDER_MODE}} {{end}}{{if .CLOUD_FOLDER_MOUNT_POINT}}CLOUD_FOLDER_MOUNT_POINT={{shellQuote .CLOUD_FOLDER_MOUNT_POINT}} {{end}}'
       WAIT: '{{.WAIT | default ""}}'

@@ -32,7 +32,15 @@
     (loaded by Task's dotenv: or by bootstrap.ps1) can drive it:
       DEVCONTAINER_DOCKER_PATH, DEVCONTAINER_NODE_VERSION,
       DEVCONTAINER_CLI_VERSION, HOST_TYPE, HOST_TYPE_PRIORITY, HOST_MOUNTS, SSH_AGENT_MODE,
-      DCF_HOST_CLOUD_FOLDER. Explicit parameters win over the environment.
+      DCF_HOST_CLOUD_FOLDER, DCF_HOST_FUSE. Explicit parameters win over the environment.
+
+    FUSE on request (cloud-folder Feature, mount mode; ADR 0031): DCF_HOST_FUSE=1 (or true, yes,
+    on) sets DCF_HOST_FUSE_DEVICE, DCF_HOST_FUSE_CAP and DCF_HOST_FUSE_SECURITY to
+    --device=/dev/fuse, --cap-add=SYS_ADMIN and --security-opt=apparmor=unconfined for the CLI,
+    which the repository's runArgs read with ${localEnv:<name>:<default>} (the CLI has no option
+    for run arguments; the bootstrap's devcontainer.json carries the lines). Unset, the three are
+    removed. Never granted by default; `up` warns when the repository's devcontainer.json lacks
+    the lines (Get-FuseSlotMissing).
 
     Host mounts: `up` (so `rebuild`) adds the mounts the host type needs with
     `--mount type=bind,source=...,target=...` (Get-HostMount; slice 3: the
@@ -437,11 +445,58 @@ function Resolve-HostProfile {
         Engine = $engine; EnginePath = $enginePath
         Home = $hostHome; SshAgent = $agent.Mode; SshSocket = $agent.Socket
         CloudFolder = (Get-SettingOrEnv '' 'DCF_HOST_CLOUD_FOLDER')
+        Fuse = (Test-FuseRequested)
+    }
+}
+
+# FUSE on request (cloud-folder proposal, slice 3; ADR 0031; the bash twin's fuse_vars and
+# fuse_args). A Feature's capAdd and securityOpt are static and `devcontainer up` has no option
+# for run arguments, so the grant travels as three variables the repository's runArgs read.
+$script:FuseGrant = [ordered]@{
+    DCF_HOST_FUSE_DEVICE   = '--device=/dev/fuse'
+    DCF_HOST_FUSE_CAP      = '--cap-add=SYS_ADMIN'
+    DCF_HOST_FUSE_SECURITY = '--security-opt=apparmor=unconfined'
+}
+
+function Test-FuseRequested {
+    <# .SYNOPSIS $true when DCF_HOST_FUSE (environment, or the parameter the entry script copies into it) is 1, true, yes or on. #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param()
+    return ("$env:DCF_HOST_FUSE".Trim().ToLowerInvariant() -in '1', 'true', 'yes', 'on')
+}
+
+function Get-FuseRunArgument {
+    <# .SYNOPSIS The grant: an ordered map of DCF_HOST_FUSE_* to the run argument each carries; empty when not requested. #>
+    [CmdletBinding()]
+    param([bool]$Requested = (Test-FuseRequested))
+    if (-not $Requested) { return [ordered]@{} }
+    return $script:FuseGrant
+}
+
+function Get-FuseSlotMissing {
+    <# .SYNOPSIS The DCF_HOST_FUSE_* names the repository's devcontainer.json does not read with ${localEnv:...} outside comments; none when there is no file. #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$WorkspaceFolder, [string[]]$Arguments = @())
+    $file = Get-DevcontainerConfigFile -WorkspaceFolder $WorkspaceFolder -Arguments $Arguments
+    if (-not $file) { return @() }
+    $text = ConvertTo-JsonWithoutComment -Text (Get-Content -LiteralPath $file -Raw)
+    return @($script:FuseGrant.Keys | Where-Object { -not $text.Contains('${localEnv:' + $_) })
+}
+
+function Write-FuseSlotWarning {
+    <# .SYNOPSIS When FUSE is requested, one warning if the repository's devcontainer.json cannot carry the grant. #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$WorkspaceFolder, [string[]]$Arguments = @())
+    if (-not (Test-FuseRequested)) { return }
+    $missing = @(Get-FuseSlotMissing -WorkspaceFolder $WorkspaceFolder -Arguments $Arguments)
+    if ($missing.Count) {
+        Write-Warning "DCF_HOST_FUSE=1, but the repository's devcontainer.json has no runArgs reading $($missing -join ' ') (`${localEnv:<name>:<default>}): FUSE does not reach the container. Copy the three runArgs lines from the bootstrap's devcontainer.json."
     }
 }
 
 function Initialize-HostEnvironment {
-    <# .SYNOPSIS Sets DCF_HOST_TYPE, DCF_HOST_HOME, DCF_HOST_SSH_AGENT and DCF_HOST_CLOUD_FOLDER in this process, so the devcontainer CLI (and ${localEnv:...} in a repo's devcontainer.json) sees them. Returns the profile. #>
+    <# .SYNOPSIS Sets DCF_HOST_TYPE, DCF_HOST_HOME, DCF_HOST_SSH_AGENT, DCF_HOST_CLOUD_FOLDER and the FUSE grant (DCF_HOST_FUSE and DCF_HOST_FUSE_*) in this process, so the devcontainer CLI (and ${localEnv:...} in a repo's devcontainer.json) sees them. Returns the profile. #>
     [CmdletBinding()]
     param([string]$DockerPath)
     $p = Resolve-HostProfile -DockerPath $DockerPath
@@ -450,6 +505,17 @@ function Initialize-HostEnvironment {
     [Environment]::SetEnvironmentVariable('DCF_HOST_SSH_AGENT', $p.SshAgent)
     # Passed on unchanged (the user's value), so containerEnv can map it; empty removes it.
     [Environment]::SetEnvironmentVariable('DCF_HOST_CLOUD_FOLDER', $p.CloudFolder)
+    # The FUSE grant from the fixed list when asked for; removed otherwise, so a value left in the
+    # user's environment or .env never reaches runArgs.
+    [Environment]::SetEnvironmentVariable('DCF_HOST_FUSE', $(if ($p.Fuse) { '1' } else { '' }))
+    $grant = Get-FuseRunArgument -Requested $p.Fuse
+    foreach ($name in $script:FuseGrant.Keys) {
+        # Remove-Item, not SetEnvironmentVariable(name, $null): PowerShell passes $null to a string
+        # parameter as '', which on Linux and macOS leaves the variable set and empty, and an empty
+        # value would replace runArgs' default with an empty argument.
+        if ($grant.Contains($name)) { [Environment]::SetEnvironmentVariable($name, $grant[$name]) }
+        else { Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue }
+    }
     return $p
 }
 
@@ -521,6 +587,25 @@ function ConvertTo-JsonWithoutComment {
     return $sb.ToString()
 }
 
+function Get-DevcontainerConfigFile {
+    <# .SYNOPSIS The repository's devcontainer.json: the file --config names in $Arguments, else .devcontainer/devcontainer.json, else .devcontainer.json; $null when there is none. #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$WorkspaceFolder, [string[]]$Arguments = @())
+    $file = $null
+    for ($i = 0; $i -lt $Arguments.Count; $i++) {
+        if ($Arguments[$i] -eq '--config' -and $i + 1 -lt $Arguments.Count) { $file = $Arguments[$i + 1] }
+        elseif ($Arguments[$i] -like '--config=*') { $file = $Arguments[$i].Substring(9) }
+    }
+    if (-not $file) {
+        foreach ($rel in '.devcontainer/devcontainer.json', '.devcontainer.json') {
+            $candidate = Join-Path $WorkspaceFolder $rel
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) { $file = $candidate; break }
+        }
+    }
+    if (-not $file -or -not (Test-Path -LiteralPath $file -PathType Leaf)) { return $null }
+    return $file
+}
+
 function Get-ConfiguredMountTarget {
     <#
     .SYNOPSIS
@@ -536,18 +621,8 @@ function Get-ConfiguredMountTarget {
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$WorkspaceFolder, [string[]]$Arguments = @())
-    $file = $null
-    for ($i = 0; $i -lt $Arguments.Count; $i++) {
-        if ($Arguments[$i] -eq '--config' -and $i + 1 -lt $Arguments.Count) { $file = $Arguments[$i + 1] }
-        elseif ($Arguments[$i] -like '--config=*') { $file = $Arguments[$i].Substring(9) }
-    }
-    if (-not $file) {
-        foreach ($rel in '.devcontainer/devcontainer.json', '.devcontainer.json') {
-            $candidate = Join-Path $WorkspaceFolder $rel
-            if (Test-Path -LiteralPath $candidate -PathType Leaf) { $file = $candidate; break }
-        }
-    }
-    if (-not $file -or -not (Test-Path -LiteralPath $file -PathType Leaf)) { return @() }
+    $file = Get-DevcontainerConfigFile -WorkspaceFolder $WorkspaceFolder -Arguments $Arguments
+    if (-not $file) { return @() }
     $text = ConvertTo-JsonWithoutComment -Text (Get-Content -LiteralPath $file -Raw)
     $targets = [System.Collections.Generic.List[string]]::new()
     foreach ($m in [regex]::Matches($text, '"mounts"\s*:\s*\[[^\]]*\]')) {
@@ -648,6 +723,11 @@ function Show-HostProfile {
     Write-Host "DCF_HOST_SSH_AGENT : $($p.SshAgent)"
     Write-Host "DCF_HOST_CLOUD_FOLDER: $(if ($p.CloudFolder) { $p.CloudFolder } else { '(unset)' })"
     if (-not $WorkspaceFolder) { $WorkspaceFolder = (Get-Location).Path }
+    if ($p.Fuse) {
+        Write-Host "DCF_HOST_FUSE      : 1 (runArgs get: $(@((Get-FuseRunArgument -Requested $true).Values) -join ' '))"
+        Write-FuseSlotWarning -WorkspaceFolder $WorkspaceFolder -Arguments $Arguments
+    }
+    else { Write-Host 'DCF_HOST_FUSE      : (unset: no FUSE grant)' }
     $r = Resolve-HostMount -WorkspaceFolder $WorkspaceFolder -Arguments $Arguments -DockerPath $DockerPath
     if (-not $r.Enabled) { Write-Host 'host mounts        : off (HOST_MOUNTS=false)'; return }
     if (-not ($r.Add.Count + $r.Skip.Count)) { Write-Host 'host mounts        : none'; return }
@@ -870,6 +950,7 @@ function Invoke-DevcontainerCliProcess {
     # runs in a container that exists. Initialize-HostEnvironment below sets DCF_HOST_*.
     if ($Subcommand -eq 'up') {
         $cliArgs += @(Get-HostMountArgument -WorkspaceFolder $WorkspaceFolder -Arguments $Arguments -DockerPath $DockerPath)
+        Write-FuseSlotWarning -WorkspaceFolder $WorkspaceFolder -Arguments $Arguments
     }
 
     if ($IsWindows) {
@@ -1091,4 +1172,4 @@ function Invoke-DevcontainerCli {
     exit $rc
 }
 
-Export-ModuleMember -Function Get-HostTypeId, Get-DefaultHostTypePriority, Resolve-HostType, Resolve-SshAgent, Resolve-HostProfile, Initialize-HostEnvironment, Get-HostMount, Test-CloudFolderMount, ConvertTo-MountArgument, ConvertTo-JsonWithoutComment, Get-ConfiguredMountTarget, Test-HostMountsEnabled, Resolve-HostMount, Initialize-HostMountSource, Get-HostMountArgument, Show-HostProfile, Import-SshKey, Clear-HostProfileCache, Get-SettingOrEnv, ConvertFrom-TaskCliArgString, Get-PortableNodeDir, Get-DevcontainersCliEntrypoint, Remove-DevcontainersCli, Resolve-DockerPath, Get-WorkspaceFolderVariant, Get-RunningDevcontainerId, Stop-Devcontainer, Test-BuildSubcommand, Enter-DevcontainerBuildLock, Exit-DevcontainerBuildLock, Invoke-DevcontainerCliProcess, Invoke-DevcontainerCli
+Export-ModuleMember -Function Get-HostTypeId, Get-DefaultHostTypePriority, Resolve-HostType, Resolve-SshAgent, Resolve-HostProfile, Initialize-HostEnvironment, Test-FuseRequested, Get-FuseRunArgument, Get-FuseSlotMissing, Write-FuseSlotWarning, Get-DevcontainerConfigFile, Get-HostMount, Test-CloudFolderMount, ConvertTo-MountArgument, ConvertTo-JsonWithoutComment, Get-ConfiguredMountTarget, Test-HostMountsEnabled, Resolve-HostMount, Initialize-HostMountSource, Get-HostMountArgument, Show-HostProfile, Import-SshKey, Clear-HostProfileCache, Get-SettingOrEnv, ConvertFrom-TaskCliArgString, Get-PortableNodeDir, Get-DevcontainersCliEntrypoint, Remove-DevcontainersCli, Resolve-DockerPath, Get-WorkspaceFolderVariant, Get-RunningDevcontainerId, Stop-Devcontainer, Test-BuildSubcommand, Enter-DevcontainerBuildLock, Exit-DevcontainerBuildLock, Invoke-DevcontainerCliProcess, Invoke-DevcontainerCli

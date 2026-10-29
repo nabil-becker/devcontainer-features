@@ -7,7 +7,7 @@
 # source (auto, nothing mounted), mounted and not empty, mounted and empty, mounted and not
 # writable (skipped as root, which may write anywhere), a bare folder that exists but is not
 # mounted, mode host with nothing mounted (and the DCF_HOST_CLOUD_FOLDER hint), the mode this
-# version does not know (mount), a path with a space and a trailing slash, a mounted file, --json, the
+# version does not know, mode mount with no remote, a path with a space and a trailing slash, a mounted file, --json, the
 # post-start report never failing, nothing written into the folder, and the Feature Taskfile
 # handing CLOUD_FOLDER_* and CLI_ARGS to the script. Part of `task lint`
 # (`task test:cloud-folder-unit`). SETUP_SH points the tests at another copy of the script.
@@ -48,7 +48,7 @@ run() {
   local -a envs=()
   while [ "$1" != -- ]; do envs+=("$1"); shift; done
   shift
-  out="$(env -i PATH="$PATH" HOME="$T" DCF_CLOUD_FOLDER_STATE_DIR="$T/state" DCF_CLOUD_FOLDER_MOUNTINFO="$T/mountinfo" DCF_CLOUD_FOLDER_HOST_MOUNT="$T/cloud folder" "${envs[@]}" bash "$setup_sh" "$@" 2>&1)"
+  out="$(env -i PATH="$PATH" HOME="$T" DCF_CLOUD_FOLDER_STATE_DIR="$T/state" DCF_CLOUD_FOLDER_MOUNTINFO="$T/mountinfo" DCF_CLOUD_FOLDER_HOST_MOUNT="$T/cloud folder" DCF_CLOUD_FOLDER_FUSE_DEV="$T/no-fuse" "${envs[@]}" bash "$setup_sh" "$@" 2>&1)"
   rc=$?
 }
 field() { python3 -c 'import json, sys; v = json.loads(sys.stdin.read())[sys.argv[1]]; print(json.dumps(v) if not isinstance(v, str) else v)' "$1" <<<"$out"; }
@@ -125,11 +125,11 @@ run CLOUD_FOLDER_MOUNT_POINT="$T/file" -- status
 check 'a mounted file: exit 1' 1 "$rc"
 has 'a mounted file: not a folder' 'not usable (not-a-folder)' "$out"
 
-# --- a mode this version does not know (mount comes later; sync is tested in sync_test.sh)
+# --- mode mount with no remote (mount is tested in mount_test.sh, sync in sync_test.sh)
 mount_table "$mp"
 run CLOUD_FOLDER_MOUNT_POINT="$mp" CLOUD_FOLDER_MODE=mount -- status
-check "mode mount: exit 1" 1 "$rc"
-has "mode mount: not in this version" "mode mount is not in this version of the Feature" "$out"
+check "mode mount, no remote: exit 1" 1 "$rc"
+has "mode mount, no remote: says to sign in" "not usable (not-configured)" "$out"
 run CLOUD_FOLDER_MOUNT_POINT="$mp" CLOUD_FOLDER_MODE=bogus -- status
 check 'an unknown mode: exit 1' 1 "$rc"
 has 'an unknown mode: says so' "mode 'bogus' is unknown" "$out"

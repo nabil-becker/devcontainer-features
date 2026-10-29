@@ -53,6 +53,11 @@
     cloud-folder Feature's host mount, /mnt/cloud-folder-host. Empty = $env:DCF_HOST_CLOUD_FOLDER,
     else no folder.
 
+.PARAMETER Fuse
+    DCF_HOST_FUSE: 1 (or true, yes, on) asks for FUSE on this machine (the cloud-folder Feature's
+    mount mode): the launcher sets DCF_HOST_FUSE_DEVICE, DCF_HOST_FUSE_CAP and
+    DCF_HOST_FUSE_SECURITY for the repository's runArgs. Empty = $env:DCF_HOST_FUSE, else no grant.
+
 .PARAMETER NodeVersion
     Portable Node.js version (Windows). Empty = $env:DEVCONTAINER_NODE_VERSION
     or the module default.
@@ -73,6 +78,7 @@ param(
     [string]$HostMounts,
     [string]$SshAgentMode,
     [string]$CloudFolder,
+    [string]$Fuse,
     [string]$NodeVersion,
     [string]$CliVersion,
     [switch]$Force
@@ -86,6 +92,7 @@ if ($HostTypePriority) { $env:HOST_TYPE_PRIORITY = $HostTypePriority }
 if ($HostMounts) { $env:HOST_MOUNTS = $HostMounts }
 if ($SshAgentMode) { $env:SSH_AGENT_MODE = $SshAgentMode }
 if ($CloudFolder) { $env:DCF_HOST_CLOUD_FOLDER = $CloudFolder }
+if ($Fuse) { $env:DCF_HOST_FUSE = $Fuse }
 
 $params = @{
     Subcommand      = $Subcommand

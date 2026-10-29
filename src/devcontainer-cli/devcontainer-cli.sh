@@ -48,6 +48,14 @@
 #                              /mnt/cloud-folder-host, the cloud-folder Feature's host mount (its
 #                              mountPoint links there); passed on to the CLI as is.
 #                              Unset = no host folder, no mount.
+#   DCF_HOST_FUSE              1 (or true, yes, on) = the project asks for FUSE on this machine,
+#                              for the cloud-folder Feature's mount mode (ADR 0031): the
+#                              launcher sets DCF_HOST_FUSE_DEVICE, DCF_HOST_FUSE_CAP and
+#                              DCF_HOST_FUSE_SECURITY to --device=/dev/fuse,
+#                              --cap-add=SYS_ADMIN and --security-opt=apparmor=unconfined, which
+#                              the repository's runArgs read with ${localEnv:...:<default>} (the
+#                              CLI has no option for run arguments). Unset = no grant, and the
+#                              three are removed from the CLI's environment. Never by default.
 #   DEVCONTAINER_BUILD_LOCK    0 = do not serialise image builds (below).
 #   DEVCONTAINER_BUILD_LOCK_FEATURES_TEST  true = `features test` takes the
 #                              lock too (default false).
@@ -341,13 +349,31 @@ cloud_folder_target=/mnt/cloud-folder-host
 # resolve_cloud_folder: sets HT_CLOUD_FOLDER (the host path, or empty).
 resolve_cloud_folder() { HT_CLOUD_FOLDER="${DCF_HOST_CLOUD_FOLDER:-}"; }
 
-# resolve_host_profile: HT_* plus HT_HOME, the SSH agent (HT_SSH_AGENT, HT_SSH_SOCKET) and the
-# cloud folder (HT_CLOUD_FOLDER).
+# FUSE on request (docs/proposals/cloud-folder.md, slice 3; ADR 0031): the cloud-folder Feature's
+# mount mode needs /dev/fuse, CAP_SYS_ADMIN and an AppArmor profile that allows mount. A Feature's
+# capAdd and securityOpt are static (they would reach every consumer) and `devcontainer up` has no
+# option for run arguments, so the grant travels as three variables that the repository's runArgs
+# read with a harmless default (a label) when they are unset: the bootstrap's devcontainer.json
+# carries the three lines. Granted only when DCF_HOST_FUSE asks, never by default.
+fuse_vars=(DCF_HOST_FUSE_DEVICE DCF_HOST_FUSE_CAP DCF_HOST_FUSE_SECURITY)
+fuse_args=(--device=/dev/fuse --cap-add=SYS_ADMIN --security-opt=apparmor=unconfined)
+
+# resolve_fuse: HT_FUSE=1 when DCF_HOST_FUSE asks for FUSE (1, true, yes, on), else empty.
+resolve_fuse() {
+  case "${DCF_HOST_FUSE:-}" in 1 | true | yes | on | TRUE | True | YES | Yes | ON | On) HT_FUSE=1 ;; *) HT_FUSE='' ;; esac
+}
+
+# fuse_run_args: the run arguments of the grant, one per line (none when not asked for).
+fuse_run_args() { [ "${HT_FUSE:-}" = 1 ] || return 0; printf '%s\n' "${fuse_args[@]}"; }
+
+# resolve_host_profile: HT_* plus HT_HOME, the SSH agent (HT_SSH_AGENT, HT_SSH_SOCKET), the
+# cloud folder (HT_CLOUD_FOLDER) and the FUSE request (HT_FUSE).
 resolve_host_profile() {
   resolve_host_type
   HT_HOME="${HOME:-}"
   resolve_ssh_agent
   resolve_cloud_folder
+  resolve_fuse
 }
 
 # export_host_env: DCF_HOST_* into this process's environment, which the CLI inherits;
@@ -355,6 +381,13 @@ resolve_host_profile() {
 export_host_env() {
   resolve_host_profile
   export DCF_HOST_TYPE="$HT_TYPE" DCF_HOST_HOME="$HT_HOME" DCF_HOST_SSH_AGENT="$HT_SSH_AGENT" DCF_HOST_CLOUD_FOLDER="$HT_CLOUD_FOLDER"
+  export DCF_HOST_FUSE="$HT_FUSE"
+  local i
+  # Set from the fixed list when asked for, removed otherwise: a value left in the user's
+  # environment or .env never reaches runArgs.
+  for i in 0 1 2; do
+    if [ "$HT_FUSE" = 1 ]; then export "${fuse_vars[$i]}=${fuse_args[$i]}"; else unset "${fuse_vars[$i]}"; fi
+  done
 }
 
 # ---------------------------------------------------------- host mounts ----
@@ -415,7 +448,9 @@ strip_jsonc() {
 # stripped) rather than with `devcontainer read-configuration`, which costs a second Node
 # start (about 0.25-0.5 s), asks the engine (`docker ps`) and fails when the engine is
 # down. Mounts a Feature declares and docker-compose files are not seen.
-configured_mount_targets() {
+# config_file <workspace> [cli args...]: the repository's devcontainer.json (the file --config
+# names, else .devcontainer/devcontainer.json, else .devcontainer.json), or nothing.
+config_file() {
   local ws="$1"; shift
   local file='' prev='' a
   for a in "$@"; do
@@ -427,7 +462,38 @@ configured_mount_targets() {
       if [ -f "$ws/$a" ]; then file="$ws/$a"; break; fi
     done
   fi
-  [ -n "$file" ] && [ -f "$file" ] || return 0
+  [ -n "$file" ] && [ -f "$file" ] && printf '%s\n' "$file"
+  return 0
+}
+
+# fuse_slots_missing <workspace> [cli args...]: prints the DCF_HOST_FUSE_* variables the
+# repository's devcontainer.json does not read (outside comments), one per line; nothing when it
+# reads all three or there is no file to read.
+fuse_slots_missing() {
+  local file text v
+  file="$(config_file "$@")"
+  [ -n "$file" ] || return 0
+  text="$(strip_jsonc < "$file")"
+  for v in "${fuse_vars[@]}"; do
+    grep -qF -- "\${localEnv:$v" <<<"$text" || printf '%s\n' "$v"
+  done
+}
+
+# fuse_check_slots <workspace> [cli args...]: when FUSE is asked for, one warning if the
+# repository's devcontainer.json cannot carry the grant.
+fuse_check_slots() {
+  local missing
+  [ "${HT_FUSE:-}" = 1 ] || return 0
+  missing="$(fuse_slots_missing "$@" | tr '\n' ' ')"
+  [ -n "$missing" ] || return 0
+  echo "DCF_HOST_FUSE=1, but the repository's devcontainer.json has no runArgs reading ${missing% } (\${localEnv:<name>:<default>}): FUSE does not reach the container. Copy the three runArgs lines from the bootstrap's devcontainer.json." >&2
+}
+
+configured_mount_targets() {
+  local ws="$1"; shift
+  local file
+  file="$(config_file "$ws" "$@")"
+  [ -n "$file" ] || return 0
   # No "mounts" is not an error (grep exits 1): the function must not fail under set -e/pipefail.
   { strip_jsonc < "$file" | tr '\n' ' ' | grep -oE '"mounts"[[:space:]]*:[[:space:]]*\[[^]]*\]' || true; } | {
     grep -oE '((target|destination|dst)=[^,"[:space:]]+|"(target|destination)"[[:space:]]*:[[:space:]]*"[^"]+")' || true
@@ -494,6 +560,12 @@ mode_host() { # [workspace] [cli args...]
   echo "DCF_HOST_HOME      : $HT_HOME"
   echo "DCF_HOST_SSH_AGENT : $HT_SSH_AGENT"
   echo "DCF_HOST_CLOUD_FOLDER: ${HT_CLOUD_FOLDER:-(unset)}"
+  if [ "${HT_FUSE:-}" = 1 ]; then
+    echo "DCF_HOST_FUSE      : 1 (runArgs get: $(fuse_run_args | tr '\n' ' '| sed 's/ $//'))"
+    fuse_check_slots "$ws" "$@" 2>&1
+  else
+    echo 'DCF_HOST_FUSE      : (unset: no FUSE grant)'
+  fi
   resolve_host_mounts "$ws" "$@"
   if [ "$HM_ENABLED" = false ]; then echo 'host mounts        : off (HOST_MOUNTS=false)'; return 0; fi
   if [ $(( ${#HM_ADD[@]} + ${#HM_SKIP[@]} )) -eq 0 ]; then echo 'host mounts        : none'; return 0; fi
@@ -628,6 +700,7 @@ run_cli() {
   if [ "$subcommand" = up ]; then
     host_mount_args "$(resolve_workspace "$workspace")" "$@"
     args+=(${HM_ARGS[@]+"${HM_ARGS[@]}"})
+    fuse_check_slots "$(resolve_workspace "$workspace")" "$@"
   fi
   if [ -n "$cmd_b64" ]; then
     [ "$subcommand" = exec ] || die '--cmd-b64 is only meaningful with exec'

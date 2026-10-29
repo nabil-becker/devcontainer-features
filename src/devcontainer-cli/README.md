@@ -275,7 +275,7 @@ knows what kind of host it runs on, so a repository writes nothing host-specific
   `devcontainer.json` template does). It declares no host mount: the launcher adds those (next section). Opening the
   folder straight in VS Code skips the launcher: the variables are then empty.
 - `task devcontainer:host` prints the result without starting anything: `HOST_TYPE` as resolved and why, the priority list
-  used, the engine command, the four `DCF_HOST_*` values and the host mounts `up` would add or skip (next section).
+  used, the engine command, the four `DCF_HOST_*` values, the FUSE grant when `DCF_HOST_FUSE` asks for it, and the host mounts `up` would add or skip (next section).
   `HOST_TYPE=<id>` or `HOST_TYPE_PRIORITY=<ids>` on the command line try other choices.
 
 Not verified on real hosts: `wsl -e docker info` answering for the default distro; the WSL markers on every WSL version
@@ -336,6 +336,20 @@ the host type needs; ADR 0024 decides it, `docs/proposals/host-profile.md` is th
   repository line for the same target suppress it like the others. `DCF_HOST_CLOUD_FOLDER` itself is passed on to the
   CLI unchanged, so `containerEnv` can map it (the bootstrap's template does) and the Feature's report can name the
   source. Not verified on a real host: Docker Desktop and wslc taking a Windows path with spaces from `--mount`.
+- **FUSE on request (1.15.0).** The `cloud-folder` Feature's `mount` mode (`rclone mount`) needs `/dev/fuse`,
+  `CAP_SYS_ADMIN` and an AppArmor profile that allows mount. The launcher grants them per machine, only when the project
+  asks, never by default (ADR 0031): with `DCF_HOST_FUSE=1` (or `true`, `yes`, `on`; a Task var, `.devcontainer/.env`
+  or the environment; PowerShell `-Fuse`) it sets `DCF_HOST_FUSE_DEVICE=--device=/dev/fuse`,
+  `DCF_HOST_FUSE_CAP=--cap-add=SYS_ADMIN` and `DCF_HOST_FUSE_SECURITY=--security-opt=apparmor=unconfined` before it
+  runs the CLI, and passes `DCF_HOST_FUSE=1` on for `containerEnv`. Unset, the three are removed from the CLI's
+  environment, so a value left in a shell or `.env` never reaches the container. `devcontainer up` has no option for
+  run arguments and a Feature's `capAdd`/`securityOpt` would reach every consumer, so the repository's `runArgs` read
+  the three with a harmless default, `"${localEnv:DCF_HOST_FUSE_DEVICE:--label=dcf.fuse.device=off}"` and so on (the
+  bootstrap's `devcontainer.json` carries the three lines; checked against `@devcontainers/cli` 0.90.0's
+  `read-configuration`). `up` and `task devcontainer:host` warn once when FUSE is asked for and the repository's
+  `devcontainer.json` lacks a line. A change takes effect at the next `task devcontainer:rebuild` (run arguments
+  belong to the container). Not verified on a real host: Docker Desktop, wslc and a Kubernetes cluster taking the
+  three arguments (proposal section 11, item 6).
 - **Downloads retry (1.14.1).** The Node.js tarball and `SHASUMS256.txt` go through `dcf_curl` (`dcf-curl.sh`,
   vendored from `common`, and vendored by the bootstrap next to `host/devcontainer-cli.sh`): a TLS reset or a cut
   connection is retried on curl 7.71+. A host whose bootstrap folder predates it re-runs the bootstrap; without

@@ -39,8 +39,21 @@
     "DCF_HOST_SSH_AGENT": "${localEnv:DCF_HOST_SSH_AGENT}",
     // The host folder (DCF_HOST_CLOUD_FOLDER in .devcontainer/.env) the launcher mounts for the
     // cloud-folder Feature; empty when none. The Feature's status names it.
-    "DCF_HOST_CLOUD_FOLDER": "${localEnv:DCF_HOST_CLOUD_FOLDER}"
+    "DCF_HOST_CLOUD_FOLDER": "${localEnv:DCF_HOST_CLOUD_FOLDER}",
+    // 1 when DCF_HOST_FUSE=1 in .devcontainer/.env asked the launcher for FUSE on this machine
+    // (the cloud-folder Feature's mount mode); empty otherwise.
+    "DCF_HOST_FUSE": "${localEnv:DCF_HOST_FUSE}"
   },
+  // FUSE on request, per machine (ADR 0031): with DCF_HOST_FUSE=1 in .devcontainer/.env the
+  // launcher fills these three with --device=/dev/fuse, --cap-add=SYS_ADMIN and
+  // --security-opt=apparmor=unconfined; otherwise each falls back to a harmless label, so no
+  // container gets the privilege unless asked. Keep the three lines even when unused; a change
+  // takes effect at the next task devcontainer:rebuild.
+  "runArgs": [
+    "${localEnv:DCF_HOST_FUSE_DEVICE:--label=dcf.fuse.device=off}",
+    "${localEnv:DCF_HOST_FUSE_CAP:--label=dcf.fuse.cap=off}",
+    "${localEnv:DCF_HOST_FUSE_SECURITY:--label=dcf.fuse.security=off}"
+  ],
   // Host mounts: the launcher (task devcontainer:up / rebuild) adds the mounts the host type
   // needs with `devcontainer up --mount`, today the host home's .git-dirs at /git-dirs (the git
   // Feature's one mount), so nothing here declares it; also, when DCF_HOST_CLOUD_FOLDER is set,
