@@ -9,7 +9,7 @@
 #   agents list [--json]
 #   agents stop <name> [--extras]
 #   agents logs <name>
-#   agents check
+#   agents check          (the list, and each CLI adapter's `supports`)
 #   agents reset <name>... | --all [--purge] [--include-unlisted] [--yes] [--force]
 #   agents leases [--json]
 #   agents release <name> [--force]
@@ -1148,6 +1148,27 @@ cmd_check() {
   echo "agents: $AF_ABS (from $AF_SOURCE): $N agent(s)${d:+, default $d (agents with no name starts it)}"
   for ((i = 1; i <= N; i++)); do
     check_line "$i"
+  done
+  # What each CLI adapter says it can do (its `supports` verb), one line per CLI in the list.
+  # Information only: at run time the verb's own exit 3 stays the authority.
+  local -a seen=()
+  local c a sup rc
+  echo "CLI adapters (what each supports):"
+  for ((i = 1; i <= N; i++)); do
+    c="${CLI[i]}"
+    case " ${seen[*]:-} " in *" $c "*) continue ;; esac
+    seen+=("$c")
+    a="$(command -v "agent-adapter-$c" 2>/dev/null)" || a=''
+    if [ -z "$a" ]; then
+      printf '  %s: no adapter (agent-adapter-%s is not on PATH; add %s to devcontainer.json)\n' "$c" "$c" "$(feature_of "$c")"
+      continue
+    fi
+    sup="$("$a" supports </dev/null 2>/dev/null)"; rc=$?
+    if [ "$rc" -ne 0 ]; then
+      printf '  %s: supports failed (exit %s); the verbs answer for themselves\n' "$c" "$rc"
+    else
+      printf '  %s: %s\n' "$c" "$(printf '%s' "$sup" | tr -s '[:space:]' ' ' | sed 's/^ //; s/ $//')"
+    fi
   done
 }
 

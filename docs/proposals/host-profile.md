@@ -1,10 +1,10 @@
-# Proposal: the host is an adapter, described by DCF_HOST_* variables
+# Proposal: the host is a host type, described by DCF_HOST_* variables
 
 Status: decided 2026-10-23 by the Operator (the build is not started). Reasoning: [ADR 0024](../adr/0024-the-host-is-an-adapter-owned-by-devcontainer-cli.md). Backlog: `host-platform-adapters`, `host-profile-contract`.
 
 ## 1. Decided (2026-10-23)
 
-1. **The host is a pluggable side**, like a backend, source or sink. Only the devcontainer-cli Feature and its bootstrap (the launcher, run on the host) know about the host; every other Feature is host-blind and adapts inside the container.
+1. **The host is a pluggable side**: the host type is the only thing that differs between workstations. Only the devcontainer-cli Feature and its bootstrap (the launcher, run on the host) know about the host; every other Feature is host-blind and adapts inside the container.
 2. **`HOST_TYPE`** is the one host choice, with five ids: `windows-docker` (a docker engine reached from Windows: Docker Desktop or any docker.exe), `windows-wsl-docker` (Docker Engine in a WSL distro), `windows-wslc`, `linux`, `macos`. It defaults to `auto`; an explicit `HOST_TYPE=<id>` skips detection. `HOST_TYPE_PRIORITY` is an ordered, comma-separated list (an organisation sets its own, for example in `.devcontainer/.env`); `auto` takes the first type in it whose detection passes.
 3. **No process of ours runs in the background on the host.** Processes inside the devcontainer are fine.
 4. **No profile file.** The launcher sets the standard `DCF_HOST_*` variables in its own environment before it runs the devcontainer CLI; how they reach the container is the repository's decision, and the bootstrap's `devcontainer.json` template maps them with `containerEnv` (`${localEnv}` is substituted in a repository's own `devcontainer.json`, unlike in a Feature's, ADR 0020). Host-specific **mounts** come from the launcher's `devcontainer up --mount`, so repositories declare none.

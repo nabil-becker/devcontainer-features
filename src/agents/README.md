@@ -409,7 +409,7 @@ lease needs). Pin `agents:2`. The upgrade path is in
 
 ### 1.x
 
-1.0.0 is the first release. 1.0.2: `agents reset` output fixes: the keep reason is a full sentence, the AGENT column fits the longest
+1.0.0 is the first release. 1.0.3: see Changes in 1.0.3. 1.0.2: `agents reset` output fixes: the keep reason is a full sentence, the AGENT column fits the longest
 name, a refusal exits 2 (1 stays for a failure) and is counted in the summary; pair it with claude-code 1.8.1, whose
 `session-remove` prints one line instead of two. 1.0.1: `task agents:reset` (above); a `list` that fails is state `error` and starts nothing (it showed `unknown`
 and started residents as fresh sessions), with the adapter's reason and how to resume by hand; an
@@ -419,6 +419,15 @@ again after Claude Code retitles its session (with 1.7.0 a retitled resident loo
 time; `/rename <agent name>` in that session was the workaround and is no longer needed). It replaces claude-code's `claude-host`, `claude-fleet` and `claude-host-pin` and
 the `SESSIONS` / `HOST_SESSION` settings, which claude-code 2.0 removes; the migration is in
 [docs/migrations/agents.md](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/migrations/agents.md).
+
+## Changes in 1.0.3
+
+`agents check` shows, under the list, one line per CLI used in it with what its CLI adapter says it
+supports (`agent-adapter-<cli> supports`), for example `claude: start-bg wake attach resume new list
+stop logs ...`. A missing CLI adapter or a failing `supports` is said on that CLI's line and check
+carries on (exit codes unchanged). It is information only: at run time each verb's own exit 3 stays
+the authority. The contract tests now require `supports` to agree with the verbs (a listed verb never
+answers 3, an unlisted contract verb always does).
 
 
 ---

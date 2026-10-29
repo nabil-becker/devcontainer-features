@@ -35,7 +35,27 @@ The domain words of the project itself are not here; they live with the project'
   `windows-wsl-docker`, `windows-wslc`, `linux` or `macos`. `HOST_TYPE` picks it (default `auto`,
   detected in the order of `HOST_TYPE_PRIORITY`); the launcher then sets `DCF_HOST_TYPE`,
   `DCF_HOST_HOME` and `DCF_HOST_SSH_AGENT`, which a repo maps into the container with
-  `containerEnv` (ADR-0024).
+  `containerEnv` (ADR-0024). It is not an adapter: "adapter" is reserved for the CLI adapter.
+- **Augmentation**: a Feature with the same id as a tool that an official Feature or the base image
+  already installs, ordered after it with `installsAfter`, that adds the ecosystem pieces around the
+  tool: persistent state, a wrapper, a Taskfile, a setup script (`claude-code`, `git`, `gh`, `az`;
+  CONTRIBUTING.md).
+- **Wrapper**: an executable a Feature installs ahead of a tool on PATH under the tool's own name to
+  adjust its behaviour (the `git` and `claude` wrappers).
+- **Local workaround**: a consuming repository's own script around a gap in this collection; each
+  one found is a backlog item here.
+- **Launcher**: the host-side bootstrap and task set (`task devcontainer:*`, `bootstrap/host`) that
+  runs `devcontainer up` and sets `DCF_HOST_*`; host side only. A command that starts something
+  inside the container is a start command, not a launcher.
+- **Shared script**: a script in `src/common` vendored verbatim into the Features that use it
+  (`dcf-persist`, `dcf-curl`).
+- **Devcontainer hook**: a `postCreateCommand`, `postStartCommand` or `postAttachCommand` of the
+  Dev Container spec. Bare "hook" is avoided: say whose hook it is (devcontainer, Claude, git). An
+  agent integration's lifecycle points are verbs, not hooks.
+- **Setup script**: a Feature's `<id>-setup`, an executable on PATH that the Feature's post-create
+  devcontainer hook calls; also `task <id>:setup`.
+- **Git hook**: a script git runs at a step of its own: `pre-commit`, `pre-push`,
+  `prepare-commit-msg` (`.githooks`).
 - **Host mount**: a bind mount the launcher adds to `devcontainer up` (and so `rebuild`) with
   `--mount type=bind,source=...,target=...`, from a per-host-type list; it is skipped when the
   repository's `devcontainer.json` already mounts the same target, and `HOST_MOUNTS=false` turns
@@ -93,6 +113,11 @@ The domain words of the project itself are not here; they live with the project'
   `key=value` arguments and never reading the agent list. A handle names the ones it uses in
   `integrations`, and the ones whose absence blocks a start in `integrations-required`
   (ADR-0036).
+- **CLI adapter**: an executable `agent-adapter-<cli>` on PATH, installed by a CLI Feature (for
+  example `claude-code`), that the agents Feature calls to start, wake, open or list that CLI's
+  sessions; a repository chooses it with `cli:` in the agent list. "Adapter" is used only for
+  this. An agent integration is a different thing: supplied by a framework and named in
+  `integrations`, never chosen by `cli:`.
 - **Agent list**: the file a repository keeps naming its agents, each with its kind and CLI;
   `.devcontainer/agents.yml` by default, with a configurable path relative to the repository root.
 - **Back** (background agent): an agent that never works with a person. After each turn, and after
@@ -118,6 +143,8 @@ The domain words of the project itself are not here; they live with the project'
 
 - **Devhost**: the dev container as the environment where sessions run and the backs act. The
   `devhost` Feature installs the tooling; its state lives outside the repository.
+- **Publish target**: where the repository's site is published (Claude artifacts today); the
+  `publish-site` skill serves one, and another target takes the same page file.
 - **Workstation**: an engineer's own machine outside the devhost. The backs' hooks do nothing
   there.
 - **Worktree**: a separate checkout of the repository on its own branch, where a con that changes
@@ -244,8 +271,9 @@ The domain words of the project itself are not here; they live with the project'
 
 ## Mechanisms
 
-- **Hook**: a command Claude Code runs on an event, set in `.claude/settings.json`: SessionStart
-  runs the briefing; Stop and SubagentStop start the backs.
+- **Claude hook**: a command Claude Code runs on an event, set in `.claude/settings.json`:
+  SessionStart runs the briefing; Stop and SubagentStop start the backs; `claude-host-pin` is
+  another. Not a devcontainer hook or a git hook.
 - **Briefing**: what an inter is told at session start (`devhost-briefing`): the entries since
   the last review and whether a review is due, what the backs left pending, the open backlog
   items, the month-to-date agent spend.

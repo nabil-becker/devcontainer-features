@@ -328,6 +328,7 @@ agents:
 YAML
 out="$(run check)"
 contains 'check names the default agent' "$out" '2 agent(s), default pair'
+: > "$T/calls"  # check now asks each CLI adapter `supports` (1.0.3)
 out="$(AGENTS_TTY=1 run)"; rc=$?
 check 'no arguments: the default agent is started like agents start pair (its lease, a new session)' "0:new|pair" "$rc:$(tr '\n' ';' < "$T/calls" | sed 's/;$//')"
 reset; holder pair state=held pid=$$ pidstart="$(pstart $$)" carrier="process:$$"

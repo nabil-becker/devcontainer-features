@@ -2,11 +2,14 @@
 # Docker-free contract tests of the agents Feature: the same scenarios run against two fake
 # adapters with different capabilities, so `agents` is proven to rest on the adapter contract
 # (docs/proposals/agents.md sections 5 and 6) and not on one CLI.
-#   fakea: Claude-like. start-bg, wake, attach, resume, new, list, stop, logs.
+#   fakea: Claude-like. start-bg, wake, attach, resume, new, list, stop, logs (no hint, record or session-*).
 #   fakeb: minimal. new, resume, attach only; start-bg, wake, list, stop, logs answer exit 3.
 # Both log every call to their own file. A fake `claude` and a fake `agent-adapter-claude`
 # are on PATH too and log if anything runs them: a list that uses only fakeb must never reach
 # them. Also greps src/agents for a hard-coded claude outside the documented places.
+# `supports` must agree with the verbs (listed: never exit 3; not listed: exit 3): checked on both
+# fakes, on a deliberately lying fake (it must be caught) and on the real agent-adapter-claude
+# with a fake `claude` that starts nothing. `agents check` prints each CLI's `supports`.
 # Part of `task lint` (`task test:agents-contract`). AGENTS_SH points at another copy.
 set -u
 
@@ -43,6 +46,7 @@ case "$verb" in
   stop) sed -i "s/^\($name\t[^\t]*\t\)running\t/\1stopped\t/" "$SESS_A" ;;
   logs) echo "fakea log of $name" ;;
   attach | resume | new) ;;
+  hint | record | session-busy | session-stop | session-remove) exit 3 ;;
   *) exit 2 ;;
 esac
 exit 0
@@ -55,9 +59,16 @@ verb="$1"; shift
 echo "$verb|$*" >> "$CALLS_B"
 case "$verb" in
   new | resume | attach) exit 0 ;;
-  start-bg | wake | list | stop | logs | hint) echo "fakeb: $verb is not supported" >&2; exit 3 ;;
+  start-bg | wake | list | stop | logs | hint | record | session-busy | session-stop | session-remove) echo "fakeb: $verb is not supported" >&2; exit 3 ;;
   *) exit 2 ;;
 esac
+FAKE
+# fakec: lies. Its supports lists stop (and omits logs), but stop answers 3 and logs works.
+cat > "$bin/agent-adapter-fakec" <<'FAKE'
+#!/usr/bin/env bash
+verb="$1"
+[ "$verb" = supports ] && { printf '%s\n' new stop; exit 0; }
+case "$verb" in new) exit 0 ;; logs) exit 0 ;; *) exit 3 ;; esac
 FAKE
 # anything named claude: must never run for a list of fakeb agents
 for f in claude agent-adapter-claude; do
@@ -100,7 +111,10 @@ check "check: exit 0 on a list mixing both CLIs" 0 "$RC"
 contains "check: names a fakea agent" "$OUT" "a-res: cli fakea, resident"
 contains "check: names a fakeb agent with its args" "$OUT" "b-od: cli fakeb, on-demand, stateful (identity b-od, lease container), folder ., args: [--model] [small]"
 contains "check: counts four agents" "$OUT" "4 agent(s)"
-check "check: calls no adapter" "" "$(calls "$CALLS_A")$(calls "$CALLS_B")"
+check "check: calls no adapter verb (only supports)" "" "$(calls "$CALLS_A")$(calls "$CALLS_B")"
+contains "check: shows fakea's capabilities on one line" "$OUT" "  fakea: start-bg wake attach resume new list stop logs"
+contains "check: shows fakeb's capabilities on one line" "$OUT" "  fakeb: new resume attach"
+check "check: one capabilities line per CLI" 2 "$(printf '%s\n' "$OUT" | grep -cE '^  fake[ab]: ')"
 
 # --- start an on-demand agent, on each adapter: a new session in this terminal
 reset; run 1 start a-od
@@ -195,7 +209,57 @@ contains "logs (fakeb): says so" "$OUT" "logs not supported"
 # `supports` itself is not consulted.
 reset; run 1 start b-res; run 0 up --no-wait; run 0 stop b-res; run 0 logs b-res
 check "unsupported verbs are asked once per command (fakeb start-bg: start, up)" 2 "$(grep -c '^start-bg' "$CALLS_B")"
-check "agents never calls supports (it relies on exit 3)" 0 "$(grep -c '^supports' "$CALLS_A" "$CALLS_B" | awk -F: '{ s += $2 } END { print s + 0 }')"
+# supports is for `agents check` only; no verb consults it (it is not logged by the fakes, which answer it first)
+reset; run 1 start b-res; run 0 up --no-wait; run 0 stop b-res; run 0 logs b-res
+check "unsupported verbs are still decided by exit 3, not by supports" 2 "$(grep -c '^start-bg' "$CALLS_B")"
+
+# --- check, with `supports` missing or failing: said in the same line, check carries on (exit 0)
+  # shellcheck disable=SC2016
+printf '#!/usr/bin/env bash\n[ "$1" = supports ] && { echo boom >&2; exit 1; }\nexit 0\n' > "$bin/agent-adapter-fakeerr"; chmod +x "$bin/agent-adapter-fakeerr"
+printf 'agents:\n  - name: e\n    cli: fakeerr\n    kind: on-demand\n  - name: n\n    cli: nosuch\n    kind: on-demand\n  - name: a\n    cli: fakea\n    kind: on-demand\n' > "$repo/.devcontainer/agents.yml"
+run 0 check
+check "check: a failing supports and a missing adapter do not fail check" 0 "$RC"
+contains "check: a failing supports is said on its CLI's line" "$OUT" "  fakeerr: supports failed (exit 1)"
+contains "check: a missing adapter is said on its CLI's line" "$OUT" "  nosuch: no adapter"
+contains "check: carries on to the next CLI" "$OUT" "  fakea: start-bg"
+rm -f "$bin/agent-adapter-fakeerr"
+
+# --- supports agrees with the verbs
+VERBS="start-bg wake attach resume new list stop logs hint record session-busy session-stop session-remove"
+# agreement <adapter>: prints the disagreements, nothing when `supports` and the verbs agree
+agreement() {
+  local ad="$1" sup v rc bad=''
+  sup="$("$ad" supports </dev/null 2>/dev/null)"
+  for v in $VERBS; do
+    if [ "$v" = list ] || [ "$v" = session-busy ] || [ "$v" = session-stop ] || [ "$v" = session-remove ]; then
+      timeout 20 "$ad" "$v" x </dev/null >/dev/null 2>&1; rc=$?
+    else
+      timeout 20 "$ad" "$v" x "$repo" -- </dev/null >/dev/null 2>&1; rc=$?
+    fi
+    if printf '%s\n' "$sup" | grep -qx "$v"; then
+      [ "$rc" -ne 3 ] || bad="$bad $v(listed, answers 3)"
+    else
+      [ "$rc" -eq 3 ] || bad="$bad $v(not listed, answers $rc)"
+    fi
+  done
+  printf '%s' "$bad"
+}
+reset
+check "supports agrees with the verbs: fakea" "" "$(agreement "$bin/agent-adapter-fakea")"
+check "supports agrees with the verbs: fakeb" "" "$(agreement "$bin/agent-adapter-fakeb")"
+contains "supports disagreeing with a verb is caught (fakec lists stop, stop answers 3)" "$(agreement "$bin/agent-adapter-fakec")" "stop(listed, answers 3)"
+contains "supports disagreeing with a verb is caught (fakec answers logs without listing it)" "$(agreement "$bin/agent-adapter-fakec")" "logs(not listed, answers 0)"
+
+# the real agent-adapter-claude, with a fake claude that starts nothing (an empty session list)
+real_adapter="$root/src/claude-code/agent-adapter-claude.sh"
+if [ -f "$real_adapter" ]; then
+  rbin="$T/realbin"; mkdir -p "$rbin" "$T/claude-config"
+  cp "$real_adapter" "$rbin/agent-adapter-claude"; chmod +x "$rbin/agent-adapter-claude"
+  # shellcheck disable=SC2016
+  printf '#!/usr/bin/env bash\n[ "$1" = agents ] && { echo "[]"; exit 0; }\nexit 1\n' > "$rbin/claude"; chmod +x "$rbin/claude"
+  got="$(PATH="$rbin:$PATH" CLAUDE_CONFIG_DIR="$T/claude-config" agreement "$rbin/agent-adapter-claude")"
+  check "supports agrees with the verbs: the real agent-adapter-claude (fake claude)" "" "$got"
+fi
 
 # --- nothing is Claude-specific
 cat > "$repo/.devcontainer/agents.yml" <<'YAML'

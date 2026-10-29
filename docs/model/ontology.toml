@@ -227,8 +227,8 @@ summary = "The morning report of a night shift, in docs/night-shift/."
 
 [hook]
 type = "mechanism"
-term = "Hook"
-summary = "A command Claude Code runs on an event, set in .claude/settings.json."
+term = "Claude hook"
+summary = "A command Claude Code runs on an event, set in .claude/settings.json (SessionStart, Stop, SubagentStop, claude-host-pin)."
 
 [briefing]
 type = "mechanism"
@@ -971,3 +971,83 @@ object = "lease"
 subject = "stateful-agent"
 predicate = "uses"
 object = "agent-integration"
+
+[cli-adapter]
+type = "mechanism"
+term = "CLI adapter"
+summary = "An agent-adapter-<cli> executable installed by a CLI Feature that the agents Feature calls to start, wake, open or list that CLI's sessions; chosen by cli:, the only use of the word adapter."
+
+[augmentation]
+type = "concept"
+term = "Augmentation"
+summary = "A Feature with the same id as a tool an official Feature or the base image installs, ordered after it with installsAfter, adding persistent state, a wrapper, a Taskfile or a setup script."
+
+[wrapper]
+type = "mechanism"
+term = "Wrapper"
+summary = "An executable a Feature installs ahead of a tool on PATH under the tool's own name to adjust its behaviour (git, claude)."
+
+[local-workaround]
+type = "concept"
+term = "Local workaround"
+summary = "A consuming repository's own script around a gap in this collection; each one found is a backlog item here."
+
+[launcher]
+type = "mechanism"
+term = "Launcher"
+summary = "The host-side bootstrap and task set (task devcontainer:*) that runs devcontainer up and sets DCF_HOST_*; host side only."
+
+[shared-script]
+type = "product"
+term = "Shared script"
+summary = "A script in src/common vendored verbatim into the Features that use it (dcf-persist, dcf-curl)."
+
+[devcontainer-hook]
+type = "mechanism"
+term = "Devcontainer hook"
+summary = "A postCreateCommand, postStartCommand or postAttachCommand of the Dev Container spec."
+
+[setup-script]
+type = "mechanism"
+term = "Setup script"
+summary = "A Feature's <id>-setup executable, called from its post-create devcontainer hook."
+
+[git-hook]
+type = "mechanism"
+term = "Git hook"
+summary = "A script git runs at a step of its own: pre-commit, pre-push, prepare-commit-msg."
+
+[publish-target]
+type = "place"
+term = "Publish target"
+summary = "Where the repository's site is published (Claude artifacts today)."
+
+[[relation]]
+subject = "augmentation"
+predicate = "uses"
+object = "wrapper"
+
+[[relation]]
+subject = "augmentation"
+predicate = "uses"
+object = "setup-script"
+
+[[relation]]
+subject = "setup-script"
+predicate = "uses"
+object = "shared-script"
+
+[[relation]]
+subject = "setup-script"
+predicate = "runs"
+object = "devcontainer-hook"
+
+[[relation]]
+subject = "launcher"
+predicate = "uses"
+object = "host-type"
+
+[[relation]]
+subject = "stateful-agent"
+predicate = "uses"
+object = "cli-adapter"
