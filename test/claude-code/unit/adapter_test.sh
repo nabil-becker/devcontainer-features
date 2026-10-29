@@ -97,6 +97,12 @@ elif [ "$1" = --bg ] && [ "$2" = --resume ] && [ -n "${FAKE_RESUME_GONE:-}" ]; t
   printf '{\n  "state": "failed",\n  "detail": "source session %s not found",\n  "respawnFlags": []\n}\n' "$3" > "$d/state.json"
 elif [ "$1" = --bg ] && [ "$2" = --resume ] && [ -n "${FAKE_RESUME_FAIL:-}" ]; then
   echo "error: could not reach the daemon" >&2; exit 1
+elif [ "$1" = --bg ] && [ "$2" = --resume ] && awk -F'\t' -v s="$3" '$2 == s && $6 != 0 { f = 1 } END { exit !f }' "$FAKE_TABLE"; then
+  # the session still has a live process (state done, not stopped): Claude Code starts a copy
+  # with empty saved options and says "already running"
+  printf 'c%07d\tsess-c%s-0000-0000-0000-000000000000\t%s\t%s\tbackground\t%s\trunning\t%s\n' "$n" "$n" "copy" "$(pwd -P)" "$((100 + n))" "$((2000 + n))" >> "$FAKE_TABLE"
+  saved "$(printf 'c%07d' "$n")"
+  echo "already running" >&2
 elif [ "$1" = --bg ] && [ "$2" = --resume ]; then
   awk -F'\t' -v OFS='\t' -v s="$3" '$2 == s { $6 = 999; $7 = "running" } { print }' "$FAKE_TABLE" > "$FAKE_TABLE.n" && mv "$FAKE_TABLE.n" "$FAKE_TABLE"
 elif [ "$1" = rm ]; then
@@ -215,7 +221,7 @@ check 'start-bg: prints the session id on stdout (claude'"'"'s own output goes t
 reg='{"env":{"AGENTIC_REGISTER_AS":"host"}}'
 rm -rf "$CLAUDE_CONFIG_DIR/jobs"
 table "a1|sess-a1|host|$repo|background|0|done|1000" "a8|sess-a8|host|$repo|background|0|failed|1500" "a9|sess-a9|host|$repo/rooms/review|background|0|done|9000"
-saved_opts a8 --name host --agent host --settings "$reg"
+saved_opts a8 --name host --settings "$reg" --agent host
 out="$(ad wake host "$repo" -- --agent host --settings "$reg")"; rc=$?
 check 'wake: the newest stopped or failed session of the agent, by its full id, bare when its saved options are the agent'"'"'s' "$repo|--bg|--resume|sess-a8;" "$(calls)"
 lacks 'wake: never -c' "$(calls)" '|-c'
@@ -247,7 +253,7 @@ check 'wake: saved options with quotes, brackets and backslashes are read as Cla
 # running (a bare wake would start a copy without any options): woken with the options
 rm -f "$records"
 table "a8|sess-a8|host|$repo|background|0|failed|1500"
-SAVED_STATE=running saved_opts a8 --name host --agent host --settings "$reg"
+SAVED_STATE=running saved_opts a8 --name host --settings "$reg" --agent host
 out="$(ad wake host "$repo" -- --agent host --settings "$reg")"; rc=$?
 check 'wake: saved options match but its state.json says running: woken with --name and the args (exit 0)' "0:$repo|--bg|--resume|sess-a8|--name|host|--agent|host|--settings|$reg;" "$rc:$(calls)"
 contains 'wake: its state.json says running: says why' "$out" "Claude Code's own state for it says 'running'"
@@ -382,6 +388,29 @@ check 'by name: a live session wins over newer ended ones' "$T|attach|l1;" "$(ca
 out="$(ad list)"
 contains 'a blocked session (waiting on a decision) is running' "$(table "b1|sess-b1|host|$repo|background|0|blocked|100"; ad list)" "host	sess-b1	running"
 
+# a session whose state is done but whose process is alive (a pid): resuming it starts a copy, so
+# wake stops that one session by id first, waits until it has no pid, then wakes it bare
+rm -rf "$CLAUDE_CONFIG_DIR/jobs"; rm -f "$records"
+table "a8|sess-a8|host|$repo|background|777|done|1500" "z1|sess-z1|other|$repo|background|778|-|1600" "z2|sess-z2|host|$repo/rooms/review|background|779|-|1700"
+saved_opts a8 --name host
+out="$(ad wake host "$repo")"; rc=$?
+check 'wake: a done session with a live pid is stopped by its id, then woken bare (exit 0)' "0:$T|stop|a8;$repo|--bg|--resume|sess-a8;" "$rc:$(calls)"
+check 'wake: a done session with a live pid: no copy was started' 0 "$(grep -c '^c' "$FAKE_TABLE")"
+lacks 'wake: never stops another session' "$(cat "$FAKE_CALLS")" 'z1'
+lacks 'wake: never stops a session of another folder' "$(cat "$FAKE_CALLS")" 'z2'
+check 'wake: the other sessions keep their pids' '778 779' "$(awk -F'\t' '$1 ~ /^z/ { printf "%s%s", s, $6; s = " " }' "$FAKE_TABLE")"
+
+# Claude Code saves the options in a fixed order (--name, --settings, --agent, --model), not the
+# order of the list's args: that is still a bare wake
+table "a8|sess-a8|host|$repo|background|0|stopped|1500"
+saved_opts a8 --name host --settings "$reg" --agent host --model haiku
+out="$(ad wake host "$repo" -- --model haiku --agent host --settings "$reg")"
+check 'wake: args in another order than Claude Code saves them: bare' "$repo|--bg|--resume|sess-a8;" "$(calls)"
+table "a8|sess-a8|host|$repo|background|0|stopped|1500"
+saved_opts a8 --name host --settings "$reg" --agent host --model haiku
+out="$(ad wake host "$repo" -- --agent host --model opus --settings "$reg")"
+check 'wake: a differing value still wakes with the flags' "$repo|--bg|--resume|sess-a8|--name|host|--agent|host|--model|opus|--settings|$reg;" "$(calls)"
+
 # end to end: agents up wakes a stopped resident with the args of its entry in agents.yml
 # (the report: three residents came back without --agent and the register --settings)
 rm -f "$records"; rm -rf "$CLAUDE_CONFIG_DIR/jobs"
@@ -393,7 +422,7 @@ out="$(cd "$repo" && AGENTS_STATE_DIR="$T/agents-state2" PATH="$bin:$PATH" agent
 check 'agents up of a stopped resident: woken with --name and the args of its entry (exit 0)' \
   "0:$repo|--bg|--resume|sess-s1|--name|scribe|--agent|scribe|--settings|{\"env\":{\"AGENTIC_REGISTER_AS\":\"scribe\"}};" "$rc:$(calls)"
 table "s1|sess-s1|scribe|$repo|background|0|done|100"
-saved_opts s1 --name scribe --agent scribe --settings '{"env":{"AGENTIC_REGISTER_AS":"scribe"}}'
+saved_opts s1 --name scribe --settings '{"env":{"AGENTIC_REGISTER_AS":"scribe"}}' --agent scribe
 out="$(cd "$repo" && AGENTS_STATE_DIR="$T/agents-state3" PATH="$bin:$PATH" agents up --no-wait 2>&1)"; rc=$?
 check 'agents up of a stopped resident that keeps its args: the same session, bare' "0:$repo|--bg|--resume|sess-s1;" "$rc:$(calls)"
 rm -f "$records"; rm -rf "$CLAUDE_CONFIG_DIR/jobs"

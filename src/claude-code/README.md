@@ -39,6 +39,21 @@ Claude Code (https://code.claude.com/docs) as a member of this collection's ecos
   `"version": "24"` instead of its moving `lts` default, which broke builds when Node 26.13.0
   became LTS. Documentation only; the Feature itself is unchanged.
 
+## Changes in 1.8.7
+
+- **A wake of a finished session whose process is still alive stops it first.** Claude Code leaves a session
+  whose state is `done` running as a process (a pid in `claude agents`) until it is stopped, and `claude --bg
+  --resume <id>` of it starts a copy under a new id with empty saved options ("already running"). The adapter now
+  lists such a session as `stopped` (its pid kept), and `wake` (and `attach`) run `claude stop <short id>` for that
+  one session, wait (`AGENT_ADAPTER_WAIT`, default 10 s) until it has no pid, then resume it. No other session is
+  ever stopped.
+- **The bare-wake check compares the options in Claude Code's order.** Claude Code saves a session's options in a
+  fixed order (`--name`, `--settings <path>`, `--agent <name>`, `--model <m>`, only those present), not the order
+  of the args in `agents.yml`; the adapter compared them as given, so a different order looked like a change and
+  woke the session with flags, which starts a copy. Both sides now use Claude Code's order (a repeated flag keeps
+  the last value). Any other arg is assumed saved after those four, in the order given. Checked on Claude Code
+  2.1.308. A wake given a prompt with `--resume` does not start a copy; wake does not use that.
+
 ## Changes in 1.8.6
 
 - **A wake whose session is gone starts the agent fresh.** When `claude --bg --resume <session id>` fails
