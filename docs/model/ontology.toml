@@ -195,6 +195,11 @@ type = "mechanism"
 term = "Review"
 summary = "Reading the cost report and the entries since the last review; run with /ledger-review."
 
+[architecture-review]
+type = "mechanism"
+term = "Architecture review"
+summary = "A subagent's check of a proposal against the NFRs, ADRs, capability matrix and lexicon before the Operator rules."
+
 [cost-report]
 type = "record"
 term = "Cost report"

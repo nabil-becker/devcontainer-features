@@ -215,6 +215,9 @@ The domain words of the project itself are not here; they live with the project'
 - **Review**: reading the cost report and the entries since the last review, checking whether the
   last review's friction came back, and turning each group into one action; appended to the
   ledger as a `## Review` section, every 25 entries by default (`DEVHOST_REVIEW_EVERY`). Run with `/ledger-review`.
+- **Architecture review**: a subagent's check of a proposal's design against the non-functional
+  requirements, the ADRs, the CLI capability matrix, the lexicon and where each element is placed,
+  written into the proposal before the Operator rules; run with `/architecture-review`.
 - **Cost report**: `docs/ledger/costs-YYYY-MM-<engineer>.md`, the monthly agent costs on one
   engineer's machine (inters, cons, backs, by model), rebuilt by `devhost-report` with no model
   from the cost store and this machine's new records, with the month's entry rate and, when `DEVHOST_MONTHLY_TARGET` is set, the spend against that tracking point. Read first by the review.
