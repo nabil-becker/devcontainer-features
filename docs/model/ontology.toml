@@ -916,3 +916,58 @@ object = "agent"
 subject = "on-demand-agent"
 predicate = "is-a"
 object = "agent"
+
+[handle]
+type = "concept"
+term = "Handle"
+summary = "An agent's name in the agent list: an address, not an identity; path-safe, unique, and the name of its lease folder."
+
+[stateful-agent]
+type = "concept"
+term = "Stateful agent"
+summary = "An agent with lifecycle stateful (the default): has an identity, takes a lease so one copy runs, keeps state in records."
+
+[ephemeral-agent]
+type = "concept"
+term = "Ephemeral agent"
+summary = "An agent with lifecycle ephemeral: no lease, any number of copies, nothing kept or resumed; never resident."
+
+[lease]
+type = "mechanism"
+term = "Lease"
+summary = "The exclusive right to run one copy of a stateful handle: a mkdir-taken folder with a holder file, scope container or none, taken over when the holder is dead."
+
+[carrier]
+type = "concept"
+term = "Carrier"
+summary = "What an agent currently runs on (session, process or none): a runtime fact, never assumed to be the agent."
+
+[agent-integration]
+type = "mechanism"
+term = "Agent integration"
+summary = "An agent-integration-<id> executable supplied by a framework that acts on an agent's lifecycle through verbs and key=value arguments, never reading the agent list."
+
+[[relation]]
+subject = "agent-list"
+predicate = "contains"
+object = "handle"
+
+[[relation]]
+subject = "stateful-agent"
+predicate = "is-a"
+object = "agent"
+
+[[relation]]
+subject = "ephemeral-agent"
+predicate = "is-a"
+object = "agent"
+
+[[relation]]
+subject = "stateful-agent"
+predicate = "uses"
+object = "lease"
+
+[[relation]]
+subject = "stateful-agent"
+predicate = "uses"
+object = "agent-integration"

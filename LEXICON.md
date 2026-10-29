@@ -67,6 +67,32 @@ The domain words of the project itself are not here; they live with the project'
   a back, which no person attaches to.
 - **On-demand agent**: an agent kind in the agent list: starting it opens a new session, and it
   can resume an earlier one when asked. A designer or a general Claude instance is one.
+- **Handle**: an agent's `name` in the agent list: an address, not an identity. Letters, digits,
+  `-` and `_`, unique in the list; it is also the name of the agent's lease folder, so it stays
+  path-safe (`docs/proposals/agents-v2.md`).
+- **Stateful agent**: an agent whose `lifecycle` is `stateful`, the default: it has an identity,
+  takes a lease so only one copy runs, and keeps its state in records, not in the session. A 1.x
+  agent was one in practice. Independent of its kind: a resident or an on-demand agent can be
+  stateful. Decided 2026-10-29 (ADR-0036).
+- **Ephemeral agent**: an agent whose `lifecycle` is `ephemeral`: it takes no lease, any number of
+  copies may run at once, and nothing is kept or resumed. It may share a stateful agent's identity,
+  which is how a stateful agent's background runs are listed. It is never resident
+  (ADR-0036).
+- **Lease**: the exclusive right to run one copy of a stateful handle: a folder
+  `leases/<handle>/` with a holder file in the agents Feature's state folder, taken with `mkdir`
+  at every start through `agents`, held until the carrier ends, and taken over when the holder is
+  dead. Its `scope` is `container` (the default for a stateful agent) or `none` (ephemeral); a
+  wider scope is refused. A second start of a resident joins the running copy; a second start of
+  an on-demand stateful agent is refused (ADR-0036).
+- **Carrier**: what an agent currently runs on, a runtime fact and not a list key: `session:<id>`
+  for a background session, `process:<pid>` for a foreground one, `none` before a start. The lease
+  is held by the agent; the carrier is never assumed to be the agent (ADR-0036).
+- **Agent integration**: an executable `agent-integration-<id>` on PATH, supplied by a framework and
+  never by the agents Feature, that acts on an agent's lifecycle through the verbs `env`,
+  `before-start`, `after-start`, `lease-taken`, `lease-released`, `stop` and `check`, taking
+  `key=value` arguments and never reading the agent list. A handle names the ones it uses in
+  `integrations`, and the ones whose absence blocks a start in `integrations-required`
+  (ADR-0036).
 - **Agent list**: the file a repository keeps naming its agents, each with its kind and CLI;
   `.devcontainer/agents.yml` by default, with a configurable path relative to the repository root.
 - **Back** (background agent): an agent that never works with a person. After each turn, and after
