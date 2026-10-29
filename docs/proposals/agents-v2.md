@@ -1,0 +1,411 @@
+# Proposal: agents version 2, an agent defined in one place
+
+Status: Proposed 2026-10-29; Operator decided version 2.0.0 (exclusive lease for every stateful agent). The four recommended answers in section 2 and the open questions in section 13 await the Operator's ruling on the proposal as a whole. Nothing here is built. Backlog: `fleet-design-rethink` (this proposal absorbs part of it, section 11) and `agents-file-decisions` (still open; section 11 says what v2 assumes).
+
+Who this serves: the Operator, who rules on it, and the maintainers of a framework that consumes the agents Feature. They will write two integrations (one that registers an agent and its identity, one that makes it reachable) against the contract in section 7, and want a repository to define an agent completely in its one list. The engineers who start agents in a devcontainer get the same verbs they have today, plus an exclusive copy per stateful agent.
+
+## 1. The ask, and what the list cannot say today
+
+Today one agent is spread over three places. The list says its name, CLI, folder, kind and args; the Claude Code profile is a `--agent tooling` pair in `args`; and the identity the agent signs its writes with is an environment variable that has to be smuggled in as `--settings` JSON in `args`:
+
+```yaml
+- name: tooling
+  cli: claude
+  kind: resident
+  folder: .worktrees/tooling
+  args: [--agent, tooling, --settings, '{"env":{"AGENTIC_REGISTER_AS":"tooling"}}']
+```
+
+Nothing in the Feature knows two copies of `tooling` must not run. It reports a duplicate session (`+1` in `agents:list`, `agents:stop --extras`) after the fact. The framework wants the list to be the whole definition: who the agent is, how many copies may run, where it runs, and what it plugs into. The design test is that the line above needs no `args` in v2.
+
+```mermaid
+flowchart LR
+  subgraph entry["One entry in .devcontainer/agents.yml"]
+    who["who: name, identity, definition"]
+    many["how many: lifecycle, lease"]
+    where["where: kind, folder, cli"]
+    plug["plugs into: integrations, integrations-required"]
+  end
+  entry --> agents["agents command<br/>(the only reader of the list)"]
+  agents -->|"verbs, --agent, env"| adapter["agent-adapter-cli<br/>(CLI specific)"]
+  agents -->|"leases/handle"| lease[("lease folder<br/>one holder per handle")]
+  agents -->|"verb handle key=value"| integ["agent-integration-id<br/>(the framework's)"]
+```
+
+The picture shows the one rule that keeps the layers apart: the Feature reads the list; adapters and integrations never do. They receive what they need as arguments and environment, so the Feature learns no CLI flag and no project name.
+
+## 2. Decided, and recommended
+
+### Decided by the Operator (2026-10-29)
+
+- **Version 2.0.0, option b.** The lease is exclusive for **every** stateful agent, including lists with no integrations. A duplicate start joins or refuses instead of being reported. That changes behaviour for existing lists, so it is a major version, and section 12 is the written upgrade path for 1.x lists.
+
+### Recommended by the host (the Operator has seen these four; they rule on the proposal as a whole)
+
+1. **`lifecycle` is a new key, not a third `kind` value.** `kind` says when it runs (`resident` at container start and kept, `on-demand` when asked); `lifecycle` says what it keeps (`stateful`: an identity, a lease and records; `ephemeral`: nothing, discarded). The two are independent, so a third `kind` would multiply values (`resident-stateful`, ...) and break every 1.x list that reads `kind`. `ephemeral` with `resident` is refused (section 5). A list without `lifecycle` reads as `stateful`, which is what a 1.x agent already was in practice: one named agent with a conversation.
+2. **The lease lives in the agents Feature's state folder and is taken with `mkdir`.** `/var/lib/devcontainer-features/agents/leases/<handle>/`, a holder file inside records carrier, pid, container, time. Dead holder: the container differs, the CLI adapter says the carrier is not running, or the pid is gone. Takeover is a rename of the stale folder, then `mkdir`. Section 6 works this out and makes four refinements, each from reading the code and NFR-1; the rule in the recommendation stands:
+   - **No volume.** The agents Feature owns no volume today (its state folder is a plain directory, mode 1777, holding once-per-container-start markers). NFR-1 asks a Feature to keep state in a volume when the state must survive; a lease that survives a rebuild is by definition stale, so a volume would be the wrong default. The container check still matters, because a plain restart keeps the writable layer, and a repository may bind-mount the same target (NFR-1 allows it). NOTES records this as the reasoned exception.
+   - **Container identity is two values.** The container id alone does not change on `docker restart`, when every process and every background session is gone. The Feature already keys its markers by the start of PID 1 (`/proc/1/stat`, field 22). The holder records both, and either differing means a dead holder.
+   - **A takeover lock.** A bare "rename away, then `mkdir`" has an ABA hole: taker A judges the holder dead, taker B takes over and starts a live copy, then A renames B's live lease away. A short-lived `mkdir leases/<handle>.takeover` serialises takers, and each re-reads the holder after getting it.
+   - **Liveness is asked of the adapter by agent, not by comparing ids.** Claude Code changes a session's full id on `/clear` (the adapter's records track the stable job id for this reason, ADR 0033). A holder file that stored a session id and compared it with `list` would call a live agent dead after `/clear` and start a second copy. The holder keeps the carrier id for display and for integrations, refreshed at every start or join; "is it running" is `state_of` (identity by name and folder, record-aware), as the 1.x code already does.
+3. **Scope beyond one container is refused in 2.0, with the reason documented.** There is no cross-container atomic primitive in bash, awk and sed. `scope: machine` over a named volume shared by containers on one engine is possible later (the same `mkdir`, in a volume the Feature then owns, which turns NFR-1 into a requirement for it). Across machines needs a server, which is the framework's register or a2a, not this Feature. Supported: `container` and `none`.
+4. **An on-demand stateful agent holds the lease for the session's life, not only while it writes.** The lease is what makes a copy "the" agent; if it were taken only around writes, two copies would both be the agent while thinking. Write ordering is the register's job (the framework), not the lease's.
+
+## 3. The concepts, in the framework's words
+
+The framework's words are used as given. Where one sits badly on the Feature, it says so.
+
+| Concept | In the list or the Feature | Fit |
+| --- | --- | --- |
+| Handle | `name` (letters, digits, `-`, `_`; unique in the list). An address, not an identity. | Fits. It is also the lease folder's name, so the character set stays path-safe. |
+| Agent definition | The stateless keys of an entry: `cli`, `definition`, `args`. | Partly. In the framework a definition is a thing two agents share. In the list one entry is one agent and two entries share by repeating three keys; there is no `definitions:` section in 2.0 (section 4). The list's key `definition` (the CLI's profile, Claude Code `--agent`) is also narrower than the concept; `profile` would read better (open question 10). |
+| Stateful agent | `lifecycle: stateful` (the default): has an `identity`, takes the lease, "state in records not the session" is the framework's side. | Fits. The Feature carries the identity and the lease only. |
+| Ephemeral agent | `lifecycle: ephemeral`: no lease, any number of copies, not resumed. A stateful agent's background runs are ephemeral entries with the stateful agent's `identity`. | Fits, with one gap: the Feature has no notion of "one task". Discarding is `agents reset --purge` and the CLI's own end of session; nothing else is promised. |
+| Identity | `identity`, default `name`. Passed to integrations; the Feature never writes with it. | Fits. |
+| Carrier | Not a list key. A runtime fact the Feature records and passes as `carrier=<kind>:<id>`: `session:<id>` for a background session, `process:<pid>` for a foreground session, `none` before a start. | Fits. A carrier is never assumed to be the agent: the lease is held by the agent, and the carrier is what it currently runs on. Container and machine carriers are the scope, not a value here. |
+| Lease | The `leases/<handle>/` folder and the `lease` key. | Fits (section 6). |
+
+## 4. The list format
+
+New keys, all optional. `name`, `cli` and `kind` stay required; `folder` and `args` as today.
+
+```yaml
+agents:
+  - name: tooling                     # the handle
+    cli: claude                       # the CLI adapter, as today
+    definition: tooling               # the CLI's agent profile (Claude Code: --agent tooling)
+    lifecycle: stateful               # stateful (default) | ephemeral
+    kind: resident                    # resident | on-demand, as today
+    identity: tooling                 # the principal it signs as; default = name
+    folder: .worktrees/tooling        # repo-relative, must exist when the CLI starts
+    lease: container                  # container (default for stateful) | none (default for ephemeral)
+    integrations: [register, a2a]     # adapters that act on this agent's lifecycle
+    integrations-required: [register] # the ones whose absence or failure blocks a start
+    args: []                          # still passed through
+  - name: tooling-night               # a background run of tooling, acting under its identity
+    cli: claude
+    definition: tooling
+    lifecycle: ephemeral
+    kind: on-demand
+    identity: tooling
+    folder: .worktrees/tooling-night
+    integrations: [register]
+```
+
+### Can the awk subset read `lease: { scope: container }`?
+
+Checked 2026-10-29 by running `agents check` from the tree on four lists. **No.** An inline map is not in the subset: a known key whose value starts with `{` is refused (`'<key>' must be a plain or quoted value`), and an entry written as `{ ... }` is refused too. Today the key `lease` is not known, so on 1.x `lease: { scope: container }` is read as an unknown key and ignored with a warning, and a block map under it (`lease:` then an indented `scope: container`) is skipped the same way. The list in the ask reads on 1.x, it just means nothing there.
+
+Proposed form: **a flat scalar, `lease: container`**, with any later lease setting as a flat sibling key (`lease-wait: 30`). Why, honestly:
+
+- awk could read a one-line map: the list reader `flow()` is 35 lines and a map reader is of the same size. The reason against is the cost of a second grammar for one word. The subset today is "a key and a scalar, or a key and a list of scalars"; each key is one line, and the unknown-key skipper works by indentation. A nested map adds depth state, quoting of `:` and `,` inside it, and a new class of error messages.
+- The flat form changes nothing about the parser's records (`K <entry> <key> <value>`), and a later `scope: machine` is the same key with a new accepted value.
+- Cost: `lease: container` is a value that carries one fact, where the ask's form leaves room for named settings. If the framework needs several settings per lease, the flat siblings do the same job with one more line each.
+
+The two lists use the existing flow or block form (`integrations: [a, b]` or one `- a` per line); items are ids matching `^[a-z0-9][a-z0-9_-]*$`. The parser's record stream grows one field: `G <entry> <list> <value>` (the list name: `args`, `integrations`, `integrations-required`).
+
+### How "required" is written
+
+Options weighed:
+
+| Option | Reads | Verdict |
+| --- | --- | --- |
+| A second list, `integrations-required: [register]` | A name in it must also be in `integrations` (checked). | **Recommended.** Uses only what the parser reads; the reader sees the strong and the weak ones at a glance; a typo is a list error. |
+| A marker on the item, `register!` | Compact. | Rejected: `!` is a YAML tag character and the parser already refuses plain values starting with it; the marker is easy to miss. |
+| A map per item, `{ id: register, required: true }` | Self-describing. | Rejected: inline maps are not in the subset (above). |
+
+### Rules the list check adds
+
+Every problem is named by file and line, as today; a broken list exits 2.
+
+- `lifecycle` is `stateful` or `ephemeral`. `ephemeral` with `kind: resident` is refused: the container start would create and discard an agent every time.
+- `lease` is `container` (stateful only) or `none` (ephemeral only). A stateful agent with `lease: none` is refused, because without a lease it is the 1.x behaviour and that is what `ephemeral` means. `machine` and `cluster` are refused with the reason of section 2, item 3, so the key reserves the words.
+- `identity` is validated like `name`. **Two stateful entries may not share an `identity`**: a principal with two live copies is what the lease prevents, and a lease per handle would not catch two handles for one principal. Ephemeral entries may share an identity with each other and with one stateful entry (the background-run case).
+- `definition` and a `--agent` in `args` together are refused (two sources for one fact). The reverse stays legal, so a 1.x list keeps working and migrates one agent at a time.
+- Every id in `integrations-required` is in `integrations`; ids are unique.
+- The `folder` rule stays (inside the repository). Whether it must exist is checked later than today (section 8).
+
+## 5. What `kind` and `lifecycle` mean together
+
+|  | `resident` | `on-demand` |
+| --- | --- | --- |
+| **stateful** | Runs in the background from the container start; the lease is held while it runs; a second start attaches to it. | Opens a foreground session; the lease is held for the session's life; a second start is refused while it runs. `--resume` as today. |
+| **ephemeral** | Refused. | Opens a new session on every start, no lease, any number at once. `--resume` is refused (nothing is kept). With `--bg` (section 8) it starts in the background without attaching. |
+
+`agents list` shows the lifecycle and the lease (section 9). An ephemeral agent's several running sessions are normal, so the "N more running" notice is not printed for it, and `agents stop <handle>` stops the newest while `--all` stops every copy.
+
+## 6. The lease
+
+### Shape
+
+```
+/var/lib/devcontainer-features/agents/
+  <start key>/...          the once-per-container-start markers, as today
+  leases/                  mode 0777 (no sticky bit: a holder of another user may be taken over)
+    <handle>/              the lease: exists while someone holds it
+      holder               plain text, one key=value per line
+    <handle>.takeover/     held for the few milliseconds a takeover needs
+```
+
+The holder file:
+
+```
+state=starting|held
+pid=<the agents process that took it>
+pidstart=<field 22 of /proc/<pid>/stat>
+boot=<field 22 of /proc/1/stat>
+container=<hostname>
+carrier=session:<id> | process:<pid> | pending
+time=<epoch seconds>
+```
+
+`hostname` is the container id in Docker unless a repository sets `--hostname`; either way it is written and compared as a string. The file is written to a temporary name inside the folder and renamed over `holder`, so a reader never sees half a file.
+
+### Take, join, refuse, take over
+
+```mermaid
+flowchart TD
+  s(["start of handle h<br/>stateful"]) --> m{"mkdir leases/h<br/>succeeds?"}
+  m -- yes --> w["write holder<br/>state=starting"] --> go(["held: go on to start<br/>fire lease-taken"])
+  m -- no --> r["read holder"] --> d{"holder dead?<br/>(table below)"}
+  d -- yes --> t["take the takeover lock<br/>re-read; still dead?<br/>rename folder to h.stale.pid<br/>mkdir leases/h"] --> w
+  d -- "no, starting" --> wt["wait, up to AGENTS_LEASE_WAIT s<br/>(default 20), poll 0.5 s"] --> m
+  d -- "no, held" --> k{"kind?"}
+  k -- resident --> j(["join: attach to it<br/>(no terminal: say it runs, exit 0)"])
+  k -- on-demand --> x(["refuse: exit 2, name the holder<br/>since when, how to release"])
+```
+
+**Dead holder.** Rules in this order, the first that applies decides:
+
+| # | Condition | Verdict |
+| --- | --- | --- |
+| 1 | No readable holder file and the folder is older than 5 s (its taker died between `mkdir` and writing). Younger: treat as `starting`. | dead / starting |
+| 2 | `boot` or `container` differs from this container's | dead (`new-container`) |
+| 3 | `state=starting` and the pid is gone, or its start time differs (pid reused) | dead (`start-died`); else starting |
+| 4 | `state=held` and the adapter's `list` shows no running session of this agent (by name, folder and record), and the pid (a foreground session's wrapper) is gone or reused | dead (`session-gone`) |
+| 5 | `state=held` and either of those is alive | held |
+| 6 | The adapter cannot list (exit 3) and the holder has no live pid | held, said: "cannot tell". Never take over what may be running (the 1.x fallback rule); the way out is `agents release --force`, or the next container start (rule 2) |
+| 7 | The adapter's listing fails (exit 1) | held, said: nothing is taken on a guess (the 1.x `error` state) |
+
+**Takeover**, atomic as a whole. `mkdir leases/h.takeover` (a taker that finds it checks the pid in it and retries after 0.2 s, up to 5 s, then treats it as stale); re-read the holder and apply the table again; if it is still dead, `mv leases/h leases/h.stale.<pid>`, then the ordinary `mkdir leases/h`; remove the stale folder and the takeover lock. A third party that wins the `mkdir` first is a legitimate take; the taker then joins or refuses as for any live holder. `lease-released reason=stale` fires for the old holder, then `lease-taken` for the new.
+
+A takeover can find the agent already running: after a container restart the CLI's supervisor may restore a background session before `agents up` runs. The lease is then taken for that session (carrier from `list`) and nothing is started; this is the existing settle-then-adopt behaviour with a lease under it.
+
+### When it is taken and released
+
+- **Taken** for a stateful agent at every start path: `agents start`, `agents up` (each resident), `--new`, `reset`'s start of a resident. `list`, `logs`, `check` and `release` take nothing.
+- **Held** until the carrier ends. A resident's lease outlives the `agents` process that started it: `state` goes from `starting` to `held` once the session id is known, and the process may exit. A foreground session's lease is held by the `agents start` process, which stays and waits for `new` to return (it traps `EXIT`, `INT`, `TERM` and `HUP` and releases); on `SIGKILL` the pid check (row 4) finds it dead.
+- **Released** by `agents stop` after the adapter stopped the session (`reason=stopped`), by the foreground wrapper on exit (`exited`), by a failed start (`failed-start`), by `agents release <handle>` (a dead holder; `--force` a live one, `forced`) and by takeover (`stale`).
+- **Not by the CLI.** A session started by hand with `claude --bg --name tooling` never takes a lease. The lease guards what goes through `agents`; the 1.x duplicate report (`+N`, `--extras`) stays as the backstop for copies that did not, and `agents up` still prints it.
+
+### Start sequence
+
+```mermaid
+sequenceDiagram
+  participant U as caller (task, up)
+  participant A as agents
+  participant L as lease folder
+  participant I as integrations
+  participant C as adapter
+  U->>A: start tooling
+  A->>A: read and check the list
+  A->>I: found? (command -v agent-integration-id)
+  A->>L: take (mkdir), state=starting
+  A->>I: lease-taken tooling identity= lifecycle= folder= carrier=none
+  A->>I: env tooling ...
+  I-->>A: KEY=VALUE lines
+  A->>I: before-start tooling ...
+  A->>A: check the folder exists
+  A->>C: start-bg tooling folder (AGENTS_DEFINITION, AGENTS_ENV_FILE)
+  C-->>A: session id
+  A->>L: state=held, carrier=session:id
+  A->>I: after-start tooling ... carrier=session:id
+  A-->>U: attach, or print how
+```
+
+The order is one rule per step: the lease first, so a second caller waits or joins and the integrations are called once; `lease-taken` before `env`, so a record the integration writes on taking the lease exists before the session can sign anything; the folder check after `before-start`, so an integration may create the folder (a worktree); the carrier recorded before `after-start`, so integrations see it.
+
+## 7. The integration contract
+
+Beside the CLI contract, the same shape and the same exit codes. One executable per integration on PATH, `agent-integration-<id>`, supplied by the framework, never by this Feature.
+
+```
+agent-integration-<id> <verb> <handle> [key=value ...]
+  env             print KEY=VALUE lines for the session, nothing else; no side effects
+  before-start    a session is about to start or wake
+  after-start     it started or woke; carrier is known
+  lease-taken     the handle's lease was taken (stateful only)
+  lease-released  the lease ended; reason=...
+  stop            the agent is being stopped on purpose; reason=...
+  check           is this integration usable for this agent now; message on stdout
+Exit: 0 done, 1 failed, 2 bad use, 3 not supported (verb or agent).
+```
+
+The arguments `agents` passes (always `key=value`, one word each, no quoting rules to learn):
+
+| Key | Value | On |
+| --- | --- | --- |
+| `identity` | the principal | every verb |
+| `lifecycle` | `stateful` or `ephemeral` | every verb |
+| `kind` | `resident` or `on-demand` | every verb |
+| `cli` | `claude` | every verb |
+| `definition` | the CLI profile, omitted when none | every verb |
+| `folder` | absolute path (it may not exist before `before-start`) | every verb |
+| `carrier` | `session:<id>`, `process:<pid>` or `none` | every verb; `none` until the start has run |
+| `scope` | `container` (stateful) or `none` | every verb |
+| `reason` | `stopped`, `exited`, `stale`, `forced`, `failed-start`, `purged` | `lease-released`, `stop` |
+| `previous` | the old carrier, for a takeover | `lease-released` with `reason=stale` |
+
+**An integration never parses `agents.yml`.** Everything it needs is in those arguments and in its own configuration. A new fact is a new key; an integration ignores keys it does not know, and `agents` never removes one.
+
+**Behaviour the Feature guarantees**
+
+- **Presence and required.** Each id in `integrations` is looked up on PATH at the start of every start path. A missing optional integration is one line (`tooling: integration a2a is not installed; skipping it`) and the start goes on. A missing integration listed in `integrations-required` refuses the start (exit 1, nothing taken, nothing started, the id and the way to add it named). `agents check` reports both, `ok`, `missing (optional)` or `missing (required)`, and exits 1 only for the required.
+- **Failure.** A verb that exits 1 or 2, or times out (`AGENTS_INTEGRATION_TIMEOUT`, default 30 s), fails the step for a required integration (before-start and lease-taken abort the start and release the lease; the others are said and the run goes on) and is only a warning for an optional one. Exit 3 is skipped without a word. An integration that exits 0 having printed nothing for `env` adds no variables.
+- **Order.** In the order of `integrations`; for `stop` and `lease-released` in reverse.
+- **At least once.** A starter killed between `lease-taken` and its record may leave the next one to call the verb again; integrations must tolerate a repeat. The Feature never calls `after-start` without a carrier.
+- **`env`.** Output lines must match `^[A-Z_][A-Z0-9_]*=` and are one line each. A name `agents` reserves (`AGENTS_*`, `PATH`, `LD_*`, `HOME`, `BASH_ENV`, `ENV`, `IFS`) fails the integration's step; the same name from two integrations is a failure naming both, never a silent last-wins. The merge is written to `env/<handle>.env` in the Feature's state folder, mode 600, removed on release, and handed to the adapter (section 7.1). The Feature adds three generic variables of its own, `AGENTS_HANDLE`, `AGENTS_IDENTITY` and `AGENTS_LIFECYCLE`, so a session can tell who it is without any integration (open question 8).
+- **Streams.** An integration's stdout and stderr appear prefixed `agents: <handle>: <id>:`, except `env`'s stdout, which is parsed. Its working directory is the repository root. It gets the container's environment and no extras.
+- **`check` is not run by the plain `agents check`**, which stays instant and offline (it runs in post-create hooks). `agents check --deep` (task `agents:check -- --deep`) calls it for every agent and integration.
+
+### 7.1 How `definition` and `env` reach the session, in the adapter
+
+The CLI contract is unchanged (verbs, arguments, exit codes, the fallbacks). Two inputs are added, **as environment variables of the adapter call**, so an adapter that does not know them ignores them:
+
+| Variable | Meaning |
+| --- | --- |
+| `AGENTS_DEFINITION` | the list's `definition`, empty when none |
+| `AGENTS_ENV_FILE` | path of the merged `KEY=VALUE` file, empty when there is none |
+
+`agent-adapter-<cli> supports` may print two more lines, `definition` and `env`, which are capabilities, not verbs. `agents` asks before a start. **If the list sets `definition`, or an integration produced env, and the adapter does not list the capability, the start is refused (exit 2) naming the claude-code release that adds it.** The alternative, starting a stateful agent without its identity variable, writes under the wrong identity, and a loud refusal is cheaper. A 1.x-shaped list needs neither, so the 1.8.x adapter keeps working with agents 2.0.0.
+
+**The Claude Code adapter** (claude-code 1.9.0) does the CLI-specific part:
+
+| Input | Claude Code | Notes |
+| --- | --- | --- |
+| `AGENTS_DEFINITION=tooling` | `--agent tooling`, placed before the list's `args` | Passed by `start-bg`, `new`, `wake` and `resume` alike. Refused when `args` already holds `--agent` (the list check already does). |
+| `AGENTS_ENV_FILE` | the adapter writes `<state>/settings/<agent>.json` (`{"env":{"K":"V",...}}`, mode 600, JSON-escaped by the adapter, no jq) and passes `--settings <that path>` | Settings `env` is how Claude Code exports variables to a session's tools, hooks and MCP servers. The path is stable per agent, so the flag is identical between runs. |
+
+Why a settings file and not the process environment: a background session is started by Claude Code's supervisor, not by the `claude --bg` client, so whether the client's environment reaches the session is unproven (open question 1); a settings file is a documented route and `--bg` keeps its flags. The adapter would use the environment as well when question 1 shows it works, but would not rely on it.
+
+How this fits the adapter's saved-options rule: Claude Code puts back the options a background session was started with (`respawnFlags`) on a bare `wake`, and the adapter wakes bare only when those equal what `start-bg` passes. `want_flags` therefore has to include `--agent <definition>` and `--settings <path>` in the same order as a start. Because the path is stable, a bare wake re-reads the **current** file, which the adapter rewrites from the env file before every wake; so a changed identity reaches a woken session. A session started under 1.x with its `--settings` JSON in `args` has different saved options, so its first wake after the move to `definition` falls to the existing "wake with the agent's options, which may start a copy" path, said on stderr; `agents stop --extras` removes the copy. Open question 4 asks whether Claude Code merges two `--settings` flags, which decides what happens when a list keeps its own `--settings` in `args` beside an integration's env.
+
+All of this stays in `agent-adapter-claude`. `agents` never writes a Claude flag, and another CLI's adapter maps the same two inputs its own way (a different CLI has its own profile and environment mechanism).
+
+## 8. Join or refuse, and what the container start does
+
+| Start path | Lease free | Held, live | Held, starting | Held, dead |
+| --- | --- | --- | --- | --- |
+| `agents start <resident>` | take, start, attach | **join**: attach to the carrier (no terminal: say it runs, exit 0) | wait up to `AGENTS_LEASE_WAIT`, then join | take over, start, attach |
+| `agents up` / post-start, each resident | take, start | **join** silently: `tooling: running (id)`, exit 0 | wait, then join | take over, start (or adopt a restored session) |
+| `agents start <on-demand stateful>` | take, open the session | **refuse**, exit 2: names the holder (`process:<pid>`, since when) and `agents release` | wait, then refuse | take over, open |
+| `agents start --new <resident>` | as `start` | asks, stops it, starts a fresh one; the lease is released and taken again in one run, no waiting | wait | take over |
+
+The existing behaviour of `agents start <name>` is already "join" for a resident (it finds the running session and attaches), so a second start of a resident changes only in being guarded by the lease: two concurrent starts are one start and one join. A container start's auto-start **never refuses and never fails the container start**: held means running, which is what it wants, and it prints one line. An on-demand agent cannot be joined (a foreground session in another terminal cannot be attached to), so it refuses, in plain words: the agent is stateful, it already runs there, and an engineer who wants several at once means `lifecycle: ephemeral`.
+
+**Folder check later.** Today `adapter_of` refuses a start when the folder does not exist, before anything else. In 2.0 that check moves after `before-start`, so an integration may create the folder (a worktree at `.worktrees/tooling`). `agents check` and `agents list` still say `no-folder`.
+
+**Ephemeral background runs (`--bg`).** The ask's "a stateful agent's background runs are ephemeral agents" needs one way to start an on-demand agent in the background without attaching: `agents start <handle> --bg [-- args]` calls the adapter's existing `start-bg`, prints the session id and exits. It is allowed only for `ephemeral` agents (a stateful on-demand agent holds its lease through a foreground wrapper). A framework that wants a task prompt passes it in the args after `--`, as today. Open question 6.
+
+## 9. What the verbs print
+
+```
+$ task agents:check
+agents: /workspaces/repo/.devcontainer/agents.yml (the default): 2 agent(s)
+  tooling: cli claude, definition tooling, resident, stateful (identity tooling, lease container), folder .worktrees/tooling, args: none
+    integrations: register (required), a2a
+  tooling-night: cli claude, definition tooling, on-demand, ephemeral (identity tooling, lease none), folder .worktrees/tooling-night, args: none
+    integrations: register
+integrations: register found, a2a missing (optional; tooling skips it)
+
+$ task agents:list
+NAME            KIND       LIFECYCLE  CLI     STATE      LEASE                 ID        FOLDER
+tooling         resident   stateful   claude  running    held session:ab12cd   ab12cd..  .worktrees/tooling
+tooling-night   on-demand  ephemeral  claude  running+2  -                     ef34..    .worktrees/tooling-night
+
+$ task agents:leases
+HANDLE   STATE  CARRIER             SINCE      HOLDER
+tooling  held   session:ab12cd      14:02:11   pid 311, this container
+```
+
+`list --json` gains `lifecycle`, `identity`, `lease` (`none`, `free`, `held`, `starting`, `stale`) and `carrier`, all additive. New tasks (each with a `desc`, NFR-2, `-- --json` where it lists, NFR-7): `agents:leases` (the table above), `agents:release -- <handle> [--force]`. `agents:version` and `agents:check` print the new keys.
+
+## 10. Tests
+
+All Docker-free, in `test/agents/unit/` with the fake adapter that exists (sessions in a file, every call recorded), and two additions: a **fake integration**, `agent-integration-fake`, that logs every call it gets (verb, handle, every `key=value`) to a file, prints `FAKE_IDENTITY=<identity>` for `env`, and can be told to fail, time out, answer exit 3 or be absent; and a fake adapter that supports `definition` and `env` and writes the `AGENTS_DEFINITION` and the content of `AGENTS_ENV_FILE` it received into the session it creates. The claude adapter's tests keep their fake `claude`.
+
+The five cases the framework asked for, with what each asserts:
+
+| Case | Asserts |
+| --- | --- |
+| Two concurrent starts for one stateful handle give exactly one copy | Launch eight `agents start tooling` at once (a slow fake `start-bg`): the fake adapter's calls hold one `start-bg`; the sessions file one running session; one process started it, the others joined (exit 0, "running"); the integration log has one `lease-taken` and one `after-start`. The same for `agents up` racing `agents start`. On-demand (a fake `new` that waits): one opens, seven exit 2. |
+| A dead holder's lease is taken over | Four cases, one per rule: a holder with another `boot`, another `container`, a dead `starting` pid, and `held` with no running session. Each: the next start takes over, the log shows `lease-released reason=stale previous=...` then `lease-taken`, exactly one new session. Plus: eight concurrent takers of one dead lease give exactly one winner (the takeover lock), and a live lease is never renamed away. |
+| An ephemeral agent takes no lease | `leases/` has no folder for it; two starts run side by side; no `lease-taken` or `lease-released` in the log, `before-start` and `after-start` fire; `--resume` is refused; `ephemeral` with `resident` fails the list check. |
+| Env reaches the session | The fake integration's `env` prints `FAKE_IDENTITY=tooling`; the session the fake adapter made holds that line and `AGENTS_DEFINITION=tooling`. A reserved name, and the same name from two integrations, fail the start with both named. An adapter without the `env` capability gets the refusal of section 7.1. |
+| A missing optional integration does not block; a missing required one does | Optional absent: the start succeeds, one line says so, `agents check` exits 0 and reports `missing (optional)`. Required absent: exit 1, no lease folder, no session, nothing recorded as called; `agents check` exits 1. A required one that fails `lease-taken` releases the lease and starts nothing; an optional one that fails only warns. A hanging integration is cut at `AGENTS_INTEGRATION_TIMEOUT`. |
+
+Further tests, grouped by slice in section 12: the list format (flat `lease`, the refused inline map with a message pointing at the flat form, `integrations`, `integrations-required` subset, duplicate stateful identity, `definition` with `--agent`, a 1.x list reading exactly as before); join and refuse per the table of section 8; takeover after `docker restart` (boot differs) and after `/clear` (a changed session id with the same job: still held); the lease released by `stop`, by a foreground wrapper's exit and by `SIGTERM`; `release` and `release --force`; `--bg`; the folder created by `before-start`; and, in `adapter_test.sh`, `--agent` and the settings file (content, mode, JSON escaping of a quote and a backslash, rewritten before a wake) and a bare wake still bare.
+
+## 11. Relation to the open backlog
+
+**`fleet-design-rethink`** (agents without sessions, from what Claude Code provides) asked for a model, what wakes a worker, two sessions in one room, idle cost, the ledger as the only memory, the migration, and the shutdown handshake. The 1.x agents Feature already absorbed the facts and taking the session out of the domain (`agent-kind-standard`, done). This proposal absorbs:
+
+- **two sessions in one room**: at most one live copy per handle, exclusive (section 6), and several workers in a room as ephemeral handles with a shared identity (sections 4 and 5);
+- **a disposable background worker**: the `ephemeral` lifecycle and `--bg`;
+- **the identity half of "the ledger as the only memory"**: a stateful agent has an identity that signs its writes, and the Feature carries it to the session. The records themselves stay the framework's.
+
+It does **not** absorb: what wakes a worker (backlog, schedule or events: the framework's a2a and a scheduler); idle cost; the records server; and the shutdown handshake. The handshake is only given a place to hang: the `stop` verb exists, but in 2.0 an integration cannot veto a stop (a failing `stop` is said and the stop goes on). A vote that can veto needs its own design. The claude-code 2.0 removal of `claude-host`, `claude-fleet` and the pin hook is unchanged and independent. After a ruling, the item narrows to those parts (a stake for the secretary).
+
+**`agents-file-decisions`** is still open: how a repository points at a list other than `.devcontainer/agents.yml`, that paths in it are repository-relative, and which source wins. v2 assumes what is built and was recommended: `AGENTS_FILE` is the only setting (task variable, `.env`, `.devcontainer/.env`, environment, default), no Feature option, `folder` and every path in the list relative to the repository root. Nothing in v2 depends on that answer beyond the folder rule; if the Operator rules otherwise (an `agentsFile` option), only `resolve_file` changes. The lease state is not per list: it is keyed by handle, so two lists in one container with the same handle would share a lease, which is the right outcome for a stateful agent.
+
+## 12. Slices, versions and the upgrade path
+
+| Slice | Content | Version | Tests |
+| --- | --- | --- | --- |
+| 1 | The keys `lifecycle`, `identity`, `lease` and `definition` (parsed, checked, shown; `definition` only stored), the lease (`mkdir`, holder, takeover lock, join and refuse, release by stop, foreground wrapper), `agents:leases`, `agents:release`, `list` and `check` columns, NOTES, `docs/migrations/agents.md` (the 1.x to 2.0 section), `task docs` | agents **2.0.0** | the lease cases of section 10 (concurrent starts, takeover, ephemeral, join and refuse), the list-format cases, a 1.x list unchanged |
+| 2 | The integration contract: `integrations`, `integrations-required`, the verbs at their points, `env` merge and the env file, `AGENTS_DEFINITION` and `AGENTS_ENV_FILE`, the capability check, the folder check moved, `check --deep`, `AGENTS_INTEGRATION_TIMEOUT` | agents **2.1.0** | the integration cases (fake integration; missing optional and required; failing, timing out; order), env reaching a fake adapter |
+| 3 | The Claude Code adapter: `definition` to `--agent`, env to the settings file and `--settings`, `want_flags` and the bare wake, `supports` lines | claude-code **1.9.0** (adapter only; additive) | `adapter_test.sh` with the fake `claude` |
+| 4 | `--bg` for ephemeral agents, `stop --all`, `reset` sweeping stale leases of listed agents | agents **2.2.0** | the `--bg` and ephemeral-stop cases |
+| 5 | Consumers: the framework writes its two integrations against slice 2 and moves its list (drops its `--settings` args); this repository and DSNP and the office read `docs/migrations/agents.md` | none here | the framework's own |
+
+Slice 1 is the release the Operator decided (2.0.0); slices 2 to 4 are minors of 2.x, so a repository can take the lease alone. No devcontainer-cli change: `task devcontainer:agent` passes the flags through (`-- --bg`, `-- --deep`); a host-side task for `agents:leases` is a later minor if the Operator wants one. A release is due after slice 3, which the Operator starts; the framework cannot name the Feature until it is published.
+
+### The upgrade path for 1.x lists
+
+What changes with 2.0.0 for a list that has none of the new keys:
+
+| What | Before (1.x) | After (2.0.0) | What to do |
+| --- | --- | --- | --- |
+| Entry without `lifecycle` | not a concept | reads as `stateful` | nothing |
+| A `resident` agent, started twice | the second attaches to the running session | the same, guarded by the lease: two concurrent starts are one start | nothing |
+| An `on-demand` agent started in a second terminal while one runs | opens a second session | **refused** (exit 2): the agent is stateful and the lease is held | add `lifecycle: ephemeral` to an agent you run several of at once; its `--resume` is then refused |
+| Duplicate running sessions | reported (`+N`) | still reported, for those not started through `agents` | nothing |
+| First start after the upgrade | | a session already running (restored, or started by hand) is adopted: the lease is taken for it, nothing restarts | nothing |
+| A container restart | a resident was woken or started | the same; the old lease is dead (`boot` differs) and is taken over | nothing |
+| `agents list` | `NAME KIND CLI STATE ID FOLDER` | two more columns, `LIFECYCLE` and `LEASE` | a script reads `-- --json`, whose fields are only added to |
+| State | a markers folder | the same folder plus `leases/` | nothing; no volume |
+| claude-code | 1.8.x adapter | the same adapter works: `list` is all the lease needs | take claude-code 1.9.0 only to use `definition` or integrations |
+| Pin | `agents:1` | `agents:2` | change the Feature version; `agents:1` never moves to 2 on its own |
+
+A consumer that runs on-demand agents in several terminals (a reviewer, a pair) is the only one that must edit its list. The rest edit nothing. A 2.x list on a 1.x install reads the new keys as unknown (a warning) and gets no lease and no integrations, silently apart from that warning; the pin above is what prevents it. The upgrade note goes into `docs/migrations/agents.md` in slice 1, and each consumer's `.devcontainer/DEVCONTAINER_CONTRIBUTION.md` carries the line.
+
+## 13. Open questions
+
+Facts to check on the real CLI (workstation, a trusted throwaway folder):
+
+1. Does the environment of the `claude --bg` client reach the session's tools and hooks, or only that of the supervisor that spawns it? Decides whether the adapter may use the process environment as well as a settings file.
+2. Does `--settings <file>` with an `env` object reach Bash-tool commands, hooks and MCP servers of a **background** session, and is it re-read on `claude --bg --resume <id>` (a bare wake) after the file changed?
+3. Is `--agent <profile>` stored in a background session's saved options (`respawnFlags`) and put back by a bare wake? `want_flags` depends on it.
+4. Given `--settings` twice (one in the list's `args`, one from the adapter), do the two merge or does the last win? Decides whether a list may keep its own `--settings`.
+5. After `kill -9` of a background session, how long does `claude agents --json --all` keep a pid for it? Row 4 of the dead-holder table trusts "no running session"; a lagging pid makes a takeover late, never wrong.
+
+Design points the Operator or the framework rules on:
+
+6. **`--bg` for ephemeral agents** (section 8) is not in the ask. It is the smallest way to give "a stateful agent's background run" a start verb; the alternative is that the framework starts such runs itself (`claude --bg ...`) and the Feature only names them. Keep `--bg`?
+7. **`--resume` of an ephemeral agent refused** (section 5): "discarded" says nothing is kept, but a 1.x on-demand agent given `lifecycle: ephemeral` to run in several terminals loses its `--resume`. Refuse, or allow it with the newest-session rule?
+8. **`AGENTS_HANDLE`, `AGENTS_IDENTITY` and `AGENTS_LIFECYCLE` exported by the Feature** to every session, besides what integrations print. Generic, no project names; keep or drop?
+9. **"Retire on removal"** in the framework's register has no verb of its own. `lease-released` with `reason=purged` (from `agents reset --purge`) and `reason=stopped` is proposed; a removal from the list cannot be seen at all (the list is gone). Does the framework need a separate verb for a purge?
+10. **The key's name, `definition` or `profile`** (section 3): the framework rules; the parser knows one name at a time, so this is a one-line change.
+11. **Two stateful agents with one identity are refused** (section 4). Confirm: the lease per handle then equals a lease per principal.
+12. **The takeover lock and the sticky bit**: `leases/` is mode 0777 without the sticky bit so a holder owned by another user (root at post-start, the remote user in a terminal) can be taken over; the container is single-tenant. Acceptable?
+13. **Waiting**: `AGENTS_LEASE_WAIT` default 20 s for a starting holder, `AGENTS_INTEGRATION_TIMEOUT` default 30 s. A container start with several residents and a slow integration is bounded by the sum; whether the post-start path wants a lower total is for the first real run.
