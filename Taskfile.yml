@@ -80,7 +80,7 @@ tasks:
           echo "generated READMEs are up to date"
 
   lint:
-    desc: 'shellcheck every shell script, yamllint every YAML file (.yamllint), PSScriptAnalyzer every PowerShell file, the vendored copies of src/common/*.sh (in src/ and local-features/) identical to the canonical ones, every download in a Feature script through dcf_curl (common:curl-check), and the Docker-free unit tests (the dcf_curl retry helper, the go-task Feature''s team task aliases, devhost tooling, the git Feature''s .git-dirs mapping, the ssh-agent Feature''s setup script, the cloud-folder Feature''s status and sync, the agents Feature''s list and verbs, the claude-code Feature''s agent adapter, live-session rule and claude-fleet, the phi-check Feature''s patterns and command, the host launcher and its agent task) (CI runs exactly this inside .devcontainer/ci; the tools must be installed - this repo''s devcontainer has them, at the pinned versions).'
+    desc: 'shellcheck every shell script, yamllint every YAML file (.yamllint), PSScriptAnalyzer every PowerShell file, the vendored copies of src/common/*.sh (in src/ and local-features/) identical to the canonical ones, every download in a Feature script through dcf_curl (common:curl-check), and the Docker-free unit tests (the dcf_curl retry helper, the go-task Feature''s team task aliases, devhost tooling, the git Feature''s .git-dirs mapping, the ssh-agent Feature''s setup script, the cloud-folder Feature''s status and sync, the agents Feature''s list and verbs and its contract tests against two fake adapters, the claude-code Feature''s agent adapter, live-session rule and claude-fleet, the phi-check Feature''s patterns and command, the host launcher and its agent task) (CI runs exactly this inside .devcontainer/ci; the tools must be installed - this repo''s devcontainer has them, at the pinned versions).'
     cmds:
       - shellcheck -x src/*/*.sh local-features/*/*.sh local-features/*/share/bin/*.sh local-features/*/share/jobs/*/*.sh test/*/*.sh test/*/unit/*.sh test/bootstrap/*.sh bootstrap/*.sh bootstrap/host/*.sh .githooks/* .devcontainer/*.sh
       - yamllint --strict .
@@ -103,10 +103,16 @@ tasks:
       - task: test:ssh-agent-unit
       - task: test:cloud-folder-unit
       - task: test:agents-unit
+      - task: test:agents-contract
       - task: test:claude-unit
       - task: test:phi-check-unit
       - task: test:claude-fleet-task
       - task: test:agent-task
+
+  test:agents-contract:
+    desc: 'Docker-free contract tests of the agents Feature: the same scenarios against two fake adapters with different capabilities (fakea, Claude-like with background mode, wake, list, stop and logs; fakeb, minimal, with only new, resume and attach, every other verb answering exit 3): check on a mixed list, start of an on-demand agent on each (and refused without a terminal), --resume, a resident on each (attached on fakea, run as on-demand on fakeb with its one line, refused without a terminal), up (started, skipped, never twice), list and --json for an adapter with no list (unknown, not an error), stop and logs without the verb (exit 3), unsupported verbs asked once per command, and that a list using only fakeb never runs anything named claude (a fake claude and agent-adapter-claude log any call), plus a grep that src/agents names claude only in its documented places. Part of lint.'
+    cmds:
+      - bash test/agents/unit/contract_test.sh
 
   test:claude-unit:
     desc: 'Docker-free tests of the claude-code Feature''s claude-host live-session rule (a running session, one with a pid, refuses a second copy; ended sessions never count; CLAUDE_HOST_ALLOW_SECOND; the stale-pin warning and CLAUDE_HOST_UPDATE_PIN; `claude agents --json` unavailable), of the claude-host-pin SessionStart hook (the right .env line, every other byte kept, never fails) of claude-fleet (running by id or by folder, unset variable, start with --bg in the folder, --plan, --no-view, the environment beating .env), the deprecation line of the three, and of agent-adapter-claude (list from `claude agents --json --all`, a session found by name and folder, every action by id, a stopped one woken with --bg --resume <session id>, never -c, never rm, resume refused while running, --extras; the list read past a notice line, a slow first read tried again, a quick error such as a wrapper''s said as it is and not retried, resume on an unreadable list opening Claude Code''s own picker, never a new session; the record of each agent''s session, so a retitled session is still found and never started twice, a /clear and a removed session resolved; session-stop, session-remove, record), and of the additionalDirectories managed-settings drop-in (empty, one, several, a space in a path, ~ expanded, re-run idempotent, a relative path refused); a fake claude on PATH answers `agents --json` and records the other calls; part of lint.'
