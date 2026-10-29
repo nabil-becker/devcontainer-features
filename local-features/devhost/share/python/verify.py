@@ -26,6 +26,10 @@ word itself), and needs only git and python3:
   100755; a 100644 hook never runs on Linux (`core.fileMode=false` on Windows hides the change).
 - `conflict_markers`: no tracked text file has a line starting with a merge-conflict marker
   (`<<<<<<< ` or `>>>>>>> `), which a stash pop or a merge can leave behind unnoticed.
+- `backlog_ids`: no backlog item id (`- [ ] **<id> Title**` in `TODO.md`) appears on more lines than
+  it did at the merge base with the base ref; a `merge=union` merge keeps both versions of a line both
+  sides changed (a tick), so a repeated id is how that shows. Ids already repeated on the base are
+  not reported; with no base ref every repeated id is.
 - `model`: quiet without `docs/model/ontology.toml`; with it, the TOML, ids, types, relations, theme
   keys, the lexicon's bold terms against the ids' `term`s and the Mermaid node ids of
   `docs/model/*.md` are checked (needs Python 3.11 for tomllib).
@@ -41,7 +45,7 @@ except ImportError:  # Python before 3.11
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from devhost_common import (COST_REPORT, MONTHLY, adr_dir, base_ref, forbidden_words as _forbidden,  # noqa: E402
+from devhost_common import (COST_REPORT, MONTHLY, adr_dir, backlog_path, base_ref, forbidden_words as _forbidden,  # noqa: E402
                             git, ledger_dir, lexicon_path, model_dir, read_text, redact_file, redact_names, rel, repo_root,
                             tracked_files)
 
@@ -218,6 +222,34 @@ def conflict_markers(root: Path) -> list[str]:
             if CONFLICT_MARKER.match(line):
                 findings.append(f"{rel(root, path)}:{number}: a merge-conflict marker; resolve the conflict")
     return findings
+
+
+BACKLOG_ITEM = re.compile(r"^- \[[ xX]\] \*\*([a-z0-9][\w-]*)[ *]")
+
+
+def backlog_ids(root: Path) -> list[str]:
+    path = backlog_path(root)
+    if not path.is_file():
+        return []
+
+    def count(text: str) -> dict[str, list[int]]:
+        ids: dict[str, list[int]] = {}
+        for number, line in enumerate(text.splitlines(), 1):
+            found = BACKLOG_ITEM.match(line)
+            if found:
+                ids.setdefault(found.group(1), []).append(number)
+        return ids
+
+    now = count(read_text(path))
+    before: dict[str, list[int]] = {}
+    base = base_ref(root)
+    if base is not None:
+        fork = (git(root, "merge-base", "HEAD", base) or "").strip() or base
+        old = git(root, "show", f"{fork}:{rel(root, path)}")
+        before = count(old) if old else {}
+    return [f"{rel(root, path)}:{lines[-1]}: the backlog id '{item}' is on {len(lines)} items "
+            f"(lines {', '.join(map(str, lines))}); keep one, a merge=union merge may have kept both versions of a changed line"
+            for item, lines in now.items() if len(lines) > max(1, len(before.get(item, [])))]
 
 
 # Conventions
@@ -438,7 +470,7 @@ def model(root: Path) -> list[str]:
     return findings
 
 
-GUARDS = (ledger_append_only, ledger_shape, secrets, forbidden_words, conflict_markers, adrs, taskfile, skills, hook_modes, model)
+GUARDS = (ledger_append_only, ledger_shape, secrets, forbidden_words, conflict_markers, adrs, taskfile, skills, hook_modes, backlog_ids, model)
 
 
 def run(root: Path) -> tuple[dict[str, list[str]], list[str]]:

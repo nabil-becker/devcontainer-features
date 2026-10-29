@@ -237,6 +237,31 @@ class Verify(h.RepoCase):
             "docs/notes.md:6: a merge-conflict marker; resolve the conflict",
         ])
 
+    def test_a_backlog_id_on_two_items_is_refused_unless_the_base_already_had_it(self):
+        path = self.root / "TODO.md"
+        item = "- [ ] **same-id Title** (host). Text. Added 2026-10-01."
+        h.write(path, f"# Backlog\n\n{item}\n")
+        h.track(self.root)
+        h.git(self.root, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qm", "item")
+        h.git(self.root, "update-ref", "refs/heads/main", "HEAD")
+        self.assertEqual(self.v.backlog_ids(self.root), [])
+        # What a merge=union of two ticks of one item leaves: both versions.
+        h.write(path, f"# Backlog\n\n{item}\n{item.replace('[ ]', '[x]')} Done 2026-10-02.\n")
+        findings = self.v.backlog_ids(self.root)
+        self.assertEqual(len(findings), 1, findings)
+        self.assertIn("'same-id' is on 2 items (lines 3, 4)", findings[0])
+        done = h.run(["verify", "--quiet"], self.root, self.env)
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("FAIL backlog_ids", done.stdout)
+
+    def test_a_backlog_id_repeated_on_the_base_is_not_reported_again(self):
+        path = self.root / "TODO.md"
+        h.write(path, "- [x] **old-id One**\n- [ ] **old-id Two**\n")
+        h.track(self.root)
+        h.git(self.root, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qm", "dup")
+        h.git(self.root, "update-ref", "refs/heads/main", "HEAD")
+        self.assertEqual(self.v.backlog_ids(self.root), [])
+
     def test_the_entrypoint_runs_the_source_guards_in_the_devhost_repository(self):
         import subprocess
         entry = h.PYTHON_DIR.parent / "bin" / "entrypoints" / "verify"

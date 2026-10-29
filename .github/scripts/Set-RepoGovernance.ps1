@@ -42,14 +42,14 @@ Write-Host "Applying governance to $Repo"
 
 function Invoke-Gh {
     param([string]$Method, [string]$Endpoint, [hashtable]$Body, [switch]$IgnoreError)
-    $args = @('api', '-X', $Method, $Endpoint, '-H', 'Accept: application/vnd.github+json')
+    $ghArgs = @('api', '-X', $Method, $Endpoint, '-H', 'Accept: application/vnd.github+json')
     if ($Body) {
         $json = $Body | ConvertTo-Json -Depth 20 -Compress
-        $args += @('--input', '-')
-        $out = $json | gh @args 2>&1
+        $ghArgs += @('--input', '-')
+        $out = $json | gh @ghArgs 2>&1
     }
     else {
-        $out = gh @args 2>&1
+        $out = gh @ghArgs 2>&1
     }
     if ($LASTEXITCODE -ne 0) {
         if ($IgnoreError) { Write-Warning "$Method $Endpoint : $out"; return $null }
