@@ -129,7 +129,8 @@ sessions() {
       idle:* | waiting:* | *:blocked) act=idle ;;
       *) act=unknown ;;
     esac
-    if [ "${pid:-0}" -gt 0 ]; then st=running
+    if [ "${pid:-0}" -gt 0 ] && [ "${bst,,}" = "done" ]; then st=stopped  # finished, process alive: wake stops it first
+    elif [ "${pid:-0}" -gt 0 ]; then st=running
     else
       case "${st,,}" in
         running | idle | busy | working | waiting | blocked | starting) st=running ;;
@@ -317,11 +318,30 @@ saved_flags() {
     exit 1 }' "$f"
 }
 
-# want_flags <args...>: what start-bg passes for the agent (--name <name> <args>), encoded as
-# saved_flags prints it (JSON string escapes, as Claude Code writes them).
+# want_flags <args...>: what start-bg passes for the agent (--name <name> <args>), as Claude
+# Code saves it (2.1.308, checked): in a fixed order, --name, --settings <path>, --agent <name>,
+# --model <m>, whichever are present, whatever order the list gave them in; a repeated flag keeps
+# the last value (two --settings: the last wins). Any other arg is assumed saved too (not
+# checked), after those four in the order given, so an unknown flag compares strictly. Encoded
+# as saved_flags prints it (JSON string escapes, as Claude Code writes them).
 want_flags() {
-  local a
-  for a in --name "$NAME" "$@"; do
+  local a v_name="$NAME" v_settings='' v_agent='' v_model='' rest=() out=()
+  local h_settings='' h_agent='' h_model=''
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --name) [ $# -ge 2 ] && { v_name="$2"; shift 2; continue; } ;;
+      --settings) [ $# -ge 2 ] && { v_settings="$2"; h_settings=1; shift 2; continue; } ;;
+      --agent) [ $# -ge 2 ] && { v_agent="$2"; h_agent=1; shift 2; continue; } ;;
+      --model) [ $# -ge 2 ] && { v_model="$2"; h_model=1; shift 2; continue; } ;;
+    esac
+    rest+=("$1"); shift
+  done
+  out=(--name "$v_name")
+  [ -z "$h_settings" ] || out+=(--settings "$v_settings")
+  [ -z "$h_agent" ] || out+=(--agent "$v_agent")
+  [ -z "$h_model" ] || out+=(--model "$v_model")
+  out+=("${rest[@]}")
+  for a in "${out[@]}"; do
     a="${a//\\/\\\\}"; a="${a//\"/\\\"}"; a="${a//$'\n'/\\n}"; a="${a//$'\t'/\\t}"; a="${a//$'\r'/\\r}"
     printf '%s\n' "$a"
   done
@@ -374,6 +394,24 @@ session_gone() {
   return 1
 }
 
+# stop_done <session line>: a session whose state is done may still have a live process (a pid in
+# the list); resuming that starts a copy with empty saved options ("already running"; 2.1.308). So
+# when the line carries a pid, `claude stop <short id>` that one session (never another), then wait
+# (AGENT_ADAPTER_WAIT seconds, default 10) until the list shows it without a pid. Fails when it
+# does not stop.
+stop_done() {
+  local pid short sid left="${AGENT_ADAPTER_WAIT:-10}" all
+  pid="$(col "$1" 7)" short="$(col "$1" 5)" sid="$(col "$1" 2)"
+  [ "${pid:-0}" -gt 0 ] 2>/dev/null || return 0
+  note "$NAME: session $sid is finished but its process (pid $pid) is alive; stopping it before the wake."
+  claude stop "$short" </dev/null >/dev/null || { note "$NAME: 'claude stop $short' failed."; return 1; }
+  while :; do
+    all="$(sessions 2>/dev/null)" && [ -z "$(printf '%s\n' "$all" | awk -F'\t' -v s="$sid" '$2 == s && $7 > 0')" ] && return 0
+    [ "$left" -le 0 ] && { note "$NAME: session $sid still has a process after 'claude stop'; not waking it (that would start a copy)."; return 1; }
+    sleep 1; left=$((left - 1))
+  done
+}
+
 # wake_session <session line> <args...>: wake that ended session in the background, bare when
 # bare_ok, else with --name <name> <args> (said on stderr); wait until it runs, record it and
 # print its session id (the copy's, when Claude Code started one). When the resume fails because
@@ -383,6 +421,7 @@ wake_session() {
   local s="$1" sid short before WHY='' out rc=0 got; shift
   sid="$(col "$s" 2)" short="$(col "$s" 5)"
   before="$(printf '%s\n' "$ALL" | cut -f2 | tr '\n' ' ')"
+  stop_done "$s" || exit 1
   if bare_ok "$short" "$@"; then
     out="$(cd "$FOLDER" && claude --bg --resume "$sid" </dev/null 2>&1)" || rc=$?
   else
@@ -561,7 +600,8 @@ case "$verb" in
     fi
     cd "$FOLDER" && exec claude --name "$NAME" "$@" ;;
   stop)
-    run="$(mine running)"
+    # running sessions, and finished ones whose process is still alive (listed stopped, with a pid)
+    run="$(mine | awk -F'\t' '$3 == "running" || ($3 == "stopped" && $7 + 0 > 0)')"
     [ -n "$run" ] || { echo "$NAME: not running"; exit 0; }
     if [ -n "$extras" ]; then targets="$(printf '%s\n' "$run" | tail -n +2)"
     else targets="$(printf '%s\n' "$run" | head -n 1)"; extras_note "$run"; fi
