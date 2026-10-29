@@ -141,7 +141,7 @@ $GitignoreBootstrap = -not $NoGitignore -and ((Resolve-Setting '' 'BOOTSTRAP_GIT
 function Get-SourceFile([string]$RelativePath, [string]$Destination) {
     New-Item -ItemType Directory -Path (Split-Path $Destination -Parent) -Force | Out-Null
     if ($Source -match '^https?://') {
-        Invoke-WebRequest -UseBasicParsing -Uri "$Source/$RelativePath" -OutFile $Destination
+        Invoke-WebRequest -UseBasicParsing -MaximumRetryCount 3 -RetryIntervalSec 2 -Uri "$Source/$RelativePath" -OutFile $Destination
     }
     else {
         Copy-Item -LiteralPath (Join-Path $Source $RelativePath) -Destination $Destination -Force

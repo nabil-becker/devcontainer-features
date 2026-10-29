@@ -162,5 +162,21 @@ old_repo; run BOOTSTRAP_DIR=vendor --
 lacks 'old form with BOOTSTRAP_DIR: no migration note' "$out" 'MIGRATION'
 check 'old form with BOOTSTRAP_DIR: Taskfile untouched' "$(cat "$T/old-Taskfile.yml")" "$(cat "$T/repo/Taskfile.yml")"
 
+# --- downloads retry a dropped connection (curl: --retry-all-errors covers exit 35 and 56)
+new_repo
+mkdir -p "$T/cbin"
+cat > "$T/cbin/curl" <<'SH'
+#!/bin/sh
+case "$*" in *--help*) echo "--retry-all-errors"; exit 0 ;; esac
+echo "$*" >> "$CURL_LOG"
+exit 22
+SH
+chmod +x "$T/cbin/curl"
+CURL_LOG="$T/curl.log"; : > "$CURL_LOG"; export CURL_LOG
+(cd "$T/repo" && env -u BOOTSTRAP_DIR PATH="$T/cbin:$bin:$PATH" bash "$script" --source https://example.invalid/x --no-up >/dev/null 2>&1)
+contains 'download: --retry 3' "$CURL_LOG" '--retry 3'
+contains 'download: --retry-delay 2' "$CURL_LOG" '--retry-delay 2'
+contains 'download: --retry-all-errors' "$CURL_LOG" '--retry-all-errors'
+
 echo "bootstrap dir tests: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

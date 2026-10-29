@@ -111,8 +111,8 @@ function Get-PortableNodeDir {
     $zipName = "node-v$Version-win-x64.zip"
     $zipPath = Join-Path $script:CacheRoot $zipName
     try {
-        Invoke-WebRequest -UseBasicParsing -Uri "https://nodejs.org/dist/v$Version/$zipName" -OutFile $zipPath
-        $sums = (Invoke-WebRequest -UseBasicParsing -Uri "https://nodejs.org/dist/v$Version/SHASUMS256.txt").Content
+        Invoke-WebRequest -UseBasicParsing -MaximumRetryCount 3 -RetryIntervalSec 2 -Uri "https://nodejs.org/dist/v$Version/$zipName" -OutFile $zipPath
+        $sums = (Invoke-WebRequest -UseBasicParsing -MaximumRetryCount 3 -RetryIntervalSec 2 -Uri "https://nodejs.org/dist/v$Version/SHASUMS256.txt").Content
         $line = $sums -split "`n" | Where-Object { $_ -match ('\s' + [regex]::Escape($zipName) + '\s*$') } | Select-Object -First 1
         if (-not $line) { throw "Could not find $zipName in nodejs.org SHASUMS256.txt for v$Version." }
         $expected = ($line.Trim() -split '\s+')[0].ToLowerInvariant()
