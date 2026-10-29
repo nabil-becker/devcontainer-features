@@ -1,6 +1,6 @@
 # Proposal: agents version 2, an agent defined in one place
 
-Status: Proposed 2026-10-29; Operator decided version 2.0.0 (exclusive lease for every stateful agent). The four recommended answers in section 2 and the open questions in section 13 await the Operator's ruling on the proposal as a whole. Nothing here is built. Backlog: `fleet-design-rethink` (this proposal absorbs part of it, section 11) and `agents-file-decisions` (still open; section 11 says what v2 assumes).
+Status: Proposed 2026-10-29; Operator decided version 2.0.0 (exclusive lease for every stateful agent) and accepted the recommendations on 2026-10-29. The open questions in section 13 still await rulings. Nothing here is built. Backlog: `fleet-design-rethink` (this proposal absorbs part of it, section 11) and `agents-file-decisions` (still open; section 11 says what v2 assumes).
 
 Who this serves: the Operator, who rules on it, and the maintainers of a framework that consumes the agents Feature. They will write two integrations (one that registers an agent and its identity, one that makes it reachable) against the contract in section 7, and want a repository to define an agent completely in its one list. The engineers who start agents in a devcontainer get the same verbs they have today, plus an exclusive copy per stateful agent.
 
@@ -398,6 +398,20 @@ Facts to check on the real CLI (workstation, a trusted throwaway folder):
 3. Is `--agent <profile>` stored in a background session's saved options (`respawnFlags`) and put back by a bare wake? `want_flags` depends on it.
 4. Given `--settings` twice (one in the list's `args`, one from the adapter), do the two merge or does the last win? Decides whether a list may keep its own `--settings`.
 5. After `kill -9` of a background session, how long does `claude agents --json --all` keep a pid for it? Row 4 of the dead-holder table trusts "no running session"; a lagging pid makes a takeover late, never wrong.
+
+### Facts checked 2026-10-29 (Claude Code 2.1.308)
+
+Result: **none of the five could be checked, so no section changes.** Every `claude --bg` in a throwaway folder (a new `mktemp -d` under the session scratchpad) exits with `Workspace not trusted. Run 'claude' in <folder> once and accept the trust prompt, then retry.` The only trusted folder is the repository checkout (`projects[...].hasTrustDialogAccepted` in `$CLAUDE_CONFIG_DIR/.claude.json`); accepting a prompt needs an interactive terminal, and editing the trust file or running inside the checkout was outside the agreed safety rules. No session was started and nothing was stopped.
+
+| # | Fact | Verdict | Evidence |
+| --- | --- | --- | --- |
+| 1 | The `--bg` client's environment reaches the session | not checked | `FOO=bar1 claude --bg --name factcheck-env --model haiku ...` refused as above. A job's `state.json` has a `providerEnv` key (seen on the host's own job), which suggests the supervisor keeps some environment; not evidence either way |
+| 2 | `--settings` env applies in a background session and on a bare wake | not checked | same refusal |
+| 3 | `--agent` is kept in the saved options | not checked | the one readable job (the host's) has `respawnFlags` of `--reply-on-resume --permission-mode auto`, so `respawnFlags` holds flags given at start, but it does not say whether `--agent` or `--settings` are among them |
+| 4 | two `--settings` flags merge | not checked | same refusal; `claude -p` in a trusted folder could answer it without `--bg` |
+| 5 | how long a pid lingers after `kill -9`; does the session id change on a wake | not checked | needs a session of its own |
+
+To check them: run `claude` once in a new throwaway folder and accept the trust prompt (the Operator, or a session with a terminal), then rerun the commands above; or let a con work in a subfolder of the checkout. Until then sections 6, 7 and 7.1 keep their stated fallbacks (settings file, not the process environment; row 4 of the dead-holder table; `want_flags`).
 
 Design points the Operator or the framework rules on:
 
