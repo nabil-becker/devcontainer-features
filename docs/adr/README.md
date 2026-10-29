@@ -82,3 +82,5 @@ numbering and a row below.
 | [0031](0031-the-launcher-grants-fuse-on-request-and-the-cloud-folder-mode-is-chosen-in-the-container.md) | The launcher grants FUSE on request, and the cloud-folder mode is chosen in the container | accepted | 2026-10-27 |
 | [0032](0032-extra-working-folders-are-written-to-claude-codes-managed-settings-not-the-users-settings-file.md) | Extra working folders are written to Claude Code's managed settings, not the user's settings file | accepted | 2026-10-28 |
 | [0033](0033-the-agent-adapter-remembers-the-session-id-and-a-reset-never-deletes-by-default.md) | The agent adapter remembers the session id, and a reset never deletes by default | accepted | 2026-10-28 |
+| [0034](0034-every-build-time-download-goes-through-the-vendored-dcf-curl-and-a-lint-check-enforces-it.md) | Every build-time download goes through the vendored `dcf_curl`, and a lint check enforces it | accepted | 2026-10-28 |
+| [0035](0035-a-feature-that-ships-a-check-or-transform-tool-gives-it-the-linter-cli-contract.md) | A Feature that ships a check or transform tool gives it the linter CLI contract | accepted | 2026-10-29 |

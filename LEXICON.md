@@ -22,6 +22,10 @@ The domain words of the project itself are not here; they live with the project'
   publish; `task features:stage` stages it with the `src/` Features and releases skip it. The
   devhost is one (ADR-0025).
 - **Feature Taskfile**: the Taskfile a Feature ships for its tool, registered at build time.
+- **Linter CLI contract**: the shape a Feature's check or transform tool takes: paths and `-` for
+  standard input, one `path:line: rule` per finding with a `--format` for machines, exit 0 clean,
+  1 findings, 2 usage or internal error, exceptions in a file, and no knowledge of git or hooks
+  (ADR-0035).
 - **Feature state**: what a Feature keeps outside the checkout: a named volume under
   `/var/lib/devcontainer-features/<id>` or host disk.
 - **Git dirs mount**: the one line every consuming repo adds to bind the workstation's `.git-dirs`
