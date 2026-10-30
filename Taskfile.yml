@@ -188,7 +188,7 @@ tasks:
       - bash test/bootstrap/host_type_test.sh
 
   test:host-mounts:
-    desc: 'Docker-free bash tests of the host mounts the bash twin (src/devcontainer-cli/devcontainer-cli.sh) adds to `up`: the --mount argument per host type (linux, macos, windows-wsl-docker), the source folder created, a mount skipped when the repository''s devcontainer.json already declares its target (JSONC comments, trailing commas, object form, --config), HOST_MOUNTS=false, none for build/exec/read-configuration, the SSH agent socket mount per host type and SSH_AGENT_MODE=key, the cloud folder (DCF_HOST_CLOUD_FOLDER at the fixed /mnt/cloud-folder-host, a Windows path passed as is, a missing folder skipped and never created), and what `host` lists; a stub devcontainer records its arguments; part of lint. The PowerShell twin is in test:bootstrap.'
+    desc: 'Docker-free bash tests of the host mounts the bash twin (src/devcontainer-cli/devcontainer-cli.sh) adds to `up`: the --mount argument per host type (linux, macos, windows-wsl-docker), the source folder created, a mount skipped when the repository''s devcontainer.json already declares its target (JSONC comments, trailing commas, object form, --config), HOST_MOUNTS=false, none for build/exec/read-configuration, the SSH agent socket mount per host type and SSH_AGENT_MODE=key, the cloud folder (DCF_HOST_CLOUD_FOLDER at the fixed /mnt/cloud-folder-host, a Windows path passed as is, a missing folder skipped and never created), FUSE on request (the grant''s three variables, refused with a warning on a wslc engine), and what `host` lists; a stub devcontainer records its arguments; part of lint. The PowerShell twin is in test:bootstrap.'
     cmds:
       - bash test/bootstrap/host_mounts_test.sh
 

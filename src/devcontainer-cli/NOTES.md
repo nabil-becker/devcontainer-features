@@ -1,3 +1,16 @@
+## Changes in 1.16.3
+
+- **FUSE is not granted on wslc.** `wslc run` (WSL Containers 3.0.3) has no `--device`, `--cap-add`
+  or `--security-opt` option and refused the whole start ("Option name was not recognized for the
+  current command: '--device=/dev/fuse'") when `DCF_HOST_FUSE=1` filled the `runArgs`. On the
+  `windows-wslc` host type, or with `DEVCONTAINER_DOCKER_PATH` naming `wslc`, the launcher now
+  withholds the grant: the three `DCF_HOST_FUSE_*` variables stay unset (the `runArgs` fall back to
+  their labels), `DCF_HOST_FUSE` reaches the container empty, `up` warns once with the reason, and
+  the container starts without FUSE, so the cloud-folder Feature's `auto` mode takes sync.
+  `task devcontainer:host` prints `DCF_HOST_FUSE : 1 asked for, not granted on windows-wslc: ...`.
+  Docker Desktop and the other engines are unchanged. Unset `DCF_HOST_FUSE` in `.devcontainer/.env`
+  on a wslc machine to drop the warning.
+
 ## Changes in 1.16.2
 
 - **`DCF_HOST_MACHINE`**: the launcher sets the workstation's machine name for `up` and `rebuild`,
@@ -394,8 +407,11 @@ the host type needs; ADR 0024 decides it, `docs/proposals/host-profile.md` is th
   bootstrap's `devcontainer.json` carries the three lines; checked against `@devcontainers/cli` 0.90.0's
   `read-configuration`). `up` and `task devcontainer:host` warn once when FUSE is asked for and the repository's
   `devcontainer.json` lacks a line. A change takes effect at the next `task devcontainer:rebuild` (run arguments
-  belong to the container). Not verified on a real host: Docker Desktop, wslc and a Kubernetes cluster taking the
-  three arguments (proposal section 11, item 6).
+  belong to the container). Not on `windows-wslc` (1.16.3): `wslc run` has no `--device`, `--cap-add` or
+  `--security-opt` option and refuses a start that carries one, so there the launcher withholds the grant, warns
+  once with the reason and starts the container without FUSE (`auto` takes sync); `host` prints the refusal. Not
+  verified on a real host: Docker Desktop and a Kubernetes cluster taking the three arguments (proposal section 11,
+  item 6).
 - **Downloads retry (1.14.1).** The Node.js tarball and `SHASUMS256.txt` go through `dcf_curl` (`dcf-curl.sh`,
   vendored from `common`, and vendored by the bootstrap next to `host/devcontainer-cli.sh`): a TLS reset or a cut
   connection is retried on curl 7.71+. A host whose bootstrap folder predates it re-runs the bootstrap; without

@@ -79,8 +79,10 @@ case would need a different remote type. Rejected.
   0024's host contract now includes granting a privilege on request; the notes for the launcher
   must say so and that the grant is opt-in per machine.
 - A project that does not ask for FUSE gets `sync` (or `host`), so `auto` degrades instead of
-  failing; whether the grant works on Docker Desktop and wslc, and whether a cluster can grant it
-  at all, is still unverified (proposal section 11).
+  failing; whether the grant works on Docker Desktop, and whether a cluster can grant it at all,
+  is still unverified (proposal section 11). wslc cannot take it: `wslc run` (WSL 3.0.3) has no
+  `--device`, `--cap-add` or `--security-opt` option and refuses the start, so the launcher
+  withholds the grant there with a warning (devcontainer-cli 1.16.3, 2026-10-30).
 - The first in-container background process of the collection is introduced; a hard kill or a
   stop that skips the shutdown check can leave a stale bisync lock and a listing that needs
   `--resync`, and the next start says so.
@@ -94,3 +96,4 @@ case would need a different remote type. Rejected.
 |---|---|
 | 2026-10-27 | Accepted: the Operator accepted all six recommendations of the cloud-folder proposal. |
 | 2026-10-27 | Corrected while building step 2 against rclone 1.75.2: bisync's default keeps both versions of a conflict (it was described as "newer wins"), and `sharepoint` is a choice inside the `onedrive` backend. The decisions stand; the Operator also accepted step 2's six build decisions (both versions kept on conflict, `--resilient --recover` on every sync, the local copy in the container's filesystem, the shutdown check refusing unsynced local changes, no rclone in `host` mode, client-credentials sign-in only through `cloud-folder:login`). |
+| 2026-10-30 | Found on the Operator's workstation: `wslc run` has no `--device`, `--cap-add` or `--security-opt` option, so on `windows-wslc` the grant cannot be given; the launcher withholds it with a warning and `auto` takes sync (devcontainer-cli 1.16.3). The decision stands: the grant is the launcher's, per machine, and a host that cannot carry it says so instead of failing the start. |

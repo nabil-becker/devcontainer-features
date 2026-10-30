@@ -76,7 +76,9 @@
 #                              DCF_HOST_FUSE_CAP and DCF_HOST_FUSE_SECURITY, which the
 #                              repository's runArgs read (the bootstrap's devcontainer.json has
 #                              the lines; `up` warns when they are missing). Unset = no grant,
-#                              never by default. Takes effect at the next rebuild.
+#                              never by default. Takes effect at the next rebuild. Not granted
+#                              on windows-wslc (wslc run has no such options): `up` warns once
+#                              and starts the container without FUSE.
 #   CLOUD_FOLDER_LOGIN_TIMEOUT for `cloud-folder-login`: the seconds the sign-in relay stays
 #                              open (default 600).
 #   DEVCONTAINER_NODE_VERSION  portable Node.js version (default in the scripts).
@@ -194,7 +196,7 @@ tasks:
         platforms: [linux, darwin]
 
   host:
-    desc: 'Show the host profile without starting anything: HOST_TYPE as resolved and why, the HOST_TYPE_PRIORITY list used, the engine command, the DCF_HOST_TYPE, DCF_HOST_HOME, DCF_HOST_SSH_AGENT and DCF_HOST_CLOUD_FOLDER values the launcher sets before it runs the CLI, the FUSE grant when DCF_HOST_FUSE asks for it (and a warning when devcontainer.json lacks its runArgs lines), and the host mounts `up` would add (and those it would skip because devcontainer.json already mounts the target; HOST_MOUNTS=false turns them off). HOST_TYPE=<id> or HOST_TYPE_PRIORITY=<ids> on the command line try other choices.'
+    desc: 'Show the host profile without starting anything: HOST_TYPE as resolved and why, the HOST_TYPE_PRIORITY list used, the engine command, the DCF_HOST_TYPE, DCF_HOST_HOME, DCF_HOST_SSH_AGENT and DCF_HOST_CLOUD_FOLDER values the launcher sets before it runs the CLI, the FUSE grant when DCF_HOST_FUSE asks for it (and a warning when devcontainer.json lacks its runArgs lines; on windows-wslc the grant is refused with the reason), and the host mounts `up` would add (and those it would skip because devcontainer.json already mounts the target; HOST_MOUNTS=false turns them off). HOST_TYPE=<id> or HOST_TYPE_PRIORITY=<ids> on the command line try other choices.'
     cmds:
       - task: cli
         vars:

@@ -61,6 +61,8 @@
 #                              the repository's runArgs read with ${localEnv:...:<default>} (the
 #                              CLI has no option for run arguments). Unset = no grant, and the
 #                              three are removed from the CLI's environment. Never by default.
+#                              Not granted when the engine is wslc (no --device, --cap-add or
+#                              --security-opt option): a warning, the start goes on without.
 #   DEVCONTAINER_BUILD_LOCK    0 = do not serialise image builds (below).
 #   DEVCONTAINER_BUILD_LOCK_FEATURES_TEST  true = `features test` takes the
 #                              lock too (default false).
@@ -363,9 +365,28 @@ resolve_cloud_folder() { HT_CLOUD_FOLDER="${DCF_HOST_CLOUD_FOLDER:-}"; }
 fuse_vars=(DCF_HOST_FUSE_DEVICE DCF_HOST_FUSE_CAP DCF_HOST_FUSE_SECURITY)
 fuse_args=(--device=/dev/fuse --cap-add=SYS_ADMIN --security-opt=apparmor=unconfined)
 
-# resolve_fuse: HT_FUSE=1 when DCF_HOST_FUSE asks for FUSE (1, true, yes, on), else empty.
+# fuse_refusal: prints why this host cannot carry the grant, nothing when it can. wslc (WSL
+# Containers 3.0.3: `wslc run --help`) has no --device, --cap-add or --security-opt option and
+# refuses the whole run when runArgs carry one, so with the windows-wslc host type, or an engine
+# command named wslc, the grant is withheld: the container starts without FUSE and the
+# cloud-folder Feature's auto mode takes sync. The PowerShell twin is Get-FuseRefusal.
+fuse_refusal() {
+  local leaf="${DEVCONTAINER_DOCKER_PATH:-docker}"
+  leaf="${leaf##*/}"; leaf="${leaf##*\\}"; leaf="${leaf%.exe}"
+  if [ "${HT_TYPE:-}" = windows-wslc ] || [ "$leaf" = wslc ]; then
+    echo "wslc run (WSL Containers) has no --device, --cap-add or --security-opt option, so the cloud-folder Feature's mount mode cannot run here; its auto mode takes sync"
+  fi
+}
+
+# resolve_fuse: HT_FUSE_ASKED=1 when DCF_HOST_FUSE asks for FUSE (1, true, yes, on), else empty;
+# HT_FUSE=1 when asked for and this host can carry the grant, else empty, with HT_FUSE_WHY
+# naming the refusal. Needs HT_TYPE (resolve_host_type first).
 resolve_fuse() {
-  case "${DCF_HOST_FUSE:-}" in 1 | true | yes | on | TRUE | True | YES | Yes | ON | On) HT_FUSE=1 ;; *) HT_FUSE='' ;; esac
+  case "${DCF_HOST_FUSE:-}" in 1 | true | yes | on | TRUE | True | YES | Yes | ON | On) HT_FUSE_ASKED=1 ;; *) HT_FUSE_ASKED='' ;; esac
+  HT_FUSE='' HT_FUSE_WHY=''
+  [ "$HT_FUSE_ASKED" = 1 ] || return 0
+  HT_FUSE_WHY="$(fuse_refusal)"
+  [ -n "$HT_FUSE_WHY" ] || HT_FUSE=1
 }
 
 # fuse_run_args: the run arguments of the grant, one per line (none when not asked for).
@@ -525,14 +546,22 @@ fuse_slots_missing() {
   done
 }
 
-# fuse_check_slots <workspace> [cli args...]: when FUSE is asked for, one warning if the
-# repository's devcontainer.json cannot carry the grant.
+# fuse_check_slots <workspace> [cli args...]: when FUSE is granted, one warning if the
+# repository's devcontainer.json cannot carry the grant (none when the host refuses it:
+# fuse_check_refused says why).
 fuse_check_slots() {
   local missing
   [ "${HT_FUSE:-}" = 1 ] || return 0
   missing="$(fuse_slots_missing "$@" | tr '\n' ' ')"
   [ -n "$missing" ] || return 0
   echo "DCF_HOST_FUSE=1, but the repository's devcontainer.json has no runArgs reading ${missing% } (\${localEnv:<name>:<default>}): FUSE does not reach the container. Copy the three runArgs lines from the bootstrap's devcontainer.json." >&2
+}
+
+# fuse_check_refused: when FUSE is asked for and this host cannot carry the grant, one warning
+# naming why; the start goes on without FUSE.
+fuse_check_refused() {
+  [ "${HT_FUSE_ASKED:-}" = 1 ] && [ "${HT_FUSE:-}" != 1 ] || return 0
+  echo "DCF_HOST_FUSE=1, but FUSE is not granted on this host ($HT_TYPE): $HT_FUSE_WHY. The container starts without it; unset DCF_HOST_FUSE in .devcontainer/.env on this machine to drop this warning." >&2
 }
 
 configured_mount_targets() {
@@ -611,6 +640,8 @@ mode_host() { # [workspace] [cli args...]
   if [ "${HT_FUSE:-}" = 1 ]; then
     echo "DCF_HOST_FUSE      : 1 (runArgs get: $(fuse_run_args | tr '\n' ' '| sed 's/ $//'))"
     fuse_check_slots "$ws" "$@" 2>&1
+  elif [ "${HT_FUSE_ASKED:-}" = 1 ]; then
+    echo "DCF_HOST_FUSE      : 1 asked for, not granted on $HT_TYPE: $HT_FUSE_WHY"
   else
     echo 'DCF_HOST_FUSE      : (unset: no FUSE grant)'
   fi
@@ -748,6 +779,7 @@ run_cli() {
   if [ "$subcommand" = up ]; then
     host_mount_args "$(resolve_workspace "$workspace")" "$@"
     args+=(${HM_ARGS[@]+"${HM_ARGS[@]}"})
+    fuse_check_refused
     fuse_check_slots "$(resolve_workspace "$workspace")" "$@"
     machine_check_slot "$(resolve_workspace "$workspace")" "$@"
   fi

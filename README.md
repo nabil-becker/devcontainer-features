@@ -238,7 +238,7 @@ run is configured:
 | `false` (or `0`, `no`): the launcher adds no host mounts to `up`. By default it adds the host home's `.git-dirs` at `/git-dirs` and, where the host type has one, the SSH agent socket at the `ssh-agent` Feature's fixed path (each skipped when the repository's `devcontainer.json` already mounts that target), so a repository declares no mount line; `task devcontainer:host` lists them. | `HOST_MOUNTS` | `HOST_MOUNTS=` var |
 | `key`: opt into a signing key kept in the container (the `ssh-agent` Feature's key mode, which breaks "the private key never enters the container" for you): `DCF_HOST_SSH_AGENT=key` and no agent socket mounted. Unset: the host type decides (socket on linux, macos, a WSL distro; none on the Windows engines). | `SSH_AGENT_MODE` | `SSH_AGENT_MODE=` var |
 | A host folder a sync client keeps (SharePoint, OneDrive) that `up` bind-mounts at `/mnt/cloud-folder-host`, where the `cloud-folder` Feature's `mountPoint` links; passed on unchanged for `containerEnv`. Never created: a path missing on this host is skipped with a warning. Unset: no folder. | `DCF_HOST_CLOUD_FOLDER` | `DCF_HOST_CLOUD_FOLDER=` var |
-| `1`: grant FUSE on this machine for the `cloud-folder` Feature's `mount` mode: `up` sets `DCF_HOST_FUSE_DEVICE`, `DCF_HOST_FUSE_CAP` and `DCF_HOST_FUSE_SECURITY` (`--device=/dev/fuse`, `--cap-add=SYS_ADMIN`, `--security-opt=apparmor=unconfined`), which the repository's `runArgs` read (the bootstrap's template has the lines). Unset: no grant, never by default. Rebuild after a change. | `DCF_HOST_FUSE` | `DCF_HOST_FUSE=` var / `-Fuse` |
+| `1`: grant FUSE on this machine for the `cloud-folder` Feature's `mount` mode: `up` sets `DCF_HOST_FUSE_DEVICE`, `DCF_HOST_FUSE_CAP` and `DCF_HOST_FUSE_SECURITY` (`--device=/dev/fuse`, `--cap-add=SYS_ADMIN`, `--security-opt=apparmor=unconfined`), which the repository's `runArgs` read (the bootstrap's template has the lines). Not on `windows-wslc`: `wslc run` has none of those options, so the grant is withheld with a warning and the container starts without FUSE. Unset: no grant, never by default. Rebuild after a change. | `DCF_HOST_FUSE` | `DCF_HOST_FUSE=` var / `-Fuse` |
 | Portable Node.js version | `DEVCONTAINER_NODE_VERSION` | - |
 | `@devcontainers/cli` version (default `latest`) | `DEVCONTAINER_CLI_VERSION` | - |
 | Root of the host-side tool-state folders (`devcontainer:homes`; default `~/.devcontainer-homes`) | `DEVCONTAINER_HOMES` | - |
@@ -315,7 +315,8 @@ Where there is no host folder (a cluster), `cloud-folder` 1.1.0 syncs it with rc
 `cloud-folder-setup shutdown-check` to your `shutdown:check` so a stop waits for a running sync (see the Feature's
 NOTES). `cloud-folder` 1.2.0 with devcontainer-cli 1.15.0 adds `mount` mode (`rclone mount`, a live view): set
 `DCF_HOST_FUSE=1` in `.devcontainer/.env` on the machines that should have it, keep the three `runArgs` lines of the
-bootstrap's template, and rebuild; `auto` then takes host, else mount, else sync. `cloud-folder` 1.3.0 with
+bootstrap's template, and rebuild; `auto` then takes host, else mount, else sync (not on `windows-wslc`, whose
+`wslc run` cannot take the grant: devcontainer-cli 1.16.3 withholds it with a warning and `auto` takes sync). `cloud-folder` 1.3.0 with
 devcontainer-cli 1.16.0 signs in with one command wherever it runs: `task cloud-folder:login` in the container (paste
 back the address the browser shows after the sign-in) or on the workstation (the launcher relays the browser into the
 container; the root Taskfile needs the bootstrap's `cloud-folder` include, which the bootstrap prints).
