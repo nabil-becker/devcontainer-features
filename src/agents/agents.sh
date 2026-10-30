@@ -514,16 +514,18 @@ marked() { [ -e "$(marker "$1")" ]; }
 # ------------------------------------------------------------------ the lease ----
 # A stateful agent's exclusive lease (docs/proposals/agents-v2.md section 6): the folder
 # leases/<name> under the state folder exists while someone holds it; mkdir is the atomic take.
-# Its holder file (key=value lines, written to a temporary name and renamed): state
-# (starting|held), pid and pidstart (the agents process that took it), boot (field 22 of
-# /proc/1/stat, or AGENTS_START_ID) and container (the hostname), carrier (session:<id>,
-# process:<pid> or pending), time. Liveness (first rule that applies): no holder file and the
-# folder older than 5 s: dead, younger: starting; another boot or container: dead; starting:
-# alive while its pid is; held: alive while its pid is or the adapter's list shows the agent
-# running; the adapter cannot list: cannot tell (held; never taken over on a guess); the
-# listing failed: error (held). A takeover is serialised by leases/<name>.takeover (mkdir),
-# re-judges the holder, renames the old folder away and takes it with mkdir. Folders are
-# made 0777 (no sticky bit), so a holder of another user can be taken over and removed.
+# Its holder file (key=value lines, written to a temporary name, then linked in place when the
+# lease is new (ln, which fails if a holder is there already) or renamed over the dead one's in a
+# takeover): state (starting|held), pid and pidstart (the agents process that took it), boot
+# (field 22 of /proc/1/stat, or AGENTS_START_ID) and container (the hostname), carrier
+# (session:<id>, process:<pid> or pending), time. Liveness (first rule that applies): no holder
+# file and the folder older than 5 s: dead, younger: starting; another boot or container: dead;
+# starting: alive while its pid is; held: alive while its pid is or the adapter's list shows the
+# agent running; the adapter cannot list: cannot tell (held; never taken over on a guess); the
+# listing failed: error (held). A takeover is serialised by the lock leases/<name>.takeover (a
+# symlink naming its taker), re-judges the holder under it and claims the lease in place by
+# replacing the holder file: the folder never goes away, so no plain mkdir can slip in. Folders
+# are made 0777 (no sticky bit), so a holder of another user can be taken over and removed.
 LEASE_DIR="$STATE_DIR/leases"
 declare -A LEASE_TIME=()
 LEASES_MINE='' # names whose lease this process holds and releases when it exits
@@ -540,14 +542,33 @@ proc_start() {
 }
 pid_alive() { local s; s="$(proc_start "$1")" && [ -n "$s" ] && [ "$s" = "$2" ]; }
 fmt_time() { date -d "@$1" +%H:%M:%S 2>/dev/null || printf '%s' "$1"; }
+# lease_pause <point>: for the tests only: with AGENTS_LEASE_PAUSE=<point>, the n-th time this
+# process gets there it appends a line to $AGENTS_LEASE_PAUSE_FILE.at and waits (60 s at most)
+# for $AGENTS_LEASE_PAUSE_FILE.go.<n>
+lease_pause() {
+  [ "${AGENTS_LEASE_PAUSE:-}" = "$1" ] && [ -n "${AGENTS_LEASE_PAUSE_FILE:-}" ] || return 0
+  local n=0
+  LEASE_PAUSES=$((${LEASE_PAUSES:-0} + 1))
+  echo "$$" >> "$AGENTS_LEASE_PAUSE_FILE.at"
+  while [ ! -e "$AGENTS_LEASE_PAUSE_FILE.go.$LEASE_PAUSES" ] && [ "$n" -lt 1200 ]; do sleep 0.05; n=$((n + 1)); done
+}
 
-holder_write() { # <name> <state> <carrier>
-  local d="$LEASE_DIR/$1" t
+# holder_write <name> <state> <carrier> [new|replace]: write this process's holder file. new: only
+# if the lease has none yet (ln fails on an existing one: 1, nothing written); replace: over the
+# one there (a takeover, under the lock); default: this process's own holder, updated.
+holder_write() {
+  local d="$LEASE_DIR/$1" t r=0
   t="$d/.holder.$$"
   [ -n "${LEASE_TIME[$1]:-}" ] || LEASE_TIME[$1]="$(date +%s)"
-  { printf 'state=%s\npid=%s\npidstart=%s\nboot=%s\ncontainer=%s\ncarrier=%s\ntime=%s\n' \
-      "$2" "$$" "$(proc_start $$)" "$(start_id)" "$(container_id)" "$3" "${LEASE_TIME[$1]}" > "$t" &&
-      mv -f "$t" "$d/holder"; } 2>/dev/null
+  printf 'state=%s\npid=%s\npidstart=%s\nboot=%s\ncontainer=%s\ncarrier=%s\ntime=%s\n' \
+    "$2" "$$" "$(proc_start $$)" "$(start_id)" "$(container_id)" "$3" "${LEASE_TIME[$1]}" > "$t" 2>/dev/null || return 1
+  if [ "${4:-}" = new ]; then
+    ln "$t" "$d/holder" 2>/dev/null || r=1
+    rm -f "$t"
+  else
+    mv -f "$t" "$d/holder" 2>/dev/null || { rm -f "$t"; r=1; }
+  fi
+  return "$r"
 }
 # holder_read <folder>: LH_* from its holder file (LH_RAW the whole file); 1 when there is none
 holder_read() {
@@ -562,11 +583,30 @@ holder_read() {
     esac
   done <<< "$LH_RAW"
 }
+# holder_is_me: the holder just read (LH_*) is this process, in this container start
+holder_is_me() {
+  [ "$LH_PID" = "$$" ] && [ "$LH_PIDSTART" = "$(proc_start $$)" ] &&
+    [ "$LH_BOOT" = "$(start_id)" ] && [ "$LH_CONTAINER" = "$(container_id)" ]
+}
 
 # lease_verdict <i or empty> <name> [fresh]: LV (free, dead, starting, held, cannot-tell, error)
 # and LV_WHY (why dead: no-holder, new-container, start-died, session-gone), the holder in LH_*.
 # fresh: read the adapter's list again rather than this run's copy (a taker must see now).
+# A holder judged dead because its pid is gone is read again afterwards and must be unchanged: a
+# live holder writes its next state (held, its session) before it exits, so a holder read just
+# before that and a pid looked at just after would otherwise make a fresh lease look dead.
 lease_verdict() {
+  local n=0 raw
+  while :; do
+    lease_judge "$@"
+    case "$LV:$LV_WHY" in dead:start-died | dead:session-gone) ;; *) return 0 ;; esac
+    raw="$LH_RAW"
+    holder_read "$LEASE_DIR/$2" && [ "$LH_RAW" = "$raw" ] && return 0
+    n=$((n + 1))
+    [ "$n" -lt 20 ] || { LV=starting LV_WHY=''; return 0; } # it keeps changing: someone is at work
+  done
+}
+lease_judge() {
   local i="$1" h="$2" fresh="${3:-}" d="$LEASE_DIR/$2" age
   LV='' LV_WHY=''
   if ! holder_read "$d"; then
@@ -575,6 +615,7 @@ lease_verdict() {
     if [ "$age" -gt 5 ]; then LV=dead LV_WHY=no-holder; else LV=starting; fi
     return 0
   fi
+  lease_pause verdict
   if [ "$LH_BOOT" != "$(start_id)" ] || [ "$LH_CONTAINER" != "$(container_id)" ]; then
     LV=dead LV_WHY=new-container; return 0
   fi
@@ -593,29 +634,48 @@ lease_verdict() {
   esac
 }
 
-# takeover_lock <name>: mkdir leases/<name>.takeover, waiting 0.2 s at a time; a lock whose pid
-# is gone, or still there after 5 s, is stale and cleared.
+# lock_owner <lock>: "<pid> <pidstart>" of the taker holding a takeover lock (the symlink's
+# target; a 2.0.0 lock is a folder with a pid file); empty when it is gone or not written yet
+lock_owner() { if [ -L "$1" ]; then readlink "$1" 2>/dev/null; else cat "$1/pid" 2>/dev/null; fi; }
+lock_dead() { [ -n "$1" ] && ! pid_alive "${1% *}" "${1#* }"; }
+# takeover_lock <name>: the symlink leases/<name>.takeover -> "<pid> <pidstart>" (ln -s makes it
+# with its owner in one step), waiting 0.2 s at a time for as long as its taker lives: a lock is
+# cleared only when its taker is gone (or, a 2.0.0 folder without a pid file, after 5 s), never
+# because a wait was long. Clearing renames the lock aside first and checks the one it moved: a
+# live taker's lock, moved because it was taken in between, is put back.
 takeover_lock() {
-  local t="$LEASE_DIR/$1.takeover" n=0 p='' ps='' p2 ps2
-  while ! mkdir -m 0777 "$t" 2>/dev/null; do
-    if read -r p ps < "$t/pid" 2>/dev/null && ! pid_alive "$p" "$ps"; then
-      read -r p2 ps2 < "$t/pid" 2>/dev/null && [ "$p2 $ps2" = "$p $ps" ] && rm -rf "$t"
+  local t="$LEASE_DIR/$1.takeover" me o b
+  me="$$ $(proc_start $$)"
+  while ! ln -sT "$me" "$t" 2>/dev/null; do
+    o="$(lock_owner "$t")"
+    if lock_dead "$o" || { [ -z "$o" ] && [ -d "$t" ] && [ ! -L "$t" ] &&
+      [ $(($(date +%s) - $(stat -c %Y "$t" 2>/dev/null || date +%s))) -gt 5 ]; }; then
+      b="$t.cleared.$$"
+      if mv -T "$t" "$b" 2>/dev/null; then
+        o="$(lock_owner "$b")"
+        if [ -L "$b" ] && ! lock_dead "$o"; then ln -sT "$o" "$t" 2>/dev/null; fi
+        rm -rf "$b"
+      fi
       continue
     fi
-    n=$((n + 1))
-    if [ "$n" -ge 25 ]; then rm -rf "$t"; n=0; continue; fi
     sleep 0.2
   done
-  printf '%s %s\n' "$$" "$(proc_start $$)" > "$t/pid" 2>/dev/null
 }
-takeover_unlock() { rm -rf "$LEASE_DIR/$1.takeover"; }
+# takeover_unlock <name>: remove the lock if it is this process's
+takeover_unlock() {
+  local t="$LEASE_DIR/$1.takeover"
+  [ "$(lock_owner "$t")" = "$$ $(proc_start $$)" ] && rm -f "$t"
+  return 0
+}
 
-# lease_own <name>: this process now holds it (state starting) and releases it when it exits,
-# also on TERM and HUP, unless lease_keep hands it to a background carrier.
+# lease_own <name> [new|replace]: this process now holds it (state starting) and releases it when
+# it exits, also on TERM and HUP, unless lease_keep hands it to a background carrier. new (the
+# default, after its own mkdir): 1 when another taker's holder got there first (this process
+# stalled for more than 5 s between mkdir and holder, and the folder was taken over).
 lease_own() {
   LEASE_TIME[$1]="$(date +%s)"
+  holder_write "$1" starting pending "${2:-new}" || return 1
   LEASES_MINE="$LEASES_MINE $1"
-  holder_write "$1" starting pending
   trap 'exit 143' TERM; trap 'exit 129' HUP
 }
 lease_hold() { holder_write "$1" held "$2"; }
@@ -630,7 +690,7 @@ lease_keep() { lease_drop "$1"; } # the lease outlives this process (a backgroun
 lease_release_own() {
   local d="$LEASE_DIR/$1"
   holder_read "$d" || return 0
-  [ "$LH_PID" = "$$" ] || return 0
+  holder_is_me || return 0
   mv "$d" "$d.released.$$" 2>/dev/null && rm -rf "$d.released.$$"
 }
 lease_exit() { local h; for h in $LEASES_MINE; do lease_release_own "$h"; done; }
@@ -644,8 +704,12 @@ lease_remove() {
   lease_drop "$1"
 }
 
-# lease_takeover <i>: the lease was judged dead (LV_WHY, LH_*); take it over under the lock.
-# 0 taken; 1 not (someone else was quicker, or the holder came back to life).
+# lease_takeover <i>: the lease was judged dead (LV_WHY, LH_*); take it over under the lock, in
+# place: re-read the holder (judged again when it changed), then replace the dead holder file
+# with this process's (or, a folder without one, link it in). The folder stays, so no plain mkdir
+# can take the lease meanwhile, and every other taker waits for the lock, then finds this one
+# starting. 0 taken (and only then the "stale" line); 1 not (the lease is gone, to be taken with
+# mkdir, or someone else was quicker, or the holder came back to life).
 lease_takeover() {
   local i="$1" h="${NAME[$1]}" d="$LEASE_DIR/${NAME[$1]}" raw="$LH_RAW" why="$LV_WHY" prev="$LH_CARRIER" took=''
   takeover_lock "$h"
@@ -653,17 +717,13 @@ lease_takeover() {
     holder_read "$d"
     if [ "$LH_RAW" != "$raw" ]; then
       lease_verdict "$i" "$h" fresh
-      if [ "$LV" != dead ]; then takeover_unlock "$h"; return 1; fi
-      why="$LV_WHY" prev="$LH_CARRIER"
+      if [ "$LV" = dead ]; then why="$LV_WHY" prev="$LH_CARRIER"; else d=''; fi
     fi
-    if mv "$d" "$d.stale.$$" 2>/dev/null; then
-      mkdir -m 0777 "$d" 2>/dev/null && took=1
-      rm -rf "$d.stale.$$"
+    lease_pause takeover
+    if [ -n "$d" ]; then
+      if [ -n "$LH_RAW" ]; then lease_own "$h" replace && took=1; else lease_own "$h" new && took=1; fi
     fi
-  else
-    mkdir -m 0777 "$d" 2>/dev/null && took=1
   fi
-  [ -z "$took" ] || lease_own "$h"
   takeover_unlock "$h"
   [ -n "$took" ] || return 1
   echo "$h: its lease was stale ($why${prev:+, held by $prev}); taken over."
@@ -685,7 +745,10 @@ lease_take() {
     return 1
   fi
   while :; do
-    if mkdir -m 0777 "$LEASE_DIR/$h" 2>/dev/null; then lease_own "$h"; return 0; fi
+    if mkdir -m 0777 "$LEASE_DIR/$h" 2>/dev/null; then
+      lease_pause mkdir
+      lease_own "$h" new && return 0
+    fi
     tries=$((tries + 1))
     if [ "$tries" -gt 200 ]; then warn "$h: could not take its lease under $LEASE_DIR; nothing started."; return 1; fi
     lease_verdict "$i" "$h" fresh
