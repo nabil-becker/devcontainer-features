@@ -31,6 +31,15 @@
 #       lease: container      # container (stateful, the default) | none (ephemeral)
 #       definition: host      # the CLI's agent profile; read and checked, not passed yet
 #       default: true         # at most one: what `agents` with no name starts
+#       session-name: "{machine} {handle}"   # the name the CLI shows (2.1); default: the option
+#
+# The session name (2.1). The handle (the name above) stays the address: it keys the lease, the
+# record and every verb. The session name is the label the CLI shows, rendered from a template
+# (the entry's session-name, else the sessionName option of the Feature, AGENTS_SESSION_NAME in
+# .env or the environment, else {handle}) with {handle}, {repo} (the repository folder's name)
+# and {machine} (DCF_HOST_MACHINE; unset: the word container) and free text around them. The
+# adapter gets it in the environment variable AGENT_SESSION_NAME on every call about that agent
+# and an empty one on every other call, so a value from a parent session never leaks.
 #
 # Only that subset of YAML is read (comments, plain and quoted scalars, a flow or block
 # list for args); the parser is awk, because bash, awk and sed are what every base image
@@ -63,6 +72,10 @@
 set -uo pipefail
 
 STATE_DIR="${AGENTS_STATE_DIR:-/var/lib/devcontainer-features/agents}"
+# AGENT_SESSION_NAME (2.1): empty on every call to a CLI adapter, but those about one agent, which
+# set the agent's rendered session name on that one call (call, hint); a value inherited from a
+# parent session never reaches an adapter.
+export AGENT_SESSION_NAME=''
 DEFAULT_FILE=.devcontainer/agents.yml
 
 warn() { printf 'agents: %s\n' "$*" >&2; }
@@ -117,7 +130,8 @@ resolve_file() {
 
 # The parser: the YAML subset above, one record per line out:
 #   I <n> <line>             an entry starts
-#   K <n> <key> <value>      name, cli, kind, folder, lifecycle, identity, lease, definition, default
+#   K <n> <key> <value>      name, cli, kind, folder, lifecycle, identity, lease, definition, default, session-name
+#   L <n> <line>             the line of the entry's session-name key
 #   A <n>                    the entry has args
 #   G <n> <value>            one arg
 #   W <line> <message>       a warning
@@ -197,12 +211,14 @@ function keyline(t,   k, v) {
     if (substr(v, 1, 1) == "[") { flow(v); return }
     fail("args must be a list: args: [--model, opus], or one - value per line below it")
   }
-  if (k == "name" || k == "cli" || k == "kind" || k == "folder" || k == "lifecycle" || k == "identity" || k == "lease" || k == "definition" || k == "default") {
+  if (k == "name" || k == "cli" || k == "kind" || k == "folder" || k == "lifecycle" || k == "identity" || k == "lease" || k == "definition" || k == "default" || k == "session-name") {
     if (v == "" || substr(v, 1, 1) == "#") fail("'" k "' has no value")
+    if (k == "session-name" && substr(v, 1, 1) == "{") fail("a session-name that starts with { must be quoted: session-name: \"{machine} {handle}\"")
     if (k == "lease" && substr(v, 1, 1) == "{") fail("lease is one word, not a map: lease: container (or none)")
     v = scalar(v, "'" k "'")
     if (v ~ /\t/) fail("a tab in the value of '" k "'")
     printf "K\t%d\t%s\t%s\n", n, k, v
+    if (k == "session-name") printf "L\t%d\t%d\n", n, NR
     return
   }
   printf "W\t%d\tunknown key '%s' (ignored)\n", NR, k
@@ -273,14 +289,17 @@ load_list() {
     die 2 "no agent list at $AF_ABS (from $AF_SOURCE); write one (see the agents Feature notes) or set AGENTS_FILE to its path relative to $ROOT."
   fi
   out="$(awk "$PARSER" "$AF_ABS")"; rc=$?
-  N=0 NAME=() CLI=() KIND=() FOLDER=() ARGS=() LINE=() HASARGS=() LIFE=() IDENT=() LEASE=() DEF=() DFLT=()
+  N=0 NAME=() CLI=() KIND=() FOLDER=() ARGS=() LINE=() HASARGS=() LIFE=() IDENT=() LEASE=() DEF=() DFLT=() SNKEY=() SNSET=() SNLINE=() SNAME=()
+  resolve_template
   while IFS=$'\t' read -r rec a b c; do
     case "$rec" in
       I) N="$a"; LINE[a]="$b" FOLDER[a]=. ARGS[a]='' ;;
       K) case "$b" in
            name) NAME[a]="$c" ;; cli) CLI[a]="$c" ;; kind) KIND[a]="$c" ;; folder) FOLDER[a]="$c" ;;
            lifecycle) LIFE[a]="$c" ;; identity) IDENT[a]="$c" ;; lease) LEASE[a]="$c" ;; definition) DEF[a]="$c" ;; default) DFLT[a]="$c" ;;
+           session-name) SNKEY[a]="$c" SNSET[a]=1 ;;
          esac ;;
+      L) SNLINE[a]="$b" ;;
       A) HASARGS[a]=1 ;;
       G) if [ -n "${ARGS[a]:-}" ]; then ARGS[a]="${ARGS[a]}"$'\x1f'"$b"; else ARGS[a]="$b"; fi ;;
       W) warn "$AF:$a: $b" ;;
@@ -311,6 +330,7 @@ load_list() {
       fi
     done
     check_v2 "$i" "$at"; errs=$((errs + V2ERRS))
+    check_session_name "$i" "$at"; errs=$((errs + V2ERRS))
   done
   [ "$errs" -eq 0 ] || die 2 "$AF: $errs problem(s) in the agent list (above)."
 }
@@ -376,6 +396,126 @@ check_v2() {
       V2ERRS=$((V2ERRS + 1))
     fi
   done
+}
+
+# ------------------------------------------------------------- session names ----
+# The session name template and its rendering (2.1). SN_MAX is this repository's limit, not
+# Claude Code's: its documentation (the --name flag) gives no limit for a session name, so the
+# 60 is chosen, not measured: short enough for one line of the remote view and the terminal
+# title, with room for the " (2)" Claude Code appends when two sessions share a name. A name
+# over it is refused and never cut (a cut name can collide, and which end is lost would surprise).
+SN_MAX=60
+SN_DEFAULT='{handle}'
+SN_OK='^[A-Za-z0-9._:@/() -]$'
+SN_BAD='[^A-Za-z0-9._:@/() -]'
+
+# resolve_template: GT, the template for every agent that has no session-name of its own, and
+# GT_SRC, where it came from. Resolved like every setting (NFR-6), first wins: the task variable
+# (AGENTS_SESSION_NAME_TASK_VAR; it counts only when it differs from the .env and the
+# environment, as for AGENTS_FILE), the root .env, then .devcontainer/.env, the environment, the
+# Feature's sessionName option (written at install), the default {handle}.
+resolve_template() {
+  local tv="${AGENTS_SESSION_NAME_TASK_VAR:-}" ev="${AGENTS_SESSION_NAME:-}" dv='' dsrc='' f v opt=''
+  for f in "$ROOT/.env" "$ROOT/.devcontainer/.env"; do
+    if [ -f "$f" ] && v="$(dotenv_value "$f" AGENTS_SESSION_NAME)"; then
+      dv="$v" dsrc="${f#"$ROOT"/}"
+      break
+    fi
+  done
+  f="${AGENTS_SHARE_DIR:-/usr/local/share/agents-feature}/session-name"
+  [ ! -f "$f" ] || opt="$(head -n 1 "$f" 2>/dev/null | tr -d '\r')"
+  if [ -n "$tv" ] && [ "$tv" != "$dv" ] && [ "$tv" != "$ev" ]; then
+    GT="$tv" GT_SRC='the task variable AGENTS_SESSION_NAME'
+  elif [ -n "$dv" ]; then
+    GT="$dv" GT_SRC="AGENTS_SESSION_NAME in $dsrc"
+  elif [ -n "$ev" ]; then
+    GT="$ev" GT_SRC='AGENTS_SESSION_NAME in the environment'
+  elif [ -n "$opt" ]; then
+    GT="$opt" GT_SRC='the sessionName option of the agents Feature'
+  else
+    GT="$SN_DEFAULT" GT_SRC='the default (no sessionName set)'
+  fi
+}
+
+# render_name <template> <handle>: RN, the rendered name. Returns 1 with RN_ERR, the first
+# problem, when the template cannot be rendered. Text: letters, digits, space and . _ : @ / ( ) -
+# only; {handle}, {repo} and {machine} are the variables (a {run} for ephemeral runs is not in
+# this version); a value is cut to the same set, every other character becoming -.
+render_name() {
+  local LC_ALL=C t="$1" c rest var val m
+  RN='' RN_ERR=''
+  while [ -n "$t" ]; do
+    c="${t:0:1}"
+    case "$c" in
+      '{')
+        rest="${t:1}"
+        case "$rest" in *'}'*) ;; *) RN_ERR='a { is never closed (a variable is written {handle}, {repo} or {machine})'; return 1 ;; esac
+        var="${rest%%'}'*}"
+        t="${rest#*'}'}"
+        case "$var" in
+          handle) val="$2" ;;
+          repo) val="$(basename "$ROOT")" ;;
+          machine)
+            m="${DCF_HOST_MACHINE:-}"
+            m="${m#"${m%%[![:space:]]*}"}"; m="${m%"${m##*[![:space:]]}"}"
+            val="${m:-container}" ;;
+          run) RN_ERR='{run} is not available in this version (ephemeral runs come later); the variables are {handle}, {repo} and {machine}'; return 1 ;;
+          *) RN_ERR="unknown variable {$var}; the variables are {handle}, {repo} and {machine}"; return 1 ;;
+        esac
+        RN="$RN${val//$SN_BAD/-}" ;;
+      '}') RN_ERR='a } without a {'; return 1 ;;
+      *)
+        if [[ "$c" =~ $SN_OK ]]; then
+          RN="$RN$c"; t="${t:1}"
+        else
+          RN_ERR="the character $(printf '%q' "$c") is not allowed in a session name (letters, digits, space and . _ : @ / ( ) - only)"; return 1
+        fi ;;
+    esac
+  done
+}
+
+# check_session_name <i> <at>: render entry i's session name into SNAME[i] and refuse what
+# cannot be one (V2ERRS counts the problems, each said with its file and line): a template that
+# does not render, an empty or over-length name, a name another agent of the same CLI and folder
+# has as its name or handle (the adapter finds sessions by name and folder).
+check_session_name() {
+  local i="$1" at="$2" tpl where j
+  V2ERRS=0
+  SNAME[i]="${NAME[i]:-}"
+  if [ -n "${SNSET[i]:-}" ]; then tpl="${SNKEY[i]}" where="$AF:${SNLINE[i]:-${LINE[i]}}: session-name"
+  else tpl="$GT" where="$at: the session name template (from $GT_SRC)"; fi
+  [ -n "${NAME[i]:-}" ] || return 0
+  if [ -z "$tpl" ]; then
+    warn "$where is empty"; V2ERRS=$((V2ERRS + 1)); return 0
+  fi
+  if ! render_name "$tpl" "${NAME[i]}"; then
+    warn "$where '$tpl': $RN_ERR"; V2ERRS=$((V2ERRS + 1)); return 0
+  fi
+  if [ "${#RN}" -gt "$SN_MAX" ]; then
+    warn "$where '$tpl' renders '$RN', ${#RN} characters; a session name is at most $SN_MAX here (the CLIs document no limit; this is this repository's choice) and is never cut: shorten the template"
+    V2ERRS=$((V2ERRS + 1)); return 0
+  fi
+  case "$RN" in
+    ' '* | *' ') warn "$where '$tpl' renders '$RN', which starts or ends with a space"; V2ERRS=$((V2ERRS + 1)); return 0 ;;
+  esac
+  SNAME[i]="$RN"
+  for ((j = 1; j < i; j++)); do
+    [ -n "${NAME[j]:-}" ] && [ "${NAME[j]}" != "${NAME[i]}" ] && [ "${CLI[j]:-}" = "${CLI[i]:-}" ] && [ "${FOLDER[j]}" = "${FOLDER[i]}" ] || continue
+    if [ "${SNAME[j]}" = "$RN" ] || [ "${NAME[j]}" = "$RN" ] || [ "${SNAME[j]}" = "${NAME[i]}" ]; then
+      warn "$where '$tpl' renders '$RN', which collides with the agent '${NAME[j]}' (entry $j, same CLI and folder): a session name equal to another agent's name or handle cannot be told apart, since the adapter finds sessions by name and folder"
+      V2ERRS=$((V2ERRS + 1)); return 0
+    fi
+  done
+}
+
+# name_is <i> <session name>: the session name is entry i's (its handle, or its rendered session
+# name), with or without the collision number Claude Code appends ("host (2)")
+name_is() {
+  local nm="$2" b
+  for b in "${NAME[$1]}" "${SNAME[$1]}"; do
+    case "$nm" in "$b") return 0 ;; "$b ("*")") [[ "$nm" =~ \([0-9]+\)$ ]] && return 0 ;; esac
+  done
+  return 1
 }
 
 # find_agent <name>: AI, the entry's index; exits 2 naming the agents when there is none.
@@ -460,7 +600,7 @@ state_of() {
   while IFS=$'\t' read -r nm id st fo; do
     [ -n "${nm:-}" ] || continue
     [ "$fo" = "$DIR" ] || continue
-    case "$nm" in "${NAME[i]}") ;; "${NAME[i]} ("*")") [[ "$nm" =~ \([0-9]+\)$ ]] || continue ;; *) continue ;; esac
+    name_is "$i" "$nm" || continue
     if [ "$st" = running ]; then
       running=$((running + 1)); [ -z "$runid" ] && runid="$id"
     fi
@@ -478,7 +618,7 @@ state_of() {
 list_failed() {
   local i="$1" cli="${CLI[$1]}" h
   warn "${NAME[i]}: the $cli sessions could not be listed${LIST_ERR[$cli]:+ (${LIST_ERR[$cli]})}; starting nothing, since it may be running or have a conversation to resume."
-  if h="$("$ADAPTER" hint "${NAME[i]}" "$DIR" </dev/null 2>/dev/null)" && [ -n "$h" ]; then
+  if h="$(AGENT_SESSION_NAME="${SNAME[i]:-${NAME[i]}}" "$ADAPTER" hint "${NAME[i]}" "$DIR" </dev/null 2>/dev/null)" && [ -n "$h" ]; then
     printf '%s\n' "$h" | sed "s/^/agents: ${NAME[i]}: /" >&2
   else
     warn "${NAME[i]}: check with $cli itself whether it runs, and resume its conversation by hand if it does not."
@@ -488,7 +628,7 @@ list_failed() {
 call() { # call <verb> <i> [adapter flags]: the adapter for entry i, CLI args after --
   local verb="$1" i="$2"; shift 2
   args_of "$i"
-  "$ADAPTER" "$verb" "${NAME[i]}" "$DIR" "$@" -- ${CLIARGS[@]+"${CLIARGS[@]}"} ${PASS[@]+"${PASS[@]}"}
+  AGENT_SESSION_NAME="${SNAME[i]:-${NAME[i]}}" "$ADAPTER" "$verb" "${NAME[i]}" "$DIR" "$@" -- ${CLIARGS[@]+"${CLIARGS[@]}"} ${PASS[@]+"${PASS[@]}"}
 }
 
 # call_out <verb> <i>: call, stdin from /dev/null, its stdout in OUT. Through a file, not a pipe,
@@ -1077,14 +1217,23 @@ settle() {
 json_str() { local s="$1"; s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; printf '"%s"' "$s"; }
 
 cmd_list() {
-  local json='' i first=1 st a c
+  local json='' i first=1 st a c named='' nw=4
   declare -A failed=()
   for a in "$@"; do
     case "$a" in --json) json=1 ;; *) die 2 "list: unknown argument '$a' (--json)" ;; esac
   done
   load_list
+  # a NAME column (the session name) only when some agent's differs from its handle, so the
+  # default list is unchanged; the first column is then called HANDLE
+  for ((i = 1; i <= N; i++)); do
+    [ "${SNAME[i]}" = "${NAME[i]}" ] || named=1
+    [ "${#SNAME[i]}" -le "$nw" ] || nw="${#SNAME[i]}"
+  done
   [ -n "$json" ] && printf '['
-  [ -z "$json" ] && printf '%-16s %-10s %-10s %-8s %-9s %-24s %-38s %s\n' NAME KIND LIFECYCLE CLI STATE LEASE ID FOLDER
+  if [ -z "$json" ]; then
+    if [ -n "$named" ]; then printf '%-16s %-*s %-10s %-10s %-8s %-9s %-24s %-38s %s\n' HANDLE "$nw" NAME KIND LIFECYCLE CLI STATE LEASE ID FOLDER
+    else printf '%-16s %-10s %-10s %-8s %-9s %-24s %-38s %s\n' NAME KIND LIFECYCLE CLI STATE LEASE ID FOLDER; fi
+  fi
   for ((i = 1; i <= N; i++)); do
     STATE='' SID='' EXTRAS=0
     if adapter_of "$i" 2>/dev/null; then
@@ -1106,8 +1255,11 @@ cmd_list() {
         "$(json_str "${NAME[i]}")" "$(json_str "${KIND[i]}")" "$(json_str "${CLI[i]}")" \
         "$(json_str "${FOLDER[i]}")" "$(json_str "$state")" "$(json_str "$sid")" "$extras"
       [ "$state" = error ] && printf ',"error":%s' "$(json_str "${failed[${CLI[i]}]}")"
-      printf ',"lifecycle":%s,"identity":%s,"lease":%s,"carrier":%s}' "$(json_str "${LIFE[i]}")" \
-        "$(json_str "${IDENT[i]}")" "$(json_str "$LO_LEASE")" "$(json_str "$LO_CARRIER")"
+      printf ',"lifecycle":%s,"identity":%s,"lease":%s,"carrier":%s,"sessionName":%s}' "$(json_str "${LIFE[i]}")" \
+        "$(json_str "${IDENT[i]}")" "$(json_str "$LO_LEASE")" "$(json_str "$LO_CARRIER")" "$(json_str "${SNAME[i]}")"
+    elif [ -n "$named" ]; then
+      printf '%-16s %-*s %-10s %-10s %-8s %-9s %-24s %-38s %s\n' "${NAME[i]}" "$nw" "${SNAME[i]}" "${KIND[i]}" "${LIFE[i]}" "${CLI[i]}" "$st" \
+        "$LO_TEXT" "${sid:--}" "${FOLDER[i]}"
     else
       printf '%-16s %-10s %-10s %-8s %-9s %-24s %-38s %s\n' "${NAME[i]}" "${KIND[i]}" "${LIFE[i]}" "${CLI[i]}" "$st" \
         "$LO_TEXT" "${sid:--}" "${FOLDER[i]}"
@@ -1240,6 +1392,15 @@ cmd_check() {
   for ((i = 1; i <= N; i++)); do
     check_line "$i"
   done
+  local tpl
+  for ((i = 1; i <= N; i++)); do
+    tpl="$GT"; [ -z "${SNSET[i]:-}" ] || tpl="${SNKEY[i]}"
+    case "$tpl" in *'{machine}'*)
+      if [ -z "${DCF_HOST_MACHINE:-}" ]; then
+        printf '  %s: DCF_HOST_MACHINE is not set here, so {machine} renders "container" and the session name will not tell machines apart (the launcher sets it; a consumer'"'"'s devcontainer.json passes it in containerEnv)\n' "${NAME[i]}"
+      fi ;;
+    esac
+  done
   # What each CLI adapter says it can do (its `supports` verb), one line per CLI in the list.
   # Information only: at run time the verb's own exit 3 stays the authority.
   local -a seen=()
@@ -1270,6 +1431,7 @@ check_line() {
   printf '  %s: cli %s, %s%s, %s (identity %s, lease %s), folder %s, args:' "${NAME[i]}" "${CLI[i]}" \
     "${DEF[i]:+definition ${DEF[i]}, }" "${KIND[i]}" "${LIFE[i]}" "${IDENT[i]}" "${LEASE[i]}" "${FOLDER[i]}"
   if [ "${#CLIARGS[@]}" -eq 0 ]; then printf ' none'; else printf ' [%s]' "${CLIARGS[@]}"; fi
+  [ "${SNAME[i]}" = "${NAME[i]}" ] || printf ', session name "%s"' "${SNAME[i]}"
   printf '\n'
 }
 
@@ -1291,7 +1453,7 @@ owner_of() {
   local j
   for ((j = 1; j <= N; j++)); do
     [ "${CLI[j]}" = "$1" ] && [ -n "${ADIR[j]:-}" ] && [ "${ADIR[j]}" = "$3" ] || continue
-    case "$2" in "${NAME[j]}") echo "$j"; return 0 ;; "${NAME[j]} ("*")") [[ "$2" =~ \([0-9]+\)$ ]] && { echo "$j"; return 0; } ;; esac
+    name_is "$j" "$2" && { echo "$j"; return 0; }
   done
 }
 

@@ -24,6 +24,12 @@ install -m 0755 "$feature_dir/agents.sh" /usr/local/bin/agents
 mkdir -p /usr/local/share/agents-feature
 printf '%s\n' "${version:-unknown}" > /usr/local/share/agents-feature/version
 chmod 0644 /usr/local/share/agents-feature/version
+# The sessionName option (2.1): the template of the session names, read by `agents` when no
+# AGENTS_SESSION_NAME, .env or task variable says otherwise.
+session_name="${SESSIONNAME:-}"
+[ -n "$session_name" ] || session_name='{handle}'
+printf '%s\n' "$session_name" > /usr/local/share/agents-feature/session-name
+chmod 0644 /usr/local/share/agents-feature/session-name
 # Any user writes their markers here; the sticky bit keeps users out of each other's.
 mkdir -p /var/lib/devcontainer-features/agents
 chmod 1777 /var/lib/devcontainer-features/agents

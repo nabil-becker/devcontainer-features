@@ -42,7 +42,7 @@ agents:
       - sonnet
 ```
 
-2.0 adds five optional keys, all flat (one word each):
+2.0 adds five optional keys and 2.1 a sixth, `session-name`, all flat (one scalar each):
 
 ```yaml
   - name: tooling              # the handle
@@ -53,6 +53,7 @@ agents:
     lease: container           # container (stateful, the default) | none (ephemeral, the default)
     definition: tooling        # the CLI's agent profile; read, checked and shown, not passed to the CLI in 2.0
     default: true              # at most one agent: what `task agents` with no name starts
+    session-name: "{machine} {handle}"   # 2.1: the name its CLI shows; default the option, else {handle}
 ```
 
 | Key | Values | Rule |
@@ -61,6 +62,7 @@ agents:
 | `identity` | letters, digits, `-`, `_`; default the `name` | Two stateful agents may not share one; ephemeral agents may share each other's and one stateful agent's. |
 | `lease` | `container`, `none` | A stateful agent's lease is `container` (`none` is refused: that is what `ephemeral` means); an ephemeral agent's is `none`. `machine` and `cluster` are reserved and refused (Limits). One word: `lease: { scope: container }` is refused with a line pointing at the flat form. |
 | `definition` | letters, digits, `.`, `:`, `-`, `_` | Refused together with `--agent` in `args` (two sources for one fact). In 2.0 it is stored and shown only; `agents start` says so in one line and the CLI starts without it. A later 2.x hands it to the adapter. |
+| `session-name` | a template: letters, digits, space, `. _ : @ / ( ) -`, and `{handle}`, `{repo}`, `{machine}` (2.1) | The name the CLI shows for the agent's session, rendered once per start; wins over the Feature option. A value that starts with `{` must be quoted. Refused with its line when it does not render or is over 60 characters. See Session names. |
 | `default` | `true`, `false` | At most one agent; `agents check` names it. `task agents` (no name), `agents` and `agents start` without a name start it exactly as `agents start <name>`; with none marked they print the usage (exit 2) as before. |
 
 - `name`, `cli`, `kind` are required; `folder` defaults to `.` and must stay inside the
@@ -112,7 +114,7 @@ it differs from both.
 | `task agents -- <name> --resume` | the same | resume its latest conversation (refused while that one runs) |
 | `task agents -- <name> --new` | stop the running session and start a fresh one, after a yes/no question (`--yes` skips it), then attach | the same as plain |
 | `task agents:up` | start every resident not running, attach none (the postStartCommand) | skipped |
-| `task agents:list` | name, kind, CLI, state (`running`, `stopped`, `failed`, `none`; `+N` extra running sessions; `unknown` when the CLI cannot list, `error` when listing failed, with the adapter's reason below the table and as `"error"` in `--json`), id, folder; `-- --json` for agents | `running` with its id, else `none` (a stopped conversation is what `--resume` opens, not a state) |
+| `task agents:list` | name, kind, CLI, state (`running`, `stopped`, `failed`, `none`; `+N` extra running sessions; `unknown` when the CLI cannot list, `error` when listing failed, with the adapter's reason below the table and as `"error"` in `--json`), id, folder; a `NAME` column (the session name; the first column is then `HANDLE`) only when some agent's session name differs from its handle; `-- --json` for agents, always with `sessionName` | `running` with its id, else `none` (a stopped conversation is what `--resume` opens, not a state) |
 | `task agents:stop -- <name>` | stop it; the conversation is kept. `-- <name> --extras` stops only the extra sessions | stop a running one, if the adapter can |
 | `task agents:logs -- <name>` | recent output | recent output, if it ran in the background |
 | `task agents:check` | read and check the list, print it | the same |
@@ -144,6 +146,64 @@ start that fails is said and the start goes on. `task agents:up -- --no-wait` sk
 
 Exit codes of `agents`: 0 done, 1 failed, 2 bad use (unknown agent, broken or missing list,
 refused), 3 the CLI cannot do it.
+
+## Session names (2.1)
+
+The **handle** (the agent's `name`) stays the address: it keys the lease, the CLI adapter's record
+and every verb (`agents stop host`). The **session name** is only the label the CLI shows for the
+agent's session (in Claude Code, the name in its remote view and `/resume`). Several agents called
+`host` on several machines are told apart by a template.
+
+```yaml
+agents:
+  - name: host
+    cli: claude
+    session-name: "{machine} {handle}"   # wins over the option
+```
+
+| Where | How |
+| --- | --- |
+| the Feature option `sessionName` | `"agents": { "sessionName": "{machine} {handle}" }`; default `{handle}`, which shows the handle exactly as before 2.1 |
+| `AGENTS_SESSION_NAME` | overrides the option like every setting (NFR-6): the task variable, the root `.env`, `.devcontainer/.env`, the environment, then the option |
+| the key `session-name:` | one agent's own template; wins over all of the above |
+
+| Variable | Value |
+| --- | --- |
+| `{handle}` | the agent's name |
+| `{repo}` | the name of the repository folder (the folder holding `.devcontainer`) |
+| `{machine}` | the workstation's name, `DCF_HOST_MACHINE` (set by the devcontainer-cli launcher, 1.16.2, and passed by `containerEnv`); the word `container` when it is unset or empty, because the container's own hostname changes at every rebuild |
+
+Everything else in a template is free text: letters, digits, space and `. _ : @ / ( ) -`. A
+variable's value is cut to the same set, every other character becoming `-` (`NABIL'S PC` renders
+`NABIL-S PC`). A tab, quote, backslash, `$` or any other character, an unknown or unclosed `{...}`,
+a stray `}` and `{run}` (reserved for ephemeral runs, a later 2.x) are refused. The rendered name is
+at most **60 characters**; a longer one is refused, never cut (a cut name can collide, and which
+end is lost would surprise). That limit is this repository's choice, not a CLI's: Claude Code's
+documentation of `--name` gives no limit, and 60 is short enough for one line of the remote view
+with room for the ` (2)` Claude Code appends to a collision. Two agents of one CLI and folder
+whose names (or one's name and the other's handle) are equal are refused too, since the adapter
+finds sessions by name and folder.
+
+`agents check` and every verb refuse a list that does not render, naming the file and line of the
+key (for the option or the environment, the entry). `agents check` shows the name of every agent
+whose differs from its handle, and warns when `{machine}` is used while `DCF_HOST_MACHINE` is unset.
+
+**What the CLI adapter gets.** The rendered name in the environment variable `AGENT_SESSION_NAME`,
+on every call about that agent (`start-bg`, `wake`, `new`, `resume`, `attach`, `stop`, `logs`,
+`record`, `hint`) and an **empty** `AGENT_SESSION_NAME` on every other call (`list`, `supports`,
+`session-busy`, `session-stop`, `session-remove`), so a value a parent session passed down never
+reaches a child's call. The arguments `<verb> <name> <folder>` do not change: `<name>` is still
+the handle, and an adapter that does not read the variable simply starts the CLI as before (the
+NFR-12 fallback: the CLI keeps its own title). There is deliberately no `supports` capability for
+it: `supports` lists verbs, and a variable cannot answer exit 3. Which CLIs use the name is each
+adapter's business (claude-code 1.9.0 and later passes it as `--name`; Copilot's `-n` and OpenCode's
+`--title` can follow). A session is the agent's when its name is the handle or the rendered name,
+with or without a collision number; the adapter's `list` still reports a recorded session under
+its handle.
+
+**Changing the template.** A changed name applies to the sessions started from then on; a session
+that exists keeps its name and is never copied to rename it (there is no rename verb). The Claude
+CLI adapter finds the agent's session by its record whatever its name is.
 
 ## The lease (2.0)
 
@@ -265,6 +325,8 @@ agent-adapter-<cli> session-stop <id>     stop that session (the id `list` print
 agent-adapter-<cli> session-remove <id>   remove that ended session from the CLI's list
 agent-adapter-<cli> supports   the verbs it supports, one per line
 Exit: 0 done, 1 failed, 2 bad use, 3 not supported by this CLI.
+Environment (2.1): AGENT_SESSION_NAME is the rendered session name on every call about the agent
+(an adapter that can name a session uses it, else the handle) and empty on the others (Session names).
 ```
 
 `<folder>` is absolute. A session is the agent's when its folder is the agent's and its name is
@@ -309,9 +371,10 @@ holder dead. A repository may bind-mount the folder (NFR-1 allows it); the same 
 
 | Option | Default | What it does |
 | --- | --- | --- |
+| `sessionName` | `{handle}` | The session name template for every agent without its own `session-name:` (Session names). The default shows the handle, as before 2.1. |
 | `installTaskfile` | `true` | Register `taskfile.yml` with the go-task Feature's registry, so `task agents*` exist. Turn it off only if you call `agents` directly. |
 
-No option for the list's path: `AGENTS_FILE` is the one setting (above).
+No option for the list's path: `AGENTS_FILE` is the one setting (above). `sessionName` is written at install to `/usr/local/share/agents-feature/session-name`; `AGENTS_SESSION_NAME` overrides it.
 
 ## Minimal `devcontainer.json`
 
@@ -381,7 +444,27 @@ so they live here and each CLI Feature adds only its adapter.
 `ghcr.io/nabil-becker/devcontainer-features/agents:2` follows 2.x; rebuild to update. `agents:1` never
 moves to 2 on its own.
 
-**What 2.x holds so far.** 2.0 brings the lease and the `default` agent. The rest of version 2 arrives in steps (docs/proposals/agents-v2.md, section 12): agent integrations in 2.1, the Claude CLI adapter passing `definition` (as `--agent`) in claude-code 1.9, and ephemeral runs in 2.2. Until then `definition` is stored and shown, and a start that sets it says it is not passed on yet.
+**What 2.x holds so far.** 2.0 brings the lease and the `default` agent; 2.1 brings session names (the `sessionName` option and the `session-name:` key, with `AGENT_SESSION_NAME` handed to every CLI adapter call). The rest of version 2 arrives in steps (docs/proposals/agents-v2.md, section 12): agent integrations in 2.2 and ephemeral runs in 2.3. The Claude CLI adapter maps the session name onto `--name` in claude-code 1.9; passing `definition` (as `--agent`) follows in a later claude-code minor. Until then `definition` is stored and shown, and a start that sets it says it is not passed on yet.
+
+### Changes in 2.1.0
+
+Session names: the label a CLI shows for an agent's session is a template (the Feature option
+`sessionName`, `AGENTS_SESSION_NAME`, a per-agent `session-name:`; default `{handle}`, so nothing
+changes until one is set) rendered with `{handle}`, `{repo}` and `{machine}`, at most 60 characters,
+refused when it does not render and never cut. The handle stays the address (lease, record, verbs).
+`AGENT_SESSION_NAME` is set on every call to a CLI adapter: the rendered name on a call about the
+agent, empty on every other call. `list` adds a `NAME` column (the first column becomes `HANDLE`)
+only when some agent's name differs from its handle, and `--json` always carries `sessionName`
+(after `carrier`); `check` shows a differing name and warns when `{machine}` is used without
+`DCF_HOST_MACHINE`.
+
+**Upgrade note.** A 2.0 list and a 2.0 `devcontainer.json` change nothing: with no template every
+name is the handle, `list` prints the same table, and an adapter that ignores `AGENT_SESSION_NAME`
+starts as before. To tell machines apart set `"sessionName": "{machine} {handle}"` and pair it with
+claude-code 1.9.0 (which uses the name) and, for `{machine}`, devcontainer-cli 1.16.2 and a
+`"DCF_HOST_MACHINE": "${localEnv:DCF_HOST_MACHINE}"` line in the `containerEnv` of the
+repository's `devcontainer.json` (until it is there `{machine}` renders `container`). A session
+that exists keeps its name until it is stopped and started again.
 
 ### Changes in 2.0.3
 

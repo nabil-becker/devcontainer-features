@@ -29,10 +29,12 @@ cp "$agents_sh" "$bin/agents"; chmod +x "$bin/agents"
 # FAKE_UNSUPPORTED (a space-separated list of verbs) answers exit 3, FAKE_FAIL exit 1; every call
 # is recorded in $FAKE_CALLS as "verb|name|folder|arg|arg..."; FAKE_LIST_ERR makes `list` fail
 # (exit 1) with that message on stderr, as an adapter whose CLI cannot be read does. `hint`
-# prints how to resume by hand and is not recorded.
+# prints how to resume by hand and is not recorded. Every call also logs the AGENT_SESSION_NAME it
+# was given in $FAKE_ENV as "verb|value" (UNSET when the variable is not set at all).
 cat > "$bin/agent-adapter-fake" <<'FAKE'
 #!/usr/bin/env bash
 verb="$1"; shift
+echo "$verb|${AGENT_SESSION_NAME-UNSET}" >> "${FAKE_ENV:-/dev/null}"
 case " ${FAKE_UNSUPPORTED:-} " in *" $verb "*) echo "fake: $verb not supported" >&2; exit 3 ;; esac
 case " ${FAKE_FAIL:-} " in *" $verb "*) exit 1 ;; esac
 if [ "$verb" = list ] && [ -n "${FAKE_LIST_ERR:-}" ]; then echo "list" >> "$FAKE_CALLS"; echo "agent-adapter-fake: $FAKE_LIST_ERR" >&2; exit 1; fi
@@ -60,11 +62,12 @@ FAKE
 chmod +x "$bin/agent-adapter-fake"
 
 repo="$T/repo"; mkdir -p "$repo/.devcontainer" "$repo/rooms/review" "$repo/sub"
+export FAKE_ENV="$T/env" AGENTS_SHARE_DIR="$T/share"
 export FAKE_SESSIONS="$T/sessions" FAKE_CALLS="$T/calls" AGENTS_STATE_DIR="$T/state" AGENTS_START_ID=start-1
 export AGENTS_SETTLE_INTERVAL=0 AGENTS_SETTLE_TIMEOUT=0
-unset AGENTS_FILE AGENTS_FILE_TASK_VAR AGENTS_TTY CLAUDE_CODE_CHILD_SESSION
+unset AGENTS_FILE AGENTS_FILE_TASK_VAR AGENTS_TTY CLAUDE_CODE_CHILD_SESSION AGENTS_SESSION_NAME AGENTS_SESSION_NAME_TASK_VAR AGENT_SESSION_NAME DCF_HOST_MACHINE
 write_list() { cat > "$repo/.devcontainer/agents.yml"; }
-reset() { : > "$T/sessions"; : > "$T/calls"; rm -rf "$T/state"; unset FAKE_UNSUPPORTED FAKE_FAIL FAKE_LIST_ERR FAKE_BUSY; }
+reset() { : > "$T/sessions"; : > "$T/calls"; : > "$T/env"; rm -rf "$T/state"; unset FAKE_UNSUPPORTED FAKE_FAIL FAKE_LIST_ERR FAKE_BUSY; }
 run() { (cd "${DIRIN:-$repo}" && PATH="$bin:$PATH" agents "$@" 2>&1); }
 calls() { grep -v '^list$' "$T/calls" | tr '\n' ';'; }
 
@@ -388,7 +391,7 @@ contains 'list: an on-demand agent with only a stopped session is none (not yest
 contains 'list: no adapter' "$out" 'no-adapter'
 contains 'list: no folder' "$out" 'no-folder'
 out="$(run list --json)"
-contains 'list --json: an array of objects' "$out" '[{"name":"host","kind":"resident","cli":"fake","folder":".","state":"running","id":"id-old","extras":0,"lifecycle":"stateful","identity":"host","lease":"free","carrier":"none"},'
+contains 'list --json: an array of objects' "$out" '[{"name":"host","kind":"resident","cli":"fake","folder":".","state":"running","id":"id-old","extras":0,"lifecycle":"stateful","identity":"host","lease":"free","carrier":"none","sessionName":"host"},'
 reset; printf 'reviewer\tid-r2\trunning\t%s/rooms/review\nreviewer\tid-r\tstopped\t%s/rooms/review\n' "$repo" "$repo" > "$T/sessions"
 out="$(run list)"
 contains 'list: an on-demand agent with a running session shows it' "$out" "$(printf '%-16s %-10s %-10s %-8s %-9s %-24s %-38s %s' reviewer on-demand stateful fake running free id-r2 rooms/review)"
@@ -529,6 +532,186 @@ if command -v git >/dev/null 2>&1; then
   rm -rf "$repo/.git" "$repo/tracked"
 fi
 cp "$T/list.before-reset" "$repo/.devcontainer/agents.yml"
+
+# ------------------------------------------------------- session names (2.1) ----
+envs() { tr '\n' ';' < "$T/env"; }
+sn_list() { # a one-agent list with the session-name line (or none) given as $1
+  { printf 'agents:\n  - name: host\n    cli: fake\n    kind: resident\n'; [ -z "${1:-}" ] || printf '    %s\n' "$1"; } > "$repo/.devcontainer/agents.yml"
+}
+sn_name() { # the rendered name of host, from --json
+  run list --json | sed -n 's/.*"sessionName":"\([^"]*\)".*/\1/p'
+}
+sn_refused() { # <what> <expected text>: the list as written must be refused, exit 2
+  local o r; o="$(run check)"; r=$?
+  check "session name refused: $1 (exit 2)" 2 "$r"
+  contains "session name refused: $1 (message)" "$o" "$2"
+}
+
+# the default: nothing changes (a 2.0 list reads and prints as before)
+rm -rf "$T/share"; sn_list
+out="$(run check)"
+lacks 'session names: the default check line carries no session name' "$out" 'session name'
+lacks 'session names: no machine warning without {machine}' "$out" 'DCF_HOST_MACHINE'
+out="$(run list)"
+contains 'session names: the default list keeps the NAME column first, no HANDLE' "$out" 'NAME             KIND       LIFECYCLE  CLI      STATE'
+lacks 'session names: the default list has no extra column' "$out" 'HANDLE'
+check 'session names: --json always carries sessionName (the handle by default)' host "$(sn_name)"
+reset
+AGENTS_TTY=1 run start host > /dev/null
+check 'session names: the default hands the handle to start-bg and attach, empty to list' "list|;start-bg|host;attach|host;" "$(envs)"
+
+# the option (written at install), the key, and what beats what
+mkdir -p "$T/share"; printf '{machine} {handle}\n' > "$T/share/session-name"
+export DCF_HOST_MACHINE=desk
+check 'session names: the option renders {machine} {handle}' 'desk host' "$(sn_name)"
+out="$(run list)"
+contains 'session names: a name that differs adds HANDLE and NAME columns' "$out" 'HANDLE           NAME'
+contains 'session names: the row shows the handle and the session name' "$out" 'host             desk host'
+out="$(run check)"
+contains 'session names: check shows the session name when it differs' "$out" ', session name "desk host"'
+sn_list 'session-name: "{repo}: {handle} (x)"'
+check 'session names: the key wins over the option; {repo} is the repository folder' 'repo: host (x)' "$(sn_name)"
+sn_list "session-name: '{handle}@{machine}'"
+check 'session names: a single-quoted key' 'host@desk' "$(sn_name)"
+sn_list 'session-name: Plain text'
+check 'session names: an unquoted plain value, free text only' 'Plain text' "$(sn_name)"
+sn_list
+AGENTS_SESSION_NAME='{handle} env' ; export AGENTS_SESSION_NAME
+check 'session names: the environment beats the option' 'host env' "$(sn_name)"
+printf 'AGENTS_SESSION_NAME={handle} dotenv\n' > "$repo/.devcontainer/.env"
+check 'session names: .devcontainer/.env beats the environment' 'host dotenv' "$(sn_name)"
+printf 'AGENTS_SESSION_NAME={handle} root\n' > "$repo/.env"
+check 'session names: the root .env beats .devcontainer/.env' 'host root' "$(sn_name)"
+out="$(AGENTS_SESSION_NAME_TASK_VAR='{handle} task' run list --json)"
+contains 'session names: the task variable beats the .env' "$out" '"sessionName":"host task"'
+rm -f "$repo/.env" "$repo/.devcontainer/.env"; unset AGENTS_SESSION_NAME
+
+# {machine}: the container fallback, a bad character in a value, the warning
+unset DCF_HOST_MACHINE
+check 'session names: {machine} unset renders the word container' 'container host' "$(sn_name)"
+out="$(run check)"
+contains 'session names: check warns that the name will not tell machines apart' "$out" 'DCF_HOST_MACHINE is not set here'
+export DCF_HOST_MACHINE=''
+check 'session names: {machine} empty renders container too' 'container host' "$(sn_name)"
+export DCF_HOST_MACHINE="NABIL'S PC"
+check 'session names: a character outside the set in a value becomes -' 'NABIL-S PC host' "$(sn_name)"
+export DCF_HOST_MACHINE=desk
+
+# refusals, each with the file and line of the key
+sn_list 'session-name: "{run} {handle}"'
+sn_refused '{run}' "agents.yml:5: session-name '{run} {handle}': {run} is not available in this version"
+sn_list 'session-name: "{handle} {user}"'
+sn_refused 'an unknown variable' 'unknown variable {user}'
+sn_list 'session-name: "{handle"'
+sn_refused 'an unclosed brace' 'a { is never closed'
+sn_list 'session-name: "host}"'
+sn_refused 'a stray }' 'a } without a {'
+# shellcheck disable=SC2016
+sn_list 'session-name: "cost $5"'
+sn_refused 'a dollar sign' 'the character \$ is not allowed'
+sn_list 'session-name: "it'"'"'s"'
+sn_refused 'a quote' "is not allowed in a session name"
+sn_list 'session-name: "back\\slash"'
+sn_refused 'a backslash' 'is not allowed in a session name'
+sn_list 'session-name: ""'
+sn_refused 'an empty name' 'agents.yml:5: session-name is empty'
+sn_list 'session-name: {handle}'
+sn_refused 'an unquoted value that starts with {' 'agents.yml:5: a session-name that starts with { must be quoted'
+sn_list 'session-name: " {handle}"'
+sn_refused 'a leading space' 'starts or ends with a space'
+printf 'agents:\n  - name: host\n    cli: fake\n    kind: resident\n    session-name: "a"\n    session-name: "b"\n' > "$repo/.devcontainer/agents.yml"
+sn_refused 'the key twice' "'session-name' appears twice"
+# the option's template refused, naming the entry
+sn_list
+printf '{handle} {run}\n' > "$T/share/session-name"
+sn_refused 'a bad template from the option' "the session name template (from the sessionName option of the agents Feature) '{handle} {run}': {run}"
+printf '{machine} {handle}\n' > "$T/share/session-name"
+# the length: 60 passes, 61 is refused and never cut
+sn_list "session-name: \"{handle} $(printf '%055d' 0 | tr 0 7)\""
+out="$(run check)"; rc=$?
+check 'session names: 60 characters pass' 0 "$rc"
+sn_list "session-name: \"{handle} $(printf '%056d' 0 | tr 0 7)\""
+sn_refused '61 characters' '61 characters; a session name is at most 60'
+contains 'session names: the limit says whose it is' "$(run check)" "document no limit"
+reset; rc=0; out="$(AGENTS_TTY=0 run start host)" || rc=$?
+check 'session names: a start with an over-length name is refused (exit 2)' 2 "$rc"
+check 'session names: nothing was started' "" "$(calls)"
+# a clash: two agents of one CLI and folder with one name, or one's name another's handle
+printf 'agents:\n  - name: a\n    cli: fake\n    kind: resident\n    session-name: same\n  - name: b\n    cli: fake\n    kind: resident\n    session-name: same\n' > "$repo/.devcontainer/agents.yml"
+sn_refused 'two agents with one name' "which collides with the agent 'a' (entry 1, same CLI and folder)"
+printf 'agents:\n  - name: a\n    cli: fake\n    kind: resident\n    session-name: b\n  - name: b\n    cli: fake\n    kind: resident\n' > "$repo/.devcontainer/agents.yml"
+sn_refused "a name that is another agent's handle" "which collides with the agent 'a' (entry 1"
+printf 'agents:\n  - name: a\n    cli: fake\n    kind: resident\n    session-name: same\n  - name: b\n    cli: fake\n    kind: resident\n    folder: sub\n    session-name: same\n' > "$repo/.devcontainer/agents.yml"
+out="$(run check)"; rc=$?
+check 'session names: one name in two folders is fine' 0 "$rc"
+
+# AGENT_SESSION_NAME on every call to an adapter: the rendered name for the agent's calls,
+# empty for the others, never a parent session's value
+printf '{machine} {handle}\n' > "$T/share/session-name"
+write_list <<'YAML'
+agents:
+  - name: host
+    cli: fake
+    kind: resident
+  - name: reviewer
+    cli: fake
+    kind: on-demand
+    folder: rooms/review
+    session-name: "{handle} review"
+YAML
+export AGENT_SESSION_NAME='parent session value'
+reset; export FAKE_UNSUPPORTED=start-bg
+AGENTS_TTY=1 run start host > /dev/null
+check 'session names: start, start-bg refused, new: the name on each call about the agent, empty on list' "list|;start-bg|desk host;new|desk host;" "$(envs)"
+reset
+AGENTS_TTY=1 run start reviewer > /dev/null
+check 'session names: new of an on-demand agent carries its own key' "new|reviewer review;" "$(envs)"
+reset
+AGENTS_TTY=1 run start reviewer --resume > /dev/null
+check 'session names: resume' "resume|reviewer review;" "$(envs)"
+reset; printf 'desk host\tid-1\tstopped\t%s\n' "$repo" > "$T/sessions"
+AGENTS_TTY=1 run start host > /dev/null
+check 'session names: wake and attach; a session under the rendered name is the agent'"'"'s' "list|;wake|desk host;list|;attach|desk host;" "$(envs)"
+reset; printf 'desk host (2)\tid-1\trunning\t%s\n' "$repo" > "$T/sessions"
+out="$(AGENTS_TTY=0 run start host)"
+contains 'session names: the rendered name with a collision number counts' "$out" 'host: running (id-1)'
+reset; printf 'host\tid-1\trunning\t%s\n' "$repo" > "$T/sessions"
+run stop host > /dev/null
+check 'session names: stop' "stop|desk host;" "$(envs)"
+reset
+run logs host > /dev/null
+check 'session names: logs' "logs|desk host;" "$(envs)"
+reset
+run list > /dev/null
+check 'session names: list is empty of a name, and is not given the parent value' "list|;" "$(envs)"
+reset
+run check > /dev/null
+check 'session names: supports is empty' "supports|;" "$(envs)"
+reset; export FAKE_LIST_ERR='cannot read'
+AGENTS_TTY=0 run start host > /dev/null
+check 'session names: hint carries the agent name, list stays empty' "list|;hint|desk host;" "$(envs)"
+reset; printf 'desk host\tid-1\trunning\t%s\ndesk host\tid-2\trunning\t%s\n' "$repo" "$repo" > "$T/sessions"
+run reset host --yes > /dev/null
+check 'session names: by-id verbs and record: the session-stop is empty, record carries the name' "list|;session-busy|;session-stop|;record|desk host;" "$(envs)"
+unset AGENT_SESSION_NAME
+
+# an agent started with the option unset and nothing else keeps the handle on every call
+rm -rf "$T/share"; unset DCF_HOST_MACHINE
+reset; export AGENT_SESSION_NAME='parent'
+AGENTS_TTY=1 run start reviewer > /dev/null
+check 'session names: the handle is handed when the template is the default' "new|reviewer review;" "$(envs)"
+unset AGENT_SESSION_NAME
+write_list <<'YAML'
+agents:
+  - name: reviewer
+    cli: fake
+    kind: on-demand
+YAML
+reset; export AGENT_SESSION_NAME='parent'
+AGENTS_TTY=1 run start reviewer > /dev/null
+check 'session names: handle, never the parent value, with the default template' "new|reviewer;" "$(envs)"
+unset AGENT_SESSION_NAME
+cp "$T/list.before-reset" "$repo/.devcontainer/agents.yml" 2>/dev/null || true
 
 # ------------------------------------------------- the Feature Taskfile ----
 if command -v task >/dev/null 2>&1; then
