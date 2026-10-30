@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Docker-free tests of the claude-code Feature's agent-adapter-claude (the agents Feature's
 # adapter contract for Claude Code): `list` from `claude agents --json --all`, newest first,
-# with the state (a pid is running; failed; everything else stopped) and the resolved folder;
+# with the state (a pid is running, finished or not; failed; everything else stopped) and the resolved folder;
 # a session is the agent's by name AND folder (another folder, or a name that only starts
 # with the agent's, never counts; "host (2)" does); every action takes the session's id,
 # never the name; a stopped session is woken with --bg --resume <full session id>, never -c;
@@ -429,19 +429,71 @@ rm -f "$records"; table \
 out="$(ad attach host "$repo")"
 check 'by name: a live session wins over newer ended ones' "$T|attach|l1;" "$(calls)"
 out="$(ad list)"
-contains 'a blocked session (waiting on a decision) is running' "$(table "b1|sess-b1|host|$repo|background|0|blocked|100"; ad list)" "host	sess-b1	running"
+contains 'a blocked session with a process (waiting on a decision) is running' "$(table "b1|sess-b1|host|$repo|background|31|blocked|100"; ad list)" "host	sess-b1	running"
 
-# a session whose state is done but whose process is alive (a pid): resuming it starts a copy, so
-# wake stops that one session by id first, waits until it has no pid, then wakes it bare
+# a session whose state is done but whose process is alive (a pid) waits for a prompt: it is up
+# (listed running, 1.9.2; 1.8.7 listed it stopped and a wake stopped it first, so every `agents up`
+# stopped and woke a finished resident). Resuming it would start a copy, so nothing resumes it.
 rm -rf "$CLAUDE_CONFIG_DIR/jobs"; rm -f "$records"
 table "a8|sess-a8|host|$repo|background|777|done|1500" "z1|sess-z1|other|$repo|background|778|-|1600" "z2|sess-z2|host|$repo/rooms/review|background|779|-|1700"
 saved_opts a8 --name host
+check 'done with a live pid: listed running (what agents joins instead of waking)' "host	sess-a8	running	$repo" "$(ad list | grep sess-a8)"
+out="$(ad session-busy sess-a8)"; rc=$?
+check 'done with a live pid: session-busy says idle (exit 1)' "1:sess-a8: not mid-turn" "$rc:$out"
+: > "$FAKE_CALLS"
 out="$(ad wake host "$repo")"; rc=$?
-check 'wake: a done session with a live pid is stopped by its id, then woken bare (exit 0)' "0:$T|stop|a8;$repo|--bg|--resume|sess-a8;" "$rc:$(calls)"
-check 'wake: a done session with a live pid: no copy was started' 0 "$(grep -c '^c' "$FAKE_TABLE")"
-lacks 'wake: never stops another session' "$(cat "$FAKE_CALLS")" '|stop|z1'
-lacks 'wake: never stops a session of another folder' "$(cat "$FAKE_CALLS")" '|stop|z2'
-check 'wake: the other sessions keep their pids' '778 779' "$(awk -F'\t' '$1 ~ /^z/ { printf "%s%s", s, $6; s = " " }' "$FAKE_TABLE")"
+check 'wake of it: nothing to wake (exit 1), no stop, no resume, no copy' "1:" "$rc:$(calls)"
+contains 'wake of it: says it is running' "$out" 'is running'
+: > "$FAKE_CALLS"
+out="$(ad attach host "$repo")"; rc=$?
+check 'attach: claude attach <id> of that very session, no resume' "$T|attach|a8;" "$(calls)"
+: > "$FAKE_CALLS"
+out="$(ad stop host "$repo")"; rc=$?
+check 'stop: a done session with a live pid is stopped by its id, no other' "0:$T|stop|a8;" "$rc:$(calls)"
+check 'after stop it is listed stopped, no pid' "host	sess-a8	stopped	$repo" "$(ad list | grep sess-a8)"
+check 'no copy was started anywhere' 0 "$(grep -c '^c' "$FAKE_TABLE")"
+check 'the other sessions keep their pids' '778 779' "$(awk -F'\t' '$1 ~ /^z/ { printf "%s%s", s, $6; s = " " }' "$FAKE_TABLE")"
+table "a8|sess-a8|host|$repo|background|777|done|1500"
+out="$(ad session-stop sess-a8)"; rc=$?
+check 'session-stop of a done session with a live pid: stopped by its id' "0:$T|stop|a8;" "$rc:$(calls)"
+# after that stop the same session wakes bare into the same id (it has no process now)
+saved_opts a8 --name host
+: > "$FAKE_CALLS"
+out="$(ad wake host "$repo")"; rc=$?
+check 'wake after the stop: bare, the same id' "0:$repo|--bg|--resume|sess-a8;" "$rc:$(calls)"
+check 'wake after the stop: no copy' 0 "$(grep -c '^c' "$FAKE_TABLE")"
+
+# the opposite slip: blocked with no process cannot be running; it is stopped, and a wake
+# resumes it bare into the same id
+rm -rf "$CLAUDE_CONFIG_DIR/jobs"; rm -f "$records"
+table "b1|sess-b1|host|$repo|background|0|blocked|100"
+saved_opts b1 --name host
+check 'blocked without a pid: listed stopped (wakeable)' "host	sess-b1	stopped	$repo" "$(ad list)"
+out="$(ad wake host "$repo")"; rc=$?
+check 'blocked without a pid: woken bare into the same id' "0:$repo|--bg|--resume|sess-b1;" "$rc:$(calls)"
+check 'blocked without a pid: stdout is its own id, no copy' "sess-b1:0" "$(printf '%s' "$out" | tail -n 1):$(grep -c '^c' "$FAKE_TABLE")"
+table "b2|sess-b2|host|$repo|background|555|blocked|100"
+check 'blocked with a pid: still running' "host	sess-b2	running	$repo" "$(ad list)"
+
+# the agents Feature on top of this adapter: `agents up` finds the finished resident with its live
+# process running and joins it: no stop, no resume, no start, no copy (agents.sh is the repo's own)
+agents_sh="${AGENTS_SH:-$root/src/agents/agents.sh}"
+if [ -f "$agents_sh" ]; then
+  cp "$agents_sh" "$bin/agents"; chmod +x "$bin/agents"
+  mkdir -p "$repo/.devcontainer"
+  printf 'agents:\n  - name: host\n    cli: claude\n    kind: resident\n' > "$repo/.devcontainer/agents.yml"
+  rm -rf "$CLAUDE_CONFIG_DIR/jobs"; rm -f "$records"
+  table "a8|sess-a8|host|$repo|background|777|done|1500"
+  saved_opts a8 --name host
+  aup() { (cd "$repo" && PATH="$bin:$PATH" AGENTS_STATE_DIR="$T/agents-state" AGENTS_SHARE_DIR="$T/agents-share" AGENTS_SETTLE_INTERVAL=0 AGENTS_SETTLE_TIMEOUT=0 AGENTS_START_ID=up-1 agents "$@" 2>&1); }
+  out="$(aup up --no-wait)"; rc=$?
+  check 'agents up: a finished resident with a live process is joined (exit 0)' 0 "$rc"
+  contains 'agents up: says it is running' "$out" 'host: running (sess-a8)'
+  check 'agents up: no stop, no resume, no start' "" "$(calls)"
+  check 'agents up: no copy' 0 "$(grep -c '^c' "$FAKE_TABLE")"
+  out="$(aup stop host)"; rc=$?
+  check 'agents stop: ends it by its id' "0:$repo|stop|a8;" "$rc:$(calls)"
+fi
 
 # Claude Code saves the options in the order given (2.1.308, checked for 1.9.1; 1.8.7 took it for
 # a fixed order): any order of the same options is a bare wake

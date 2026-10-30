@@ -27,6 +27,23 @@ Claude Code (https://code.claude.com/docs) as a member of this collection's ecos
 
 - `anthropic.claude-code`
 
+## Changes in 1.9.2
+
+- **A finished resident with a live process is running, not stopped.** Reported against 1.9.1: every `agents up`
+  stopped and re-woke a resident that had finished its turn. Claude Code keeps such a session (`state: done`) as a
+  process, waiting for a prompt, until it is stopped; 1.8.7 listed it `stopped` so that a wake would stop it first,
+  and the agents Feature, seeing `stopped`, woke it every time. The CLI adapter now lists any session with a pid
+  `running` (its activity `idle`, so `session-busy` says it is not mid-turn), so `agents up` joins it: no stop, no
+  resume, no start. `stop` (and `session-stop`) end it by its id like any running session. `wake` of it is refused
+  (nothing to wake; `attach` goes to the live process), so no `--bg --resume` is ever run on a live process (that
+  starts a copy, 1.8.7). The stop-then-wake path of 1.8.7 (`stop_done`) is removed: a session reaching `wake` has no
+  process.
+- **A `blocked` session with no process is stopped.** It was listed `running` although nothing ran, so nothing woke
+  it. It is now `stopped`, and a wake resumes it bare under its own id (1.9.1). `blocked` with a pid is still running.
+- **Corrections to earlier notes** (the history below is kept, each marked): saved options keep the order they were
+  given (1.8.7's "fixed order" was wrong; corrected in 1.9.1), and the `"state"` in Claude Code's `state.json` is not
+  authoritative (1.8.3's check on it was wrong; 1.9.1 stopped consulting it).
+
 ## Changes in 1.9.1
 
 - **Residents wake into their own session after a container restart.** Reported by a consumer: after each of two
@@ -116,13 +133,15 @@ Claude Code (https://code.claude.com/docs) as a member of this collection's ecos
 
 ## Changes in 1.8.7
 
-- **A wake of a finished session whose process is still alive stops it first.** Claude Code leaves a session
+- **A wake of a finished session whose process is still alive stops it first.** (Superseded in 1.9.2: such a session
+  is now listed running and joined, never woken; the stop-then-wake path is gone.) Claude Code leaves a session
   whose state is `done` running as a process (a pid in `claude agents`) until it is stopped, and `claude --bg
   --resume <id>` of it starts a copy under a new id with empty saved options ("already running"). The adapter now
   lists such a session as `stopped` (its pid kept), and `wake` (and `attach`) run `claude stop <short id>` for that
   one session, wait (`AGENT_ADAPTER_WAIT`, default 10 s) until it has no pid, then resume it. No other session is
   ever stopped.
-- **The bare-wake check compares the options in Claude Code's order.** Claude Code saves a session's options in a
+- **The bare-wake check compares the options in Claude Code's order.** (Corrected in 1.9.1: the order is the one
+  given, not a fixed one; both sides are now put in one order before they are compared.) Claude Code saves a session's options in a
   fixed order (`--name`, `--settings <path>`, `--agent <name>`, `--model <m>`, only those present), not the order
   of the args in `agents.yml`; the adapter compared them as given, so a different order looked like a change and
   woke the session with flags, which starts a copy. Both sides now use Claude Code's order (a repeated flag keeps
@@ -147,7 +166,8 @@ Claude Code (https://code.claude.com/docs) as a member of this collection's ecos
   conversation); different, or not readable, it is woken with `--name <name>` and the args, so it never runs without
   its `--agent`, `--settings` or name (a copy, said on stderr, recorded as the agent's). The same when the
   session's own state in Claude Code's job file still says running although the list shows it ended (after a
-  rebuild), where a bare wake would start a copy without any options. `attach` of an ended session
+  rebuild), where a bare wake would start a copy without any options. (Corrected in 1.9.1: that file's state is not
+  authoritative; a bare wake of such a session continues it, so the adapter no longer consults it.) `attach` of an ended session
   wakes it that way first, then attaches. Reported after a rebuild, where three residents came back without their
   agent definition and register identity, listed by id rather than name.
 
@@ -189,7 +209,7 @@ else should. The contract (verbs, exit codes) is in the `agents` Feature's notes
 | `attach` | `claude attach <id>` of its newest running session; an interactive one is refused with the pid and tty of the terminal that holds it. With none running, `claude attach <id>` of its newest ended one when its saved options are the agent's (Claude Code restarts it with them), else it is woken as `wake` does and then attached (1.8.3) |
 | `resume` | `cd <folder> && claude --resume <session id> <args>` of its newest session; refused while that session runs (a second process on one transcript). When the list cannot be read: `claude --resume <args>`, Claude Code's own picker (1.8.0) |
 | `new` | `cd <folder> && claude --name <name> <args>` |
-| `list` | `claude agents --json --all`: name, session id, state (a pid is running; failed; anything else stopped), folder, newest first |
+| `list` | `claude agents --json --all`: name, session id, state (a pid is running, a finished `done` session with a live process included (1.9.2); `blocked` without a pid is stopped; failed; anything else stopped), folder, newest first |
 | `hint` | how to find and resume the agent by hand (`claude agents`; `cd <folder> && claude --resume`, pick it), for when the list cannot be read (1.8.0) |
 | `stop` | `claude stop <id>` of its newest running session; `--extras` stops every other running one instead. Never `claude rm`. |
 | `logs` | `claude logs <id>` |
@@ -204,10 +224,10 @@ A stopped session is woken by its full id with `--bg --resume`; `--bg -c` and `-
 session was started with (`respawnFlags` in `$CLAUDE_CONFIG_DIR/jobs/<id>/state.json`) and puts them back on a bare
 wake; a flag given with `--bg --resume` starts a copy under a new id instead (`the flags you passed started a copy
 as <id>`). So the adapter wakes bare only when the saved options are exactly `--name <name>` and the agent's args,
-and its own `"state"` in that file is an ended one (`stopped`, `done`, `failed`), and otherwise passes them,
-accepting a copy rather than an agent without its options. The state matters after a rebuild: the volume keeps the
-last state (`running`) of a session whose process is gone, the list shows it ended, and a bare wake would make Claude
-Code take it for a live session and start a copy with no options at all (no name, so listed by id). `attach` of an
+and (as 1.8.3 had it) its own `"state"` in that file is an ended one, and otherwise passes them,
+accepting a copy rather than an agent without its options. **Corrected in 1.9.1:** the state in that file is not
+authoritative (after a restart it still says `working` for a session that was idle, and a bare wake continues it), so
+it is no longer consulted; only the saved options are compared, and they keep the order they were given. `attach` of an
 ended session follows the same rule before it runs `claude attach <id>`. That file is Claude Code's
 own, not a documented interface: when it cannot be read the adapter passes the options. The name is set with `--name` at start and
 survives `/clear`, so nothing has to be written back. The JSON is read with `sed` (no jq or python

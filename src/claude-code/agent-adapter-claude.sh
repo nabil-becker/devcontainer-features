@@ -103,8 +103,11 @@ read_agents() {
 # sessions: one line per session, newest first:
 #   name sessionId state cwd shortid kind pid startedAt activity   (tab-separated)
 # activity: busy (mid-turn: status busy, or a background state of working), idle (status idle
-# or waiting, a state of blocked, or not running), unknown (running, and neither says).
-# state: running (a pid, or a background state that says so), failed, stopped.
+# or waiting, a state of blocked or done with a live process, or not running), unknown (running,
+# and neither says).
+# state: running (a pid, whatever its state: a session that finished its turn (done) keeps its
+# process until it is stopped and waits for a prompt, so it is up, 1.9.2; or a background state
+# that says so, but not blocked without a pid), failed, stopped.
 # The first read after a Claude Code update may be slow (its daemon restarts), so a read that
 # timed out or printed nothing is tried once more after AGENT_ADAPTER_CLAUDE_PAUSE seconds
 # (default 3) with three times the time-out (AGENT_ADAPTER_CLAUDE_TIMEOUT, default 30); a quick
@@ -131,14 +134,13 @@ sessions() {
     st="$bst"; [ -n "$st" ] || st="$pst"
     case "${pst,,}:${bst,,}" in
       busy:* | *:working) act=busy ;;
-      idle:* | waiting:* | *:blocked) act=idle ;;
+      idle:* | waiting:* | *:blocked | *:done) act=idle ;;
       *) act=unknown ;;
     esac
-    if [ "${pid:-0}" -gt 0 ] && [ "${bst,,}" = "done" ]; then st=stopped  # finished, process alive: wake stops it first
-    elif [ "${pid:-0}" -gt 0 ]; then st=running
+    if [ "${pid:-0}" -gt 0 ]; then st=running  # a live process: up, even when its turn is done (idle)
     else
       case "${st,,}" in
-        running | idle | busy | working | waiting | blocked | starting) st=running ;;
+        running | idle | busy | working | waiting | starting) st=running ;;
         fail* | error* | crash*) st=failed ;;
         *) st=stopped ;;
       esac
@@ -313,8 +315,8 @@ col() { printf '%s\n' "$1" | head -n 1 | cut -f"$2"; }
 
 # wait_running <ids before> [<session id>]: after a --bg start or wake, wait (AGENT_ADAPTER_WAIT
 # seconds, default 10) until the session runs: the given session id with a live process (listed
-# running, or with a pid whatever its state: a finished session woken bare comes back idle with
-# its state still done, 1.9.1), else a running session with a name the agent's session may have
+# running: a finished session woken bare comes back idle with a pid and its state still done,
+# which is listed running, 1.9.2), else a running session with a name the agent's session may have
 # (cand_names) in its folder that was not listed before. Record it as the agent's and print its
 # session id.
 wait_running() {
@@ -322,7 +324,7 @@ wait_running() {
   while :; do
     if all="$(sessions)"; then
       got=''
-      [ -n "$want" ] && got="$(printf '%s\n' "$all" | awk -F'\t' -v s="$want" '$2 == s && ($3 == "running" || $7 + 0 > 0)' | head -n 1)"
+      [ -n "$want" ] && got="$(printf '%s\n' "$all" | awk -F'\t' -v s="$want" '$2 == s && $3 == "running"' | head -n 1)"
       [ -n "$got" ] || got="$(printf '%s\n' "$all" | awk -F'\t' -v n="$(cand_names | tr '\n' "$US")" -v f="$FOLDER" -v b="$before" '
         BEGIN { split(b, x, " "); for (k in x) old[x[k]] = 1; m = split(n, nm, "\037") }
         $3 == "running" && $4 == f && !($2 in old) { for (k = 1; k <= m; k++) if (nm[k] != "" && ($1 == nm[k] || index($1, nm[k] " (") == 1)) { print; exit } }')"
@@ -451,26 +453,9 @@ session_gone() {
   return 1
 }
 
-# stop_done <session line>: a session whose state is done may still have a live process (a pid in
-# the list); resuming that starts a copy with empty saved options ("already running"; 2.1.308). So
-# when the line carries a pid, `claude stop <short id>` that one session (never another), then wait
-# (AGENT_ADAPTER_WAIT seconds, default 10) until the list shows it without a pid. Fails when it
-# does not stop.
-stop_done() {
-  local pid short sid left="${AGENT_ADAPTER_WAIT:-10}" all
-  pid="$(col "$1" 7)" short="$(col "$1" 5)" sid="$(col "$1" 2)"
-  [ "${pid:-0}" -gt 0 ] 2>/dev/null || return 0
-  note "$NAME: session $sid is finished but its process (pid $pid) is alive; stopping it before the wake."
-  claude stop "$short" </dev/null >/dev/null || { note "$NAME: 'claude stop $short' failed."; return 1; }
-  while :; do
-    all="$(sessions 2>/dev/null)" && [ -z "$(printf '%s\n' "$all" | awk -F'\t' -v s="$sid" '$2 == s && $7 > 0')" ] && return 0
-    [ "$left" -le 0 ] && { note "$NAME: session $sid still has a process after 'claude stop'; not waking it (that would start a copy)."; return 1; }
-    sleep 1; left=$((left - 1))
-  done
-}
-
-# wake_session <session line> <args...>: wake that ended session in the background, bare when
-# bare_ok, else with --name <session name> <args> (said on stderr); wait until it runs, record it and
+# wake_session <session line> <args...>: wake that ended session (stopped or failed, so without a
+# process: one with a process is listed running and never reaches here, so a resume never starts
+# a copy of it, 1.9.2) in the background, bare when bare_ok, else with --name <session name> <args> (said on stderr); wait until it runs, record it and
 # print its session id (the copy's, when Claude Code started one). When the resume fails because
 # the session is gone (session_gone), start the agent fresh as start-bg does and say so; any
 # other failure fails.
@@ -478,7 +463,6 @@ wake_session() {
   local s="$1" sid short before WHY='' out rc=0 got; shift
   sid="$(col "$s" 2)" short="$(col "$s" 5)"
   before="$(printf '%s\n' "$ALL" | cut -f2 | tr '\n' ' ')"
-  stop_done "$s" || exit 1
   if bare_ok "$short" "$@"; then
     STARTED_AS="$BARE_NAME"  # the name it keeps (and the record then holds)
     out="$(cd "$FOLDER" && claude --bg --resume "$sid" </dev/null 2>&1)" || rc=$?
@@ -663,7 +647,10 @@ case "$verb" in
   wake)
     got="$(mine)"
     s="$(printf '%s\n' "$got" | awk -F'\t' '$3 == "stopped" || $3 == "failed"' | head -n 1)"
-    [ -n "$s" ] || die 1 "$NAME: no stopped session to wake in $FOLDER."
+    if [ -z "$s" ]; then
+      [ -z "$(mine running)" ] || die 1 "$NAME: its session in $FOLDER is running (a finished one with a live process too); nothing to wake. task agents -- $NAME attaches to it."
+      die 1 "$NAME: no stopped session to wake in $FOLDER."
+    fi
     wake_session "$s" "$@" ;;
   attach)
     run="$(mine running)"
@@ -706,8 +693,8 @@ case "$verb" in
     fi
     cd "$FOLDER" && exec claude --name "$SNAME" "$@" ;;
   stop)
-    # running sessions, and finished ones whose process is still alive (listed stopped, with a pid)
-    run="$(mine | awk -F'\t' '$3 == "running" || ($3 == "stopped" && $7 + 0 > 0)')"
+    # running sessions, which include a finished one whose process is still alive (1.9.2)
+    run="$(mine running)"
     [ -n "$run" ] || { echo "$NAME: not running"; exit 0; }
     if [ -n "$extras" ]; then targets="$(printf '%s\n' "$run" | tail -n +2)"
     else targets="$(printf '%s\n' "$run" | head -n 1)"; extras_note "$run"; fi
