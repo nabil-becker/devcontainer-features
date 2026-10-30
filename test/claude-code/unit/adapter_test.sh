@@ -46,6 +46,14 @@ cp "$adapter_sh" "$bin/agent-adapter-claude"; chmod +x "$bin/agent-adapter-claud
 # process when FAKE_FORK_OLD_PID is set.
 cat > "$bin/claude" <<'FAKE'
 #!/usr/bin/env bash
+# proc <pid>: the process as the adapter sees it ($AGENT_ADAPTER_CLAUDE_PROC): Claude Code's,
+# gone (FAKE_DEAD_PIDS, left by a container restart) or another program's (FAKE_REUSED_PIDS)
+proc() {
+  [ -n "${AGENT_ADAPTER_CLAUDE_PROC:-}" ] && [ "${1:-0}" != 0 ] || return 0
+  case " ${FAKE_DEAD_PIDS:-} " in *" $1 "*) rm -rf "${AGENT_ADAPTER_CLAUDE_PROC:?}/$1"; return 0 ;; esac
+  mkdir -p "$AGENT_ADAPTER_CLAUDE_PROC/$1"
+  case " ${FAKE_REUSED_PIDS:-} " in *" $1 "*) printf 'sleep\0infinity\0' ;; *) printf 'claude\0--bg\0' ;; esac > "$AGENT_ADAPTER_CLAUDE_PROC/$1/cmdline"
+}
 if [ "$1" = agents ]; then
   echo "$*" >> "$FAKE_READS"
   [ -n "${FAKE_NO_ALL:-}" ] && [ "${3:-}" = --all ] && { echo "error: unknown option '--all'" >&2; exit 1; }
@@ -57,7 +65,7 @@ if [ "$1" = agents ]; then
     printf '[\n'; first=1
     while IFS=$'\t' read -r id sid name cwd kind pid state started; do
       [ -n "$sid" ] || continue
-      [ -z "$first" ] && printf ',\n'; first=''
+      [ -z "$first" ] && printf ',\n'; first=''; proc "$pid"
       printf '  {\n    "id": "%s",\n    "cwd": "%s",\n    "kind": "%s",\n    "startedAt": %s,\n    "sessionId": "%s",\n    "name": "%s"' "$id" "$cwd" "$kind" "$started" "$sid" "$name"
       [ "$pid" != 0 ] && printf ',\n    "pid": %s' "$pid"
       printf '\n  }'
@@ -67,7 +75,7 @@ if [ "$1" = agents ]; then
   printf '['; first=1
   while IFS=$'\t' read -r id sid name cwd kind pid state started; do
     [ -n "$sid" ] || continue
-    [ -z "$first" ] && printf ',\n'; first=''
+    [ -z "$first" ] && printf ',\n'; first=''; proc "$pid"
     printf '{"id":"%s","cwd":"%s","kind":"%s","startedAt":%s,"sessionId":"%s","name":"%s"' "$id" "$cwd" "$kind" "$started" "$sid" "$name"
     [ "$pid" != 0 ] && printf ',"pid":%s' "$pid"
     # busy, idle and waiting are what Claude Code reports as "status" (a live process);
@@ -103,6 +111,17 @@ elif [ "$1" = --bg ] && [ "$2" = --resume ] && [ -n "${FAKE_RESUME_GONE:-}" ]; t
   printf '{\n  "state": "failed",\n  "detail": "source session %s not found",\n  "respawnFlags": []\n}\n' "$3" > "$d/state.json"
 elif [ "$1" = --bg ] && [ "$2" = --resume ] && [ -n "${FAKE_RESUME_FAIL:-}" ]; then
   echo "error: could not reach the daemon" >&2; exit 1
+elif [ "$1" = --bg ] && [ "$2" = --resume ] && [ -n "${FAKE_RESUME_SHELLFORK:-}" ]; then
+  # host-restart-copy (2.1.314, as reported): a forked respawn under a new id, its saved options
+  # --model only, named FAKE_FORK_NAME (default "fork", none of the agent's), its job naming the old
+  # id only in its arguments (FAKE_FORK_NOREF: nowhere); the old one left blocked, no process;
+  # nothing said
+  short="$(printf 'e%07d' "$n")" nsid="sess-e$n-0000-0000-0000-000000000000"
+  printf '%s\t%s\t%s\t%s\tbackground\t%s\tworking\t%s\n' "$short" "$nsid" "${FAKE_FORK_NAME:-fork}" "$(pwd -P)" "$((100 + n))" "$((2000 + n))" >> "$FAKE_TABLE"
+  mkdir -p "$CLAUDE_CONFIG_DIR/jobs/$short"
+  ref="\"--fork-session\", \"--resume\", \"$3\""; [ -n "${FAKE_FORK_NOREF:-}" ] && ref='"--fork-session"'
+  printf '{\n  "state": "working",\n  "respawnFlags": ["--model", "claude-opus-5-5"],\n  "sessionId": "%s",\n  "resumeSessionId": "%s",\n  "argv": ["--session-id", "%s", %s]\n}\n' "$nsid" "$nsid" "$nsid" "$ref" > "$CLAUDE_CONFIG_DIR/jobs/$short/state.json"
+  awk -F'\t' -v OFS='\t' -v s="$3" '$2 == s { $6 = 0; $7 = "blocked" } { print }' "$FAKE_TABLE" > "$FAKE_TABLE.n" && mv "$FAKE_TABLE.n" "$FAKE_TABLE"
 elif [ "$1" = --bg ] && [ "$2" = --resume ] && [ -n "${FAKE_RESUME_CRASH:-}${FAKE_RESUME_FORK:-}" ]; then
   nm="$(awk -F'\t' -v s="$3" '$2 == s { print $3 }' "$FAKE_TABLE")"
   old="$(awk -F'\t' -v s="$3" '$2 == s { print $1 }' "$FAKE_TABLE")"
@@ -119,7 +138,7 @@ elif [ "$1" = --bg ] && [ "$2" = --resume ] && [ -n "${FAKE_RESUME_CRASH:-}${FAK
     echo "note: woke session $old with its saved options (--name)." >&2
   fi
   echo "backgrounded · $short · woken (idle — send a prompt to start)"
-elif [ "$1" = --bg ] && [ "$2" = --resume ] && awk -F'\t' -v s="$3" '$2 == s && $6 != 0 { f = 1 } END { exit !f }' "$FAKE_TABLE"; then
+elif [ "$1" = --bg ] && [ "$2" = --resume ] && awk -F'\t' -v s="$3" -v dead=" ${FAKE_DEAD_PIDS:-} " '$2 == s && $6 != 0 && !index(dead, " " $6 " ") { f = 1 } END { exit !f }' "$FAKE_TABLE"; then
   # the session still has a live process (state done, not stopped): Claude Code starts a copy
   # with empty saved options and says "already running"
   printf 'c%07d\tsess-c%s-0000-0000-0000-000000000000\t%s\t%s\tbackground\t%s\trunning\t%s\n' "$n" "$n" "copy" "$(pwd -P)" "$((100 + n))" "$((2000 + n))" >> "$FAKE_TABLE"
@@ -148,6 +167,8 @@ repo="$T/repo"; mkdir -p "$repo/rooms/review"
 export FAKE_TABLE="$T/table" FAKE_CALLS="$T/calls" FAKE_READS="$T/reads" AGENT_ADAPTER_WAIT=0 AGENT_ADAPTER_CLAUDE_PAUSE=0 AGENT_ADAPTER_SETTLE=0
 # the adapter's records go to a scratch config folder, never the real one
 export CLAUDE_CONFIG_DIR="$T/config"
+# the processes the adapter looks at (1.9.6): the fake's, never this machine's
+export AGENT_ADAPTER_CLAUDE_PROC="$T/proc"
 unset AGENT_ADAPTER_CLAUDE_STATE AGENT_SESSION_NAME  # the session a test runs in may set it
 # the agents Feature installed here (a devhost) has its own session-name template: never read it
 export AGENTS_SHARE_DIR="$T/agents-share"
@@ -214,21 +235,21 @@ table "a1|sess-a1|host|$repo|background|0|done|1000"
 rm -rf "$CLAUDE_CONFIG_DIR/jobs"; mkdir -p "$CLAUDE_CONFIG_DIR/jobs/a1"
 printf '{\n  "state": "done",\n  "respawnFlags": [\n    "--name",\n    "host"\n  ]\n}\n' > "$CLAUDE_CONFIG_DIR/jobs/a1/state.json"
 out="$(ad attach host "$repo")"
-check 'attach a stopped session whose saved options are the agent'"'"'s: claude attach <id> (restarts it with them)' "$T|attach|a1;" "$(calls)"
+check 'attach a stopped session: woken bare first, as wake does, then claude attach <id> (1.9.6)' "$repo|--bg|--resume|sess-a1;$T|attach|a1;" "$(calls)"
 table "a1|sess-a1|host|$repo|background|0|done|1000"
 out="$(ad attach host "$repo" -- --agent host --settings '{"env":{"AGENTIC_REGISTER_AS":"host"}}')"; rc=$?
-check 'attach a stopped session without the agent'"'"'s args saved: attached bare, never woken with flags (1.9.3, exit 0)' \
-  "0:$T|attach|a1;" "$rc:$(calls)"
+check 'attach a stopped session without the agent'"'"'s args saved: woken bare, never with flags (1.9.3, exit 0)' \
+  "0:$repo|--bg|--resume|sess-a1;$T|attach|a1;" "$rc:$(calls)"
 contains 'attach, args not saved: says which are missing' "$out" 'lack or differ in: --settings {"env":{"AGENTIC_REGISTER_AS":"host"}}; --agent host'
 check 'attach, args not saved: no copy' 0 "$(grep -c '^c' "$FAKE_TABLE")"
 rm -f "$records"
 table "a1|sess-a1|host|$repo|background|0|done|1000"
 SAVED_STATE=working saved_opts a1 --name host --agent host
 out="$(ad attach host "$repo" -- --agent host)"; rc=$?
-check 'attach an ended session whose state.json still says working (a restart): attached by its id, bare (1.9.1)' \
-  "0:$T|attach|a1;" "$rc:$(calls)"
+check 'attach an ended session whose state.json still says working (a restart): woken bare by its id, then attached (1.9.1)' \
+  "0:$repo|--bg|--resume|sess-a1;$T|attach|a1;" "$rc:$(calls)"
 check 'attach, state.json says working: no copy' 0 "$(grep -c '^c' "$FAKE_TABLE")"
-rm -rf "$CLAUDE_CONFIG_DIR/jobs"
+rm -rf "$CLAUDE_CONFIG_DIR/jobs"; rm -f "$records"
 
 table "a5|sess-a5|reviewer|$repo|interactive|204|busy|2500"
 out="$(ad attach reviewer "$repo")"; rc=$?
@@ -485,6 +506,71 @@ contains 'agents up, a wake under a new id: the lease is carried by the new id' 
 out="$(cd "$repo" && AGENTS_STATE_DIR="$T/agents-state6" PATH="$bin:$PATH" agents list 2>&1)"
 lacks 'agents list, a wake under a new id: no extra session reported' "$out" '+1'
 clean
+
+# host-restart-copy (1.9.6). Reported on 2.1.314 after one container restart: the host, whose old
+# session was blocked, came back as a forked copy (`--fork-session --resume <old id>`, saved options
+# --model only) that nothing recorded and no superseded record named.
+trace_log="$CLAUDE_CONFIG_DIR/agent-adapter-claude/trace.log"
+hargs=(--agent host --settings '{"env":{"AGENTIC_REGISTER_AS":"host"}}')
+host_saved() { saved_opts h1 --name host "${hargs[@]}" --model claude-opus-5-5; }
+# (a) a pid listed for a session left by the restart: not running, so it is woken, never attached as it is
+clean; rm -f "$trace_log"
+table "h1|sess-h1|host|$repo|background|4242|blocked|1500"; host_saved
+check 'a listed pid that is gone (a container restart): stopped, not running' "host	sess-h1	stopped	$repo" "$(FAKE_DEAD_PIDS=4242 ad list)"
+check 'a listed pid that another program now has: stopped, not running' "host	sess-h1	stopped	$repo" "$(FAKE_REUSED_PIDS=4242 ad list)"
+check 'a listed pid that is Claude Code'"'"'s: running, as before' "host	sess-h1	running	$repo" "$(ad list)"
+out="$(FAKE_DEAD_PIDS=4242 wk host "$repo" -- "${hargs[@]}")"; rc=$?
+check 'a gone pid: woken bare by its id, the same session (exit 0)' "0:sess-h1:$repo|--bg|--resume|sess-h1;" "$rc:$out:$(calls)"
+check 'a gone pid: no copy' 0 "$(grep -c '^c' "$FAKE_TABLE")"
+clean; rm -f "$trace_log"
+table "h1|sess-h1|host|$repo|background|4242|blocked|1500"; host_saved
+out="$(cd "$repo" && FAKE_DEAD_PIDS=4242 AGENTS_STATE_DIR="$T/agents-state7" PATH="$bin:$PATH" agents up --no-wait 2>&1)"; rc=$?
+check 'agents up, a gone pid: the host is woken, not taken as running (exit 0)' "0:$repo|--bg|--resume|sess-h1;" "$rc:$(calls)"
+lacks 'agents up, a gone pid: never "running (sess-h1)" before the wake' "$out" 'host: running (sess-h1)'
+# (b) attach of an ended (blocked) session: woken as wake does, then the session that runs is attached
+clean; rm -f "$trace_log"
+table "h1|sess-h1|host|$repo|background|0|blocked|1500"; host_saved
+out="$(ad attach host "$repo" -- "${hargs[@]}")"; rc=$?
+check 'attach of a blocked, ended session: woken bare, then attached by its id (exit 0)' "0:$repo|--bg|--resume|sess-h1;$T|attach|h1;" "$rc:$(calls)"
+check 'attach of a blocked, ended session: recorded' "h1	sess-h1" "$(grep '^host	' "$records" | cut -f3,4)"
+contains 'attach: the trace names the verb and the session' "$(cat "$trace_log")" "attach	host	$repo	-	sess-h1	attached"
+clean; rm -f "$trace_log"
+table "h1|sess-h1|host|$repo|background|0|blocked|1500"; host_saved
+out="$(FAKE_RESUME_FORK=1 ad attach host "$repo" -- "${hargs[@]}")"; rc=$?
+fid="$(awk -F'\t' '$1 ~ /^f/ { print $2 }' "$FAKE_TABLE")" fshort="$(awk -F'\t' '$1 ~ /^f/ { print $1 }' "$FAKE_TABLE")"
+check 'attach, the wake comes back under a new id: that one attached' "0:$repo|--bg|--resume|sess-h1;$T|attach|$fshort;" "$rc:$(calls)"
+check 'attach, the wake comes back under a new id: recorded, the old one superseded' "$fid	sess-h1" "$(grep '^host	' "$records" | cut -f4,7)"
+contains 'attach, the wake comes back under a new id: traced as continuing' "$(cat "$trace_log")" "attach	host	$repo	sess-h1	$fid	continues"
+# (c) a wake answered by a forked respawn under a new id, without a name of the agent's, its job
+# naming the old id only in its arguments, its saved options --model only
+clean; rm -f "$trace_log"
+table "h1|sess-h1|host|$repo|background|0|blocked|1500"; host_saved
+out="$(FAKE_RESUME_SHELLFORK=1 wk host "$repo" -- "${hargs[@]}")"; rc=$?
+eid="$(awk -F'\t' '$1 ~ /^e/ { print $2 }' "$FAKE_TABLE")" eshort="$(awk -F'\t' '$1 ~ /^e/ { print $1 }' "$FAKE_TABLE")"
+check 'a forked respawn: woken bare only (exit 0)' "0:$repo|--bg|--resume|sess-h1;" "$rc:$(calls)"
+check 'a forked respawn: stdout is the new id' "$eid" "$out"
+check 'a forked respawn: the new id recorded, the old one superseded' "$eshort	$eid	sess-h1" "$(grep '^host	' "$records" | cut -f3,4,7)"
+contains 'a forked respawn: says it continues under a new id' "$(cat "$T/err")" "continues its conversation under a new id, $eid (was sess-h1)"
+contains 'a forked respawn: says which of the agent'"'"'s options it lacks' "$(cat "$T/err")" 'lack or differ in: --name host; --settings {"env":{"AGENTIC_REGISTER_AS":"host"}}; --agent host'
+contains 'a forked respawn: traced (verb, old id, new id, continues, options)' "$(cat "$trace_log")" "wake	host	$repo	sess-h1	$eid	continues; options lack: --name host"
+contains 'a forked respawn: list shows the old one superseded' "$(ad list)" "host (superseded)	sess-h1	stopped	$repo"
+# the same, its job not naming the old id, but by the agent's name: the new id, the old one superseded
+clean; rm -f "$trace_log"
+table "h1|sess-h1|host|$repo|background|0|blocked|1500"; host_saved
+out="$(FAKE_RESUME_SHELLFORK=1 FAKE_FORK_NOREF=1 FAKE_FORK_NAME=host wk host "$repo" -- "${hargs[@]}")"; rc=$?
+eid="$(awk -F'\t' '$1 ~ /^e/ { print $2 }' "$FAKE_TABLE")"
+check 'a new id by the agent'"'"'s name, not known to continue it: stdout is the new id (exit 0)' "0:$eid" "$rc:$out"
+check 'a new id by the agent'"'"'s name: recorded, the old one superseded' "$eid	sess-h1" "$(grep '^host	' "$records" | cut -f4,7)"
+contains 'a new id by the agent'"'"'s name: says so' "$(cat "$T/err")" "runs it as a new session, $eid (was sess-h1"
+contains 'a new id by the agent'"'"'s name: traced as new-id' "$(cat "$trace_log")" "wake	host	$repo	sess-h1	$eid	new-id"
+# a plain wake under its own id is traced as the same
+clean; rm -f "$trace_log"
+table "h1|sess-h1|host|$repo|background|0|blocked|1500"; host_saved
+out="$(wk host "$repo" -- "${hargs[@]}")"
+contains 'a wake under its own id: traced as the same' "$(cat "$trace_log")" "wake	host	$repo	sess-h1	sess-h1	same"
+check 'the trace is the user'"'"'s only (600)' 600 "$(stat -c %a "$trace_log")"
+lacks 'the trace is never on the terminal' "$(cat "$T/err")" 'trace'
+clean; rm -f "$trace_log"
 
 table "a1|sess-a1|reviewer|$repo/rooms/review|interactive|0|done|1000"
 out="$(ad resume reviewer "$repo/rooms/review" -- --model sonnet)"; rc=$?

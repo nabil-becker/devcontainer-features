@@ -27,6 +27,42 @@ Claude Code (https://code.claude.com/docs) as a member of this collection's ecos
 
 - `anthropic.claude-code`
 
+## Changes in 1.9.6
+
+- **The host returns as itself after a restart** (`host-restart-copy`). Reported by a consumer on claude-code 1.9.4
+  with Claude Code 2.1.314, after one container restart: three residents woke under new ids with the old ones
+  superseded, but the host came back as a copy, a job started as `--fork-session --resume <old id>` whose saved
+  options held only `--model` (its `--name`, `--agent` and `--settings` gone), spawned by Claude Code as `(shell)`
+  rather than claimed like the others, and nothing recorded it or marked the old session superseded. The host's old
+  session was the only one left `blocked`. Which path ran could not be read from that stack; the CLI adapter now
+  closes every path that gives that result:
+  - **A listed pid is checked.** `list` read any session with a pid as running. A pid listed for a session the
+    restart ended (gone, or taken by another program) made it running, so `agents up` never woke it and
+    `agents start`/`task devcontainer:agent` attached to it, which let Claude Code restart it on its own. A pid
+    counts now only when `$AGENT_ADAPTER_CLAUDE_PROC` (default `/proc`) has it and its command line, when
+    readable, names claude; otherwise the session is `stopped` (or `failed`), whatever state it was left in.
+  - **`attach` of an ended session wakes it first.** It ran `claude attach <id>` of the ended session, which lets
+    Claude Code restart it however it does (a copy under a new id that nothing records). It now wakes it as `wake`
+    does (bare, confirmed, a new id recorded with the old one superseded, a gone session started fresh) and attaches
+    to the session that then runs.
+  - **A fork is recognised by its job.** A new session continues the old one also when its job's `state.json` names
+    the old id anywhere (a forked respawn's `--fork-session --resume <old id>`), not only as `resumeSessionId`; it
+    is recorded whatever its name. A new running session by the agent's name that is not known to continue it (the
+    1.9.1 fallback) is recorded too, now with the woken session superseded, and one line says so.
+  - **What a new id lacks is said.** When the session that came back under a new id lacks the agent's options, one
+    line names them (`lack or differ in: --name host; --settings ...; --agent host`); it runs without them until
+    the agent's next fresh start (`task agents -- <name> --new`, a new conversation). A wake is still always bare.
+  - **A quiet trace.** `$CLAUDE_CONFIG_DIR/agent-adapter-claude/trace.log` (beside `agents.tsv`, in the Feature's
+    volume, mode 600, the last 500 to 1000 lines) gets one tab-separated line each time an agent is started, woken
+    or attached: time (UTC), the verb `agents` called (`start-bg`, `wake`, `attach`), agent, folder, old id, new id,
+    and the outcome: `same`, `continues` (a new id continuing it, the old one superseded), `new-id` (a new id not
+    known to continue it, the old one superseded), `fresh: <why>`, `started`, `said-woken`, `unconfirmed` (not
+    recorded) or `attached`, with `; options lack: ...` when the session lacks the agent's options. Nothing is
+    printed. After the next restart, `grep host "$CLAUDE_CONFIG_DIR/agent-adapter-claude/trace.log"` says which verb
+    brought the host back and as what.
+  - Not changed: `agents` (2.1.1) itself; a session with a live Claude Code process is still running, `blocked`
+    too.
+
 ## Changes in 1.9.5
 
 - **`agents start <name> --resume` reaches the agent's own conversation.** `claude agents --json --all` lists an
@@ -281,10 +317,10 @@ else should. The contract (verbs, exit codes) is in the `agents` Feature's notes
 | --- | --- |
 | `start-bg` | `cd <folder> && claude --bg --name <name> <args>`; waits until the session is listed and prints its id |
 | `wake` | the agent's newest stopped or failed session, by its full id: `cd <folder> && claude --bg --resume <session id>` (its conversation, under the same id on Claude Code 2.1.308, which says `woke session ... with its saved options (--name, ...)`; 2.1.314 may answer under a new id, which is recorded when it continues the conversation, 1.9.4), always bare (1.9.3); a line says when its saved options lack or differ from `--name <name> <args>`; extra saved options are no difference. If the session is gone (`source session <id> not found`, 1.8.6), has no transcript, or the wake crashes with "not found" within `AGENT_ADAPTER_SETTLE` seconds (1.9.4), the agent is started fresh as `start-bg` does, and stderr says so |
-| `attach` | `claude attach <id>` of its newest running session; an interactive one is refused with the pid and tty of the terminal that holds it. With none running, `claude attach <id>` of its newest ended one (Claude Code restarts it with its saved options; the same line as `wake` says when they lack or differ from the agent's, 1.9.3) |
+| `attach` | `claude attach <id>` of its newest running session; an interactive one is refused with the pid and tty of the terminal that holds it. With none running, its newest ended one is woken first as `wake` does (bare, a new id recorded, the old one superseded) and the session that then runs is attached (1.9.6; it was `claude attach <id>` of the ended one, which let Claude Code restart it as an unrecorded copy) |
 | `resume` | `cd <folder> && claude --resume <session id> <args>` of its newest own conversation (1.9.5): its recorded session, its listed interactive sessions and the ended ones found only by their transcript in the folder (an interactive session leaves the list when it ends), newest by transcript; never a background session that is not its recorded one. Refused while one of them runs (a second process on one transcript). When the list cannot be read: `claude --resume <args>`, Claude Code's own picker (1.8.0) |
 | `new` | `cd <folder> && claude --name <name> <args>` |
-| `list` | `claude agents --json --all`: name, session id, state (a pid is running, a finished `done` session with a live process included (1.9.2); `blocked` without a pid is stopped; failed; anything else stopped), folder, newest first |
+| `list` | `claude agents --json --all`: name, session id, state (a pid is running when that process is Claude Code's and runs here (1.9.6: a pid left by a container restart is not), a finished `done` session with a live process included (1.9.2); `blocked` without a live pid is stopped; failed; anything else stopped), folder, newest first |
 | `hint` | how to find and resume the agent by hand (`claude agents`; `cd <folder> && claude --resume`, pick it), for when the list cannot be read (1.8.0) |
 | `stop` | `claude stop <id>` of its newest running session; `--extras` stops every other running one instead. Never `claude rm`. |
 | `logs` | `claude logs <id>` |
