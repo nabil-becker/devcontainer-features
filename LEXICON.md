@@ -107,6 +107,11 @@ The domain words of the project itself are not here; they live with the project'
 - **Carrier**: what an agent currently runs on, a runtime fact and not a list key: `session:<id>`
   for a background session, `process:<pid>` for a foreground one, `none` before a start. The lease
   is held by the agent; the carrier is never assumed to be the agent (ADR-0036).
+- **Session name**: the label a CLI shows for an agent's session, for example in a remote session
+  list, apart from the handle. The agents Feature renders it once per start from the `sessionName`
+  template (variables `{handle}`, `{repo}`, `{machine}`) and hands it to the CLI adapter in
+  `AGENT_SESSION_NAME`; a stateful agent's stays the same at every start. Decided 2026-10-30
+  (ADR-0041).
 - **Agent integration**: an executable `agent-integration-<id>` on PATH, supplied by a framework and
   never by the agents Feature, that acts on an agent's lifecycle through the verbs `env`,
   `before-start`, `after-start`, `lease-taken`, `lease-released`, `stop` and `check`, taking
