@@ -369,7 +369,10 @@ bare_ok() {
   if ! saved="$(saved_flags "$short")"; then
     WHY="the options Claude Code saved for its session $short cannot be read ($(jobs_dir)/$short/state.json)"; return 1
   fi
-  if [ "$saved" != "$(want_flags "$@")" ]; then
+  # --remote-control is left out of both sides: whether Claude Code saves it, and where, is not
+  # known (no real session was checked), and turning the remoteControl option on must not make
+  # every wake a copy (a wake that adds flags is a copy)
+  if [ "$(printf '%s\n' "$saved" | grep -vxF -- --remote-control)" != "$(want_flags "$@" | grep -vxF -- --remote-control)" ]; then
     WHY="its session $short keeps other options than the agent's (--name and its args from the list)"; return 1
   fi
   st="$(saved_state "$short")" || st=''
@@ -510,6 +513,27 @@ while [ $# -gt 0 ]; do
 done
 given="$FOLDER"
 FOLDER="$(cd "$FOLDER" 2>/dev/null && pwd -P)" || die 1 "folder '$given' does not exist"
+# Remote Control (the remoteControl option, 1.8.8): on, every session the adapter starts or wakes
+# gets --remote-control unless the agent's args have it. --no-remote-control in the args is this
+# adapter's own opt-out for one agent (Claude Code has no off flag); it is always removed.
+remote_control_on() {
+  local v="${AGENT_ADAPTER_CLAUDE_REMOTE_CONTROL:-}"
+  [ -n "$v" ] || { v="$(cat "${AGENT_ADAPTER_CLAUDE_REMOTE_CONTROL_FILE:-/usr/local/share/claude-code/remote-control}" 2>/dev/null)" || v=''; }
+  case "${v,,}" in 1 | true | yes | on) return 0 ;; *) return 1 ;; esac
+}
+rc_args=() rc_out=0 rc_has=0
+for a in "$@"; do
+  case "$a" in
+    --no-remote-control) rc_out=1 ;;
+    --remote-control | --remote-control=*) rc_has=1; rc_args+=("$a") ;;
+    *) rc_args+=("$a") ;;
+  esac
+done
+if [ "$rc_out" -eq 0 ] && [ "$rc_has" -eq 0 ]; then
+  case "$verb" in start-bg | wake | attach | new) remote_control_on && rc_args+=(--remote-control) ;; esac
+fi
+set -- "${rc_args[@]}"
+
 case "$verb" in
   start-bg | new) ;;
   record)

@@ -1,3 +1,19 @@
+## Changes in 1.8.8
+
+- **`remoteControl` option: Remote Control on for every agent.** `"remoteControl": true` makes the CLI adapter
+  (`agent-adapter-claude`) add `--remote-control` to every session it starts (`start-bg`, `new`) and to a wake that
+  starts it again, so `agents.yml` need not repeat `args: [--remote-control]` per agent. Default `false`: nothing
+  changes. The option is baked into `/usr/local/share/claude-code/remote-control`;
+  `AGENT_ADAPTER_CLAUDE_REMOTE_CONTROL=0` or `1` overrides it for one run
+  (`AGENT_ADAPTER_CLAUDE_REMOTE_CONTROL_FILE` moves the file, for tests).
+- **Per agent.** An agent whose args already have `--remote-control` is not given a second one. Claude Code has no
+  off flag, so `--no-remote-control` in an agent's `args` is the CLI adapter's own opt-out: the adapter removes it
+  and adds nothing (it is never passed to `claude`).
+- **Wake.** Claude Code's saved options are documented only as `--name`, `--settings`, `--agent`, `--model`; whether
+  it saves `--remote-control` was not checked in a real session. The bare-wake comparison therefore ignores
+  `--remote-control` on both sides, so turning the option on does not make every wake a copy. If Claude Code does
+  not save it, a bare wake brings the session back without Remote Control: to be checked on the workstation.
+
 ## Changes in 1.8.5
 
 - **The downloads retry every error.** The channel file, the manifest and the binary go through
