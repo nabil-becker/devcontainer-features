@@ -49,8 +49,12 @@
     "./features/gh": {},
     "./features/claude-code": {},
     // The agent list is .devcontainer/agents.yml: `task agents -- host` inside,
-    // `task devcontainer:agent -- host` from the workstation.
-    "./features/agents": {},
+    // `task devcontainer:agent -- host` from the workstation. Sessions show the
+    // machine and the handle ("desk host"), so the host sessions of several
+    // machines can be told apart.
+    "./features/agents": {
+      "sessionName": "{machine} {handle}"
+    },
     "./features/devhost": {},
     // The Operator's own personal OneDrive, mounted live at /mnt/cloud-folder
     // (`task cloud-folder:login` once, with the personal Microsoft account).

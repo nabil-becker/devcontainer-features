@@ -284,6 +284,17 @@ check "unknown cli: exit 1" 1 "$RC"
 contains "unknown cli: names agent-adapter-nosuch" "$OUT" "agent-adapter-nosuch"
 lacks "unknown cli: does not suggest the claude Feature" "$OUT" "claude-code"
 
+# --- a session name template: the variable AGENT_SESSION_NAME is no verb and no capability; an
+# adapter that ignores it (fakea and fakeb never read it) is called exactly as before (NFR-12)
+cp "$repo/.devcontainer/agents.yml" "$T/list.plain"
+printf 'agents:\n  - name: b-od\n    cli: fakeb\n    kind: on-demand\n    session-name: "{handle} named"\n  - name: a-res\n    cli: fakea\n    kind: resident\n    session-name: "{handle} named"\n' > "$repo/.devcontainer/agents.yml"
+reset; run 1 start b-od
+check "session name: an adapter that ignores it is called as before (fakeb new)" "new|b-od $D --" "$(calls "$CALLS_B")"
+reset; run 1 check
+lacks "session name: supports lists no session-name capability for fakea" "$OUT" "session-name"
+contains "session name: check shows the name per agent" "$OUT" 'session name "b-od named"'
+cp "$T/list.plain" "$repo/.devcontainer/agents.yml"
+
 # Static: every non-comment line of src/agents naming claude must be one of the documented
 # places in the code (agents.sh, install.sh; descriptions in the JSON and Taskfile are prose) (the Feature hint for the claude cli, the Claude Code session guard in reset).
 hits="$(grep -rniE 'claude' "$src_dir/agents.sh" "$src_dir/install.sh" 2>/dev/null |
