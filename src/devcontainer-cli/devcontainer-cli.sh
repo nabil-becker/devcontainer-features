@@ -26,6 +26,8 @@
 #       `host` is not one either: it prints the resolved host type, the engine
 #       command, the DCF_HOST_* values and the host mounts `up` would add (and
 #       those it would skip), and starts nothing (devcontainer:host).
+#       `cloud-folder-login` is not one either: the cloud-folder Feature's sign-in from the
+#       workstation (relay, --paste, --workstation-rclone; see "cloud-folder login" below).
 #       A failed `exec` says which of three things failed: the command (its
 #       exit code is passed on), no running container (1), the engine (2).
 #
@@ -819,6 +821,266 @@ mode_ssh_key_import() {
   run_cli exec "$workspace" '' ssh-agent-setup key-load || exit $?
 }
 
+# ---------------------------------------------------- cloud-folder login ----
+# task cloud-folder:login from the workstation (devcontainer:cloud-folder-login): the cloud-folder
+# Feature's sign-in, which runs `rclone authorize "onedrive"` in the container, reached from the
+# workstation's browser. Microsoft sends the browser after the sign-in to the fixed
+# http://localhost:53682/ (rclone's app registration allows only that address), which on the
+# workstation does not reach the container. Three routes (the PowerShell twin is
+# Invoke-CloudFolderLogin):
+#   relay (default)  a listener on the workstation's 127.0.0.1:53682, for the sign-in only, relays
+#                    each request into the container through `<engine> exec -i` and bash's
+#                    /dev/tcp to rclone's listener there (no port mapping, no socat, nothing in
+#                    devcontainer.json); the in-container login (`login --relay`) prints rclone's
+#                    link, which the default browser opens; the listener closes when the login
+#                    ends, fails or times out (CLOUD_FOLDER_LOGIN_TIMEOUT, default 600 s). The
+#                    listener is a python3 program (bash cannot listen); without python3, or with
+#                    53682 busy here, it says so and takes the paste route.
+#   paste (--paste)  the in-container login on this terminal: open the sign-in address, paste the
+#                    address the browser fails to open afterwards (or a token).
+#   --workstation-rclone  the pinned rclone (the repository's cloud-folder rcloneVersion, else the
+#                    Feature's default) fetched into the cache, verified against the release's
+#                    SHA256SUMS, runs `rclone authorize "onedrive"` here; its token goes to
+#                    `login --token` in the container on stdin (never an argument).
+# Test hooks: DCF_CLOUD_FOLDER_LOGIN_PORT (the workstation port, default 53682),
+# DCF_CLOUD_FOLDER_LOGIN_CONTAINER_PORT (rclone's port in the container, default 53682),
+# DCF_BROWSER (the command that opens the address), DCF_RCLONE_DOWNLOADS (default
+# https://downloads.rclone.org).
+# The cloud-folder Feature's rcloneVersion default; test/bootstrap/cloud_folder_login_test.sh checks
+# that it matches src/cloud-folder/devcontainer-feature.json.
+cf_rclone_default=1.75.2
+
+# The relay: listens on 127.0.0.1:<port> (prints "busy" and exits 3 when it cannot, "listening"
+# when it does), and for each request runs `<engine> exec -i <id> bash -c` with a script that
+# opens /dev/tcp/127.0.0.1/<container port>, writes the request (made HTTP/1.0, Connection:
+# close, so rclone answers and closes) and copies the answer back. Ends after <timeout> seconds,
+# or when killed.
+cf_relay_py='
+import socket, subprocess, sys, time
+port, timeout, cport, engine, cid = int(sys.argv[1]), float(sys.argv[2]), int(sys.argv[3]), sys.argv[4], sys.argv[5]
+srv = socket.socket()
+# Reuse past TIME_WAIT (a second sign-in soon after the first); a socket listening there still refuses.
+srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+try:
+    srv.bind(("127.0.0.1", port))
+    srv.listen(8)
+except OSError:
+    print("busy", flush=True)
+    sys.exit(3)
+srv.settimeout(0.5)
+print("listening", flush=True)
+script = "exec 3<>/dev/tcp/127.0.0.1/%d || exit 1; cat <&3 & cat >&3; wait" % cport
+deadline = time.time() + timeout
+while time.time() < deadline:
+    try:
+        conn, _ = srv.accept()
+    except socket.timeout:
+        continue
+    try:
+        conn.settimeout(10)
+        data = b""
+        while b"\r\n\r\n" not in data and len(data) < 65536:
+            chunk = conn.recv(65536)
+            if not chunk:
+                break
+            data += chunk
+        head = data.split(b"\r\n\r\n", 1)[0].split(b"\r\n")
+        first = head[0].split(b" ")
+        if len(first) < 2:
+            continue
+        lines = [first[0] + b" " + first[1] + b" HTTP/1.0"]
+        lines += [h for h in head[1:] if h and h.split(b":", 1)[0].strip().lower() not in (b"connection", b"keep-alive")]
+        lines.append(b"Connection: close")
+        req = b"\r\n".join(lines) + b"\r\n\r\n"
+        try:
+            out = subprocess.run([engine, "exec", "-i", cid, "bash", "-c", script], input=req,
+                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=30).stdout
+        except Exception:
+            out = b""
+        if not out:
+            out = b"HTTP/1.0 502 Bad Gateway\r\nContent-Type: text/plain\r\n\r\nThe devcontainer did not answer (is task cloud-folder:login still running?).\n"
+        conn.sendall(out)
+    except OSError:
+        pass
+    finally:
+        conn.close()
+srv.close()
+'
+
+# open_browser <url>: the default browser, in the background; else the address is printed.
+open_browser() {
+  local url="$1" c
+  if [ -n "${DCF_BROWSER:-}" ]; then
+    # shellcheck disable=SC2086  # DCF_BROWSER is a command line, split on purpose
+    $DCF_BROWSER "$url" > /dev/null 2>&1 &
+    return 0
+  fi
+  for c in open xdg-open wslview; do
+    if [ "$c" = open ] && [ "$(host_os)" != macos ]; then continue; fi
+    if command -v "$c" >/dev/null 2>&1; then "$c" "$url" > /dev/null 2>&1 & return 0; fi
+  done
+  echo "cloud-folder-login: open this address in your browser: $url"
+}
+
+# cf_login_exec <workspace> <login args...>: the in-container login on this terminal; its exit
+# code. 127 (no cloud-folder-setup) is explained.
+cf_login_exec() {
+  local workspace="$1" rc=0; shift
+  run_cli exec "$workspace" '' cloud-folder-setup login "$@" || rc=$?
+  if [ "$rc" -eq 127 ]; then
+    echo "cloud-folder-login: the devcontainer has no cloud-folder-setup: add the cloud-folder Feature (1.3.0 or later) to its devcontainer.json and rebuild." >&2
+  fi
+  return "$rc"
+}
+
+# cf_login_relay <workspace> <container id>: the relay route (see above).
+cf_login_relay() {
+  local workspace="$1" id="$2" port="${DCF_CLOUD_FOLDER_LOGIN_PORT:-53682}" cport="${DCF_CLOUD_FOLDER_LOGIN_CONTAINER_PORT:-53682}"
+  local timeout="${CLOUD_FOLDER_LOGIN_TIMEOUT:-600}" engine dir relay first='' rc=0 i
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "cloud-folder-login: no python3 on this workstation for the sign-in relay; signing in by pasting the address instead."
+    cf_login_exec "$workspace"
+    return
+  fi
+  engine="$(engine_name)" || { engine_unreachable; return 2; }
+  dir="$(mktemp -d)"
+  python3 -I -c "$cf_relay_py" "$port" "$timeout" "$cport" "$engine" "$id" > "$dir/relay" 2>&1 &
+  relay=$!
+  for ((i = 0; i < 50; i++)); do
+    first="$(head -n 1 "$dir/relay" 2>/dev/null || true)"
+    [ -n "$first" ] && break
+    kill -0 "$relay" 2>/dev/null || break
+    sleep 0.1
+  done
+  if [ "$first" != listening ]; then
+    kill "$relay" 2>/dev/null || true; wait "$relay" 2>/dev/null || true; rm -rf "$dir"
+    echo "cloud-folder-login: port $port on this workstation is in use (another sign-in, or a local rclone?), so the browser's redirect cannot be relayed; signing in by pasting the address instead."
+    cf_login_exec "$workspace"
+    return
+  fi
+  echo "cloud-folder-login: relaying 127.0.0.1:$port on this workstation into the devcontainer for the sign-in (closed when it ends, at the latest after ${timeout}s)."
+  local line url
+  # The relay never outlives this script, whatever ends it.
+  # shellcheck disable=SC2064  # expanded now on purpose: the values are fixed
+  trap "kill $relay 2>/dev/null || true; rm -rf '$dir'" EXIT
+  # In a list with ||, so a failing login (pipefail, errexit) still reaches the clean-up below.
+  { run_cli exec "$workspace" '' env "CLOUD_FOLDER_LOGIN_TIMEOUT=$timeout" cloud-folder-setup login --relay < /dev/null | {
+    opened=no
+    while IFS= read -r line; do
+      printf '%s\n' "$line"
+      case "$line" in
+        *'sign-in URL: http://'*)
+          if [ "$opened" = no ]; then
+            url="${line##*sign-in URL: }"; url="${url%%[[:space:]]*}"
+            url="${url/:$cport\//:$port/}"
+            echo "cloud-folder-login: opening the sign-in in your browser: $url"
+            open_browser "$url"
+            opened=yes
+          fi ;;
+      esac
+    done
+  }; rc="${PIPESTATUS[0]}"; } || true
+  kill "$relay" 2>/dev/null || true; wait "$relay" 2>/dev/null || true; rm -rf "$dir"
+  echo "cloud-folder-login: the relay on 127.0.0.1:$port is closed."
+  if [ "$rc" -eq 127 ]; then
+    echo "cloud-folder-login: the devcontainer has no cloud-folder-setup: add the cloud-folder Feature (1.3.0 or later) to its devcontainer.json and rebuild." >&2
+  fi
+  return "$rc"
+}
+
+# cf_rclone_version <workspace>: the cloud-folder rcloneVersion in the repository's
+# devcontainer.json, else the Feature's default; "latest" resolves through the publisher.
+cf_rclone_version() {
+  local file v=''
+  file="$(config_file "$1")"
+  if [ -n "$file" ]; then
+    v="$(strip_jsonc < "$file" | tr '\n' ' ' | grep -oE '"rcloneVersion"[[:space:]]*:[[:space:]]*"[^"]*"' | head -n 1 | sed -E 's/.*"([^"]*)"$/\1/')" || v=''
+  fi
+  v="${v#v}"
+  if [ "$v" = latest ]; then
+    load_dcf_curl
+    v="$(dcf_curl -fsSL "${DCF_RCLONE_DOWNLOADS:-https://downloads.rclone.org}/version.txt" | sed -n 's/^rclone v\{0,1\}\([0-9][0-9.]*\).*/\1/p' | head -n 1)" || v=''
+    [ -n "$v" ] || die 'cloud-folder-login: rcloneVersion latest: the publisher did not say which version that is.'
+  fi
+  printf '%s' "${v:-$cf_rclone_default}"
+}
+
+# cf_workstation_rclone <version>: the rclone release for this workstation in the cache
+# (downloaded once, verified against the release's SHA256SUMS); prints its path.
+cf_workstation_rclone() {
+  local v="$1" os arch asset dir base tmp sum
+  case "$(host_os)" in macos) os=osx ;; *) os=linux ;; esac
+  case "$(uname -m)" in
+    x86_64 | amd64) arch=amd64 ;;
+    aarch64 | arm64) arch=arm64 ;;
+    *) die "cloud-folder-login: no rclone build for $(uname -m) here (amd64, arm64)" ;;
+  esac
+  dir="$cache_root/rclone/v$v"
+  if [ -x "$dir/rclone" ]; then printf '%s' "$dir/rclone"; return 0; fi
+  asset="rclone-v$v-$os-$arch.zip"
+  base="${DCF_RCLONE_DOWNLOADS:-https://downloads.rclone.org}/v$v"
+  command -v unzip >/dev/null 2>&1 || die 'cloud-folder-login: unzip is needed to unpack rclone; install it and retry.'
+  load_dcf_curl
+  tmp="$(mktemp -d)"
+  echo "cloud-folder-login: downloading rclone v$v ($asset, once; cached under $dir)..." >&2
+  if ! dcf_curl -fsSL -o "$tmp/$asset" "$base/$asset" || ! dcf_curl -fsSL -o "$tmp/SHA256SUMS" "$base/SHA256SUMS"; then
+    rm -rf "$tmp"; die "cloud-folder-login: could not download rclone v$v from $base"
+  fi
+  sum="$(awk -v n="$asset" '$2 == n { print $1; exit }' "$tmp/SHA256SUMS")"
+  if [ -z "$sum" ]; then rm -rf "$tmp"; die "cloud-folder-login: $asset is not in the release's SHA256SUMS"; fi
+  ( sha256_check "$tmp/$asset" "$sum" ) || { rm -rf "$tmp"; exit 1; }
+  mkdir -p "$tmp/x" "$dir"
+  unzip -q -j -o "$tmp/$asset" "rclone-v$v-$os-$arch/rclone" -d "$tmp/x" || { rm -rf "$tmp"; die "cloud-folder-login: $asset has no rclone-v$v-$os-$arch/rclone"; }
+  chmod 0755 "$tmp/x/rclone" && mv -f "$tmp/x/rclone" "$dir/rclone"
+  rm -rf "$tmp"
+  printf '%s' "$dir/rclone"
+}
+
+# cf_login_workstation <workspace>: the --workstation-rclone route.
+cf_login_workstation() {
+  local workspace="$1" v rclone tmp token rc=0
+  v="$(cf_rclone_version "$workspace")"
+  rclone="$(cf_workstation_rclone "$v")" || exit 1
+  tmp="$(umask 077; mktemp -d)"
+  echo "cloud-folder-login: signing in with rclone v$v on this workstation: rclone authorize \"onedrive\" opens your browser."
+  # Its notices (the link) on the terminal; its stdout, which holds the token, into a private file.
+  "$rclone" authorize onedrive > "$tmp/out" || rc=$?
+  token="$(awk '/^Paste the following into your remote machine --->/ { on = 1; next } /^<---End paste/ { exit } on && NF { print; exit }' "$tmp/out")"
+  if [ "$rc" -ne 0 ] || [ -z "$token" ]; then
+    rm -rf "$tmp"
+    echo "cloud-folder-login: rclone authorize did not give a token (exit $rc; its messages are above)." >&2
+    return 1
+  fi
+  (umask 077; printf '%s\n' "$token" > "$tmp/token")
+  token=''
+  echo 'cloud-folder-login: handing the token to the devcontainer (on stdin, never as an argument).'
+  cf_login_exec "$workspace" --token < "$tmp/token" || rc=$?
+  rm -rf "$tmp"
+  return "$rc"
+}
+
+# cloud-folder-login <workspace> [--paste | --workstation-rclone]: task devcontainer:cloud-folder-login.
+mode_cloud_folder_login() {
+  local workspace="$1" route=relay a ids; shift
+  for a in "$@"; do
+    case "$a" in
+      --paste) route="paste" ;;
+      --workstation-rclone) route=workstation ;;
+      *) die "cloud-folder-login: unknown argument '$a' (--paste, --workstation-rclone)" ;;
+    esac
+  done
+  ids="$(running_ids "$workspace")" || { engine_unreachable; exit 2; }
+  if [ -z "$ids" ]; then
+    echo "No running devcontainer for $workspace. Start it with: task dc:start" >&2
+    exit 1
+  fi
+  case "$route" in
+    paste) cf_login_exec "$workspace" ;;
+    workstation) cf_login_workstation "$workspace" ;;
+    *) cf_login_relay "$workspace" "$(head -n 1 <<<"$ids")" ;;
+  esac
+}
+
 mode_run() {
   local subcommand="${1:-}"; shift || true
   [ -n "$subcommand" ] || die 'run: missing subcommand'
@@ -834,6 +1096,12 @@ mode_run() {
   done
 
   [ "$subcommand" != host ] || { mode_host "$(resolve_workspace "${workspace:-.}")" "$@"; return; }
+
+  if [ "$subcommand" = cloud-folder-login ]; then
+    [ -n "$workspace" ] || die 'run: --workspace-folder is required for cloud-folder-login'
+    mode_cloud_folder_login "$(resolve_workspace "$workspace")" "$@"
+    return
+  fi
 
   if [ "$subcommand" = ssh-key-import ]; then
     [ -n "$workspace" ] || die 'run: --workspace-folder is required for ssh-key-import'

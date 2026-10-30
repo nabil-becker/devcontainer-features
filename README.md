@@ -272,6 +272,7 @@ Each Feature stores its persistent state (logins, config, transcripts) in a name
 | `devcontainer:up` / `rebuild` / `build` | `devcontainer up` (extra flags after `--`), from-scratch rebuild, image build only. `up` and `rebuild` add the host mounts of the host type (`--mount`: the home's `.git-dirs` at `/git-dirs` and the SSH agent socket, each skipped when `devcontainer.json` already mounts it; `HOST_MOUNTS=false` turns them off); `build` and `exec` add none. |
 | `devcontainer:ssh-add [-- <args>]` | Run the host's `ssh-add` once (no arguments: `-l`) to load a key into the host agent that the `ssh-agent` Feature's socket mode forwards (linux, macos, windows-wsl-docker); on Windows it says the container cannot reach that agent and points to `ssh-key-import`. Host only. |
 | `devcontainer:ssh-key-import FILE=<host path>` | Opt-in key mode: stream a private key file of the host (and its `.pub`) into the running container's `ssh-agent` key volume through `devcontainer exec` on stdin (never an argument), mode 0600, then load it; prints the fingerprint, never the key; warns (never blocks) when FILE has a default name or its public key also opens this host. Refuses when FILE is missing, no container runs, or key mode is off there. Host only. |
+| `devcontainer:cloud-folder-login [-- --paste\|--workstation-rclone]` (also `cloud-folder:login`) | Sign the `cloud-folder` Feature's remote in from the workstation: a listener on `127.0.0.1:53682`, for the sign-in only, relays the browser into the running container (`<engine> exec` and bash's `/dev/tcp`), where `rclone authorize` runs; closed when the login ends, fails or times out. A busy port falls back to pasting the address; `--workstation-rclone` runs the pinned, verified rclone here and hands its token in on stdin. `cloud-folder:login` needs the bootstrap's `cloud-folder` include (left out inside the container, where the Feature's own task runs). |
 | `devcontainer:host` | Print the host profile (`HOST_TYPE` and why, engine, `DCF_HOST_*`) and the host mounts `up` would add or skip; starts nothing. |
 | `devcontainer:exec CMD='...'` / `shell` / `pwsh` | Run a command (base64-safe), an interactive bash, or PowerShell in the container. |
 | `devcontainer:agent [AGENTS_FILE=<path>] -- <name> [--resume\|--new] [<CLI args>]` | Start an agent of the repository's agent list inside (needs the `agents` Feature and the adapter of the agent's CLI): a `resident` runs in the background and is attached, an `on-demand` agent opens a new session in this terminal. Runs directly when already inside the container. |
@@ -314,7 +315,10 @@ Where there is no host folder (a cluster), `cloud-folder` 1.1.0 syncs it with rc
 `cloud-folder-setup shutdown-check` to your `shutdown:check` so a stop waits for a running sync (see the Feature's
 NOTES). `cloud-folder` 1.2.0 with devcontainer-cli 1.15.0 adds `mount` mode (`rclone mount`, a live view): set
 `DCF_HOST_FUSE=1` in `.devcontainer/.env` on the machines that should have it, keep the three `runArgs` lines of the
-bootstrap's template, and rebuild; `auto` then takes host, else mount, else sync.
+bootstrap's template, and rebuild; `auto` then takes host, else mount, else sync. `cloud-folder` 1.3.0 with
+devcontainer-cli 1.16.0 signs in with one command wherever it runs: `task cloud-folder:login` in the container (paste
+back the address the browser shows after the sign-in) or on the workstation (the launcher relays the browser into the
+container; the root Taskfile needs the bootstrap's `cloud-folder` include, which the bootstrap prints).
 
 **One verb for every agent (`agents` 1.0.0, claude-code 1.7.0, devcontainer-cli 1.13.0):** add
 `ghcr.io/nabil-becker/devcontainer-features/agents:1` to the `features`, write `.devcontainer/agents.yml` (one entry per
