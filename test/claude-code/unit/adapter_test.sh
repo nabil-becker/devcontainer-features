@@ -30,8 +30,9 @@ cp "$adapter_sh" "$bin/agent-adapter-claude"; chmod +x "$bin/agent-adapter-claud
 # startedAt, tab-separated. `agents --json [--all]` renders it (pid and state only when set,
 # as Claude Code does; FAKE_NO_ALL=1 refuses --all). `--bg --name N` adds a running background
 # session in the current folder and keeps its flags as its saved options ($CLAUDE_CONFIG_DIR/
-# jobs/<id>/state.json, respawnFlags); `--bg --resume <sessionId>` gives that session a pid again,
-# and with any flag after it starts a copy under a new id (c...) instead, as Claude Code does;
+# jobs/<id>/state.json, respawnFlags); `--bg --resume <sessionId>` gives that session a pid again
+# (idle: a done one stays done, any other is working), whatever its state.json says, and with
+# any flag after it starts a copy under a new id (c...) instead, as Claude Code does;
 # `stop <id>` clears it. Every call but `agents` is recorded in $FAKE_CALLS as "folder|arg|arg";
 # every `agents` call adds a line to $FAKE_READS. The ways a read goes wrong: FAKE_AGENTS_FAIL
 # (exit 1, nothing printed), FAKE_WRAPPED (what a wrapper putting `--add-dir <dir>` first
@@ -104,7 +105,15 @@ elif [ "$1" = --bg ] && [ "$2" = --resume ] && awk -F'\t' -v s="$3" '$2 == s && 
   saved "$(printf 'c%07d' "$n")"
   echo "already running" >&2
 elif [ "$1" = --bg ] && [ "$2" = --resume ]; then
-  awk -F'\t' -v OFS='\t' -v s="$3" '$2 == s { $6 = 999; $7 = "running" } { print }' "$FAKE_TABLE" > "$FAKE_TABLE.n" && mv "$FAKE_TABLE.n" "$FAKE_TABLE"
+  # a bare wake continues the same session whatever its state.json says (after a container
+  # restart it still says working): it comes back with a pid, idle; a finished one keeps the
+  # state done (Claude Code 2.1.308, checked for 1.9.1). FAKE_RESUME_UNLISTED: the list does not
+  # show it yet
+  short="$(awk -F'\t' -v s="$3" '$2 == s { print $1 }' "$FAKE_TABLE")"
+  echo "note: woke session $short with its saved options (--name)." >&2
+  echo "backgrounded · $short · woken (idle — send a prompt to start)"
+  [ -n "${FAKE_RESUME_UNLISTED:-}" ] || {
+    awk -F'\t' -v OFS='\t' -v s="$3" '$2 == s { $6 = 999; if ($7 != "done") $7 = "working" } { print }' "$FAKE_TABLE" > "$FAKE_TABLE.n" && mv "$FAKE_TABLE.n" "$FAKE_TABLE"; }
 elif [ "$1" = rm ]; then
   echo "removed $2"; echo "kept the transcript"
 elif [ "$1" = stop ]; then
@@ -190,12 +199,11 @@ check 'attach a stopped session without the agent'"'"'s args saved: woken with -
   "0:$repo|--bg|--resume|sess-a1|--name|host|--agent|host|--settings|{\"env\":{\"AGENTIC_REGISTER_AS\":\"host\"}};$T|attach|$copy;" "$rc:$(calls)"
 rm -f "$records"
 table "a1|sess-a1|host|$repo|background|0|done|1000"
-SAVED_STATE=running saved_opts a1 --name host --agent host
+SAVED_STATE=working saved_opts a1 --name host --agent host
 out="$(ad attach host "$repo" -- --agent host)"; rc=$?
-copy="$(awk -F'\t' '$1 ~ /^c/ { print $1 }' "$FAKE_TABLE")"
-check 'attach a stopped session whose state.json says running: woken with --name and the args, then attached (exit 0)' \
-  "0:$repo|--bg|--resume|sess-a1|--name|host|--agent|host;$T|attach|$copy;" "$rc:$(calls)"
-check 'attach, state.json says running: the copy is recorded as the agent'"'"'s' "host	$repo	$copy" "$(grep '^host	' "$records" | cut -f1-3)"
+check 'attach an ended session whose state.json still says working (a restart): attached by its id, bare (1.9.1)' \
+  "0:$T|attach|a1;" "$rc:$(calls)"
+check 'attach, state.json says working: no copy' 0 "$(grep -c '^c' "$FAKE_TABLE")"
 rm -rf "$CLAUDE_CONFIG_DIR/jobs"
 
 table "a5|sess-a5|reviewer|$repo|interactive|204|busy|2500"
@@ -249,20 +257,37 @@ table "a8|sess-a8|host|$repo|background|0|failed|1500"
 saved_opts a8 --name host --settings '{"a":["x]","y\"z"],"b":"\\"}'
 out="$(ad wake host "$repo" -- --settings '{"a":["x]","y\"z"],"b":"\\"}')"
 check 'wake: saved options with quotes, brackets and backslashes are read as Claude Code wrote them' "$repo|--bg|--resume|sess-a8;" "$(calls)"
-# after a rebuild: the list shows the session ended, but Claude Code's own state.json still says
-# running (a bare wake would start a copy without any options): woken with the options
+# after a container restart (1.9.1, the report: 8 of 9 residents came back as new sessions):
+# Claude Code lists a session that was idle as failed, but its own state.json still says working
+# until its background service starts again; a bare wake continues it (checked on 2.1.308), so
+# state.json is not consulted. A never-prompted room agent (failed, idle) and a finished main
+# agent (done) are both woken into their own session ids; --remote-control saved where given
 rm -f "$records"
-table "a8|sess-a8|host|$repo|background|0|failed|1500"
-SAVED_STATE=running saved_opts a8 --name host --settings "$reg" --agent host
-out="$(ad wake host "$repo" -- --agent host --settings "$reg")"; rc=$?
-check 'wake: saved options match but its state.json says running: woken with --name and the args (exit 0)' "0:$repo|--bg|--resume|sess-a8|--name|host|--agent|host|--settings|$reg;" "$rc:$(calls)"
-contains 'wake: its state.json says running: says why' "$out" "Claude Code's own state for it says 'running'"
-copy="$(awk -F'\t' '$1 ~ /^c/ { print $1 "\t" $2 }' "$FAKE_TABLE")"
-check 'wake: its state.json says running: the copy is recorded as the agent'"'"'s' "host	$repo	$copy	host" "$(grep '^host	' "$records")"
-table "a8|sess-a8|host|$repo|background|0|failed|1500"
-SAVED_STATE=starting saved_opts a8 --name host
-out="$(ad wake host "$repo")"
-check 'wake: its state.json says starting (not ended): woken with --name' "$repo|--bg|--resume|sess-a8|--name|host;" "$(calls)"
+table "r1|sess-r1|room|$repo|background|0|failed|1500"
+SAVED_STATE=working saved_opts r1 --name room --remote-control --model opus
+out="$(cd "$T" && PATH="$bin:$PATH" agent-adapter-claude wake room "$repo" -- --remote-control --model opus 2>"$T/err")"; rc=$?
+check 'restart, idle room agent (failed, state.json working): woken bare (exit 0)' "0:$repo|--bg|--resume|sess-r1;" "$rc:$(calls)"
+check 'restart, idle room agent: stdout is its own session id' sess-r1 "$out"
+check 'restart, idle room agent: no copy' 0 "$(grep -c '^c' "$FAKE_TABLE")"
+check 'restart, idle room agent: recorded as its own session' "room	$repo	r1	sess-r1" "$(grep '^room	' "$records" | cut -f1-4)"
+lacks 'restart, idle room agent: no note about a copy' "$(cat "$T/err")" 'copy'
+table "m1|sess-m1|main|$repo|background|0|done|1500"
+SAVED_STATE='done' saved_opts m1 --name main --remote-control --model opus
+out="$(cd "$T" && PATH="$bin:$PATH" agent-adapter-claude wake main "$repo" -- --remote-control --model opus 2>"$T/err")"; rc=$?
+check 'restart, finished main agent (done): woken bare (exit 0)' "0:$repo|--bg|--resume|sess-m1;" "$rc:$(calls)"
+check 'restart, finished main agent: back idle with its state still done, stdout is its own session id' sess-m1 "$out"
+check 'restart, finished main agent: recorded as its own session' "main	$repo	m1	sess-m1" "$(grep '^main	' "$records" | cut -f1-4)"
+lacks 'restart, finished main agent: not "not recorded"' "$(cat "$T/err")" 'not recorded'
+check 'restart, finished main agent: no copy' 0 "$(grep -c '^c' "$FAKE_TABLE")"
+table "m1|sess-m1|main|$repo|background|0|done|1500"
+SAVED_STATE='done' saved_opts m1 --name main --remote-control --model opus
+out="$(cd "$T" && FAKE_RESUME_UNLISTED=1 PATH="$bin:$PATH" agent-adapter-claude wake main "$repo" -- --remote-control --model opus 2>/dev/null)"; rc=$?
+check 'wake: Claude Code says it woke the session but the list lags: its own id, no fresh start (exit 0)' "0:sess-m1:$repo|--bg|--resume|sess-m1;" "$rc:$out:$(calls)"
+table "r1|sess-r1|room|$repo|background|0|failed|1500"
+SAVED_STATE=starting saved_opts r1 --name room
+out="$(ad wake room "$repo")"
+check 'wake: its state.json says starting: bare all the same' "$repo|--bg|--resume|sess-r1;" "$(calls)"
+rm -rf "$CLAUDE_CONFIG_DIR/jobs"; rm -f "$records"
 table "a8|sess-a8|host|$repo|background|0|failed|1500"
 SAVED_STATE='done' saved_opts a8 --name host
 out="$(ad wake host "$repo")"
@@ -282,6 +307,13 @@ out="$(cd "$T" && FAKE_RESUME_GONE=a8 PATH="$bin:$PATH" agent-adapter-claude wak
 check 'wake: the session is gone: stdout is the fresh session'"'"'s id, one line' \
   "$(awk -F'\t' '$3 == "host" && $7 == "running" { print $2 }' "$FAKE_TABLE" | tail -n 1)" "$out"
 lacks 'wake: the session is gone: stdout never names the gone session' "$out" sess-a8
+# truly gone after a restart (state.json still working): the bare wake first, then fresh
+rm -f "$records"
+table "a8|sess-a8|host|$repo|background|0|failed|1500"
+SAVED_STATE=working saved_opts a8 --name host --agent host
+out="$(FAKE_RESUME_GONE=a8 ad wake host "$repo" -- --agent host)"; rc=$?
+check 'wake after a restart, the session gone: bare, then started fresh (exit 0)' "0:$repo|--bg|--resume|sess-a8;$repo|--bg|--name|host|--agent|host;" "$rc:$(calls)"
+check 'wake after a restart, the session gone: no copy' 0 "$(grep -c '^c' "$FAKE_TABLE")"
 # any other resume failure still fails
 table "a8|sess-a8|host|$repo|background|0|failed|1500"
 saved_opts a8 --name host --agent host
@@ -411,12 +443,16 @@ lacks 'wake: never stops another session' "$(cat "$FAKE_CALLS")" '|stop|z1'
 lacks 'wake: never stops a session of another folder' "$(cat "$FAKE_CALLS")" '|stop|z2'
 check 'wake: the other sessions keep their pids' '778 779' "$(awk -F'\t' '$1 ~ /^z/ { printf "%s%s", s, $6; s = " " }' "$FAKE_TABLE")"
 
-# Claude Code saves the options in a fixed order (--name, --settings, --agent, --model), not the
-# order of the list's args: that is still a bare wake
+# Claude Code saves the options in the order given (2.1.308, checked for 1.9.1; 1.8.7 took it for
+# a fixed order): any order of the same options is a bare wake
 table "a8|sess-a8|host|$repo|background|0|stopped|1500"
 saved_opts a8 --name host --settings "$reg" --agent host --model haiku
 out="$(ad wake host "$repo" -- --model haiku --agent host --settings "$reg")"
 check 'wake: args in another order than Claude Code saves them: bare' "$repo|--bg|--resume|sess-a8;" "$(calls)"
+table "a8|sess-a8|host|$repo|background|0|stopped|1500"
+saved_opts a8 --name host --model haiku --remote-control --settings "$reg"
+out="$(ad wake host "$repo" -- --model haiku --remote-control --settings "$reg")"
+check 'wake: saved as given (--model before --settings, --remote-control between): bare' "$repo|--bg|--resume|sess-a8;" "$(calls)"
 table "a8|sess-a8|host|$repo|background|0|stopped|1500"
 saved_opts a8 --name host --settings "$reg" --agent host --model haiku
 out="$(ad wake host "$repo" -- --agent host --model opus --settings "$reg")"
@@ -436,6 +472,20 @@ table "s1|sess-s1|scribe|$repo|background|0|done|100"
 saved_opts s1 --name scribe --settings '{"env":{"AGENTIC_REGISTER_AS":"scribe"}}' --agent scribe
 out="$(cd "$repo" && AGENTS_STATE_DIR="$T/agents-state3" PATH="$bin:$PATH" agents up --no-wait 2>&1)"; rc=$?
 check 'agents up of a stopped resident that keeps its args: the same session, bare' "0:$repo|--bg|--resume|sess-s1;" "$rc:$(calls)"
+# after a container restart: a room agent left failed and idle (state.json still working) and a
+# finished main agent come back as their own sessions, and the lease follows those ids
+rm -f "$records"; rm -rf "$CLAUDE_CONFIG_DIR/jobs"
+table "r1|sess-r1|room|$repo|background|0|failed|100" "m1|sess-m1|main|$repo|background|0|done|90"
+SAVED_STATE=working saved_opts r1 --name room --remote-control --model opus
+SAVED_STATE='done' saved_opts m1 --name main --remote-control --model opus
+printf 'agents:\n  - name: room\n    cli: claude\n    kind: resident\n    args: [--remote-control, --model, opus]\n  - name: main\n    cli: claude\n    kind: resident\n    args: [--remote-control, --model, opus]\n' > "$repo/.devcontainer/agents.yml"
+out="$(cd "$repo" && AGENTS_STATE_DIR="$T/agents-state4" PATH="$bin:$PATH" agents up --no-wait 2>&1)"; rc=$?
+check 'agents up after a restart: both woken bare into their own sessions (exit 0)' "0:$repo|--bg|--resume|sess-r1;$repo|--bg|--resume|sess-m1;" "$rc:$(calls)"
+lacks 'agents up after a restart: no new session' "$out" 'as a new session'
+check 'agents up after a restart: no copy' 0 "$(grep -c '^c' "$FAKE_TABLE")"
+out="$(cd "$repo" && AGENTS_STATE_DIR="$T/agents-state4" PATH="$bin:$PATH" agents leases 2>&1)"
+contains 'agents up after a restart: the room lease is carried by its own session' "$out" 'session:sess-r1'
+contains 'agents up after a restart: the main lease is carried by its own session' "$out" 'session:sess-m1'
 rm -f "$records"; rm -rf "$CLAUDE_CONFIG_DIR/jobs"
 
 # ------------------------------------------------------------ reset's verbs ----
