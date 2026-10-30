@@ -55,6 +55,10 @@ task devcontainer:up` and probes the fixed path anyway.
   socket is mounted (`none` or unknown); a mounted socket wins and the hook says so. Override
   without a rebuild with `SSH_AGENT_SETUP_KEY_MODE=true|false` in `containerEnv`, or per start
   with `SSH_AGENT_MODE=key` on the launcher.
+- `passphraseTimeout` (default `"120"`): key mode, seconds the explicit tasks wait for the passphrase of a
+  protected key at ssh-add's prompt in `task ssh-agent:setup` and the key tasks before it warns and goes on; `0` never prompts. The start hook itself never asks.
+  Override without a rebuild with `SSH_AGENT_SETUP_PASSPHRASE_TIMEOUT` in `containerEnv`
+  (a repository can map it from the launcher's environment with `${localEnv:...}`).
 
 ```json
 "features": {
@@ -251,8 +255,20 @@ orders it behind `go-task` and `common-utils`.
   Code's own forwarding in its terminals, or start through the tasks.
 - `windows-wsl-docker` driven from Windows, and Docker Desktop's socket on Windows, are not
   forwarded (unverified, see `host-profile-unverified-checks` in the repository's backlog).
-- A passphrase-protected key cannot be loaded by the start hook (no terminal); run
-  `task ssh-agent:setup` from a terminal.
+- **A passphrase-protected key (key mode) at start.** The start hook never asks for a passphrase: it
+  loads the keys that have none, skips each protected key with one warning
+  (`<key> has a passphrase and the start hook never asks for one ... Load it: run task
+  ssh-agent:setup from a terminal in the container`), starts the agent and exits 0. Why: the devcontainer
+  CLI runs every Feature's start hook together and waits for all of them, so a hook that waits at
+  ssh-add's prompt holds the whole start (a consumer's start on `windows-wslc` stopped after about 13
+  minutes, 775 s, when WSL's exec connection timed out; the remaining start hooks were skipped, so no
+  agent ran, and the failure was reported on another Feature's hook). From a terminal,
+  `task ssh-agent:setup` (and `key:load`, `key:add`, `key:new`, `key:rotate`) shows ssh-add's own prompt,
+  `Enter passphrase for <key>:`, and waits up to `passphraseTimeout` seconds (default 120;
+  `SSH_AGENT_SETUP_PASSPHRASE_TIMEOUT` in `containerEnv` overrides it, `0` never prompts). A wrong
+  passphrase is asked again (ssh-add's own three tries). When the time runs out, the passphrase is
+  skipped or there is no terminal, it prints the same single warning and goes on with exit 0. The passphrase
+  is typed at ssh-add's prompt and never read, logged or passed by this script.
 - The key volume is a named volume: a container-engine storage reset deletes it (the key is on your
   host anyway; re-import it).
 
@@ -264,6 +280,13 @@ this collection or of `devcontainers/features` forwards the agent for the CLI; t
 the launcher's mount instead of a process on the host, and is honest where a host type cannot.
 
 ## Version and upgrade
+
+`1.2.0`: the start hook no longer hangs on a passphrase-protected key in key mode: it never asks, it
+skips the key with one warning and exits 0. `task ssh-agent:setup` (and the key tasks) ask at ssh-add's
+prompt for up to the new option `passphraseTimeout` (default 120 seconds); on the timeout, with no
+terminal or with `0`, they warn once (the key is not loaded, how to load it) and go on with exit 0.
+Before, ssh-add asked on the controlling terminal with no limit, so the start waited until something
+else gave up. Nothing in the key volume changes on upgrade.
 
 `1.1.1`: `git:verify` no longer ends with `tmp: unbound variable` after `ok` and removes its
 temporary folder; `git:signing` defaults to `SCOPE=global` on a Windows host (`DCF_HOST_TYPE`

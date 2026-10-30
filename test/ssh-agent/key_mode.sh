@@ -13,6 +13,7 @@ tmp="$(mktemp -d)"
 export GIT_CONFIG_GLOBAL="$tmp/gitconfig"
 
 check "options baked: keyMode on" grep -q '^KEYMODE=true$' /usr/local/share/ssh-agent-feature/options.env
+check "options baked: passphraseTimeout default" grep -q "^PASSPHRASETIMEOUT=120$" /usr/local/share/ssh-agent-feature/options.env
 check "setup starts or keeps the agent on the fixed path" bash -c "ssh-agent-setup | grep -E 'started an agent|already answers'"
 check "an agent answers on the fixed path" bash -c "ssh-add -l >/dev/null; [ \$? -le 1 ]"
 check "the socket is a socket" test -S "$sock"
@@ -21,6 +22,9 @@ check "the key volume is writable" test -w "$keys"
 
 ssh-keygen -q -t ed25519 -N '' -C 'handmade' -f "$keys/handmade"
 check "key-load loads a 0600 key from the volume" bash -c "[ \"\$(stat -c %a $keys/handmade)\" = 600 ] && ssh-agent-setup key-load | grep -E '[0-9]+ of [0-9]+ key' && ssh-add -l | grep -F handmade"
+ssh-keygen -q -t ed25519 -N 'secret' -C protected -f "$keys/protected"
+check "the start hook skips a protected key with one warning, exits 0 and keeps the agent and the other key" bash -c "ssh-agent-setup > '$tmp/hook.out' 2>&1 </dev/null; [ \$? -eq 0 ] && grep -F 'protected has a passphrase and the start hook never asks for one' '$tmp/hook.out' && grep -F 'task ssh-agent:setup' '$tmp/hook.out' && ssh-add -l | grep -F handmade && ! ssh-add -l | grep -F protected"
+rm -f "$keys/protected" "$keys/protected.pub"
 cp "$keys/handmade" "$keys/loose"
 chmod 644 "$keys/loose"
 check "a 0644 key is refused" bash -c "ssh-agent-setup key-load 2>&1 | grep -F 'refusing loose: mode 644'"

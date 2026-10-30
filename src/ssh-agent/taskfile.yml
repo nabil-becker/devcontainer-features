@@ -17,9 +17,10 @@ tasks:
 
   setup:
     dir: '{{.USER_WORKING_DIR}}'
-    desc: 'Re-run the post-start hook: check the host agent socket, or in key mode (keyMode: true or DCF_HOST_SSH_AGENT=key) start the in-container agent and load the keys of the key volume. Idempotent, never fatal.'
+    desc: 'Re-run the post-start hook from a terminal: check the host agent socket, or in key mode (keyMode: true or DCF_HOST_SSH_AGENT=key) start the in-container agent and load the keys of the key volume, asking for the passphrase of a protected key (the start hook itself never asks and skips such a key with a warning). The prompt waits up to SSH_AGENT_SETUP_PASSPHRASE_TIMEOUT seconds (default 120), then warns and goes on. Idempotent, never fatal.'
+    interactive: true
     cmds:
-      - ssh-agent-setup
+      - ssh-agent-setup setup --ask
 
   keys:
     dir: '{{.USER_WORKING_DIR}}'
@@ -29,7 +30,8 @@ tasks:
 
   key:load:
     dir: '{{.USER_WORKING_DIR}}'
-    desc: 'Key mode only: (re)load every private key of the key volume into the in-container agent, what the post-start hook does; use it after copying keys in by hand. Refuses, with the way to turn it on, when key mode is off.'
+    desc: 'Key mode only: (re)load every private key of the key volume into the in-container agent, what the post-start hook does but asking for the passphrase of a protected key on the terminal (waits up to SSH_AGENT_SETUP_PASSPHRASE_TIMEOUT seconds, then warns and goes on); use it after copying keys in by hand. Refuses, with the way to turn it on, when key mode is off.'
+    interactive: true
     cmds:
       - ssh-agent-setup key-load
 
