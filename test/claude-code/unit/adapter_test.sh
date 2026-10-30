@@ -194,9 +194,10 @@ out="$(ad attach host "$repo")"
 check 'attach a stopped session whose saved options are the agent'"'"'s: claude attach <id> (restarts it with them)' "$T|attach|a1;" "$(calls)"
 table "a1|sess-a1|host|$repo|background|0|done|1000"
 out="$(ad attach host "$repo" -- --agent host --settings '{"env":{"AGENTIC_REGISTER_AS":"host"}}')"; rc=$?
-copy="$(awk -F'\t' '$1 ~ /^c/ { print $1 }' "$FAKE_TABLE")"
-check 'attach a stopped session without the agent'"'"'s args saved: woken with --name and the args, then attached (exit 0)' \
-  "0:$repo|--bg|--resume|sess-a1|--name|host|--agent|host|--settings|{\"env\":{\"AGENTIC_REGISTER_AS\":\"host\"}};$T|attach|$copy;" "$rc:$(calls)"
+check 'attach a stopped session without the agent'"'"'s args saved: attached bare, never woken with flags (1.9.3, exit 0)' \
+  "0:$T|attach|a1;" "$rc:$(calls)"
+contains 'attach, args not saved: says which are missing' "$out" 'lack or differ in: --settings {"env":{"AGENTIC_REGISTER_AS":"host"}}; --agent host'
+check 'attach, args not saved: no copy' 0 "$(grep -c '^c' "$FAKE_TABLE")"
 rm -f "$records"
 table "a1|sess-a1|host|$repo|background|0|done|1000"
 SAVED_STATE=working saved_opts a1 --name host --agent host
@@ -224,8 +225,8 @@ check 'start-bg: claude --bg --name <name> <args> in the folder' "$repo|--bg|--n
 check 'start-bg: prints the session id on stdout (claude'"'"'s own output goes to stderr)' 'sess-1-0000-0000-0000-000000000000' "$out"
 
 # A woken session gets the agent's options: Claude Code puts its saved options back on a bare
-# --bg --resume, and starts a copy when flags are given; so bare when they are the agent's
-# (--name <name> <args>), else with them (the copy then carries them).
+# --bg --resume, and starts a copy when flags are given (losing the conversation); so a wake is
+# always bare (1.9.3), and says when the saved options lack or differ from the agent's.
 reg='{"env":{"AGENTIC_REGISTER_AS":"host"}}'
 rm -rf "$CLAUDE_CONFIG_DIR/jobs"
 table "a1|sess-a1|host|$repo|background|0|done|1000" "a8|sess-a8|host|$repo|background|0|failed|1500" "a9|sess-a9|host|$repo/rooms/review|background|0|done|9000"
@@ -236,19 +237,42 @@ lacks 'wake: never -c' "$(calls)" '|-c'
 table "a8|sess-a8|host|$repo|background|0|failed|1500"
 saved_opts a8 --name host
 out="$(ad wake host "$repo" -- --agent host --settings "$reg")"; rc=$?
-check 'wake: saved options without the agent'"'"'s args: woken with --name and the args (exit 0)' "0:$repo|--bg|--resume|sess-a8|--name|host|--agent|host|--settings|$reg;" "$rc:$(calls)"
-contains 'wake: saved options without the args: says why, and that it is a copy' "$out" 'keeps other options than the agent'"'"'s'
-copy="$(awk -F'\t' '$1 ~ /^c/ { print $1 "\t" $2 }' "$FAKE_TABLE")"
-check 'wake: the copy Claude Code started is recorded as the agent'"'"'s' "host	$repo	$copy	host" "$(grep '^host	' "$records")"
+check 'wake: saved options without the agent'"'"'s args: still bare, same id (exit 0)' "0:$repo|--bg|--resume|sess-a8;" "$rc:$(calls)"
+contains 'wake: saved options without the args: one warning naming them' "$out" 'lack or differ in: --settings {"env":{"AGENTIC_REGISTER_AS":"host"}}; --agent host'
+contains 'wake: the warning says they apply at the next fresh start' "$out" "applies at the agent's next fresh start"
+check 'wake: saved options without the args: no copy' 0 "$(grep -c '^c' "$FAKE_TABLE")"
+check 'wake: the session itself is recorded as the agent'"'"'s' "host	$repo	a8	sess-a8	host" "$(grep '^host	' "$records")"
 rm -rf "$CLAUDE_CONFIG_DIR/jobs"
 table "a8|sess-a8|host|$repo|background|0|failed|1500"
 out="$(ad wake host "$repo" -- --agent host)"; rc=$?
-check 'wake: saved options that cannot be read: woken with --name and the args' "$repo|--bg|--resume|sess-a8|--name|host|--agent|host;" "$(calls)"
+check 'wake: saved options that cannot be read: bare all the same' "$repo|--bg|--resume|sess-a8;" "$(calls)"
 contains 'wake: saved options that cannot be read: says so' "$out" 'cannot be read'
 table "a8|sess-a8|host|$repo|background|0|failed|1500"
 saved_opts a8 --name host --agent host
 out="$(ad wake host "$repo" -- --agent host --model opus)"
-check 'wake: saved options that differ (the args changed in the list): woken with the new ones' "$repo|--bg|--resume|sess-a8|--name|host|--agent|host|--model|opus;" "$(calls)"
+check 'wake: a saved option missing (the args changed in the list): bare' "$repo|--bg|--resume|sess-a8;" "$(calls)"
+contains 'wake: a saved option missing: the warning names it' "$out" 'lack or differ in: --model opus'
+check 'wake: a saved option missing: no copy' 0 "$(grep -c '^c' "$FAKE_TABLE")"
+# 1.9.3 (the report: residents saved as --name n --remote-control --model sonnet, the model taken
+# from the room'"'"'s settings, came back as copies): extra saved options are no difference
+table "a8|sess-a8|host|$repo|background|0|failed|1500"
+saved_opts a8 --name host --remote-control --model sonnet
+out="$(ad wake host "$repo" -- --remote-control)"
+check 'wake: an extra saved --model (from settings): bare, same id' "$repo|--bg|--resume|sess-a8;" "$(calls)"
+lacks 'wake: an extra saved --model: no warning' "$out" 'differ'
+check 'wake: an extra saved --model: no copy' 0 "$(grep -c '^c' "$FAKE_TABLE")"
+table "a8|sess-a8|host|$repo|background|0|failed|1500"
+saved_opts a8 --name host --agent host --model sonnet --effort high
+out="$(ad wake host "$repo" -- --agent host)"
+check 'wake: several extra saved options: bare, no warning' "$repo|--bg|--resume|sess-a8;" "$(calls)"
+lacks 'wake: several extra saved options: no warning' "$out" 'differ'
+# a changed value: the same, with the warning
+table "a8|sess-a8|host|$repo|background|0|failed|1500"
+saved_opts a8 --name host --model sonnet
+out="$(ad wake host "$repo" -- --model opus)"
+check 'wake: a changed value: bare, same id' "$repo|--bg|--resume|sess-a8;" "$(calls)"
+contains 'wake: a changed value: the warning names it' "$out" 'lack or differ in: --model opus'
+check 'wake: a changed value: no copy' 0 "$(grep -c '^c' "$FAKE_TABLE")"
 table "a8|sess-a8|host|$repo|background|0|failed|1500"
 saved_opts a8 --name host
 out="$(ad wake host "$repo")"
@@ -508,7 +532,7 @@ check 'wake: saved as given (--model before --settings, --remote-control between
 table "a8|sess-a8|host|$repo|background|0|stopped|1500"
 saved_opts a8 --name host --settings "$reg" --agent host --model haiku
 out="$(ad wake host "$repo" -- --agent host --model opus --settings "$reg")"
-check 'wake: a differing value still wakes with the flags' "$repo|--bg|--resume|sess-a8|--name|host|--agent|host|--model|opus|--settings|$reg;" "$(calls)"
+check 'wake: a differing value still wakes bare (1.9.3)' "$repo|--bg|--resume|sess-a8;" "$(calls)"
 
 # end to end: agents up wakes a stopped resident with the args of its entry in agents.yml
 # (the report: three residents came back without --agent and the register --settings)
@@ -518,8 +542,8 @@ saved_opts s1 --name scribe
 printf 'agents:\n  - name: scribe\n    cli: claude\n    kind: resident\n    args: [--agent, scribe, --settings, %s]\n' \
   "'{\"env\":{\"AGENTIC_REGISTER_AS\":\"scribe\"}}'" > "$repo/.devcontainer/agents.yml"
 out="$(cd "$repo" && AGENTS_STATE_DIR="$T/agents-state2" PATH="$bin:$PATH" agents up --no-wait 2>&1)"; rc=$?
-check 'agents up of a stopped resident: woken with --name and the args of its entry (exit 0)' \
-  "0:$repo|--bg|--resume|sess-s1|--name|scribe|--agent|scribe|--settings|{\"env\":{\"AGENTIC_REGISTER_AS\":\"scribe\"}};" "$rc:$(calls)"
+check 'agents up of a stopped resident whose saved options lack its args: the same session, bare (1.9.3, exit 0)' \
+  "0:$repo|--bg|--resume|sess-s1;" "$rc:$(calls)"
 table "s1|sess-s1|scribe|$repo|background|0|done|100"
 saved_opts s1 --name scribe --settings '{"env":{"AGENTIC_REGISTER_AS":"scribe"}}' --agent scribe
 out="$(cd "$repo" && AGENTS_STATE_DIR="$T/agents-state3" PATH="$bin:$PATH" agents up --no-wait 2>&1)"; rc=$?
@@ -708,12 +732,19 @@ check 'names: no record: found by the rendered name, woken bare' "$repo|--bg|--r
 rm -f "$records"; table "q4|sess-q4|other name|$repo|background|0|done|100"
 out="$(adn 'desk host' wake host "$repo")"; rc=$?
 check 'names: a session under a name the agent never had is not the agent'"'"'s' "1:" "$rc:$(calls)"
-# saved options that are not the agent's: woken with the session name now (a copy, said)
+# saved options that are not the agent's: still bare, under the name it keeps (1.9.3)
 rm -f "$records"; rm -rf "$CLAUDE_CONFIG_DIR/jobs"
 table "q5|sess-q5|host|$repo|background|0|done|100"
 SAVED_STATE=stopped saved_opts q5 --name host
 out="$(adn 'desk host' wake host "$repo" -- --agent x)"
-check 'names: a wake that is not bare names the copy with the session name' "$repo|--bg|--resume|sess-q5|--name|desk host|--agent|x;" "$(calls)"
+check 'names: saved options that lack the args: bare, the session keeps its name' "$repo|--bg|--resume|sess-q5;" "$(calls)"
+check 'names: the name it keeps is recorded' "host	$repo	q5	sess-q5	host" "$(rec)"
+rm -f "$records"; rm -rf "$CLAUDE_CONFIG_DIR/jobs"
+table "q7|sess-q7|host|$repo|background|0|done|100"
+SAVED_STATE=stopped saved_opts q7 --name host
+out="$(adn 'desk host' wake host "$repo")"
+check 'names: a saved --name that is one the agent has had: bare, no warning' "$repo|--bg|--resume|sess-q7;" "$(calls)"
+lacks 'names: a saved --name the agent has had: no warning' "$out" 'differ'
 # the session is gone: the fresh start uses the session name
 rm -f "$records"; rm -rf "$CLAUDE_CONFIG_DIR/jobs"
 table "q6|sess-q6|host|$repo|background|0|failed|100"
