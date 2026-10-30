@@ -491,6 +491,17 @@ call() { # call <verb> <i> [adapter flags]: the adapter for entry i, CLI args af
   "$ADAPTER" "$verb" "${NAME[i]}" "$DIR" "$@" -- ${CLIARGS[@]+"${CLIARGS[@]}"} ${PASS[@]+"${PASS[@]}"}
 }
 
+# call_out <verb> <i>: call, stdin from /dev/null, its stdout in OUT. Through a file, not a pipe,
+# so a background process the adapter leaves holding its stdout cannot make agents wait.
+call_out() {
+  local f rc
+  OUT=''
+  f="$(mktemp 2>/dev/null)" || { call "$@" </dev/null >/dev/null; return; }
+  call "$@" </dev/null >"$f"; rc=$?
+  OUT="$(cat "$f" 2>/dev/null)"; rm -f "$f"
+  return "$rc"
+}
+
 has_tty() {
   case "${AGENTS_TTY:-}" in 1) return 0 ;; 0) return 1 ;; esac
   [ -t 0 ] && [ -t 1 ]
@@ -831,10 +842,24 @@ fg_hold() {
   trap ':' INT
 }
 
+# run_sid <i> <adapter stdout>: SID, the session that runs now after a start-bg or wake: the id
+# the adapter printed (its last line; a wake may answer with a new session, a copy or a fresh
+# start in place of one that is gone), else the running session its list shows, else empty.
+# Never the session that was asked to wake: the lease's carrier is taken from this.
+run_sid() {
+  local i="$1" id
+  id="$(printf '%s\n' "$2" | awk 'NF { l = $0 } END { print l }')"
+  case "$id" in *[[:space:]]*) id='' ;; esac
+  if [ -n "$id" ]; then SID="$id"; return 0; fi
+  reread "${CLI[i]}"
+  state_of "$i" && [ "$STATE" = running ] || SID=''
+}
+
 # make_run <i>: make the resident run in the background (no attach). Prints one line on
-# what it did. Returns 0 running, 1 failed, 3 the CLI has no background mode.
+# what it did; SID is the session that runs. Returns 0 running, 1 failed, 3 the CLI has no
+# background mode.
 make_run() {
-  local i="$1" nm="${NAME[$1]}" rc
+  local i="$1" nm="${NAME[$1]}" was rc
   state_of "$i" || { list_failed "$i"; return 1; }
   case "$STATE" in
     running)
@@ -843,11 +868,14 @@ make_run() {
       return 0 ;;
     stopped | failed)
       echo "$nm: $STATE ($SID); waking it with its conversation"
-      call wake "$i" </dev/null >/dev/null; rc=$?
+      was="$SID"
+      call_out wake "$i"; rc=$?
       if [ "$rc" -eq 3 ]; then
         echo "$nm: ${CLI[i]} cannot wake a stopped session; starting a fresh one in the background instead."
       elif [ "$rc" -eq 0 ]; then
-        mark_started "$nm"; return 0
+        mark_started "$nm"; run_sid "$i" "$OUT"
+        [ -z "$SID" ] || [ "$SID" = "$was" ] || echo "$nm: running as a new session ($SID); $was was not woken"
+        return 0
       else
         warn "$nm: waking failed."; return 1
       fi ;;
@@ -858,9 +886,9 @@ make_run() {
       fi
       echo "$nm: ${CLI[i]} cannot list its sessions, so 'make sure it runs' cannot be promised; starting it once for this container start." ;;
   esac
-  call start-bg "$i" </dev/null >/dev/null; rc=$?
+  call_out start-bg "$i"; rc=$?
   case "$rc" in
-    0) mark_started "$nm"; reread "${CLI[i]}"; state_of "$i"; echo "$nm: started in the background${SID:+ ($SID)}"; return 0 ;;
+    0) mark_started "$nm"; run_sid "$i" "$OUT"; echo "$nm: started in the background${SID:+ ($SID)}"; return 0 ;;
     3) return 3 ;;
     *) warn "$nm: starting it in the background failed."; return 1 ;;
   esac
@@ -913,7 +941,7 @@ cmd_start() {
         lease_take "$i"; rc=$?
         [ "$rc" -eq 0 ] || refuse_held "$i"
       fi
-      call start-bg "$i" </dev/null >/dev/null; rc=$?
+      call_out start-bg "$i"; rc=$?
       if [ "$rc" -eq 3 ]; then
         echo "$name: ${CLI[i]} has no background mode; opening a new session in this terminal instead."
         has_tty || die 2 "$name: a new interactive session needs a terminal."
@@ -921,7 +949,7 @@ cmd_start() {
         call new "$i"; exit $?
       fi
       [ "$rc" -eq 0 ] || die 1 "$name: starting a fresh session failed."
-      mark_started "$name"; reread "${CLI[i]}"; state_of "$i"
+      mark_started "$name"; run_sid "$i" "$OUT"
       if [ "${LEASE[i]}" = container ]; then lease_hold "$name" "session:${SID:-unknown}"; lease_keep "$name"; fi
       echo "$name: started a fresh session${SID:+ ($SID)}"
     else

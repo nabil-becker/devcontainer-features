@@ -28,7 +28,9 @@ bin="$T/bin"; mkdir -p "$bin"
 cp "$agents_sh" "$bin/agents"; chmod +x "$bin/agents"
 # The fake adapter: sessions in $FAKE_SESSIONS (name<TAB>id<TAB>state<TAB>folder, newest first),
 # every call but list in $FAKE_CALLS as "verb|name"; FAKE_SLOW seconds of sleep in start-bg and
-# new (a slow start, a session that lasts); FAKE_UNSUPPORTED verbs answer 3; FAKE_LIST_ERR fails list.
+# new (a slow start, a session that lasts); FAKE_UNSUPPORTED verbs answer 3; FAKE_LIST_ERR fails list;
+# FAKE_WAKE_NEW=1 makes wake start a fresh session id-<name>-new (the old one gone) and print its
+# id, FAKE_WAKE_NEW=quiet the same without printing it.
 cat > "$bin/agent-adapter-fake" <<'FAKE'
 #!/usr/bin/env bash
 verb="$1"; shift
@@ -46,7 +48,11 @@ case "$verb" in
     { printf '%s\tid-%s-%s\trunning\t%s\n' "$name" "$name" "$n" "$folder"; cat "$FAKE_SESSIONS" 2>/dev/null; } > "$FAKE_SESSIONS.new"
     mv "$FAKE_SESSIONS.new" "$FAKE_SESSIONS"; echo "id-$name-$n" ;;
   new | resume) sleep "${FAKE_SLOW:-0}" ;;
-  wake) sed -i "s/^\($name\t[^\t]*\t\)\(stopped\|failed\)\t/\1running\t/" "$FAKE_SESSIONS" ;;
+  wake)
+    if [ -n "${FAKE_WAKE_NEW:-}" ]; then # the session is gone: a fresh one under a new id, the old stays failed
+      { printf '%s\tid-%s-new\trunning\t%s\n' "$name" "$name" "$folder"; cat "$FAKE_SESSIONS"; } > "$FAKE_SESSIONS.new"
+      mv "$FAKE_SESSIONS.new" "$FAKE_SESSIONS"; [ "$FAKE_WAKE_NEW" = quiet ] || echo "id-$name-new"
+    else sed -i "s/^\($name\t[^\t]*\t\)\(stopped\|failed\)\t/\1running\t/" "$FAKE_SESSIONS"; fi ;;
   stop) sed -i "s/^\($name\t[^\t]*\t\)running\t/\1stopped\t/" "$FAKE_SESSIONS" ;;
 esac
 exit 0
@@ -59,11 +65,12 @@ export FAKE_SESSIONS="$T/sessions" FAKE_CALLS="$T/calls" AGENTS_STATE_DIR="$S" A
 export AGENTS_SETTLE_INTERVAL=0 AGENTS_SETTLE_TIMEOUT=0 AGENTS_LEASE_WAIT=20
 unset AGENTS_FILE AGENTS_FILE_TASK_VAR AGENTS_TTY CLAUDE_CODE_CHILD_SESSION
 write_list() { cat > "$repo/.devcontainer/agents.yml"; }
-reset() { : > "$T/sessions"; : > "$T/calls"; rm -rf "$S" "$T/out"; mkdir -p "$T/out"; unset FAKE_UNSUPPORTED FAKE_LIST_ERR FAKE_SLOW; }
+reset() { : > "$T/sessions"; : > "$T/calls"; rm -rf "$S" "$T/out"; mkdir -p "$T/out"; unset FAKE_UNSUPPORTED FAKE_LIST_ERR FAKE_SLOW FAKE_WAKE_NEW; }
 run() { (cd "$repo" && PATH="$bin:$PATH" agents "$@" 2>&1); }
 count() { grep -c "^$1|" "$T/calls"; }
 here_host="$(cat /proc/sys/kernel/hostname 2>/dev/null || uname -n)"
 pstart() { sed 's/.*) //' "/proc/$1/stat" | awk '{ print $20 }'; }
+fmt() { date -d "@$1" +%H:%M:%S 2>/dev/null || printf '%s' "$1"; }
 sh -c 'exit 0' & deadpid=$!; wait "$deadpid"
 # holder <name> [key=value...]: a lease written by hand (defaults: held, a dead pid, this container)
 holder() {
@@ -353,6 +360,34 @@ paused 2; handover 2; paused 3; go_all; wait
 check 'a holder that handed over and exited (read under the lock): joined, nothing started, not stale' "0:0:0" \
   "$(sort -u "$T/out/rc" | tr -d '\n'):$(count start-bg):$(stale_lines 1)"
 check 'a holder that handed over: its session still holds the lease' carrier=session:id-host-1 "$(grep '^carrier=' "$L/host/holder")"
+
+# ----------------------------- a failed wake started fresh: the carrier follows ----
+# after a rebuild the resident's session failed and cannot be woken; the adapter starts it fresh
+# under a new id and prints that id. The lease names the session that runs, never the failed one.
+for mode in 1 quiet; do
+  reset; holder host boot=start-0 carrier=session:id-old; printf 'host\tid-old\tfailed\t%s\n' "$repo" > "$T/sessions"
+  out="$(FAKE_WAKE_NEW=$mode run up --no-wait)"; rc=$?
+  w='fresh after a failed wake'; [ "$mode" = 1 ] || w="$w (the adapter printed no id)"
+  check "$w: woken once, nothing else started (exit 0)" "0:1:0" "$rc:$(count wake):$(count start-bg)"
+  check "$w: the carrier is the new session" carrier=session:id-host-new "$(grep '^carrier=' "$L/host/holder" 2>/dev/null)"
+  contains "$w: says it runs as a new session" "$out" 'host: running as a new session (id-host-new); id-old was not woken'
+  out="$(run list)"
+  contains "$w: list: LEASE and ID agree" "$out" \
+    "$(printf '%-16s %-10s %-10s %-8s %-9s %-24s %-38s %s' host resident stateful fake running 'held session:id-host-new' id-host-new .)"
+  out="$(run leases)"
+  contains "$w: leases: held by the new session, its starter (up) exited" "$out" \
+    "$(printf '%-16s %-10s %-24s %-9s %s' host held session:id-host-new "$(fmt "$(sed -n 's/^time=//p' "$L/host/holder")")" "pid $(sed -n 's/^pid=//p' "$L/host/holder") (exited), this container")"
+done
+# liveness: the holder's pid (agents up) is gone, its carrier runs: live, never taken over
+: > "$T/calls"
+out="$(AGENTS_TTY=0 run start host)"; rc=$?
+check 'exited starter, running carrier: joined, nothing woken or started' "0:0:0" "$rc:$(count wake):$(count start-bg)"
+contains 'exited starter, running carrier: says it runs (the new session)' "$out" 'host: running (id-host-new)'
+out="$(run release host)"; rc=$?
+check 'exited starter, running carrier: release refused (a live holder)' "2:yes" "$rc:$([ -d "$L/host" ] && echo yes || echo no)"
+contains 'release names the running session, not the failed one' "$out" 'held by session:id-host-new'
+out="$(run release host --force)"; rc=$?
+contains 'release --force names the running session' "$out" 'lease released (forced; its lease is held by session:id-host-new'
 
 # ------------------------------------------------------ --new on a resident ----
 reset; AGENTS_TTY=0 run start host >/dev/null; : > "$T/calls"

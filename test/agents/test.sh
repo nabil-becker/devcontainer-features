@@ -10,7 +10,7 @@ source dev-container-features-test-lib
 
 check "agents on PATH" command -v agents
 check "agents is root-owned" bash -c "[ \"\$(stat -c %U \"\$(command -v agents)\")\" = root ]"
-check "the Feature version is baked" grep -qx '2.0.2' /usr/local/share/agents-feature/version
+check "the Feature version is baked" grep -qx '2.0.3' /usr/local/share/agents-feature/version
 check "the state folder is there and sticky" bash -c "[ \"\$(stat -c %a /var/lib/devcontainer-features/agents)\" = 1777 ]"
 check "the lease folder is there, open to every user, not sticky" bash -c "[ \"\$(stat -c %a /var/lib/devcontainer-features/agents/leases)\" = 777 ]"
 check "taskfile registered" test -f /usr/local/share/go-task/includes.d/agents.yml

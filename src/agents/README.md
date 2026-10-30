@@ -264,7 +264,9 @@ Feature to add.
 ```
 agent-adapter-<cli> <verb> <name> <folder> [--extras] [-- args...]
   start-bg   start the agent in the background in <folder> (a fresh session); print its id
-  wake       bring the agent's stopped or failed session back in the background, same conversation
+  wake       bring the agent's stopped or failed session back in the background, same conversation;
+             print the id of the session that runs (a new one when the CLI started a copy, or a
+             fresh session because the old one is gone)
   attach     open the agent's running session in this terminal
   resume     open the agent's latest conversation in this terminal
   new        open a new conversation in this terminal
@@ -399,6 +401,19 @@ so they live here and each CLI Feature adds only its adapter.
 moves to 2 on its own.
 
 **What 2.x holds so far.** 2.0 brings the lease and the `default` agent. The rest of version 2 arrives in steps (docs/proposals/agents-v2.md, section 12): agent integrations in 2.1, the Claude CLI adapter passing `definition` (as `--agent`) in claude-code 1.9, and ephemeral runs in 2.2. Until then `definition` is stored and shown, and a start that sets it says it is not passed on yet.
+
+### Changes in 2.0.3
+
+The lease follows a fresh start after a failed wake. When a resident's session could not be
+woken and its adapter started it fresh under a new id (claude-code 1.8.6 and later, after a
+rebuild), 2.0.0 to 2.0.2 recorded the failed session it had asked to wake as the lease's carrier,
+so `agents leases` and `release` named a session that no longer ran while `list` showed the new
+one. The carrier is now the id the adapter prints after `wake` and `start-bg` (the contract above
+now says `wake` prints it), else the running session its `list` shows, never the session asked to
+wake (a start no longer lists the sessions again when the adapter printed the id); a wake that
+answers with a new session says so in one line. Whether a lease is live never
+depended on the carrier or on the starter's pid alone: a resident's lease held by a session whose
+starter (`agents up`) has exited is live while the adapter's `list` shows the agent running.
 
 ### Changes in 2.0.2
 
