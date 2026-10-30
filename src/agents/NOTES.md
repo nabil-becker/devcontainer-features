@@ -194,6 +194,9 @@ start of a stateful agent h
 - **At container start** `agents up` never refuses and never fails: a held lease means running
   (one line, `h: running (id)`); a stale one (the old container start) is taken over and the
   resident started or adopted.
+- **Several takers of one dead lease at once** start exactly one session. Which of them prints
+  "its lease was stale" is a race (one clears it, any of them may claim it), so that line can be
+  missing; the lease itself never doubles.
 
 ## Reset (1.0.1, output fixed in 1.0.2)
 

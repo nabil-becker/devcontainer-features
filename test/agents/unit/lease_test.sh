@@ -299,7 +299,11 @@ check 'a takeover lock left by a dead taker does not block' 1 "$(count start-bg)
 reset; export FAKE_SLOW=1; holder host state=held boot=start-0
 for k in 1 2 3 4 5 6 7 8; do (AGENTS_TTY=0 run start host > "$T/out/$k"; echo $? >> "$T/out/rc") & done; wait
 check 'eight concurrent takers of one dead lease: exactly one new session' 1 "$(count start-bg)"
-check 'eight concurrent takers: one took it over' 1 "$(cat "$T/out"/[0-9] | grep -c 'its lease was stale')"
+# Which taker reports the stale lease is a race: one clears it under the takeover lock, and any
+# taker's plain mkdir may then claim the freed lease first, so 0 or 1 of them say so. The lease's
+# promise is the line above: exactly one session.
+n_stale="$(cat "$T/out"/[0-9] | grep -c 'its lease was stale')"
+check 'eight concurrent takers: at most one reports the stale lease' 1 "$([ "$n_stale" -le 1 ] && echo 1 || echo 0)"
 check 'eight concurrent takers: every one exits 0' 0 "$(sort -u "$T/out/rc" | tr -d '\n')"
 unset FAKE_SLOW
 
