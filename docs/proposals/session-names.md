@@ -1,6 +1,6 @@
 # Proposal: session names you can tell apart
 
-Status: proposed 2026-10-30, for the Operator to rule on after the architecture review. Build not started.
+Status: Decided 2026-10-30 by the Operator (see section 'Decided'). Build not started.
 
 Who this serves: the Operator, and anyone who runs several agents, often several named `host`, across machines and cannot tell their sessions apart in Claude Code's remote view; a consumer's maintainer gets the same, set once in the repository.
 
@@ -8,7 +8,22 @@ Who this serves: the Operator, and anyone who runs several agents, often several
 
 The Operator (2026-10-29): sessions started through the agents CLI all show their bare handle (`host`) in the remote view; with four or five `host` sessions across machines nobody can tell them apart. Wanted: a template for the session's display name (machine name plus handle, for example), set once, optionally per agent; dynamic names are fine for ephemeral agents; take on little domain: use each CLI's own naming, do not recreate the CLI.
 
-Nothing is decided yet beyond that ask. Everything below is the host's recommendation. Where it departs from the host's first sketch, section 12 says so.
+The Operator ruled on 2026-10-30 (next section). The design sections below carry the ruling; where they depart from the host's first sketch, section 12 says so.
+
+## Decided (2026-10-30)
+
+Accepted as proposed, with these changes and answers:
+
+- **Finding 2 (copies after template changes):** the Claude adapter finds the agent's session by its record, then by the rendered name, the recorded (previous) name, any name the record has ever held for that handle and folder, or the bare handle; a bare wake accepts the saved name when it is any of those. Never a second session because the template changed.
+- **Finding 4 (leaking env):** the agents Feature sets `AGENT_SESSION_NAME` explicitly on every call to a CLI adapter (start-bg, new, resume, wake, attach, stop, list, logs, ...): the rendered name where it applies, unset or empty where it does not.
+- **Finding 5:** no capability in the `supports` verb list. A CLI that cannot name sessions ignores `AGENT_SESSION_NAME` (the NFR-12 fallback); `agents check` says which adapters use it only if it can tell without a new verb.
+- **Finding 6:** "Session name" becomes a lexicon term (the librarian adds it after merge; the slices do not edit `LEXICON.md`).
+- **Finding 7:** existing consumers add `"DCF_HOST_MACHINE": "${localEnv:DCF_HOST_MACHINE}"` to their `containerEnv`; the launcher prints a hint when it is missing, as it does for the FUSE slots; until then `{machine}` renders `container`.
+- **Finding 8:** the length limit gets a source: Claude Code's own limit if documented, else a limit stated as this repository's choice with the reason; over-length is refused, never cut.
+- **`{run}` is deferred** (not in these slices): ephemeral find-again first.
+- **`{user}` is dropped** for now.
+- **Open questions answered** (section 13): default stays `{handle}`; this repository uses `{machine} {handle}`, set in `.devcontainer/devcontainer.json` in the agents slice; `{machine}` unset renders `container`; over-length is refused; the separator is free text; CLIs that can only rename after the fact are ignored until they have a start flag; no rename verb, a changed template applies at the agent's next start.
+- **Slices and versions:** devcontainer-cli 1.16.2, claude-code 1.9.0, agents 2.1.0; the agents-v2 roadmap shifts one minor (integrations 2.2, ephemeral runs 2.3).
 
 ## 2. Where the question sits
 
@@ -21,8 +36,8 @@ The **handle** (the agent's `name` in the list) stays the address: it keys the l
           \                          |                                  v
            v                         v                          DCF_HOST_MACHINE in the container
         agents: render ONE time per start  <---------------------------/
-          |  handle=host repo=<folder> machine=<m> run=<id, ephemeral only>
-          |  check: characters, length, {run} only on ephemeral, no clash
+          |  handle=host repo=<folder> machine=<m>
+          |  check: characters, length, no clash
           v
    rendered name  --- env AGENT_SESSION_NAME ---> agent-adapter-<cli> <verb> <handle> <folder>
                                                         |  claude: --name   copilot: -n
@@ -44,7 +59,6 @@ agents:
   - name: reviewer
     cli: claude
     lifecycle: ephemeral
-    session-name: "{handle} {run}"          # ephemeral only
 ```
 
 - **Option** `sessionName` on the agents Feature, written to the Feature's settings like `AGENTS_FILE` (NFR-6: task variable, root `.env`, `.devcontainer/.env`, environment, default); default `{handle}`, today's behaviour exactly.
@@ -56,24 +70,24 @@ agents:
 | `{handle}` | the agent's name | the list |
 | `{repo}` | the repository's folder name (the basename of the workspace root the list is in) | the container |
 | `{machine}` | the workstation's name | `DCF_HOST_MACHINE`, set by the launcher |
-| `{run}` | six lowercase hex characters, new each start | the agents Feature; ephemeral agents only |
 
-`{user}` is left out of the first slice (section 12, question 2).
+`{run}` is deferred until ephemeral runs can be found again; `{user}` is dropped (Decided).
 
 ## 4. Where rendering happens
 
 The agents Feature renders, once per start, and hands the adapter the finished string in the environment variable `AGENT_SESSION_NAME` (a name for the adapter to use, not a template). Reasons:
 
-- The variables are environment facts that do not depend on the CLI; one renderer means one set of tests and every CLI gets the same name from the same list (NFR-12). Rendering in each adapter would repeat the template parser, the character rules and the `{run}` rule per CLI.
+- The variables are environment facts that do not depend on the CLI; one renderer means one set of tests and every CLI gets the same name from the same list (NFR-12). Rendering in each adapter would repeat the template parser, the character rules per CLI.
 - NFR-13: the Feature manages the environment (who, where, which run); the adapter only maps the name onto its CLI's own flag. Neither re-implements the CLI's naming.
 - An environment variable, not a new positional argument: the adapter contract `<verb> <name> <folder>` does not change, an old adapter ignores it, and a new adapter falls back to the handle when it is unset (an older agents Feature). Nothing breaks in either order of upgrade.
-- The adapter declares it applies the name with a `supports` line `session-name`; without it `agents check` says "does not name sessions" once and a start is not affected (NFR-12 fallback: the CLI keeps its own default title).
+- No `supports` line (Decided, finding 5): an adapter whose CLI cannot name sessions ignores `AGENT_SESSION_NAME` and the CLI keeps its own default title (the NFR-12 fallback). `agents check` says which adapters use it only if it can tell without a new verb.
+- The Feature sets `AGENT_SESSION_NAME` on every adapter call (start-bg, new, resume, wake, attach, stop, list, logs, ...): the rendered name where it applies, unset or empty where it does not, so a value inherited from a parent session never leaks into a nested call.
 
 The capability matrix (agents-v2 section 14.1) says two vendors name a session natively at start (Claude `--name`, Copilot `-n`), OpenCode with `run --title`, Codex only after the fact and Gemini not at all. That meets NFR-12's two-vendor test, so the template is neutral in the spec; what a CLI does with it is that CLI adapter's business.
 
 ## 5. Stability and the stateful agent
 
-The rule: for a **stateful** agent the rendered name is identical at every start. Every variable allowed there is stable (`handle`, `repo`, `machine`); `{run}` is not, so the list check refuses `{run}` on a stateful agent (and on `kind: resident`) with a message naming the key. An ephemeral agent takes no lease and is never found again by name, so `{run}` is welcome there and is the only dynamic part.
+The rule: for a **stateful** agent the rendered name is identical at every start. Every variable in the set (`handle`, `repo`, `machine`) is stable. `{run}`, the one dynamic variable, is deferred (Decided) until an ephemeral run can be found again; it is not in these slices.
 
 One residual instability, stated: `{machine}` changes if the workstation is renamed. That is a change of template result, handled as in section 6.
 
@@ -86,8 +100,8 @@ Decision: **a changed name applies to sessions started from then on; a session t
 How, in the Claude adapter, which finds the agent by its own record first (agent, folder, job id and session id, kept in the adapter's state, keyed by the handle):
 
 1. Found by the record, a rename changes nothing: the record is keyed by the handle, not the label.
-2. Bare wake: today's check is "saved options are exactly `--name <name> <args>`". It becomes "saved name is the current rendered name, or the name the record holds (the one this adapter started it with), or the bare handle". The adapter records the name it used when it starts a session (a new field in its record). So a woken session keeps its old name and its conversation; a flag given with `--resume` would start a copy, which this avoids.
-3. No record (an agent started by hand, a lost state folder): found by folder and by name, where the name is the rendered one **or the bare handle**, the match it makes today. The handle match stays; it is cheap and it is what an existing deployment has.
+2. Bare wake: today's check is "saved options are exactly `--name <name> <args>`". It becomes "saved name is the current rendered name, any name the record has held, or the bare handle". The adapter records the name it used when it starts a session (a new field in its record). So a woken session keeps its old name and its conversation; a flag given with `--resume` would start a copy, which this avoids.
+3. No record (an agent started by hand, a lost state folder): found by folder and by name, where the name is the rendered one, the recorded (previous) name, any name the record has ever held for that handle and folder, **or the bare handle** (Decided, finding 2). The handle match stays; it is cheap and it is what an existing deployment has.
 4. The old name goes away when the session does: `agents stop` then `start`, or `reset`, starts a new session under the new name. `agents check` prints one line while the running session's name differs from the rendered one ("host: the running session is named `host`; the template gives `desktop host`; stop and start to apply").
 
 Rejected: renaming a live session in place (Claude Code offers `/rename` interactively, nothing documented from outside; NFR-13 says not to drive the CLI's screen), and "match the handle for one release then stop": the record makes the handle match unnecessary for known agents, and an agent without a record is rare, so the handle match can stay indefinitely at no cost. A first-release-only window would turn a quiet label change into an orphaned session.
@@ -96,13 +110,13 @@ Rejected: renaming a live session in place (Claude Code offers `/rename` interac
 
 - **Template text**: letters, digits, space, and `. _ : @ / ( ) -` plus the `{variables}`. No tab or other control character (the adapter's list output is tab separated), no quote, backslash or `$`.
 - **Values**: each variable's value is cut to the same set, every other character becoming `-` (a machine named `NABIL'S PC` renders `NABIL-S-PC`); `{machine}` keeps its case.
-- **Length**: the rendered name is at most 60 characters. Over the limit is an error in `agents check` and a refused start, never a silent cut (a cut name can collide, and which end is lost would surprise). The 60 leaves room for the number Claude Code appends on a collision (` (2)`).
+- **Length**: the limit is Claude Code's own if it documents one; otherwise a limit stated as this repository's choice, with the reason, not a measured one (Decided, finding 8; the slice settles it, the figure 60 was a guess). Over the limit is an error in `agents check` and a refused start, never a silent cut (a cut name can collide, and which end is lost would surprise). Leave room for the number Claude Code appends on a collision (` (2)`).
 - **Two machines, same template**: they render the same name, which is correct: the remote view separates devices itself, and `{machine}` is how the label tells them apart where it does not. Two agents in one list rendering the same name in the same folder is refused by the list check (the adapter finds sessions by name and folder), whatever the template.
 - **Claude's own numbering** (`host (2)`) is already matched by the adapter and is unaffected.
 
 ## 8. What the verbs print
 
-`agents list` keeps the handle in HANDLE. A NAME column appears only when some agent's rendered name differs from its handle, so the default list is unchanged; `agents list --json` always carries `"sessionName"`. `agents check` prints the rendered name per agent, the warnings of sections 5 and 6, and which CLI adapters name sessions. The handle remains the argument of every verb (`agents stop host`), never the session name.
+`agents list` keeps the handle in HANDLE. A NAME column appears only when some agent's rendered name differs from its handle, so the default list is unchanged; `agents list --json` always carries `"sessionName"`. `agents check` prints the rendered name per agent and the warnings of sections 5 and 6. The handle remains the argument of every verb (`agents stop host`), never the session name.
 
 ## 9. The carrier and the lease
 
@@ -110,14 +124,14 @@ Unaffected. The lease folder, its holder file, the carrier (`session:<id>`) and 
 
 ## 10. Launcher change
 
-`DCF_HOST_MACHINE`: the launcher sets it from the workstation's name (`$env:COMPUTERNAME`; empty on a host where it is unknown) before it runs the devcontainer CLI, exactly as it sets `DCF_HOST_TYPE`, `DCF_HOST_HOME` and the others (ADR 0024). The bootstrap's `devcontainer.yml` passes it into the container with the other `DCF_HOST_*` values via `containerEnv` (`${localEnv:DCF_HOST_MACHINE}`); a user can override it in their `.env` for a friendlier name (`DCF_HOST_MACHINE=desk`). `task devcontainer:info` lists it. It carries a name, never a secret or a path.
+`DCF_HOST_MACHINE`: the launcher sets it from the workstation's name (`$env:COMPUTERNAME`; empty on a host where it is unknown) before it runs the devcontainer CLI, exactly as it sets `DCF_HOST_TYPE`, `DCF_HOST_HOME` and the others (ADR 0024). The bootstrap's `devcontainer.yml` passes it into the container with the other `DCF_HOST_*` values via `containerEnv` (`${localEnv:DCF_HOST_MACHINE}`); an existing consumer adds `"DCF_HOST_MACHINE": "${localEnv:DCF_HOST_MACHINE}"` to its `containerEnv` (until then `{machine}` renders `container`), and the launcher prints a hint when a repository's `devcontainer.json` lacks the line, as it does for the FUSE slots; a user can override it in their `.env` for a friendlier name (`DCF_HOST_MACHINE=desk`). `task devcontainer:info` lists it. It carries a name, never a secret or a path.
 
 ## 11. Tests
 
 All Docker-free, in the existing suites.
 
-- **Render** (agents unit tests): the default gives the handle; option versus key precedence; each variable; an unknown variable, an unclosed brace and a quoted `{handle}` value read right; the character set and the replacement of bad characters in values; 60 versus 61 characters; `{machine}` empty gives `container`; `{run}` accepted on ephemeral, refused on stateful and on resident, differs between two starts; the same list rendered twice gives the same name.
-- **Hand-off**: the fake adapter records the `AGENT_SESSION_NAME` it received; handle only when the template is the default; an adapter without the `session-name` capability is called the same and `check` says so; an old adapter ignoring the variable still starts.
+- **Render** (agents unit tests): the default gives the handle; option versus key precedence; each variable; an unknown variable, an unclosed brace and a quoted `{handle}` value read right; the character set and the replacement of bad characters in values; 60 versus 61 characters; `{machine}` empty gives `container`; the same list rendered twice gives the same name.
+- **Hand-off**: the fake adapter records the `AGENT_SESSION_NAME` it received; handle only when the template is the default; `AGENT_SESSION_NAME` is set or empty on every adapter call, a nested call never sees the parent's value; an old adapter ignoring the variable still starts.
 - **Clash**: two agents rendering one name in one folder fail the check; in two folders they pass.
 - **Claude adapter** (fake `claude`): `start-bg` and `new` pass `--name <rendered>`; unset gives `--name <handle>` as today; a record is found after the template changed; a bare wake of a session whose saved name is the old one stays bare (no copy); a session with no record is found by the rendered name and by the bare handle; the record carries the name it started with.
 - **Launcher**: a test of `devcontainer:info` listing `DCF_HOST_MACHINE`, set and unset, in the existing host profile tests.
@@ -125,28 +139,23 @@ All Docker-free, in the existing suites.
 
 ## 12. Where the host departs from its first sketch, and the slices
 
-- **`{user}`** is not in slice 1: the container user is `vscode`, useless as a label, so it would need a second launcher variable for a case (two Windows users on one machine) the Operator did not raise. Add it if asked.
+- **`{user}`** is dropped (Decided): the container user is `vscode`, useless as a label, so it would need a second launcher variable for a case (two Windows users on one machine) the Operator did not raise. Add it if asked.
+- **`{run}`** is deferred (Decided), not a variable of these slices.
 - **The name travels in an environment variable** rather than as a changed argument, as section 4 says.
 - **The migration is "the record, then handle-or-rendered", with no one-release window** (section 6).
 - **A fixed fallback for `{machine}`** and not the hostname (section 5).
 
 | Slice | Content | Version |
 |---|---|---|
-| 1 | The launcher sets `DCF_HOST_MACHINE`, `containerEnv` passes it, `devcontainer:info` lists it; the bootstrap comment documents it | devcontainer-cli patch (a new variable, nothing changes without a template) |
-| 2 | The Claude adapter reads `AGENT_SESSION_NAME` (default the handle), `--name` from it, the record keeps the started name, the saved-name rule of the bare wake, the match by rendered name or handle, the `session-name` `supports` line | claude-code minor (additive; with no variable it behaves as today) |
-| 3 | The agents Feature: the option, the key, the renderer, the checks, the variable to the adapter, the NAME column and `sessionName` in the JSON, NOTES, `task docs` | agents minor |
+| 1 | The launcher sets `DCF_HOST_MACHINE`, the bootstrap `containerEnv` passes it, `devcontainer:info` lists it, a hint when a repository lacks the line | devcontainer-cli 1.16.2 |
+| 2 | The Claude adapter reads `AGENT_SESSION_NAME` (default the handle), `--name` from it, the record keeps the started name, the saved-name rule of the bare wake, the finding rule of section 6 (record, rendered, recorded, any held name, handle) | claude-code 1.9.0 |
+| 3 | The agents Feature: the option, the key, the renderer, the checks, `AGENT_SESSION_NAME` on every adapter call, the NAME column and `sessionName` in the JSON, this repository's `{machine} {handle}` in `.devcontainer/devcontainer.json`, NOTES (the 2.x roadmap shifts: integrations 2.2, ephemeral runs 2.3), `task docs` | agents 2.1.0 |
 
 Slices 1 and 2 are safe in either order and before 3; the Feature that renders comes last, so no consumer sees a name change until the three are published (an unpublished Feature cannot be pulled). A release is due after slice 3; the Operator starts it.
 
-## 13. Open questions
+## 13. Open questions (answered 2026-10-30)
 
-1. **Default template.** Keep `{handle}` (nothing changes until a repository opts in), or ship `{machine} {handle}` as the default? The recommendation is to keep `{handle}`: a default change renames every consumer's running sessions on the next start, which is the section 6 migration for everyone at once.
-2. **`{user}`**: drop it (recommended) or add a `DCF_HOST_USER` in the same launcher slice?
-3. **`{machine}` fallback**: the fixed word `container` (recommended), or refuse a template using `{machine}` when the launcher did not set it?
-4. **Over-length name**: refuse (recommended) or cut the end?
-5. **Separator in a template**: free text (as here) or a fixed joiner? Free text costs the character set of section 7.
-6. **Other CLIs**: should the spec say now that an adapter whose CLI names only after the fact (Codex's `/rename`) applies the name at a later verb, or only that it ignores it until the CLI has a start flag (recommended)?
-7. **Rename in place**: is leaving a running session under its old name until stopped acceptable, or should `agents` offer an explicit `agents rename-session <handle>` that does stop-and-start for the Operator?
+All answered by the Operator; none open. Default template `{handle}`; `{user}` dropped; `{machine}` unset renders `container`; over-length refused; the separator is free text; other CLIs ignored until they have a start flag; no rename verb (a changed template applies at the agent's next start).
 
 ### Facts checked 2026-10-30 (Claude Code 2.1.308)
 

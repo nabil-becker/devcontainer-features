@@ -400,7 +400,7 @@ so they live here and each CLI Feature adds only its adapter.
 `ghcr.io/nabil-becker/devcontainer-features/agents:2` follows 2.x; rebuild to update. `agents:1` never
 moves to 2 on its own.
 
-**What 2.x holds so far.** 2.0 brings the lease and the `default` agent. The rest of version 2 arrives in steps (docs/proposals/agents-v2.md, section 12): agent integrations in 2.1, the Claude CLI adapter passing `definition` (as `--agent`) in claude-code 1.9, and ephemeral runs in 2.2. Until then `definition` is stored and shown, and a start that sets it says it is not passed on yet.
+**What 2.x holds so far.** 2.0 brings the lease and the `default` agent. The rest of version 2 arrives in steps (docs/proposals/agents-v2.md, section 12): session names in 2.1, agent integrations in 2.2, the Claude CLI adapter passing `definition` (as `--agent`) in a later claude-code minor, and ephemeral runs in 2.3. Until then `definition` is stored and shown, and a start that sets it says it is not passed on yet.
 
 ### Changes in 2.0.3
 
