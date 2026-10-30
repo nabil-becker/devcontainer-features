@@ -27,6 +27,26 @@ Claude Code (https://code.claude.com/docs) as a member of this collection's ecos
 
 - `anthropic.claude-code`
 
+## Changes in 1.9.3
+
+- **Extra saved options never turn a wake into a copy.** Reported by a consumer after 1.9.1: residents whose entries
+  in `agents.yml` had `args: [--remote-control]` still came back as copies. Their sessions' saved options were
+  `--name mhs --remote-control --model sonnet`: the `--model sonnet` was never passed by the agents Feature or the
+  CLI adapter, Claude Code saved it from the room's `.claude/settings.json` (`"model": "sonnet"`). The bare-wake
+  check required the saved options to equal `--name <name>` plus the agent's args, saw an extra `--model`, woke with
+  flags, and Claude Code started a copy (`the flags you passed started a copy as ...`) that lost the conversation.
+- **A wake of an existing session is always bare.** The CLI adapter compares the saved options with what the
+  agent wants (`--name` as any name the agent's session has had, 1.9.0, and its args, `--remote-control` left out as
+  before) and treats a wanted option that is present with the same value as met, in any order; saved options beyond
+  those are no difference. A wanted option that is missing, or saved with another value, is still woken bare, with one
+  line on stderr naming it (for example `lack or differ in: --model opus`). `wake` and `attach` of an ended session
+  both follow this, and neither ever passes flags to `--bg --resume` any more (that path is removed). When the saved
+  options cannot be read the session is woken bare too, with a line saying so.
+- **The trade.** A changed `args` entry in `agents.yml` no longer reaches a session that already exists: the session
+  keeps the options it was started with, and the changed ones apply at the agent's next fresh start (`agents reset`,
+  or the session gone). Losing a resident's conversation is the failure to avoid, so the options give way, not the
+  conversation. A session found gone is still started fresh with the agent's flags, as a new session.
+
 ## Changes in 1.9.2
 
 - **A finished resident with a live process is running, not stopped.** Reported against 1.9.1: every `agents up`
@@ -205,8 +225,8 @@ else should. The contract (verbs, exit codes) is in the `agents` Feature's notes
 | Verb | What it runs |
 | --- | --- |
 | `start-bg` | `cd <folder> && claude --bg --name <name> <args>`; waits until the session is listed and prints its id |
-| `wake` | the agent's newest stopped or failed session, by its full id: `cd <folder> && claude --bg --resume <session id>` (the same id and conversation; Claude Code 2.1.308 says `woke session ... with its saved options (--name, ...)`) when its saved options are `--name <name> <args>`; otherwise `... --resume <session id> --name <name> <args>`, which Claude Code starts as a copy with those options (1.8.3). If the session is gone (`source session <id> not found`), the agent is started fresh as `start-bg` does, and stderr says so (1.8.6) |
-| `attach` | `claude attach <id>` of its newest running session; an interactive one is refused with the pid and tty of the terminal that holds it. With none running, `claude attach <id>` of its newest ended one when its saved options are the agent's (Claude Code restarts it with them), else it is woken as `wake` does and then attached (1.8.3) |
+| `wake` | the agent's newest stopped or failed session, by its full id: `cd <folder> && claude --bg --resume <session id>` (the same id and conversation; Claude Code 2.1.308 says `woke session ... with its saved options (--name, ...)`), always bare (1.9.3); a line says when its saved options lack or differ from `--name <name> <args>`; extra saved options are no difference. If the session is gone (`source session <id> not found`), the agent is started fresh as `start-bg` does, and stderr says so (1.8.6) |
+| `attach` | `claude attach <id>` of its newest running session; an interactive one is refused with the pid and tty of the terminal that holds it. With none running, `claude attach <id>` of its newest ended one (Claude Code restarts it with its saved options; the same line as `wake` says when they lack or differ from the agent's, 1.9.3) |
 | `resume` | `cd <folder> && claude --resume <session id> <args>` of its newest session; refused while that session runs (a second process on one transcript). When the list cannot be read: `claude --resume <args>`, Claude Code's own picker (1.8.0) |
 | `new` | `cd <folder> && claude --name <name> <args>` |
 | `list` | `claude agents --json --all`: name, session id, state (a pid is running, a finished `done` session with a live process included (1.9.2); `blocked` without a pid is stopped; failed; anything else stopped), folder, newest first |
@@ -223,13 +243,14 @@ A stopped session is woken by its full id with `--bg --resume`; `--bg -c` and `-
 <name>` start copies, so the adapter never uses them. **Saved options (1.8.3).** Claude Code keeps the flags a background
 session was started with (`respawnFlags` in `$CLAUDE_CONFIG_DIR/jobs/<id>/state.json`) and puts them back on a bare
 wake; a flag given with `--bg --resume` starts a copy under a new id instead (`the flags you passed started a copy
-as <id>`). So the adapter wakes bare only when the saved options are exactly `--name <name>` and the agent's args,
-and (as 1.8.3 had it) its own `"state"` in that file is an ended one, and otherwise passes them,
-accepting a copy rather than an agent without its options. **Corrected in 1.9.1:** the state in that file is not
+as <id>`). So 1.8.3 woke bare only when the saved options were exactly `--name <name>` and the agent's args
+(and its own `"state"` in that file an ended one), and otherwise passed them, accepting a copy rather than an agent
+without its options. **Corrected in 1.9.3:** a wake is always bare and extra saved options are no difference (see
+Changes in 1.9.3). **Corrected in 1.9.1:** the state in that file is not
 authoritative (after a restart it still says `working` for a session that was idle, and a bare wake continues it), so
 it is no longer consulted; only the saved options are compared, and they keep the order they were given. `attach` of an
 ended session follows the same rule before it runs `claude attach <id>`. That file is Claude Code's
-own, not a documented interface: when it cannot be read the adapter passes the options. The name is set with `--name` at start and
+own, not a documented interface: when it cannot be read the adapter wakes bare and says so (1.9.3). The name is set with `--name` at start and
 survives `/clear`, so nothing has to be written back. The JSON is read with `sed` (no jq or python
 in the Feature), as `claude-host` does. Needs Claude Code 2.1.290 or later (session names).
 
