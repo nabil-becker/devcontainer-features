@@ -38,7 +38,12 @@ cp "$adapter_sh" "$bin/agent-adapter-claude"; chmod +x "$bin/agent-adapter-claud
 # (exit 1, nothing printed), FAKE_WRAPPED (what a wrapper putting `--add-dir <dir>` first
 # causes: Claude Code 2.1.312 says "error: unknown option '--json'", exit 1), FAKE_SLOW_FIRST
 # (the first read sleeps 3 seconds, the later ones answer), FAKE_NOISE (a line before the
-# array and one after it, the array pretty-printed).
+# array and one after it, the array pretty-printed). Claude Code 2.1.314 as reported (1.9.4; not
+# reproducible on 2.1.308, modelled from the report): FAKE_RESUME_CRASH, a bare wake crashes, the
+# attempt briefly listed running under a new id while its job says "source session <id> not found"
+# and daemon.log says it crashed; FAKE_RESUME_FORK, a bare wake continues the conversation under a
+# new id (its job's resumeSessionId the old id) and leaves the old one listed blocked, with a
+# process when FAKE_FORK_OLD_PID is set.
 cat > "$bin/claude" <<'FAKE'
 #!/usr/bin/env bash
 if [ "$1" = agents ]; then
@@ -98,6 +103,22 @@ elif [ "$1" = --bg ] && [ "$2" = --resume ] && [ -n "${FAKE_RESUME_GONE:-}" ]; t
   printf '{\n  "state": "failed",\n  "detail": "source session %s not found",\n  "respawnFlags": []\n}\n' "$3" > "$d/state.json"
 elif [ "$1" = --bg ] && [ "$2" = --resume ] && [ -n "${FAKE_RESUME_FAIL:-}" ]; then
   echo "error: could not reach the daemon" >&2; exit 1
+elif [ "$1" = --bg ] && [ "$2" = --resume ] && [ -n "${FAKE_RESUME_CRASH:-}${FAKE_RESUME_FORK:-}" ]; then
+  nm="$(awk -F'\t' -v s="$3" '$2 == s { print $3 }' "$FAKE_TABLE")"
+  old="$(awk -F'\t' -v s="$3" '$2 == s { print $1 }' "$FAKE_TABLE")"
+  p=k; [ -n "${FAKE_RESUME_FORK:-}" ] && p=f
+  short="$(printf '%s%07d' "$p" "$n")"
+  printf '%s\tsess-%s%s-0000-0000-0000-000000000000\t%s\t%s\tbackground\t%s\tworking\t%s\n' "$short" "$p" "$n" "$nm" "$(pwd -P)" "$((100 + n))" "$((2000 + n))" >> "$FAKE_TABLE"
+  mkdir -p "$CLAUDE_CONFIG_DIR/jobs/$short"
+  if [ -n "${FAKE_RESUME_CRASH:-}" ]; then
+    [ -n "${FAKE_CRASH_LOG_ONLY:-}" ] || printf '{\n  "state": "failed",\n  "detail": "source session %s not found",\n  "sessionId": "sess-%s%s-0000-0000-0000-000000000000",\n  "resumeSessionId": "%s"\n}\n' "$3" "$p" "$n" "$3" > "$CLAUDE_CONFIG_DIR/jobs/$short/state.json"
+    echo "[2026-10-30T00:00:00.000Z] [bg] bg settled $short (crashed): source session $3 not found" >> "$CLAUDE_CONFIG_DIR/daemon.log"
+  else
+    printf '{\n  "state": "working",\n  "respawnFlags": [],\n  "sessionId": "sess-%s%s-0000-0000-0000-000000000000",\n  "resumeSessionId": "%s"\n}\n' "$p" "$n" "$3" > "$CLAUDE_CONFIG_DIR/jobs/$short/state.json"
+    awk -F'\t' -v OFS='\t' -v s="$3" -v pid="${FAKE_FORK_OLD_PID:-0}" '$2 == s { $6 = pid; $7 = "blocked" } { print }' "$FAKE_TABLE" > "$FAKE_TABLE.n" && mv "$FAKE_TABLE.n" "$FAKE_TABLE"
+    echo "note: woke session $old with its saved options (--name)." >&2
+  fi
+  echo "backgrounded · $short · woken (idle — send a prompt to start)"
 elif [ "$1" = --bg ] && [ "$2" = --resume ] && awk -F'\t' -v s="$3" '$2 == s && $6 != 0 { f = 1 } END { exit !f }' "$FAKE_TABLE"; then
   # the session still has a live process (state done, not stopped): Claude Code starts a copy
   # with empty saved options and says "already running"
@@ -124,7 +145,7 @@ FAKE
 chmod +x "$bin/claude"
 
 repo="$T/repo"; mkdir -p "$repo/rooms/review"
-export FAKE_TABLE="$T/table" FAKE_CALLS="$T/calls" FAKE_READS="$T/reads" AGENT_ADAPTER_WAIT=0 AGENT_ADAPTER_CLAUDE_PAUSE=0
+export FAKE_TABLE="$T/table" FAKE_CALLS="$T/calls" FAKE_READS="$T/reads" AGENT_ADAPTER_WAIT=0 AGENT_ADAPTER_CLAUDE_PAUSE=0 AGENT_ADAPTER_SETTLE=0
 # the adapter's records go to a scratch config folder, never the real one
 export CLAUDE_CONFIG_DIR="$T/config"
 unset AGENT_ADAPTER_CLAUDE_STATE
@@ -338,7 +359,8 @@ SAVED_STATE=working saved_opts a8 --name host --agent host
 out="$(FAKE_RESUME_GONE=a8 ad wake host "$repo" -- --agent host)"; rc=$?
 check 'wake after a restart, the session gone: bare, then started fresh (exit 0)' "0:$repo|--bg|--resume|sess-a8;$repo|--bg|--name|host|--agent|host;" "$rc:$(calls)"
 check 'wake after a restart, the session gone: no copy' 0 "$(grep -c '^c' "$FAKE_TABLE")"
-# any other resume failure still fails
+# any other resume failure still fails (a fresh record: the gone sess-a8 above is superseded in it)
+rm -f "$records"
 table "a8|sess-a8|host|$repo|background|0|failed|1500"
 saved_opts a8 --name host --agent host
 out="$(FAKE_RESUME_FAIL=1 ad wake host "$repo" -- --agent host)"; rc=$?
@@ -346,6 +368,121 @@ check 'wake: another resume failure fails (exit 1), no fresh start' "1:$repo|--b
 table
 out="$(ad wake host "$repo")"; rc=$?
 check 'wake with nothing to wake: exit 1' 1 "$rc"
+
+# --------------------------------------- wakes that crash or fork (1.9.4) ----
+# The report (claude-code 1.9.2, Claude Code 2.1.314): a resident never prompted has no transcript,
+# its wake crashes ("source session <id> not found"), the crashed attempt was recorded as the carrier
+# and woken again by the next `agents up`, in a loop; a resident that resumed came back under a new
+# id with the old one left listed beside it. 2.1.314 is modelled in the fake from the report.
+fresh_sid() { awk -F'\t' '$1 ~ /^b/ && $6 != 0 { s = $2 } END { print s }' "$FAKE_TABLE"; }
+clean() { rm -f "$records"; rm -rf "$CLAUDE_CONFIG_DIR/jobs" "$CLAUDE_CONFIG_DIR/projects" "$CLAUDE_CONFIG_DIR/daemon.log"; }
+wk() { (cd "$T" && PATH="$bin:$PATH" agent-adapter-claude wake "$@" 2>"$T/err"); }
+# a session with no transcript: never woken, the agent starts fresh
+clean; mkdir -p "$CLAUDE_CONFIG_DIR/projects/-other"; echo '{}' > "$CLAUDE_CONFIG_DIR/projects/-other/sess-zz.jsonl"
+table "n1|sess-n1|host|$repo|background|0|failed|1500"
+saved_opts n1 --name host --agent host
+out="$(wk host "$repo" -- --agent host)"; rc=$?
+check 'no transcript: started fresh with the agent'"'"'s args, never woken (exit 0)' "0:$repo|--bg|--name|host|--agent|host;" "$rc:$(calls)"
+contains 'no transcript: says so' "$(cat "$T/err")" 'session sess-n1 has no transcript'
+check 'no transcript: stdout is the fresh session' "$(fresh_sid)" "$out"
+check 'no transcript: the fresh session recorded, the old one superseded' "$(fresh_sid)	host	sess-n1" "$(grep '^host	' "$records" | cut -f4,5,7)"
+check 'no transcript: list shows the old one as superseded, not as the agent' "host (superseded)	sess-n1	failed	$repo" "$(ad list | grep sess-n1)"
+# with a transcript, as before: woken bare
+clean; mkdir -p "$CLAUDE_CONFIG_DIR/projects/-repo"; echo '{"type":"user"}' > "$CLAUDE_CONFIG_DIR/projects/-repo/sess-n1.jsonl"
+table "n1|sess-n1|host|$repo|background|0|failed|1500"
+saved_opts n1 --name host
+out="$(wk host "$repo")"; rc=$?
+check 'with a transcript: woken bare, the same id' "0:sess-n1:$repo|--bg|--resume|sess-n1;" "$rc:$out:$(calls)"
+# a wake that crashes with "not found" (briefly listed running under a new id): the agent starts
+# fresh, the crashed attempt is never recorded
+clean
+table "a8|sess-a8|host|$repo|background|0|failed|1500"
+saved_opts a8 --name host
+out="$(FAKE_RESUME_CRASH=1 wk host "$repo")"; rc=$?
+kid="$(awk -F'\t' '$1 ~ /^k/ { print $2 }' "$FAKE_TABLE")"
+check 'a wake that crashes: woken bare, then started fresh (exit 0)' "0:$repo|--bg|--resume|sess-a8;$repo|--bg|--name|host;" "$rc:$(calls)"
+check 'a wake that crashes: stdout is the fresh session' "$(fresh_sid)" "$out"
+lacks 'a wake that crashes: the crashed attempt is not the recorded session' "$(cut -f3,4 "$records")" "$kid"
+check 'a wake that crashes: the record holds the fresh session' "$(fresh_sid)" "$(grep '^host	' "$records" | cut -f4)"
+contains 'a wake that crashes: says so, naming the crashed attempt' "$(cat "$T/err")" "session sess-a8 is gone (its wake crashed as $kid"
+# the crash seen only in daemon.log (no job file says it); an older line there does not count
+clean
+table "a8|sess-a8|host|$repo|background|0|failed|1500"
+saved_opts a8 --name host
+out="$(FAKE_RESUME_CRASH=1 FAKE_CRASH_LOG_ONLY=1 wk host "$repo")"; rc=$?
+check 'a crash only in daemon.log: started fresh (exit 0)' "0:$repo|--bg|--resume|sess-a8;$repo|--bg|--name|host;" "$rc:$(calls)"
+clean
+echo "[2026-10-29T00:00:00.000Z] [bg] bg settled x1 (crashed): source session sess-a8 not found" > "$CLAUDE_CONFIG_DIR/daemon.log"
+table "a8|sess-a8|host|$repo|background|0|failed|1500"
+saved_opts a8 --name host
+out="$(wk host "$repo")"; rc=$?
+check 'daemon.log: a line from before the wake does not count, woken bare' "0:sess-a8:$repo|--bg|--resume|sess-a8;" "$rc:$out:$(calls)"
+# the record points at a job that failed with "not found" (what 1.9.2 recorded): treated as gone,
+# never woken again (no loop)
+clean
+table "a8|sess-a8|host|$repo|background|0|failed|1000" "k9|sess-k9|host|$repo|background|0|failed|2000"
+mkdir -p "$CLAUDE_CONFIG_DIR/jobs/k9"
+printf '{\n  "state": "failed",\n  "detail": "source session sess-a8 not found",\n  "respawnFlags": []\n}\n' > "$CLAUDE_CONFIG_DIR/jobs/k9/state.json"
+mkdir -p "$(dirname "$records")"; printf 'host\t%s\tk9\tsess-k9\thost\n' "$repo" > "$records"
+out="$(wk host "$repo")"; rc=$?
+check 'recorded job failed "not found": never woken, started fresh (exit 0)' "0:$repo|--bg|--name|host;" "$rc:$(calls)"
+check 'recorded job failed "not found": the fresh session recorded, the failed one superseded' "$(fresh_sid)	host	sess-k9" "$(grep '^host	' "$records" | cut -f4,5,7)"
+# the same through `agents up`, twice: one fresh start, then joined (no loop)
+clean
+table "a8|sess-a8|host|$repo|background|0|failed|1000" "k9|sess-k9|host|$repo|background|0|failed|2000"
+mkdir -p "$CLAUDE_CONFIG_DIR/jobs/k9"
+printf '{\n  "state": "failed",\n  "detail": "source session sess-a8 not found"\n}\n' > "$CLAUDE_CONFIG_DIR/jobs/k9/state.json"
+mkdir -p "$(dirname "$records")"; printf 'host\t%s\tk9\tsess-k9\thost\n' "$repo" > "$records"
+mkdir -p "$repo/.devcontainer"; printf 'agents:\n  - name: host\n    cli: claude\n    kind: resident\n' > "$repo/.devcontainer/agents.yml"
+cp "$root/src/agents/agents.sh" "$bin/agents"; chmod +x "$bin/agents"
+out="$(cd "$repo" && AGENTS_STATE_DIR="$T/agents-state5" PATH="$bin:$PATH" agents up --no-wait 2>&1)"; rc=$?
+check 'agents up, the record at a crashed attempt: one fresh start, no wake (exit 0)' "0:$repo|--bg|--name|host;" "$rc:$(calls)"
+contains 'agents up, the record at a crashed attempt: the lease is carried by the fresh session' "$(cd "$repo" && AGENTS_STATE_DIR="$T/agents-state5" PATH="$bin:$PATH" agents leases 2>&1)" "session:$(fresh_sid)"
+: > "$FAKE_CALLS"
+out="$(cd "$repo" && AGENTS_STATE_DIR="$T/agents-state5" PATH="$bin:$PATH" agents up --no-wait 2>&1)"
+check 'agents up again: nothing woken or started' "" "$(calls)"
+# a wake that comes back under a new id continuing the conversation: the new id recorded, success,
+# the old one in the record (superseded), left without a process
+clean
+table "a8|sess-a8|host|$repo|background|0|failed|1500"
+saved_opts a8 --name host
+out="$(FAKE_RESUME_FORK=1 wk host "$repo")"; rc=$?
+fid="$(awk -F'\t' '$1 ~ /^f/ { print $2 }' "$FAKE_TABLE")" fshort="$(awk -F'\t' '$1 ~ /^f/ { print $1 }' "$FAKE_TABLE")"
+check 'a wake under a new id: woken bare, nothing else (exit 0)' "0:$repo|--bg|--resume|sess-a8;" "$rc:$(calls)"
+check 'a wake under a new id: stdout is the new id' "$fid" "$out"
+check 'a wake under a new id: the new id recorded, the old one kept' "$fshort	$fid	host	sess-a8" "$(grep '^host	' "$records" | cut -f3,4,5,7)"
+contains 'a wake under a new id: one line naming both' "$(cat "$T/err")" "continues its conversation under a new id, $fid (was sess-a8)"
+lacks 'a wake under a new id: not a fresh start' "$(cat "$T/err")" 'started fresh'
+out="$(ad list)"
+contains 'a wake under a new id: list shows the agent under the new id' "$out" "host	$fid	running	$repo"
+contains 'a wake under a new id: the old one (no process) as superseded' "$out" "host (superseded)	sess-a8	stopped	$repo"
+check 'a wake under a new id: one session listed as the agent' 1 "$(printf '%s\n' "$out" | grep -c '^host	')"
+check 'a wake under a new id: the old one is never removed' 1 "$(grep -c 'sess-a8' "$FAKE_TABLE")"
+: > "$FAKE_CALLS"; out="$(ad wake host "$repo")"; rc=$?
+check 'a wake under a new id: the superseded one is never woken again' "1:" "$rc:$(calls)"
+# the old one still has a process: stopped by its id
+clean
+table "a8|sess-a8|host|$repo|background|0|failed|1500"
+saved_opts a8 --name host
+out="$(FAKE_RESUME_FORK=1 FAKE_FORK_OLD_PID=998 wk host "$repo")"; rc=$?
+fid="$(awk -F'\t' '$1 ~ /^f/ { print $2 }' "$FAKE_TABLE")"
+check 'old copy with a process: stopped by its id, after the bare wake (exit 0)' "0:$repo|--bg|--resume|sess-a8;$T|stop|a8;" "$rc:$(calls)"
+check 'old copy with a process: stdout is the new id' "$fid" "$out"
+contains 'old copy with a process: says it was stopped' "$(cat "$T/err")" 'stopped its old session sess-a8 by its id'
+check 'old copy with a process: no process left' 0 "$(awk -F'\t' '$2 == "sess-a8" { print $6 }' "$FAKE_TABLE")"
+check 'old copy with a process: then superseded, one session as the agent' "1:1" "$(ad list | grep -c '^host	'):$(ad list | grep -c '^host (superseded)	sess-a8')"
+# through `agents up`: the lease follows the new id; no extra running session reported
+clean
+table "a8|sess-a8|host|$repo|background|0|failed|1500"
+saved_opts a8 --name host
+out="$(cd "$repo" && FAKE_RESUME_FORK=1 AGENTS_STATE_DIR="$T/agents-state6" PATH="$bin:$PATH" agents up --no-wait 2>&1)"; rc=$?
+fid="$(awk -F'\t' '$1 ~ /^f/ { print $2 }' "$FAKE_TABLE")"
+check 'agents up, a wake under a new id: exit 0, woken bare only' "0:$repo|--bg|--resume|sess-a8;" "$rc:$(calls)"
+lacks 'agents up, a wake under a new id: never "was not woken"' "$out" 'was not woken'
+contains 'agents up, a wake under a new id: the lease is carried by the new id' "$(cd "$repo" && AGENTS_STATE_DIR="$T/agents-state6" PATH="$bin:$PATH" agents leases 2>&1)" "session:$fid"
+out="$(cd "$repo" && AGENTS_STATE_DIR="$T/agents-state6" PATH="$bin:$PATH" agents list 2>&1)"
+lacks 'agents list, a wake under a new id: no extra session reported' "$out" '+1'
+clean
 
 table "a1|sess-a1|reviewer|$repo/rooms/review|interactive|0|done|1000"
 out="$(ad resume reviewer "$repo/rooms/review" -- --model sonnet)"; rc=$?

@@ -8,13 +8,19 @@
 #     sets it and it is not empty, else the handle: "session name" below; claude-code 1.9.0)
 #     start-bg   cd <folder> && claude --bg --name <session name> <args>; prints the new session's id
 #     wake       the agent's newest stopped or failed session, by its full id:
-#                cd <folder> && claude --bg --resume <session id> (the same id, its conversation,
+#                cd <folder> && claude --bg --resume <session id> (its conversation, the same id on 2.1.308,
 #                its saved options), always bare: a flag given with --resume starts a copy that
 #                loses the conversation (1.9.3). When Claude Code's saved options lack one the
 #                agent wants (--name a name the agent's session has had, or its args) or hold
 #                another value for it, one line says so; extra saved options (a --model Claude Code
 #                took from the room's settings) are no difference. Woken bare, it may stay idle
-#                (no prompt): that is the agent's session, its id printed (1.9.1)
+#                (no prompt): that is the agent's session, its id printed (1.9.1). Never woken:
+#                a session with no transcript (never prompted) or whose job failed with
+#                "source session <id> not found"; the agent starts fresh instead. A wake is
+#                confirmed for AGENT_ADAPTER_SETTLE seconds (default 5): one that crashes with
+#                "not found" is never recorded, the agent starts fresh. A wake that comes back
+#                under a new id continuing the same conversation records that id, keeps the old
+#                one as superseded, and stops the old one if it still has a process (1.9.4)
 #     attach     claude attach <id> of its newest running session (a terminal is needed); an
 #                ended one is woken bare as wake does, then attached
 #     resume     cd <folder> && claude --resume <session id> <args> of its newest session;
@@ -165,11 +171,16 @@ sessions() {
 # its session id (a wake that continued under a new job id). Otherwise the name and folder
 # find it, as before, by any name the agent has had (a changed session-name template does not
 # lose it). Clearing a record keeps the names (a line without ids).
+# (1.9.4) A seventh field holds the sessions the agent left in a wake (it came back under a new id,
+# crashed, or was gone; up to MAX_EARLIER, separated by \037, newest first): each is superseded,
+# never woken or attached as the agent again, and `list` prints it, while it has no process, as
+# "<name> (superseded)", which is no name of the agent's, so it is never counted as another copy.
 state_dir() { printf '%s' "${AGENT_ADAPTER_CLAUDE_STATE:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/agent-adapter-claude}"; }
 RECORDS="$(state_dir)/agents.tsv"
 
 US=$'\037'
 MAX_HIST=5
+MAX_EARLIER=10
 
 # rec_line <name> <folder>: the agent's record line (the last one), empty when none.
 rec_line() {
@@ -214,25 +225,34 @@ rec_del() {
   [ -e "$RECORDS" ] || return 0
   local tmp
   tmp="$(umask 077 && mktemp "$(state_dir)/.agents.XXXXXX" 2>/dev/null)" || return 0
-  # the names stay (the session may be found by one of them), the ids go
-  if ! { awk -F'\t' -v OFS='\t' -v n="$1" -v f="$2" '$1 == n && $2 == f { if ($5 != "") print $1, $2, "", "", $5, $6; next } { print }' "$RECORDS" > "$tmp" && chmod 600 "$tmp" && mv -f "$tmp" "$RECORDS"; }; then
+  # the names stay (the session may be found by one of them), and the superseded sessions; the ids go
+  if ! { awk -F'\t' -v OFS='\t' -v n="$1" -v f="$2" '$1 == n && $2 == f { if ($7 != "") print $1, $2, "", "", $5, $6, $7; else if ($5 != "") print $1, $2, "", "", $5, $6; next } { print }' "$RECORDS" > "$tmp" && chmod 600 "$tmp" && mv -f "$tmp" "$RECORDS"; }; then
     rm -f "$tmp"
   fi
 }
 
-# rec_put <name> <folder> <id> <session id>: replace the agent's record, with its names and
-# STARTED_AS when set (never fatal).
+# rec_put <name> <folder> <id> <session id> [<session ids left>...]: replace the agent's record,
+# with its names and STARTED_AS when set, and the sessions it left (1.9.4: superseded, see above;
+# the session it now is never among them) (never fatal).
 rec_put() {
-  local d tmp old
+  local d tmp old earlier e x n=0
   d="$(state_dir)"
   if ! (umask 077 && mkdir -p "$d") 2>/dev/null; then note "$1: could not keep its session record under $d."; return 0; fi
   chmod 700 "$d" 2>/dev/null || true
   tmp="$(umask 077 && mktemp "$d/.agents.XXXXXX" 2>/dev/null)" || { note "$1: could not keep its session record under $d."; return 0; }
   old="$(rec_line "$1" "$2")"
   names_next "$(printf '%s' "$old" | cut -f5)" "$(printf '%s' "$old" | cut -f6)"
+  earlier=''
+  while IFS= read -r e; do
+    { [ -n "$e" ] && [ "$e" != "$4" ]; } || continue
+    case "$US$earlier$US" in *"$US$e$US"*) continue ;; esac
+    [ "$n" -lt "$MAX_EARLIER" ] || break
+    earlier="${earlier:+$earlier$US}$e" n=$((n + 1))
+  done < <(for x in "${@:5}"; do printf '%s\n' "$x"; done; printf '%s\n' "$old" | cut -f7 | tr "$US" '\n')
   { [ -r "$RECORDS" ] && awk -F'\t' -v n="$1" -v f="$2" '!($1 == n && $2 == f)' "$RECORDS"
     printf '%s\t%s\t%s\t%s' "$1" "$2" "$3" "$4"
-    [ -z "$NCUR" ] || printf '\t%s%s' "$NCUR" "${NHIST:+$'\t'$NHIST}"
+    if [ -n "$earlier" ]; then printf '\t%s\t%s\t%s' "$NCUR" "$NHIST" "$earlier"
+    elif [ -n "$NCUR" ]; then printf '\t%s%s' "$NCUR" "${NHIST:+$'\t'$NHIST}"; fi
     printf '\n'; } > "$tmp"
   chmod 600 "$tmp" 2>/dev/null || true
   mv -f "$tmp" "$RECORDS" || { rm -f "$tmp"; note "$1: could not keep its session record under $d."; }
@@ -240,12 +260,17 @@ rec_put() {
 
 # apply_records: the session lines on stdin with every recorded session given its agent's
 # name and folder (by job id, else session id), so a retitled session still reads as the agent,
-# and an R in a tenth column.
+# and an R in a tenth column; a session the agent left (1.9.4) without a process reads as
+# "<agent> (superseded)" in the agent's folder, with an S (one with a process is left as it is:
+# it is a live copy, and counts as one).
 apply_records() {
   if [ -r "$RECORDS" ]; then
-    awk -F'\t' -v OFS='\t' 'NR == FNR { if ($3 != "") byid[$3] = $1 "\t" $2; if ($4 != "") bysid[$4] = $1 "\t" $2; next }
+    awk -F'\t' -v OFS='\t' 'NR == FNR { if ($3 != "") byid[$3] = $1 "\t" $2; if ($4 != "") bysid[$4] = $1 "\t" $2
+        if ($7 != "") { k = split($7, e, "\037"); for (j = 1; j <= k; j++) if (e[j] != "") sup[e[j]] = $1 "\t" $2 }
+        next }
       { r = ($5 in byid) ? byid[$5] : (($2 in bysid) ? bysid[$2] : "")
         if (r != "") { split(r, p, "\t"); $1 = p[1]; $4 = p[2]; print $0 "\tR"; next }
+        if (($2 in sup) && $3 != "running") { split(sup[$2], p, "\t"); $1 = p[1] " (superseded)"; $4 = p[2]; print $0 "\tS"; next }
         print }' "$RECORDS" -
   else
     cat
@@ -330,7 +355,7 @@ wait_running() {
         BEGIN { split(b, x, " "); for (k in x) old[x[k]] = 1; m = split(n, nm, "\037") }
         $3 == "running" && $4 == f && !($2 in old) { for (k = 1; k <= m; k++) if (nm[k] != "" && ($1 == nm[k] || index($1, nm[k] " (") == 1)) { print; exit } }')"
       if [ -n "$got" ]; then
-        rec_put "$NAME" "$FOLDER" "$(col "$got" 5)" "$(col "$got" 2)"
+        rec_put "$NAME" "$FOLDER" "$(col "$got" 5)" "$(col "$got" 2)" ${LEFT[@]+"${LEFT[@]}"}
         col "$got" 2; return 0
       fi
     else
@@ -341,6 +366,7 @@ wait_running() {
   done
 }
 ids_now() { sessions 2>/dev/null | cut -f2 | tr '\n' ' '; }
+LEFT=()  # the sessions a wake leaves (1.9.4): wait_running records them as superseded
 
 # ------------------------------------------------------------ saved options ----
 # Claude Code keeps the options a background session was started with (its "saved options",
@@ -478,41 +504,214 @@ session_gone() {
   return 1
 }
 
+# ------------------------------------------------------ wakes that crash or fork ----
+# (1.9.4) Reported on Claude Code 2.1.314: a session that was never prompted has no transcript,
+# and waking it crashes (`bg settled <short> (crashed): source session <id> not found` in
+# $CLAUDE_CONFIG_DIR/daemon.log, the job failed with that detail), sometimes under a new short id
+# that is briefly listed running; and a session that resumes fine may come back under a new id
+# (the same conversation), the old one left listed beside it. On 2.1.308 (checked) a session that
+# was never prompted has no transcript either, but a bare wake of it continues the same id. So: a
+# session with no transcript, or whose job failed with "not found", is never woken (the agent
+# starts fresh: there is no conversation to lose); every wake is confirmed for AGENT_ADAPTER_SETTLE
+# seconds; and a new id that continues the conversation is recorded as the agent's session.
+config_dir() { printf '%s' "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"; }
+
+# transcript_state <session id>: 0 Claude Code keeps a transcript of it
+# ($CLAUDE_CONFIG_DIR/projects/<folder>/<session id>.jsonl, in any folder), 1 it keeps none,
+# 2 not known (no projects folder: then the wake goes ahead, as before 1.9.4).
+transcript_state() {
+  local p f
+  p="$(config_dir)/projects"
+  [ -n "$1" ] && [ -d "$p" ] || return 2
+  for f in "$p"/*/"$1".jsonl; do [ -s "$f" ] && return 0; done
+  return 1
+}
+
+# job_field <short id> <key>: a string field of that job's state.json; returns 1 when unreadable.
+job_field() {
+  local f; f="$(jobs_dir)/$1/state.json"
+  [ -n "$1" ] && [ -r "$f" ] || return 1
+  tr -d '\n\r' < "$f" | sed -n "s/.*\"$2\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p"
+}
+
+# job_not_found <short id>: 0 when that job failed because its source session was not found (a
+# crashed wake: the session it would continue does not exist; waking it again crashes again).
+job_not_found() {
+  local f; f="$(jobs_dir)/$1/state.json"
+  [ -n "$1" ] && [ -r "$f" ] || return 1
+  tr -d '\n\r' < "$f" | grep -q 'source session [^"]* not found'
+}
+
+daemon_log() { printf '%s' "${AGENT_ADAPTER_CLAUDE_DAEMON_LOG:-$(config_dir)/daemon.log}"; }
+log_size() { local f; f="$(daemon_log)"; if [ -r "$f" ]; then wc -c < "$f" | tr -d ' '; else echo 0; fi; }
+
+# crashed <session id> <daemon.log size before> <claude output> [<short id woken>]: 0 when the wake
+# of that session failed with "not found": in what claude printed, the woken job's state.json, any
+# job's state.json naming this session, or daemon.log since the wake.
+crashed() {
+  local sid="$1" off="$2" out="$3" ws="${4:-}" lg size
+  case "$out" in *"source session $sid not found"*) return 0 ;; esac
+  [ -n "$ws" ] && job_not_found "$ws" && return 0
+  session_gone "$sid" "" && return 0
+  lg="$(daemon_log)"
+  if [ -r "$lg" ]; then
+    size="$(log_size)"; [ "$size" -ge "$off" ] 2>/dev/null || off=0
+    tail -c +"$((off + 1))" "$lg" 2>/dev/null | grep -qF "source session $sid not found" && return 0
+  fi
+  return 1
+}
+
+# fork_of <session line> <old session id> <old short id> <claude output>: 0 when that session is
+# not the old one but continues its conversation: its job resumes the old session id
+# (resumeSessionId in its state.json), or Claude Code said it woke the old session and named this
+# one (`woke session <old short>` with `backgrounded · <new short>`), or its transcript names the
+# old session. A copy Claude Code says it started (`started a copy as <id>`) never is.
+fork_of() {
+  local nsid nshort t
+  nsid="$(col "$1" 2)" nshort="$(col "$1" 5)"
+  [ -n "$nsid" ] && [ "$nsid" != "$2" ] || return 1
+  case "$4" in *"started a copy as $nshort"*) return 1 ;; esac
+  [ "$(job_field "$nshort" resumeSessionId)" = "$2" ] && return 0
+  case "$4" in *"woke session $3 "*) case "$4" in *"backgrounded · $nshort "*) return 0 ;; esac ;; esac
+  for t in "$(config_dir)/projects"/*/"$nsid".jsonl; do
+    [ -r "$t" ] && grep -qF "$2" "$t" && return 0
+  done
+  return 1
+}
+
+# scan_wake <session id> <short id> <ids before> <claude output>: one read of the list after a
+# wake. SCAN is the list; SELF that session's line when it runs; FORK a session new since the wake,
+# in the folder, that continues its conversation (fork_of); NEWRUN a new running session with a
+# name the agent's session may have (the 1.9.1 fallback). Returns 1 when the list cannot be read.
+scan_wake() {
+  local l
+  SELF='' FORK='' NEWRUN=''
+  SCAN="$(sessions)" || return 1
+  SELF="$(printf '%s\n' "$SCAN" | awk -F'\t' -v s="$1" '$2 == s && $3 == "running"' | head -n 1)"
+  while IFS= read -r l; do
+    [ -n "$l" ] || continue
+    case " $3 " in *" $(col "$l" 2) "*) continue ;; esac
+    [ "$(col "$l" 4)" = "$FOLDER" ] || continue
+    if fork_of "$l" "$1" "$2" "$4"; then FORK="$l"; break; fi
+  done <<< "$SCAN"
+  NEWRUN="$(printf '%s\n' "$SCAN" | awk -F'\t' -v n="$(cand_names | tr '\n' "$US")" -v f="$FOLDER" -v b="$3" '
+    BEGIN { split(b, x, " "); for (k in x) old[x[k]] = 1; m = split(n, nm, "\037") }
+    $3 == "running" && $4 == f && !($2 in old) { for (k = 1; k <= m; k++) if (nm[k] != "" && ($1 == nm[k] || index($1, nm[k] " (") == 1)) { print; exit } }')"
+  return 0
+}
+
+# start_fresh <why> <ids before> [<session ids left>...]: start the agent fresh as start-bg does
+# (a new session, with the agent's flags, WARGS), say why, record it with the sessions it left
+# (superseded) and print its id.
+start_fresh() {
+  local why="$1" before="$2"; shift 2
+  LEFT=("$@")
+  note "$NAME: $why; started fresh."
+  STARTED_AS="$SNAME"
+  (cd "$FOLDER" && claude --bg --name "$SNAME" ${WARGS[@]+"${WARGS[@]}"} </dev/null >&2) || die 1 "$NAME: $why, and 'claude --bg' failed."
+  wait_running "$before"
+}
+
 # wake_session <session line> <args...>: wake that ended session (stopped or failed, so without a
 # process: one with a process is listed running and never reaches here, so a resume never starts
 # a copy of it, 1.9.2) in the background, always bare (1.9.3: a flag makes Claude Code start a copy
 # that loses the conversation), and say on stderr when its saved options lack or differ from what
-# the agent wants; wait until it runs, record it and print its session id. When the resume fails
-# because the session is gone (session_gone), start the agent fresh as start-bg does, with the
-# agent's flags (a new session), and say so; any other failure fails.
+# the agent wants; confirm it, record it and print its session id. The agent starts fresh (as
+# start-bg does, a new session, said on stderr) instead when the session is gone: its job failed
+# with "not found" or it has no transcript (never woken, 1.9.4), or the wake fails or crashes with
+# "not found" within AGENT_ADAPTER_SETTLE seconds (the crashed attempt never recorded, 1.9.4). A
+# wake that comes back under a new id continuing the conversation records the new id, keeps the
+# old one as superseded and stops it if it still has a process (1.9.4). Any other failure fails.
 wake_session() {
-  local s="$1" sid short before WHY='' out rc=0 got; shift
+  local s="$1" sid short before WHY='' out rc=0 off k cand csid cshort chosen st kind; shift
+  WARGS=("$@")
   sid="$(col "$s" 2)" short="$(col "$s" 5)"
   before="$(printf '%s\n' "$ALL" | cut -f2 | tr '\n' ' ')"
+  if job_not_found "$short" || session_gone "$sid" ""; then
+    start_fresh "session $sid is gone (Claude Code did not find it when it was woken before), so it is not woken again" "$before" "$sid"; return 0
+  fi
+  transcript_state "$sid"; rc=$?
+  if [ "$rc" -eq 1 ]; then
+    start_fresh "session $sid has no transcript (it was never prompted, so there is no conversation to keep; waking it crashes on Claude Code 2.1.314), so it is not woken" "$before" "$sid"; return 0
+  fi
+  rc=0
   bare_check "$short" "$@"
   [ -z "$WHY" ] || note "$NAME: $WHY; woken as it is (the same conversation), so what differs applies at the agent's next fresh start (agents reset, or the session gone)."
   STARTED_AS="$BARE_NAME"  # the name it keeps (and the record then holds)
+  off="$(log_size)"
   out="$(cd "$FOLDER" && claude --bg --resume "$sid" </dev/null 2>&1)" || rc=$?
   [ -z "$out" ] || printf '%s\n' "$out" >&2
-  got=''
-  if [ "$rc" -eq 0 ]; then
-    got="$(wait_running "$before" "$sid")"
-    [ -z "$got" ] || { printf '%s\n' "$got"; return 0; }
-    # Claude Code said it woke this very session (its short id), but the list does not show it
-    # yet: it is the agent's, idle until a prompt reaches it (1.9.1); never a fresh start
-    case "$out" in
-      *"woke session $short "* | *"backgrounded · $short "*)
-        rec_put "$NAME" "$FOLDER" "$short" "$sid"
-        printf '%s\n' "$sid"; return 0 ;;
-    esac
+  if [ "$rc" -ne 0 ]; then
+    if crashed "$sid" "$off" "$out"; then start_fresh "session $sid is gone" "$before" "$sid"; return 0; fi
+    die 1 "$NAME: 'claude --bg --resume' failed."
   fi
-  if session_gone "$sid" "$out"; then
-    note "$NAME: session $sid is gone; started fresh."
-    STARTED_AS="$SNAME"
-    (cd "$FOLDER" && claude --bg --name "$SNAME" "$@" </dev/null >&2) || die 1 "$NAME: session $sid is gone and 'claude --bg' failed."
-    wait_running "$before"; return 0
+  # what came back: within AGENT_ADAPTER_WAIT seconds, its own session running, a new one that
+  # continues it, or a new running one by the agent's name
+  SCAN='' SELF='' FORK='' NEWRUN=''
+  k="${AGENT_ADAPTER_WAIT:-10}"; case "$k" in '' | *[!0-9]*) k=10 ;; esac
+  while :; do
+    scan_wake "$sid" "$short" "$before" "$out" || break
+    [ -z "$SELF$FORK$NEWRUN" ] || break
+    [ "$k" -le 0 ] && break
+    sleep 1; k=$((k - 1))
+  done
+  # then confirm it for AGENT_ADAPTER_SETTLE seconds: no "not found" crash (a new id may show up
+  # meanwhile, so the list is read again each second)
+  k="${AGENT_ADAPTER_SETTLE:-5}"; case "$k" in '' | *[!0-9]*) k=5 ;; esac
+  while :; do
+    cand="${FORK:-${SELF:-$NEWRUN}}"
+    csid="$(col "$cand" 2)" cshort="$(col "$cand" 5)"
+    if crashed "$sid" "$off" "$out" "$cshort"; then
+      [ "$csid" != "$sid" ] || csid=''
+      start_fresh "session $sid is gone${csid:+ (its wake crashed as $csid, which is not recorded)}" "$before" "$sid" ${csid:+"$csid"}
+      return 0
+    fi
+    [ "$k" -le 0 ] && break
+    sleep 1; k=$((k - 1))
+    local pf="$FORK" ps="$SELF" pn="$NEWRUN"
+    scan_wake "$sid" "$short" "$before" "$out" || { FORK="$pf" SELF="$ps" NEWRUN="$pn"; continue; }
+    [ -n "$FORK" ] || FORK="$pf"
+  done
+  cand="${FORK:-${SELF:-$NEWRUN}}"
+  if [ -n "$cand" ]; then
+    # alive: still listed, and not failed since
+    chosen="$(printf '%s\n' "$SCAN" | awk -F'\t' -v s="$(col "$cand" 2)" '$2 == s' | head -n 1)"
+    st="$(col "$chosen" 3)"
+    if [ "$st" = failed ]; then
+      die 1 "$NAME: woken, but session $(col "$cand" 2) failed within ${AGENT_ADAPTER_SETTLE:-5}s (not a missing session; its conversation is kept, not recorded): claude logs $(col "$cand" 5)."
+    fi
   fi
-  [ "$rc" -eq 0 ] || die 1 "$NAME: 'claude --bg --resume' failed."
+  if [ -n "$FORK" ]; then
+    csid="$(col "$FORK" 2)" cshort="$(col "$FORK" 5)"
+    rec_put "$NAME" "$FOLDER" "$cshort" "$csid" "$sid"
+    note "$NAME: woken; Claude Code continues its conversation under a new id, $csid (was $sid)."
+    # the old one: stopped by its id if it still has a process, else left (superseded)
+    s="$(printf '%s\n' "$SCAN" | awk -F'\t' -v x="$sid" '$2 == x' | head -n 1)"
+    if [ "$(col "$s" 3)" = running ]; then
+      kind="$(col "$s" 6)"
+      if [ "$kind" = interactive ]; then
+        note "$NAME: its old session $sid is held by a terminal (pid $(col "$s" 7)); end it there."
+      elif claude stop "$(col "$s" 5)" </dev/null >/dev/null 2>&1; then
+        note "$NAME: stopped its old session $sid by its id (it still had a process; its conversation goes on as $csid)."
+      else
+        note "$NAME: 'claude stop $(col "$s" 5)' of its old session $sid failed; it runs beside $csid."
+      fi
+    fi
+    printf '%s\n' "$csid"; return 0
+  fi
+  if [ -n "$cand" ]; then
+    rec_put "$NAME" "$FOLDER" "$(col "$cand" 5)" "$(col "$cand" 2)"
+    col "$cand" 2; return 0
+  fi
+  # Claude Code said it woke this very session (its short id), but the list does not show it
+  # yet: it is the agent's, idle until a prompt reaches it (1.9.1); never a fresh start
+  case "$out" in
+    *"woke session $short "* | *"backgrounded · $short "*)
+      rec_put "$NAME" "$FOLDER" "$short" "$sid"
+      printf '%s\n' "$sid"; return 0 ;;
+  esac
+  if [ -z "$SCAN" ]; then note "$NAME: started, but its session list cannot be read to confirm and record it."
+  else note "$NAME: started, but not in 'claude agents' yet; not recorded."; fi
   return 0
 }
 

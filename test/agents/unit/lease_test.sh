@@ -370,7 +370,7 @@ for mode in 1 quiet; do
   w='fresh after a failed wake'; [ "$mode" = 1 ] || w="$w (the adapter printed no id)"
   check "$w: woken once, nothing else started (exit 0)" "0:1:0" "$rc:$(count wake):$(count start-bg)"
   check "$w: the carrier is the new session" carrier=session:id-host-new "$(grep '^carrier=' "$L/host/holder" 2>/dev/null)"
-  contains "$w: says it runs as a new session" "$out" 'host: running as a new session (id-host-new); id-old was not woken'
+  contains "$w: says it runs under a new session id" "$out" 'host: running under a new session id (id-host-new, was id-old)'
   out="$(run list)"
   contains "$w: list: LEASE and ID agree" "$out" \
     "$(printf '%-16s %-10s %-10s %-8s %-9s %-24s %-38s %s' host resident stateful fake running 'held session:id-host-new' id-host-new .)"

@@ -27,6 +27,46 @@ Claude Code (https://code.claude.com/docs) as a member of this collection's ecos
 
 - `anthropic.claude-code`
 
+## Changes in 1.9.4
+
+- **A crashed wake never loops.** Reported by a consumer on claude-code 1.9.2 with Claude Code 2.1.314: a resident
+  whose session had never been prompted was woken, the wake crashed (`bg settled <short> (crashed): source session
+  <id> not found` in `$CLAUDE_CONFIG_DIR/daemon.log`), the CLI adapter recorded the crashed attempt as the agent's
+  session (it was briefly listed running under a new id), and every `agents up` woke that attempt and crashed again.
+  The workaround was `agents start <name> --new --yes`. Now:
+  - A session with no transcript (`$CLAUDE_CONFIG_DIR/projects/<folder>/<session id>.jsonl`, looked for in every
+    folder) is never woken: there is no conversation to keep, so the agent starts fresh, as for a gone session, and
+    one line says so. When there is no `projects` folder at all the wake goes ahead as before.
+  - A session whose job failed with `source session <id> not found` (its `state.json`), or that any job's
+    `state.json` names as not found, is gone and never woken again; the agent starts fresh.
+  - Every wake is confirmed for `AGENT_ADAPTER_SETTLE` seconds (default 5): when the wake output, the woken job's
+    `state.json`, any job's `state.json` or the lines `daemon.log` gained since the wake say `source session <id>
+    not found`, the agent starts fresh and the crashed attempt is never recorded. A woken session listed `failed`
+    at the end of that time for another reason fails the wake (exit 1), unrecorded, its conversation kept.
+- **"Same conversation, new id."** The same report: residents that resumed fine came back under new ids (Claude
+  Code 2.1.314 appears to resume into a new id), so "the id after a restart is the id before" no longer holds; a
+  consumer's check should compare conversations, not ids. A wake that comes back under another id is the agent's
+  session when that session continues the old one: its job's `resumeSessionId` is the old id, or Claude Code said
+  it woke the old session and named the new one (`woke session <old>` with `backgrounded · <new>`), or the new
+  transcript names the old id. The new id is recorded, the old one kept in the record, and one line names both
+  (`woken; Claude Code continues its conversation under a new id, <new> (was <old>)`). A copy Claude Code says it
+  started (`started a copy as <id>`) never counts. On 2.1.308 (checked again for this release) a bare wake keeps
+  the id, including that of a session never prompted, which also has no transcript there; 1.9.1's "the same id"
+  holds on 2.1.308 only.
+- **The old session is never left as a second copy.** After a wake under a new id, the old session is stopped by
+  its id if it still has a process (an interactive one is left, with a line). Without one it is left (never
+  removed) and marked superseded in the record (a seventh field, the sessions the agent left, also filled when it
+  starts fresh in place of a gone or crashed session). `list` prints a superseded session without a process as
+  `<name> (superseded)`, which is no name of the agent's, so `agents` never counts it as another copy, and the CLI
+  adapter never wakes or attaches it as the agent again.
+- **Facts checked on Claude Code 2.1.308** (a throwaway `factcheck-nt` session, haiku, never prompted, in a trusted
+  folder, stopped by its id): such a session has no transcript; its job's `state.json` has `sessionId` and
+  `resumeSessionId` (equal); `daemon.log` sits at `$CLAUDE_CONFIG_DIR/daemon.log` and logs a crashed wake as
+  `bg settled <short> (crashed): source session <id> not found`; a bare wake of the never-prompted session continued
+  the same id. The 2.1.314 crash and the new id on resume are taken from the consumer's report and modelled in the
+  unit tests' fake `claude`; they could not be reproduced here. `agents` 2.1.1 words its line about a new id
+  neutrally (it said the old session "was not woken").
+
 ## Changes in 1.9.3
 
 - **Extra saved options never turn a wake into a copy.** Reported by a consumer after 1.9.1: residents whose entries
@@ -225,7 +265,7 @@ else should. The contract (verbs, exit codes) is in the `agents` Feature's notes
 | Verb | What it runs |
 | --- | --- |
 | `start-bg` | `cd <folder> && claude --bg --name <name> <args>`; waits until the session is listed and prints its id |
-| `wake` | the agent's newest stopped or failed session, by its full id: `cd <folder> && claude --bg --resume <session id>` (the same id and conversation; Claude Code 2.1.308 says `woke session ... with its saved options (--name, ...)`), always bare (1.9.3); a line says when its saved options lack or differ from `--name <name> <args>`; extra saved options are no difference. If the session is gone (`source session <id> not found`), the agent is started fresh as `start-bg` does, and stderr says so (1.8.6) |
+| `wake` | the agent's newest stopped or failed session, by its full id: `cd <folder> && claude --bg --resume <session id>` (its conversation, under the same id on Claude Code 2.1.308, which says `woke session ... with its saved options (--name, ...)`; 2.1.314 may answer under a new id, which is recorded when it continues the conversation, 1.9.4), always bare (1.9.3); a line says when its saved options lack or differ from `--name <name> <args>`; extra saved options are no difference. If the session is gone (`source session <id> not found`, 1.8.6), has no transcript, or the wake crashes with "not found" within `AGENT_ADAPTER_SETTLE` seconds (1.9.4), the agent is started fresh as `start-bg` does, and stderr says so |
 | `attach` | `claude attach <id>` of its newest running session; an interactive one is refused with the pid and tty of the terminal that holds it. With none running, `claude attach <id>` of its newest ended one (Claude Code restarts it with its saved options; the same line as `wake` says when they lack or differ from the agent's, 1.9.3) |
 | `resume` | `cd <folder> && claude --resume <session id> <args>` of its newest session; refused while that session runs (a second process on one transcript). When the list cannot be read: `claude --resume <args>`, Claude Code's own picker (1.8.0) |
 | `new` | `cd <folder> && claude --name <name> <args>` |

@@ -446,6 +446,16 @@ moves to 2 on its own.
 
 **What 2.x holds so far.** 2.0 brings the lease and the `default` agent; 2.1 brings session names (the `sessionName` option and the `session-name:` key, with `AGENT_SESSION_NAME` handed to every CLI adapter call). The rest of version 2 arrives in steps (docs/proposals/agents-v2.md, section 12): agent integrations in 2.2 and ephemeral runs in 2.3. The Claude CLI adapter maps the session name onto `--name` in claude-code 1.9; passing `definition` (as `--agent`) follows in a later claude-code minor. Until then `definition` is stored and shown, and a start that sets it says it is not passed on yet.
 
+### Changes in 2.1.1
+
+A wake answered with another session id no longer says the old session "was not woken". The line
+was written for a fresh start in place of a gone session, but a CLI may also resume a session under
+a new id that continues the same conversation (Claude Code 2.1.314, as a consumer reported; the
+CLI adapter in claude-code 1.9.4 records that id and says so on stderr). The line is now neutral,
+`<name>: running under a new session id (<new>, was <old>)`, and the adapter's own line above it
+says which case it is. Nothing else changes; the lease's carrier was already the id the adapter
+prints (2.0.3).
+
 ### Changes in 2.1.0
 
 Session names: the label a CLI shows for an agent's session is a template (the Feature option
