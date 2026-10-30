@@ -1,3 +1,28 @@
+## Changes in 1.9.0
+
+- **Session names: `AGENT_SESSION_NAME`.** The CLI adapter (`agent-adapter-claude`) reads the environment variable
+  `AGENT_SESSION_NAME`, the name the caller (the `agents` Feature, from its template) wants the session to show.
+  When it is not empty it is the session's `--name` on every start (`start-bg`, `new`, a wake that has to start a
+  copy, and the fresh start after a session is gone); when it is empty or unset the handle is the name, as before.
+  The adapter checks nothing about the template (the caller renders and checks it); it only refuses a value with a
+  line break or tab (the handle is used, and it says so). The argument `<name>` stays the agent's handle: it keys the
+  record, the lease and every verb. A CLI adapter that cannot name sessions ignores the variable (the NFR-12
+  fallback), so there is no `supports` line for it.
+- **Fact it rests on.** A name given with `--name` is pinned (`nameSource: user` in the job's `state.json`): Claude
+  Code does not retitle such a session, through its first turn, a stop and a bare wake (checked on Claude Code
+  2.1.308; the session-names proposal, "Facts checked").
+- **A changed name never makes a second session.** The record (`agents.tsv`) keeps, besides the ids, the name the
+  session was started with and up to five names before it (two more columns; an older record without them still
+  works). The agent's session is found by its record, and otherwise by any name it has had in its folder: the
+  session name now, the handle, the recorded name and the recorded earlier names (`host (2)` too). The bare-wake
+  comparison accepts a saved `--name` equal to any of those, so a template that changed between starts wakes the
+  same session bare, with its conversation, under the name it has. A bare wake also records the name it keeps.
+  `record` with no running session clears the ids and keeps the names.
+- **A changed name applies at the next fresh start**, not to a running or ended session: the adapter does not
+  rename (Claude Code has `/rename` interactively and nothing from outside; NFR-13). A call without
+  `AGENT_SESSION_NAME` (a nested call) wakes the same session bare and renames nothing. A session found by neither
+  record nor any of those names (a lost record, started under a name the template no longer gives) is not found.
+
 ## Changes in 1.8.8
 
 - **`remoteControl` option: Remote Control on for every agent.** `"remoteControl": true` makes the CLI adapter
