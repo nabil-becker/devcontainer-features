@@ -3,7 +3,10 @@
 # checked, and an in-container agent restarted, on every start, not only at create),
 # also behind `task ssh-agent:setup` and `task ssh-agent:check`.
 #
-#   ssh-agent-setup                  set up for DCF_HOST_SSH_AGENT and report (never fatal: exit 0)
+#   ssh-agent-setup                  set up for DCF_HOST_SSH_AGENT and report (never fatal: exit 0); the
+#                                    start hook: never asks for a passphrase, skips a protected key with a warning
+#   ssh-agent-setup setup --ask      the same, and ask for each protected key's passphrase on the terminal
+#                                    (waits up to the passphrase timeout, then skips it with a warning)
 #   ssh-agent-setup check            only report; exit 0 when an agent answers, 1 when none does
 #   ssh-agent-setup keys             list what the agent holds (fingerprints and comments)
 # Key mode only (the opt-in that keeps a key in the container's volume):
@@ -37,6 +40,8 @@ set -u
 # shellcheck disable=SC1091  # written by install.sh at image build
 [ -f /usr/local/share/ssh-agent-feature/options.env ] && source /usr/local/share/ssh-agent-feature/options.env
 key_option="${SSH_AGENT_SETUP_KEY_MODE-${KEYMODE:-false}}"
+# Seconds the hook waits for a passphrase typed at ssh-add's prompt (0: never prompt).
+passphrase_wait="${SSH_AGENT_SETUP_PASSPHRASE_TIMEOUT:-${PASSPHRASETIMEOUT:-120}}"
 # Overridable so the Docker-free unit test can run against temp folders.
 SSH_SOCK="${DCF_SSH_AGENT_SOCK:-/var/lib/devcontainer-features/ssh-agent/agent.sock}"
 KEY_DIR="${DCF_SSH_AGENT_KEY_DIR:-/var/lib/devcontainer-features/ssh-agent-key}"
@@ -101,6 +106,55 @@ start_agent() { # sets AGENT_STATE: reused | started | failed
   else AGENT_STATE=failed; warn "could not start ssh-agent on $SSH_SOCK"; fi
 }
 
+# add_key <file>: load one private key into the agent at SSH_SOCK; 0 when loaded. A key without a
+# passphrase is added at once. A protected key is NEVER asked for by the start hook (ask_ok=0): the
+# hook has no business waiting for a person (the devcontainer CLI runs every start hook together and
+# waits for all of them), so it skips the key with one warning and the start goes on. The explicit
+# commands (task ssh-agent:setup, key:load, key:add, key:new, key:rotate) set ask_ok=1: ssh-add's own
+# prompt ("Enter passphrase for <key>:", on the terminal, never read by this script) is waited for
+# up to passphrase_wait seconds, and ssh-add re-asks after a wrong one as it always does. With no
+# terminal, wait 0, a timeout or a skipped passphrase it prints ONE warning (the key is not loaded
+# and the command to load it) and returns 1; nothing here ever fails the start.
+ask_ok=0
+key_protected() { ! ssh-keygen -y -P '' -f "$1" </dev/null >/dev/null 2>&1; }
+have_tty() { ( exec </dev/tty ) 2>/dev/null; }
+add_key() {
+  local f="$1" name="${1##*/}" rc err later wait="$passphrase_wait"
+  later="run task ssh-agent:setup from a terminal in the container"
+  case "$wait" in '' | *[!0-9]*) wait=120 ;; esac
+  if ! key_protected "$f"; then
+    SSH_ASKPASS_REQUIRE=never SSH_AUTH_SOCK="$SSH_SOCK" ssh-add "$f" </dev/null >/dev/null 2>&1 && return 0
+    warn "could not add $name to the agent; the start continues. Try again: $later"
+    return 1
+  fi
+  if [ "$ask_ok" -ne 1 ]; then
+    warn "$name has a passphrase and the start hook never asks for one, so it is not loaded; the start continues. Load it: $later"
+    return 1
+  fi
+  if ! have_tty; then
+    warn "$name has a passphrase and there is no terminal to ask for it, so it is not loaded; the start continues. Load it: $later"
+    return 1
+  fi
+  if [ "$wait" -eq 0 ]; then
+    warn "$name has a passphrase and the wait for it is off (passphrase timeout 0), so it is not loaded; the start continues. Load it: $later"
+    return 1
+  fi
+  say "$name has a passphrase: ssh-add asks for it below; waiting up to ${wait}s (SSH_AGENT_SETUP_PASSPHRASE_TIMEOUT), then it is skipped."
+  if command -v timeout >/dev/null 2>&1; then
+    err="$(SSH_ASKPASS_REQUIRE=never SSH_AUTH_SOCK="$SSH_SOCK" timeout --foreground "$wait" ssh-add "$f" </dev/null 2>&1 >/dev/null)"; rc=$?
+  else
+    err="$(SSH_ASKPASS_REQUIRE=never SSH_AUTH_SOCK="$SSH_SOCK" ssh-add "$f" </dev/null 2>&1 >/dev/null)"; rc=$?
+  fi
+  [ "$rc" -eq 0 ] && return 0
+  [ -t 2 ] && echo >&2
+  if [ "$rc" -eq 124 ]; then
+    warn "no passphrase for $name within ${wait}s, so it is not loaded; the start continues. Load it: $later"
+  else
+    warn "$name was not loaded (the passphrase was not accepted or was skipped${err:+; ssh-add said: ${err##*$'\n'}}); the start continues. Load it: $later"
+  fi
+  return 1
+}
+
 load_keys() { # adds every private key of KEY_DIR; prints one line per refusal, then a summary
   local f mode_bits loaded=0 refused=0 failed=0 total=0
   if [ ! -d "$KEY_DIR" ]; then say "key mode: no key volume at $KEY_DIR (the Feature declares it; was the container created without it?)"; return 0; fi
@@ -115,8 +169,7 @@ load_keys() { # adds every private key of KEY_DIR; prints one line per refusal, 
       warn "refusing ${f##*/}: mode $mode_bits lets group or others read it; run chmod 600 on it (or add it again with task ssh-agent:key:add)"
       continue
     fi
-    if SSH_AUTH_SOCK="$SSH_SOCK" ssh-add "$f" </dev/null >/dev/null 2>&1; then loaded=$((loaded + 1))
-    else failed=$((failed + 1)); warn "could not add ${f##*/} (a passphrase-protected key needs task ssh-agent:setup from a terminal)"; fi
+    if add_key "$f"; then loaded=$((loaded + 1)); else failed=$((failed + 1)); fi
   done
   if [ "$total" -eq 0 ]; then say "key mode: no private key in $KEY_DIR yet; copy one in with task ssh-agent:key:add FILE=<path>"
   else say "key mode: $loaded of $total key(s) from $KEY_DIR loaded ($refused refused, $failed failed)"; fi
@@ -510,8 +563,8 @@ key_loaded() { # <name>: the agent on the fixed path holds it
   [ -n "$fp" ] && SSH_AUTH_SOCK="$SSH_SOCK" ssh-add -l 2>/dev/null | grep -qF -- "$fp"
 }
 
-load_one() { # <name>: add it to the agent; the terminal stays available for a passphrase
-  SSH_AUTH_SOCK="$SSH_SOCK" ssh-add "$KEY_DIR/$1" >/dev/null 2>&1
+load_one() { # <name>: add it to the agent; a passphrase is asked for as add_key does
+  add_key "$KEY_DIR/$1"
 }
 
 drop_key_files() { # <name>: the private key, its public half and its sidecar leave the volume
@@ -730,6 +783,11 @@ cmd_key_rotate() {
 }
 
 cmd="${1:-setup}"
+# Only an explicit command may ask for a passphrase; the start hook (no arguments) never does.
+case "$cmd" in
+  key-load | key-add | key-new | key-rotate) ask_ok=1 ;;
+  setup) [ "${2:-}" = --ask ] && ask_ok=1 ;;
+esac
 case "$cmd" in
   check) verdict; rc=$?; key_hygiene; [ "$EFF" = socket ] && host_rotation_guidance; exit "$rc" ;;
   keys) cmd_keys; exit 0 ;;

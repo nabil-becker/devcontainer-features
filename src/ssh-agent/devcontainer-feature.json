@@ -1,6 +1,6 @@
 {
   "id": "ssh-agent",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "name": "SSH agent",
   "description": "Makes an SSH agent available to every process in the devcontainer (SSH_AUTH_SOCK=/var/lib/devcontainer-features/ssh-agent/agent.sock, also for `devcontainer exec`) so git commits can be signed with an SSH key: the devcontainer-cli launcher bind-mounts the host's agent socket onto that path where the host type has one (linux, macos, a WSL distro), the private key never entering the container; a post-start hook (ssh-agent-setup) checks it on every start and says plainly what a host type without one can do; the opt-in keyMode starts an agent inside the container and loads keys from its own volume instead, which breaks the no-key rule for whoever turns it on. Plus the Feature Taskfile (check, keys, key tasks including key:rotate, key:retire and key:age, git:signing, git:verify).",
   "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/ssh-agent",
@@ -10,6 +10,11 @@
       "type": "boolean",
       "default": true,
       "description": "Also install this Feature's Taskfile into /usr/local/share/go-task/includes.d so its tasks appear under the <id>: namespace of a root Taskfile that includes /usr/local/share/go-task/features.yml (see the go-task Feature)."
+    },
+    "passphraseTimeout": {
+      "type": "string",
+      "default": "120",
+      "description": "Key mode: seconds `task ssh-agent:setup` (and the key tasks) wait for the passphrase of a protected key typed at ssh-add's own prompt. On the timeout, with no terminal to ask on, or with 0 (never prompt), they print one warning (the key is not loaded; task ssh-agent:setup loads it later) and go on with exit 0. The start hook itself never asks: it skips a protected key with that warning. Override per container with SSH_AGENT_SETUP_PASSPHRASE_TIMEOUT in containerEnv."
     },
     "keyMode": {
       "type": "boolean",
