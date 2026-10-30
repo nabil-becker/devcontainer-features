@@ -279,6 +279,41 @@ check 'host warns when the runArgs lines are missing' 1 "$(grep -c 'FUSE does no
 ws="$(new_ws "$plain")"; run linux "$ws" -- host
 check 'host shows no grant when not asked' 'DCF_HOST_FUSE      : (unset: no FUSE grant)' "$(grep '^DCF_HOST_FUSE ' <<<"$out")"
 
+# --- The machine name (session-names proposal, slice 1): DCF_HOST_MACHINE is the workstation's
+# name, sanitised, set for up (and so rebuild); `up` and `host` warn once when the repository's
+# devcontainer.json does not read it, never fail.
+# shellcheck disable=SC2016  # the stub's own variable
+printf '#!/bin/sh\nfor a in "$@"; do echo "$a"; done > "$DCF_TEST_RECORD"\nenv | grep "^DCF_HOST_MACHINE" > "$DCF_TEST_RECORD.env" || : > "$DCF_TEST_RECORD.env"\n' > "$bin/devcontainer"
+# shellcheck disable=SC2016  # the stub's own variable
+printf '#!/bin/sh\necho "$DCF_TEST_HOSTNAME"\n' > "$bin/hostname"; chmod +x "$bin/hostname"
+# shellcheck disable=SC2016  # JSON text
+mline='{ "containerEnv": { "DCF_HOST_MACHINE": "${localEnv:DCF_HOST_MACHINE}" } }'
+ws="$(new_ws "$mline")"; run linux "$ws" DCF_TEST_HOSTNAME=Alice-PC -- up
+check 'DCF_HOST_MACHINE is the machine name' 'DCF_HOST_MACHINE=Alice-PC' "$(cat "$T/rec.env")"
+run linux "$ws" DCF_TEST_HOSTNAME='  my laptop (2)!.' -- up
+check 'DCF_HOST_MACHINE is cut to the safe set' 'DCF_HOST_MACHINE=my-laptop-2' "$(cat "$T/rec.env")"
+run linux "$ws" DCF_TEST_HOSTNAME=Own DCF_HOST_MACHINE=inherited -- up
+check 'DCF_HOST_MACHINE inherited from the environment is replaced' 'DCF_HOST_MACHINE=Own' "$(cat "$T/rec.env")"
+run linux "$ws" DCF_TEST_HOSTNAME="$(printf 'a%.0s' $(seq 1 80))" -- up
+check 'DCF_HOST_MACHINE is at most 63 characters' "DCF_HOST_MACHINE=$(printf 'a%.0s' $(seq 1 63))" "$(cat "$T/rec.env")"
+check 'the line present: no warning' 0 "$(grep -c 'DCF_HOST_MACHINE' <<<"$out")"
+ws="$(new_ws "$plain")"; run linux "$ws" DCF_TEST_HOSTNAME=Alice-PC -- up
+check 'the line missing: one warning on up' 1 "$(grep -c 'does not read DCF_HOST_MACHINE' <<<"$out")"
+check 'the line missing: up still starts the CLI' 'DCF_HOST_MACHINE=Alice-PC' "$(cat "$T/rec.env")"
+run linux "$ws" -- build
+check 'build: no machine warning' 0 "$(grep -c 'does not read DCF_HOST_MACHINE' <<<"$out")"
+# shellcheck disable=SC2016  # JSON text
+ws="$(new_ws '{ // "DCF_HOST_MACHINE": "${localEnv:DCF_HOST_MACHINE}"
+}')"; run linux "$ws" -- up
+check 'a machine line in a comment does not count' 1 "$(grep -c 'does not read DCF_HOST_MACHINE' <<<"$out")"
+ws="$(new_ws '')"; mkdir -p "$ws/.devcontainer"; cp "$here/../../bootstrap/devcontainer.json" "$ws/.devcontainer/devcontainer.json"
+run linux "$ws" -- up
+check 'the bootstrap template carries the machine line' 0 "$(grep -c 'does not read DCF_HOST_MACHINE' <<<"$out")"
+ws="$(new_ws "$plain")"; run linux "$ws" DCF_TEST_HOSTNAME=Alice-PC -- host
+check 'host shows the machine name' 'DCF_HOST_MACHINE   : Alice-PC' "$(grep '^DCF_HOST_MACHINE' <<<"$out")"
+check 'host warns when the line is missing' 1 "$(grep -c 'does not read DCF_HOST_MACHINE' <<<"$out")"
+check "this repository's devcontainer.json reads it" 1 "$(grep -cF 'localEnv:DCF_HOST_MACHINE' "$here/../../.devcontainer/devcontainer.json")"
+
 echo
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

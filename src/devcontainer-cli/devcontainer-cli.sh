@@ -50,6 +50,9 @@
 #                              /mnt/cloud-folder-host, the cloud-folder Feature's host mount (its
 #                              mountPoint links there); passed on to the CLI as is.
 #                              Unset = no host folder, no mount.
+#   DCF_HOST_MACHINE           the workstation's machine name (hostname -s), cut to letters, digits,
+#                              dot, underscore and hyphen (at most 63): always set by the launcher
+#                              for up and rebuild; the repository's containerEnv passes it on.
 #   DCF_HOST_FUSE              1 (or true, yes, on) = the project asks for FUSE on this machine,
 #                              for the cloud-folder Feature's mount mode (ADR 0031): the
 #                              launcher sets DCF_HOST_FUSE_DEVICE, DCF_HOST_FUSE_CAP and
@@ -376,6 +379,7 @@ resolve_host_profile() {
   resolve_ssh_agent
   resolve_cloud_folder
   resolve_fuse
+  resolve_machine
 }
 
 # export_host_env: DCF_HOST_* into this process's environment, which the CLI inherits;
@@ -383,13 +387,53 @@ resolve_host_profile() {
 export_host_env() {
   resolve_host_profile
   export DCF_HOST_TYPE="$HT_TYPE" DCF_HOST_HOME="$HT_HOME" DCF_HOST_SSH_AGENT="$HT_SSH_AGENT" DCF_HOST_CLOUD_FOLDER="$HT_CLOUD_FOLDER"
-  export DCF_HOST_FUSE="$HT_FUSE"
+  export DCF_HOST_FUSE="$HT_FUSE" DCF_HOST_MACHINE="$HT_MACHINE"
   local i
   # Set from the fixed list when asked for, removed otherwise: a value left in the user's
   # environment or .env never reaches runArgs.
   for i in 0 1 2; do
     if [ "$HT_FUSE" = 1 ]; then export "${fuse_vars[$i]}=${fuse_args[$i]}"; else unset "${fuse_vars[$i]}"; fi
   done
+}
+
+# The machine name (docs/proposals/session-names.md, slice 1): DCF_HOST_MACHINE is the
+# workstation's own name, so agents' sessions can say which machine they run on. `hostname -s`
+# (else `uname -n` up to the first dot; the PowerShell twin reads $env:COMPUTERNAME on Windows),
+# cut to a safe set: letters, digits, dot, underscore and hyphen (anything else becomes a hyphen,
+# runs collapse, no leading or trailing hyphen or dot), at most 63 characters; empty when nothing
+# is left. Always the launcher's own value, never one inherited from the environment.
+sanitise_machine() {
+  local n="$1"
+  n="${n//[^A-Za-z0-9._-]/-}"
+  while [[ "$n" == *--* ]]; do n="${n//--/-}"; done
+  while [[ "$n" == [-.]* ]]; do n="${n#?}"; done
+  n="${n:0:63}"
+  while [[ "$n" == *[-.] ]]; do n="${n%?}"; done
+  printf '%s' "$n"
+}
+resolve_machine() {
+  local raw
+  raw="$(hostname -s 2>/dev/null || true)"
+  [ -n "$raw" ] || { raw="$(uname -n 2>/dev/null || true)"; raw="${raw%%.*}"; }
+  HT_MACHINE="$(sanitise_machine "$raw")"
+}
+
+# machine_slot_missing <workspace> [cli args...]: succeeds when the repository's devcontainer.json
+# (outside comments) does not read DCF_HOST_MACHINE; fails when it does, or when there is no file.
+machine_slot_missing() {
+  local file text
+  file="$(config_file "$@")"
+  [ -n "$file" ] || return 1
+  text="$(strip_jsonc < "$file")"
+  # shellcheck disable=SC2016  # JSON text
+  ! grep -qF -- '${localEnv:DCF_HOST_MACHINE' <<<"$text"
+}
+
+# machine_check_slot <workspace> [cli args...]: one warning, never a failure, when the repository's
+# devcontainer.json lacks the DCF_HOST_MACHINE line.
+machine_check_slot() {
+  machine_slot_missing "$@" || return 0
+  echo "The repository's devcontainer.json does not read DCF_HOST_MACHINE (\"DCF_HOST_MACHINE\": \"\${localEnv:DCF_HOST_MACHINE}\" in containerEnv): agents' session names show \"container\" for {machine} until it does. Copy the line from the bootstrap's devcontainer.json." >&2
 }
 
 # ---------------------------------------------------------- host mounts ----
@@ -562,6 +606,8 @@ mode_host() { # [workspace] [cli args...]
   echo "DCF_HOST_HOME      : $HT_HOME"
   echo "DCF_HOST_SSH_AGENT : $HT_SSH_AGENT"
   echo "DCF_HOST_CLOUD_FOLDER: ${HT_CLOUD_FOLDER:-(unset)}"
+  echo "DCF_HOST_MACHINE   : ${HT_MACHINE:-(unset)}"
+  machine_check_slot "$ws" "$@" 2>&1
   if [ "${HT_FUSE:-}" = 1 ]; then
     echo "DCF_HOST_FUSE      : 1 (runArgs get: $(fuse_run_args | tr '\n' ' '| sed 's/ $//'))"
     fuse_check_slots "$ws" "$@" 2>&1
@@ -703,6 +749,7 @@ run_cli() {
     host_mount_args "$(resolve_workspace "$workspace")" "$@"
     args+=(${HM_ARGS[@]+"${HM_ARGS[@]}"})
     fuse_check_slots "$(resolve_workspace "$workspace")" "$@"
+    machine_check_slot "$(resolve_workspace "$workspace")" "$@"
   fi
   if [ -n "$cmd_b64" ]; then
     [ "$subcommand" = exec ] || die '--cmd-b64 is only meaningful with exec'

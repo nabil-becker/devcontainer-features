@@ -911,6 +911,93 @@ Describe 'FUSE on request (DCF_HOST_FUSE)' -Skip:$IsWindows {
     }
 }
 
+# The machine name (session-names proposal, slice 1), the counterpart of the machine part of
+# test/bootstrap/host_mounts_test.sh: DCF_HOST_MACHINE is the workstation's name, sanitised, set for
+# `up`; `up` and `host` warn once when the repository's devcontainer.json does not read it.
+Describe 'The machine name (DCF_HOST_MACHINE)' -Skip:$IsWindows {
+    BeforeAll {
+        $script:MEnvNames = 'HOST_TYPE', 'HOST_MOUNTS', 'DEVCONTAINER_DOCKER_PATH', 'HOME', 'SSH_AUTH_SOCK', 'SSH_AGENT_MODE', 'DCF_HOST_TYPE', 'DCF_HOST_HOME', 'DCF_HOST_SSH_AGENT', 'DCF_HOST_CLOUD_FOLDER', 'DCF_HOST_FUSE', 'DCF_HOST_MACHINE', 'COMPUTERNAME'
+        $script:MSavedEnv = @{}
+        foreach ($n in $script:MEnvNames) { $script:MSavedEnv[$n] = [Environment]::GetEnvironmentVariable($n) }
+        $script:MSavedPath = $env:PATH
+        $script:MBin = Join-Path $TestDrive 'machine-bin'
+        New-Item -ItemType Directory -Path $script:MBin | Out-Null
+        $script:MRec = Join-Path $TestDrive 'machine-args.txt'
+        Set-Content (Join-Path $script:MBin 'devcontainer') "#!/bin/sh`nenv | grep '^DCF_HOST_MACHINE' > '$($script:MRec)' || : > '$($script:MRec)'"
+        Set-Content (Join-Path $script:MBin 'docker') "#!/bin/sh`nexit 0"
+        chmod +x (Join-Path $script:MBin 'devcontainer') (Join-Path $script:MBin 'docker')
+        $script:MLine = '{ "containerEnv": { "DCF_HOST_MACHINE": "${localEnv:DCF_HOST_MACHINE}" } }'
+        function Get-MachineWorkspace {
+            param([string]$Json)
+            $ws = Join-Path $TestDrive ('mws-' + [guid]::NewGuid().ToString('N'))
+            New-Item -ItemType Directory -Path (Join-Path $ws '.devcontainer') -Force | Out-Null
+            if ($Json) { [System.IO.File]::WriteAllText((Join-Path $ws '.devcontainer/devcontainer.json'), $Json) }
+            $ws
+        }
+    }
+    BeforeEach {
+        foreach ($n in $script:MEnvNames) { [Environment]::SetEnvironmentVariable($n, $null) }
+        $env:PATH = $script:MBin + [System.IO.Path]::PathSeparator + $script:MSavedPath
+        $env:HOME = Join-Path $TestDrive 'machine-home'
+        $env:HOST_TYPE = 'linux'
+        Clear-HostProfileCache
+    }
+    AfterAll {
+        foreach ($n in $script:MEnvNames) { [Environment]::SetEnvironmentVariable($n, $script:MSavedEnv[$n]) }
+        $env:PATH = $script:MSavedPath
+    }
+
+    It 'ConvertTo-MachineName: <Raw> becomes <Expected>' -ForEach @(
+        @{ Raw = 'Alice-PC'; Expected = 'Alice-PC' }
+        @{ Raw = '  my laptop (2)!.'; Expected = 'my-laptop-2' }
+        @{ Raw = 'a_b.c'; Expected = 'a_b.c' }
+        @{ Raw = '!!!'; Expected = '' }
+        @{ Raw = ('a' * 80); Expected = ('a' * 63) }
+    ) {
+        ConvertTo-MachineName -Name $Raw | Should -Be $Expected
+    }
+
+    It 'Get-HostMachineName reads COMPUTERNAME, sanitised' {
+        $env:COMPUTERNAME = 'DESK TOP-01'
+        Get-HostMachineName | Should -Be 'DESK-TOP-01'
+    }
+
+    It 'up: the CLI sees DCF_HOST_MACHINE, replacing an inherited value' {
+        $env:COMPUTERNAME = 'Alice-PC'
+        $env:DCF_HOST_MACHINE = 'inherited'
+        Invoke-DevcontainerCliProcess -Subcommand up -WorkspaceFolder (Get-MachineWorkspace $script:MLine) 6>$null 3>$null
+        Get-Content $script:MRec | Should -Be @('DCF_HOST_MACHINE=Alice-PC')
+    }
+
+    It 'up: one warning, and the CLI still runs, when the line is missing; none when present or for build' {
+        $env:COMPUTERNAME = 'Alice-PC'
+        $w = Invoke-DevcontainerCliProcess -Subcommand up -WorkspaceFolder (Get-MachineWorkspace '{ "name": "plain" }') 6>$null 3>&1
+        @($w | Where-Object { "$_" -match 'does not read DCF_HOST_MACHINE' }) | Should -HaveCount 1
+        Get-Content $script:MRec | Should -Be @('DCF_HOST_MACHINE=Alice-PC')
+        $w = Invoke-DevcontainerCliProcess -Subcommand up -WorkspaceFolder (Get-MachineWorkspace $script:MLine) 6>$null 3>&1
+        @($w | Where-Object { "$_" -match 'does not read DCF_HOST_MACHINE' }) | Should -HaveCount 0
+        $w = Invoke-DevcontainerCliProcess -Subcommand build -WorkspaceFolder (Get-MachineWorkspace '{ }') 6>$null 3>&1
+        @($w | Where-Object { "$_" -match 'does not read DCF_HOST_MACHINE' }) | Should -HaveCount 0
+    }
+
+    It 'Test-MachineSlotMissing: a commented line counts as missing, the template and no file do not' {
+        Test-MachineSlotMissing -WorkspaceFolder (Get-MachineWorkspace $script:MLine) | Should -BeFalse
+        Test-MachineSlotMissing -WorkspaceFolder (Get-MachineWorkspace '{ }') | Should -BeTrue
+        Test-MachineSlotMissing -WorkspaceFolder (Get-MachineWorkspace "{`n  // `"DCF_HOST_MACHINE`": `"`${localEnv:DCF_HOST_MACHINE}`"`n}") | Should -BeTrue
+        Test-MachineSlotMissing -WorkspaceFolder (Get-MachineWorkspace '') | Should -BeFalse
+        $tpl = Get-MachineWorkspace ''
+        Copy-Item (Join-Path $PSScriptRoot '../../bootstrap/devcontainer.json') (Join-Path $tpl '.devcontainer/devcontainer.json')
+        Test-MachineSlotMissing -WorkspaceFolder $tpl | Should -BeFalse
+    }
+
+    It 'host prints the machine name and warns when the line is missing' {
+        $env:COMPUTERNAME = 'Alice-PC'
+        $text = (Show-HostProfile -WorkspaceFolder (Get-MachineWorkspace '{ }') 6>&1 3>&1 | ForEach-Object { if ($_.MessageData) { $_.MessageData.Message } else { "$_" } }) -join "`n"
+        $text | Should -Match 'DCF_HOST_MACHINE   : Alice-PC'
+        $text | Should -Match 'does not read DCF_HOST_MACHINE'
+    }
+}
+
 # ssh-key-import (task devcontainer:ssh-key-import): the key file reaches `devcontainer exec` on stdin and
 # never in its arguments. A stub `devcontainer` records each call's arguments and stdin; a stub `docker`
 # answers `ps -q` (the Windows branch runs the portable node.exe instead, so these run on Linux/macOS).

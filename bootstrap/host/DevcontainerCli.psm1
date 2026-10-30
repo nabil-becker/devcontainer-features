@@ -34,6 +34,11 @@
       DEVCONTAINER_CLI_VERSION, HOST_TYPE, HOST_TYPE_PRIORITY, HOST_MOUNTS, SSH_AGENT_MODE,
       DCF_HOST_CLOUD_FOLDER, DCF_HOST_FUSE. Explicit parameters win over the environment.
 
+    DCF_HOST_MACHINE is always the launcher's own value: the workstation's machine name
+    ($env:COMPUTERNAME on Windows, else the host name before its first dot), cut to letters, digits,
+    dot, underscore and hyphen (at most 63 characters). `up` and `host` warn once when the
+    repository's devcontainer.json does not read it with ${localEnv:DCF_HOST_MACHINE}.
+
     FUSE on request (cloud-folder Feature, mount mode; ADR 0031): DCF_HOST_FUSE=1 (or true, yes,
     on) sets DCF_HOST_FUSE_DEVICE, DCF_HOST_FUSE_CAP and DCF_HOST_FUSE_SECURITY to
     --device=/dev/fuse, --cap-add=SYS_ADMIN and --security-opt=apparmor=unconfined for the CLI,
@@ -515,6 +520,52 @@ function Write-FuseSlotWarning {
     }
 }
 
+# The machine name (docs/proposals/session-names.md, slice 1; the bash twin's sanitise_machine and
+# resolve_machine): DCF_HOST_MACHINE is the workstation's own name, $env:COMPUTERNAME on Windows,
+# else the host name up to the first dot, cut to letters, digits, dot, underscore and hyphen (anything
+# else becomes a hyphen, runs collapse, no leading or trailing hyphen or dot), at most 63 characters.
+function ConvertTo-MachineName {
+    <# .SYNOPSIS A machine name cut to the safe set [A-Za-z0-9._-]: other characters become hyphens, runs collapse, no leading or trailing hyphen or dot, at most 63 characters. #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param([AllowEmptyString()][string]$Name = '')
+    $n = [regex]::Replace($Name, '[^A-Za-z0-9._-]', '-')
+    $n = [regex]::Replace($n, '-+', '-')
+    $n = $n.Trim('-', '.')
+    if ($n.Length -gt 63) { $n = $n.Substring(0, 63).Trim('-', '.') }
+    return $n
+}
+
+function Get-HostMachineName {
+    <# .SYNOPSIS The workstation's machine name for DCF_HOST_MACHINE: $env:COMPUTERNAME, else the host name before its first dot, sanitised. #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param()
+    $raw = "$env:COMPUTERNAME"
+    if (-not $raw) { $raw = ([System.Net.Dns]::GetHostName() -split '\.')[0] }
+    return ConvertTo-MachineName -Name $raw
+}
+
+function Test-MachineSlotMissing {
+    <# .SYNOPSIS $true when the repository's devcontainer.json (outside comments) does not read ${localEnv:DCF_HOST_MACHINE}; $false when it does or there is no file. #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param([Parameter(Mandatory)][string]$WorkspaceFolder, [string[]]$Arguments = @())
+    $file = Get-DevcontainerConfigFile -WorkspaceFolder $WorkspaceFolder -Arguments $Arguments
+    if (-not $file) { return $false }
+    $text = ConvertTo-JsonWithoutComment -Text (Get-Content -LiteralPath $file -Raw)
+    return -not $text.Contains('${localEnv:DCF_HOST_MACHINE')
+}
+
+function Write-MachineSlotWarning {
+    <# .SYNOPSIS One warning, never a failure, when the repository's devcontainer.json lacks the DCF_HOST_MACHINE line. #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$WorkspaceFolder, [string[]]$Arguments = @())
+    if (Test-MachineSlotMissing -WorkspaceFolder $WorkspaceFolder -Arguments $Arguments) {
+        Write-Warning "The repository's devcontainer.json does not read DCF_HOST_MACHINE (`"DCF_HOST_MACHINE`": `"`${localEnv:DCF_HOST_MACHINE}`" in containerEnv): agents' session names show `"container`" for {machine} until it does. Copy the line from the bootstrap's devcontainer.json."
+    }
+}
+
 function Initialize-HostEnvironment {
     <# .SYNOPSIS Sets DCF_HOST_TYPE, DCF_HOST_HOME, DCF_HOST_SSH_AGENT, DCF_HOST_CLOUD_FOLDER and the FUSE grant (DCF_HOST_FUSE and DCF_HOST_FUSE_*) in this process, so the devcontainer CLI (and ${localEnv:...} in a repo's devcontainer.json) sees them. Returns the profile. #>
     [CmdletBinding()]
@@ -525,6 +576,10 @@ function Initialize-HostEnvironment {
     [Environment]::SetEnvironmentVariable('DCF_HOST_SSH_AGENT', $p.SshAgent)
     # Passed on unchanged (the user's value), so containerEnv can map it; empty removes it.
     [Environment]::SetEnvironmentVariable('DCF_HOST_CLOUD_FOLDER', $p.CloudFolder)
+    # The workstation's machine name: always the launcher's own value, empty removes it.
+    $machine = Get-HostMachineName
+    if ($machine) { [Environment]::SetEnvironmentVariable('DCF_HOST_MACHINE', $machine) }
+    else { Remove-Item -LiteralPath 'Env:DCF_HOST_MACHINE' -ErrorAction SilentlyContinue }
     # The FUSE grant from the fixed list when asked for; removed otherwise, so a value left in the
     # user's environment or .env never reaches runArgs.
     [Environment]::SetEnvironmentVariable('DCF_HOST_FUSE', $(if ($p.Fuse) { '1' } else { '' }))
@@ -743,6 +798,9 @@ function Show-HostProfile {
     Write-Host "DCF_HOST_SSH_AGENT : $($p.SshAgent)"
     Write-Host "DCF_HOST_CLOUD_FOLDER: $(if ($p.CloudFolder) { $p.CloudFolder } else { '(unset)' })"
     if (-not $WorkspaceFolder) { $WorkspaceFolder = (Get-Location).Path }
+    $machine = Get-HostMachineName
+    Write-Host "DCF_HOST_MACHINE   : $(if ($machine) { $machine } else { '(unset)' })"
+    Write-MachineSlotWarning -WorkspaceFolder $WorkspaceFolder -Arguments $Arguments
     if ($p.Fuse) {
         Write-Host "DCF_HOST_FUSE      : 1 (runArgs get: $(@((Get-FuseRunArgument -Requested $true).Values) -join ' '))"
         Write-FuseSlotWarning -WorkspaceFolder $WorkspaceFolder -Arguments $Arguments
@@ -975,6 +1033,7 @@ function Get-DevcontainerCliInvocation {
     if ($Subcommand -eq 'up') {
         $cliArgs += @(Get-HostMountArgument -WorkspaceFolder $WorkspaceFolder -Arguments $Arguments -DockerPath $DockerPath)
         Write-FuseSlotWarning -WorkspaceFolder $WorkspaceFolder -Arguments $Arguments
+        Write-MachineSlotWarning -WorkspaceFolder $WorkspaceFolder -Arguments $Arguments
     }
 
     if ($IsWindows) {
@@ -1533,4 +1592,4 @@ function Invoke-DevcontainerCli {
     exit $rc
 }
 
-Export-ModuleMember -Function Get-HostTypeId, Get-DefaultHostTypePriority, Resolve-HostType, Resolve-SshAgent, Resolve-HostProfile, Initialize-HostEnvironment, Test-FuseRequested, Get-FuseRunArgument, Get-FuseSlotMissing, Write-FuseSlotWarning, Get-DevcontainerConfigFile, Get-HostMount, Test-CloudFolderMount, ConvertTo-MountArgument, ConvertTo-JsonWithoutComment, Get-ConfiguredMountTarget, Test-HostMountsEnabled, Resolve-HostMount, Initialize-HostMountSource, Get-HostMountArgument, Show-HostProfile, Import-SshKey, Clear-HostProfileCache, Get-SettingOrEnv, ConvertFrom-TaskCliArgString, Get-PortableNodeDir, Invoke-DcfDownload, Get-DevcontainersCliEntrypoint, Remove-DevcontainersCli, Resolve-DockerPath, Get-WorkspaceFolderVariant, Get-RunningDevcontainerId, Stop-Devcontainer, Test-BuildSubcommand, Enter-DevcontainerBuildLock, Exit-DevcontainerBuildLock, Get-DevcontainerCliInvocation, Invoke-DevcontainerCliProcess, Get-LauncherCacheRoot, Get-CloudFolderRcloneVersion, Get-WorkstationRclone, Open-Browser, Invoke-CloudFolderRelayRequest, Invoke-CloudFolderLoginRelay, Invoke-CloudFolderLogin, Invoke-DevcontainerCli
+Export-ModuleMember -Function Get-HostTypeId, Get-DefaultHostTypePriority, Resolve-HostType, Resolve-SshAgent, Resolve-HostProfile, Initialize-HostEnvironment, Test-FuseRequested, Get-FuseRunArgument, Get-FuseSlotMissing, Write-FuseSlotWarning, ConvertTo-MachineName, Get-HostMachineName, Test-MachineSlotMissing, Write-MachineSlotWarning, Get-DevcontainerConfigFile, Get-HostMount, Test-CloudFolderMount, ConvertTo-MountArgument, ConvertTo-JsonWithoutComment, Get-ConfiguredMountTarget, Test-HostMountsEnabled, Resolve-HostMount, Initialize-HostMountSource, Get-HostMountArgument, Show-HostProfile, Import-SshKey, Clear-HostProfileCache, Get-SettingOrEnv, ConvertFrom-TaskCliArgString, Get-PortableNodeDir, Invoke-DcfDownload, Get-DevcontainersCliEntrypoint, Remove-DevcontainersCli, Resolve-DockerPath, Get-WorkspaceFolderVariant, Get-RunningDevcontainerId, Stop-Devcontainer, Test-BuildSubcommand, Enter-DevcontainerBuildLock, Exit-DevcontainerBuildLock, Get-DevcontainerCliInvocation, Invoke-DevcontainerCliProcess, Get-LauncherCacheRoot, Get-CloudFolderRcloneVersion, Get-WorkstationRclone, Open-Browser, Invoke-CloudFolderRelayRequest, Invoke-CloudFolderLoginRelay, Invoke-CloudFolderLogin, Invoke-DevcontainerCli

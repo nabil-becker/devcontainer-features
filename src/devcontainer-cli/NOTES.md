@@ -1,3 +1,16 @@
+## Changes in 1.16.2
+
+- **`DCF_HOST_MACHINE`**: the launcher sets the workstation's machine name for `up` and `rebuild`,
+  like the other `DCF_HOST_*` values, so agents' session names can say which machine they run on.
+  PowerShell reads `$env:COMPUTERNAME` on Windows (else the host name before its first dot); bash
+  reads `hostname -s` (else `uname -n` before its first dot). The name is cut to a safe set: letters,
+  digits, dot, underscore and hyphen; any other character becomes a hyphen, runs collapse, no leading
+  or trailing hyphen or dot, at most 63 characters. It is always the launcher's own value, never one
+  inherited from the environment. The bootstrap's `devcontainer.json` passes it on with
+  `"DCF_HOST_MACHINE": "${localEnv:DCF_HOST_MACHINE}"`. `up` and `host` warn once (never fail) when
+  the repository's `devcontainer.json` lacks that line, as for the FUSE slots; add the line to the
+  `containerEnv` of an existing repository. Empty means the container renders `container`.
+
 ## Changes in 1.16.1
 
 - **`task devcontainer:lock` and `task devcontainer:outdated`** (aliases `dc:lock`, `dc:outdated`):
@@ -302,13 +315,13 @@ knows what kind of host it runs on, so a repository writes nothing host-specific
   `docker` that is on PATH but whose daemon is down no longer wins over an installed `wslc.exe`.
 - Before it runs the CLI (`up`, `build`, `exec` and the other subcommands that take `--docker-path`) the launcher sets
   `DCF_HOST_TYPE` (the resolved id), `DCF_HOST_HOME` (the host user's home), `DCF_HOST_SSH_AGENT`
-  (`socket`, `none` or `key`, see "The SSH agent" below) and `DCF_HOST_CLOUD_FOLDER` (the user's own value, passed on
-  unchanged, see "The cloud folder" below) in its own environment. A repository maps them into the
+  (`socket`, `none` or `key`, see "The SSH agent" below), `DCF_HOST_CLOUD_FOLDER` (the user's own value, passed on
+  unchanged, see "The cloud folder" below) and `DCF_HOST_MACHINE` (the machine name, see "Changes in 1.16.2") in its own environment. A repository maps them into the
   container itself with `containerEnv`, `"DCF_HOST_TYPE": "${localEnv:DCF_HOST_TYPE}"` and so on (the bootstrap's
   `devcontainer.json` template does). It declares no host mount: the launcher adds those (next section). Opening the
   folder straight in VS Code skips the launcher: the variables are then empty.
 - `task devcontainer:host` prints the result without starting anything: `HOST_TYPE` as resolved and why, the priority list
-  used, the engine command, the four `DCF_HOST_*` values, the FUSE grant when `DCF_HOST_FUSE` asks for it, and the host mounts `up` would add or skip (next section).
+  used, the engine command, the `DCF_HOST_*` values (with the machine-line hint),, the FUSE grant when `DCF_HOST_FUSE` asks for it, and the host mounts `up` would add or skip (next section).
   `HOST_TYPE=<id>` or `HOST_TYPE_PRIORITY=<ids>` on the command line try other choices.
 
 Not verified on real hosts: `wsl -e docker info` answering for the default distro; the WSL markers on every WSL version

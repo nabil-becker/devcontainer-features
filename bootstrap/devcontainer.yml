@@ -68,6 +68,9 @@
 #                              there), and passes the variable on, for containerEnv. Unset =
 #                              no folder. Never created: a path missing on this host is skipped
 #                              with a warning (the Feature's status then fails).
+#   DCF_HOST_MACHINE           (set by the launcher, not a setting) the workstation's machine
+#                              name; the bootstrap's devcontainer.json passes it on with
+#                              containerEnv, and `up` warns when a repository's lacks the line.
 #   DCF_HOST_FUSE              1 = this project asks for FUSE on this machine (the cloud-folder
 #                              Feature's mount mode): `up` sets DCF_HOST_FUSE_DEVICE,
 #                              DCF_HOST_FUSE_CAP and DCF_HOST_FUSE_SECURITY, which the
