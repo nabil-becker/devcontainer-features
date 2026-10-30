@@ -12,3 +12,6 @@
 [alias]
 	# Explicit sign-off commit, for clones where the hook is not active.
 	cs = commit -s
+[merge "devhost-todo"]
+	name = TODO.md: union merge, then one line per backlog id (.github/scripts/merge_todo.py)
+	driver = python3 -I .github/scripts/merge_todo.py %O %A %B
