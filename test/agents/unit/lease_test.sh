@@ -5,7 +5,7 @@
 # starts of one stateful agent giving exactly one copy (resident: one start, the rest join;
 # on-demand: one opens, the rest are refused; up racing start); a dead holder's lease taken
 # over, one case per liveness rule, and never a live one; eight takers of one dead lease giving
-# one winner; an ephemeral agent taking no lease; release by stop, by the foreground wrapper's
+# one winner and one "stale" line; interleavings paused at a chosen step (AGENTS_LEASE_PAUSE); an ephemeral agent taking no lease; release by stop, by the foreground wrapper's
 # exit and its SIGTERM, and by `agents release` (--force for a live holder); `leases` and the
 # list's LEASE column. A fake adapter keeps sessions in a file, records every call and can be
 # slowed down. Part of `task lint` (`task test:agents-lease`). AGENTS_SH points at another copy.
@@ -299,13 +299,60 @@ check 'a takeover lock left by a dead taker does not block' 1 "$(count start-bg)
 reset; export FAKE_SLOW=1; holder host state=held boot=start-0
 for k in 1 2 3 4 5 6 7 8; do (AGENTS_TTY=0 run start host > "$T/out/$k"; echo $? >> "$T/out/rc") & done; wait
 check 'eight concurrent takers of one dead lease: exactly one new session' 1 "$(count start-bg)"
-# Which taker reports the stale lease is a race: one clears it under the takeover lock, and any
-# taker's plain mkdir may then claim the freed lease first, so 0 or 1 of them say so. The lease's
-# promise is the line above: exactly one session.
-n_stale="$(cat "$T/out"/[0-9] | grep -c 'its lease was stale')"
-check 'eight concurrent takers: at most one reports the stale lease' 1 "$([ "$n_stale" -le 1 ] && echo 1 || echo 0)"
+check 'eight concurrent takers: exactly one reports the stale lease (the one that claimed it)' 1 \
+  "$(cat "$T/out"/[0-9] | grep -c 'its lease was stale')"
 check 'eight concurrent takers: every one exits 0' 0 "$(sort -u "$T/out/rc" | tr -d '\n')"
 unset FAKE_SLOW
+
+# Interleavings made deterministic: with AGENTS_LEASE_PAUSE=<point>, the n-th time a taker gets
+# there it appends a line to $AGENTS_LEASE_PAUSE_FILE.at and waits for $AGENTS_LEASE_PAUSE_FILE.go.<n>.
+P="$T/pause"
+paused() { local n=0; while [ "$(cat "$P.at" 2>/dev/null | grep -c .)" -lt "$1" ] && [ "$n" -lt 400 ]; do sleep 0.05; n=$((n + 1)); done; }
+go() { touch "$P.go.$1"; }
+go_all() { local n; for n in $(seq 1 99); do go "$n"; done; }
+taker() { # <out> [point]: a start of host in the background, paused at point
+  (AGENTS_LEASE_PAUSE="${2:-}" AGENTS_LEASE_PAUSE_FILE="$P" AGENTS_TTY=0 run start host > "$T/out/$1"; echo $? >> "$T/out/rc") &
+}
+stale_lines() { grep -c 'its lease was stale' "$T/out/$1"; }
+# A taker holds the takeover lock for longer than 5 s: the others wait for it, never clear it.
+reset; rm -f "$P".*; holder host state=held boot=start-0
+taker 1 takeover; paused 1; taker 2
+sleep 6; go_all; wait
+check 'a takeover lock held over 5 s is waited for: one session, every taker exits 0' "1:0" "$(count start-bg):$(sort -u "$T/out/rc" | tr -d '\n')"
+check 'a takeover lock held over 5 s: only the lock holder reports the stale lease' "1:0" "$(stale_lines 1):$(stale_lines 2)"
+lacks 'a takeover lock held over 5 s: no lock or stray folder left' "$(ls -a "$L")" 'host.'
+# A taker stalls between its mkdir and its holder file for longer than 5 s: another takes the
+# folder over (no holder, older than 5 s), and the stalled one, finding a holder there, joins.
+reset; rm -f "$P".*
+taker 1 mkdir; paused 1; touch -d "@$(($(date +%s) - 10))" "$L/host"
+AGENTS_TTY=0 run start host > "$T/out/2"; echo $? >> "$T/out/rc"
+stalled="$(head -1 "$P.at")"; go_all; wait
+check 'a taker stalled after its mkdir: one session, both exit 0' "1:0" "$(count start-bg):$(sort -u "$T/out/rc" | tr -d '\n')"
+contains 'a taker stalled after its mkdir: the other took the folder over' "$(cat "$T/out/2")" 'its lease was stale (no-holder'
+contains 'a taker stalled after its mkdir: it then joins' "$(cat "$T/out/1")" 'host: running (id-host-1)'
+check 'a taker stalled after its mkdir: it never wrote the holder' "session:id-host-1:no" \
+  "$(sed -n 's/^carrier=//p' "$L/host/holder"):$(grep -qx "pid=$stalled" "$L/host/holder" && echo yes || echo no)"
+# A holder that hands over to its session and exits between a taker's read of it and the look at
+# its pid: the pid is gone, but the holder changed, so it is judged again (held), not stale. First
+# outside the lock, then (a dead lease another taker has just claimed) inside it.
+handover() { # <pause number>: the starting holder writes its session and exits
+  printf 'host\tid-host-1\trunning\t%s\n' "$repo" > "$T/sessions"
+  holder host state=held pid="$live" pidstart="$(pstart "$live")" carrier=session:id-host-1
+  kill "$live"; wait "$live" 2>/dev/null; go "$1"
+}
+reset; rm -f "$P".*; sleep 30 & live=$!
+holder host state=starting pid="$live" pidstart="$(pstart "$live")" carrier=pending
+taker 1 verdict; paused 1; handover 1; paused 2; go_all; wait
+check 'a holder that handed over and exited (read outside the lock): joined, nothing started, not stale' "0:0:0" \
+  "$(sort -u "$T/out/rc" | tr -d '\n'):$(count start-bg):$(stale_lines 1)"
+reset; rm -f "$P".*; sleep 30 & live=$!
+holder host state=held boot=start-0
+taker 1 verdict; paused 1
+holder host state=starting pid="$live" pidstart="$(pstart "$live")" carrier=pending; go 1
+paused 2; handover 2; paused 3; go_all; wait
+check 'a holder that handed over and exited (read under the lock): joined, nothing started, not stale' "0:0:0" \
+  "$(sort -u "$T/out/rc" | tr -d '\n'):$(count start-bg):$(stale_lines 1)"
+check 'a holder that handed over: its session still holds the lease' carrier=session:id-host-1 "$(grep '^carrier=' "$L/host/holder")"
 
 # ------------------------------------------------------ --new on a resident ----
 reset; AGENTS_TTY=0 run start host >/dev/null; : > "$T/calls"
