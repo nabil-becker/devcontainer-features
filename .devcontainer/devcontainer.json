@@ -94,6 +94,8 @@
     // Ledger entries between reviews: 75 here, about one review a day at this
     // repository's entry rate (the Operator, ledger review 2026-10-21).
     "DEVHOST_REVIEW_EVERY": "75",
+    // The workstation's machine name, set by the launcher (devcontainer-cli 1.16.2).
+    "DCF_HOST_MACHINE": "${localEnv:DCF_HOST_MACHINE}",
     // 1 when DCF_HOST_FUSE=1 in .devcontainer/.env asked the launcher for FUSE
     "DCF_HOST_FUSE": "${localEnv:DCF_HOST_FUSE}"
   },

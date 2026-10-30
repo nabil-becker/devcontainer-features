@@ -40,6 +40,9 @@
     // The host folder (DCF_HOST_CLOUD_FOLDER in .devcontainer/.env) the launcher mounts for the
     // cloud-folder Feature; empty when none. The Feature's status names it.
     "DCF_HOST_CLOUD_FOLDER": "${localEnv:DCF_HOST_CLOUD_FOLDER}",
+    // The workstation's machine name, set by the launcher: agents' session names use it for
+    // {machine}; "container" when empty.
+    "DCF_HOST_MACHINE": "${localEnv:DCF_HOST_MACHINE}",
     // 1 when DCF_HOST_FUSE=1 in .devcontainer/.env asked the launcher for FUSE on this machine
     // (the cloud-folder Feature's mount mode); empty otherwise.
     "DCF_HOST_FUSE": "${localEnv:DCF_HOST_FUSE}"
