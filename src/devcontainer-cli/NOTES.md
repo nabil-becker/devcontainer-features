@@ -1,3 +1,9 @@
+## Changes in 1.16.1
+
+- **`task devcontainer:lock` and `task devcontainer:outdated`** (aliases `dc:lock`, `dc:outdated`):
+  update the lock file to the requested Feature versions, or list what is behind, instead of
+  deleting the lock file by hand.
+
 ## Changes in 1.16.0
 
 - **`task cloud-folder:login` from the workstation.** A new host command, `run cloud-folder-login`
@@ -174,7 +180,11 @@ run `up` first; `rebuild` runs `stop` first (shutdown check included; `FORCE=1` 
 `STOP_CHECK` pass through) and then recreates the container; a stop that fails
 (the check refuses, or any error) stops the rebuild too, so `FORCE=1` is the
 one way to rebuild past a refusing check, as for `stop`.
-`build` and `config` touch no container.
+`build`, `config`, `lock` and `outdated` touch no container. `task devcontainer:lock` rewrites
+`.devcontainer/devcontainer-lock.json` to the Feature versions `devcontainer.json` asks for
+(`devcontainer upgrade`): run it after changing a Feature version, then commit the lock file;
+`task devcontainer:outdated` lists what is behind. Features referenced by a local path are never
+locked.
 
 One build at a time. `up` (so `rebuild` too) and `build` hold a host-wide lock
 while they run: the named mutex `Global\devcontainer-features-build` on Windows,
