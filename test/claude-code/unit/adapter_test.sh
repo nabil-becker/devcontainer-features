@@ -6,7 +6,7 @@
 # with the agent's, never counts; "host (2)" does); every action takes the session's id,
 # never the name; a stopped session is woken with --bg --resume <full session id>, never -c;
 # resume refuses a running session; stop keeps the newest unless --extras, never rm;
-# start-bg and new tag the session with --name. A fake `claude` keeps sessions in a table,
+# start-bg and new tag the session with --name (AGENT_SESSION_NAME, else the handle). A fake `claude` keeps sessions in a table,
 # renders them as `claude agents --json` does and records every other call with its folder.
 # Part of `task lint` (`task test:claude-unit`). ADAPTER_SH points the test at another copy.
 set -u
@@ -231,7 +231,7 @@ out="$(ad wake host "$repo" -- --agent host --settings "$reg")"; rc=$?
 check 'wake: saved options without the agent'"'"'s args: woken with --name and the args (exit 0)' "0:$repo|--bg|--resume|sess-a8|--name|host|--agent|host|--settings|$reg;" "$rc:$(calls)"
 contains 'wake: saved options without the args: says why, and that it is a copy' "$out" 'keeps other options than the agent'"'"'s'
 copy="$(awk -F'\t' '$1 ~ /^c/ { print $1 "\t" $2 }' "$FAKE_TABLE")"
-check 'wake: the copy Claude Code started is recorded as the agent'"'"'s' "host	$repo	$copy" "$(grep '^host	' "$records")"
+check 'wake: the copy Claude Code started is recorded as the agent'"'"'s' "host	$repo	$copy	host" "$(grep '^host	' "$records")"
 rm -rf "$CLAUDE_CONFIG_DIR/jobs"
 table "a8|sess-a8|host|$repo|background|0|failed|1500"
 out="$(ad wake host "$repo" -- --agent host)"; rc=$?
@@ -258,7 +258,7 @@ out="$(ad wake host "$repo" -- --agent host --settings "$reg")"; rc=$?
 check 'wake: saved options match but its state.json says running: woken with --name and the args (exit 0)' "0:$repo|--bg|--resume|sess-a8|--name|host|--agent|host|--settings|$reg;" "$rc:$(calls)"
 contains 'wake: its state.json says running: says why' "$out" "Claude Code's own state for it says 'running'"
 copy="$(awk -F'\t' '$1 ~ /^c/ { print $1 "\t" $2 }' "$FAKE_TABLE")"
-check 'wake: its state.json says running: the copy is recorded as the agent'"'"'s' "host	$repo	$copy" "$(grep '^host	' "$records")"
+check 'wake: its state.json says running: the copy is recorded as the agent'"'"'s' "host	$repo	$copy	host" "$(grep '^host	' "$records")"
 table "a8|sess-a8|host|$repo|background|0|failed|1500"
 SAVED_STATE=starting saved_opts a8 --name host
 out="$(ad wake host "$repo")"
@@ -315,7 +315,7 @@ table
 out="$(ad new reviewer "$repo/rooms/review" -- --model sonnet)"
 got="$(calls)"; nsid="$(printf '%s' "$got" | cut -d'|' -f5)"
 check 'new: claude --name <name> --session-id <a new id> <args> in the folder' "$repo/rooms/review|--name|reviewer|--session-id|$nsid|--model|sonnet;" "$got"
-check 'new: the chosen session id is recorded before it starts' "reviewer	$repo/rooms/review	$nsid	$nsid" "$(grep '^reviewer	' "$records")"
+check 'new: the chosen session id is recorded before it starts' "reviewer	$repo/rooms/review	$nsid	$nsid	reviewer" "$(grep '^reviewer	' "$records")"
 : > "$FAKE_CALLS"
 out="$(ad new reviewer "$repo/rooms/review" -- --session-id given)"
 check 'new: a --session-id of its own is left alone' "$repo/rooms/review|--name|reviewer|--session-id|given;" "$(calls)"
@@ -346,7 +346,7 @@ rm -f "$records"; table \
 out="$(cd "$T" && PATH="$bin:$PATH" agent-adapter-claude start-bg host "$repo" 2>/dev/null)"
 newid="$(awk -F'\t' '$3 == "host" && $6 != 0 { print $1 }' "$FAKE_TABLE")"
 newsid="$(awk -F'\t' '$3 == "host" && $6 != 0 { print $2 }' "$FAKE_TABLE")"
-check 'start-bg: the new session recorded (name, folder, job id, session id)' "host	$repo	$newid	$newsid" "$(cat "$records")"
+check 'start-bg: the new session recorded (name, folder, job id, session id)' "host	$repo	$newid	$newsid	host" "$(cat "$records")"
 check 'the record file is the user'"'"'s only (600)' 600 "$(stat -c %a "$records")"
 check 'the record folder is the user'"'"'s only (700)' 700 "$(stat -c %a "$(dirname "$records")")"
 # the first real prompt: Claude Code retitles it
@@ -381,7 +381,7 @@ awk -F'\t' -v OFS='\t' -v i="$newid" '$1 == i { $2 = "sess-cleared" } { print }'
 out="$(ad attach host "$repo")"
 check 'a /clear (new session id, same job id): still attached by its job id' "$T|attach|$newid;" "$(calls)"
 contains 'a /clear: says how it was resolved' "$out" "now holds session id sess-cleared"
-check 'a /clear: the record follows' "host	$repo	$newid	sess-cleared" "$(cat "$records")"
+check 'a /clear: the record follows' "host	$repo	$newid	sess-cleared	host" "$(cat "$records")"
 # the recorded session is gone (removed): back to name and folder
 awk -F'\t' -v i="$newid" '$1 != i' "$FAKE_TABLE" > "$FAKE_TABLE.n" && mv "$FAKE_TABLE.n" "$FAKE_TABLE"
 printf 'o3\tsess-o3\thost\t%s\tbackground\t303\t-\t300\n' "$repo" >> "$FAKE_TABLE"
@@ -525,6 +525,106 @@ for sv in "--name rcagent" "--name rcagent --remote-control" "--name rcagent --m
   check "remoteControl on: a bare wake when the saved options are '$sv'" "$repo|--bg|--resume|sess-a8;" "$(calls)"
 done
 rm -f "$rcfile"
+
+# ------------------------------------------------------ session names (1.9.0) ----
+# The caller (the agents Feature) renders a session name into AGENT_SESSION_NAME; the adapter uses
+# it as --name when a session starts, the handle when it is empty or unset. The record keeps the
+# name a session started with and the names before it, so a changed template finds the same
+# session again and a bare wake stays bare: never a second session because the name changed.
+unset AGENT_SESSION_NAME
+adn() { local n="$1"; shift; (cd "$T" && PATH="$bin:$PATH" AGENT_SESSION_NAME="$n" agent-adapter-claude "$@" 2>&1); }
+rec() { grep "^host	$repo	" "$records" | tr '\037' '+'; }
+end_session() { awk -F'\t' -v OFS='\t' -v i="$1" '$1 == i { $6 = 0; $7 = "done" } { print }' "$FAKE_TABLE" > "$FAKE_TABLE.n" && mv "$FAKE_TABLE.n" "$FAKE_TABLE"; }
+rm -f "$records"; rm -rf "$CLAUDE_CONFIG_DIR/jobs"; table
+out="$(adn 'desk host' start-bg host "$repo" -- --model opus)"
+check 'names: start-bg passes AGENT_SESSION_NAME as --name' "$repo|--bg|--name|desk host|--model|opus;" "$(calls)"
+sid1="$(awk -F'\t' '$3 == "desk host" { print $1 }' "$FAKE_TABLE")"
+check 'names: the record holds the name the session started with' "host	$repo	$sid1	sess-1-0000-0000-0000-000000000000	desk host" "$(rec)"
+# the session ends; the template changes ('laptop host'); a bare wake of the recorded session
+end_session "$sid1"; SAVED_STATE=stopped saved_opts "$sid1" --name 'desk host' --model opus
+: > "$FAKE_CALLS"
+out="$(adn 'laptop host' wake host "$repo" -- --model opus)"; rc=$?
+check 'names: a changed template still finds the session and wakes it bare (no copy)' "0:$repo|--bg|--resume|sess-1-0000-0000-0000-000000000000;" "$rc:$(calls)"
+check 'names: a bare wake leaves the name it has in the record' "host	$repo	$sid1	sess-1-0000-0000-0000-000000000000	desk host" "$(rec)"
+check 'names: no copy in the session list' 1 "$(grep -c . "$FAKE_TABLE")"
+# a nested call without the variable: the same session, still bare, not renamed
+end_session "$sid1"; : > "$FAKE_CALLS"
+out="$(ad wake host "$repo" -- --model opus)"
+check 'names: AGENT_SESSION_NAME unset on a later call wakes bare and renames nothing' "$repo|--bg|--resume|sess-1-0000-0000-0000-000000000000;" "$(calls)"
+check 'names: unset does not touch the record' "host	$repo	$sid1	sess-1-0000-0000-0000-000000000000	desk host" "$(rec)"
+# a new start under the new name: the old one moves to the history
+end_session "$sid1"; : > "$FAKE_CALLS"
+out="$(adn 'laptop host' start-bg host "$repo" -- --model opus)"
+check 'names: a fresh start uses the template as it is now' "$repo|--bg|--name|laptop host|--model|opus;" "$(calls)"
+sid2="$(awk -F'\t' '$3 == "laptop host" { print $1 }' "$FAKE_TABLE")"
+sidfull2="$(awk -F'\t' '$3 == "laptop host" { print $2 }' "$FAKE_TABLE")"
+check 'names: the record has the new name and the name before it' "host	$repo	$sid2	$sidfull2	laptop host	desk host" "$(rec | tr '+' '	')"
+# the record names are kept when the record is cleared
+end_session "$sid2"
+out="$(ad record host "$repo")"
+check 'names: clearing a record keeps its names' "host	$repo			laptop host	desk host" "$(grep "^host	$repo	" "$records" | tr '\037' '	')"
+# empty: the handle, as before
+rm -f "$records"; table
+out="$(adn '' start-bg host "$repo")"
+check 'names: an empty AGENT_SESSION_NAME gives the handle' "$repo|--bg|--name|host;" "$(calls)"
+table
+out="$(adn '   ' start-bg host "$repo")"
+check 'names: a blank AGENT_SESSION_NAME gives the handle' "$repo|--bg|--name|host;" "$(calls)"
+table
+out="$(adn $'one\ntwo' start-bg host "$repo")"
+check 'names: a name with a line break gives the handle' "$repo|--bg|--name|host;" "$(calls)"
+contains 'names: a name with a line break is said' "$out" 'AGENT_SESSION_NAME has a line break'
+rm -f "$records"; table
+out="$(adn 'desk host' new host "$repo" -- --model opus)"
+contains 'names: new passes AGENT_SESSION_NAME as --name' "$(calls)" "$repo|--name|desk host|--session-id|"
+check 'names: new records the name' "desk host" "$(rec | cut -f5)"
+rm -f "$records"; table
+out="$(ad new host "$repo")"
+contains 'names: new without it uses the handle' "$(calls)" "$repo|--name|host|--session-id|"
+# a record that points at a session that is gone, with an older name in its history: found by it
+rm -rf "$CLAUDE_CONFIG_DIR/jobs"
+table "q1|sess-q1|desk host|$repo|background|0|done|100"
+SAVED_STATE=stopped saved_opts q1 --name 'desk host'
+mkdir -p "$(dirname "$records")"
+printf 'host\t%s\tgone\tsess-gone\tlaptop host\tdesk host\n' "$repo" > "$records"
+out="$(adn 'third host' wake host "$repo")"
+check 'names: a name from the record'"'"'s history finds the session, woken bare (no copy)' "$repo|--bg|--resume|sess-q1;" "$(calls)"
+# no record at all: the bare handle is still found, and a bare wake accepts it
+rm -f "$records"; rm -rf "$CLAUDE_CONFIG_DIR/jobs"
+table "q2|sess-q2|host|$repo|background|0|done|100"
+SAVED_STATE=stopped saved_opts q2 --name host --model opus
+out="$(adn 'desk host' wake host "$repo" -- --model opus)"
+check 'names: no record: found by the bare handle, woken bare although the template now says another name' "$repo|--bg|--resume|sess-q2;" "$(calls)"
+check 'names: the name the session keeps is then recorded' "host	$repo	q2	sess-q2	host" "$(rec)"
+# no record, the session named as the template renders now
+rm -f "$records"; rm -rf "$CLAUDE_CONFIG_DIR/jobs"
+table "q3|sess-q3|desk host|$repo|background|0|done|100"
+SAVED_STATE=stopped saved_opts q3 --name 'desk host'
+out="$(adn 'desk host' wake host "$repo")"
+check 'names: no record: found by the rendered name, woken bare' "$repo|--bg|--resume|sess-q3;" "$(calls)"
+# a session under a name the agent never had is not the agent's
+rm -f "$records"; table "q4|sess-q4|other name|$repo|background|0|done|100"
+out="$(adn 'desk host' wake host "$repo")"; rc=$?
+check 'names: a session under a name the agent never had is not the agent'"'"'s' "1:" "$rc:$(calls)"
+# saved options that are not the agent's: woken with the session name now (a copy, said)
+rm -f "$records"; rm -rf "$CLAUDE_CONFIG_DIR/jobs"
+table "q5|sess-q5|host|$repo|background|0|done|100"
+SAVED_STATE=stopped saved_opts q5 --name host
+out="$(adn 'desk host' wake host "$repo" -- --agent x)"
+check 'names: a wake that is not bare names the copy with the session name' "$repo|--bg|--resume|sess-q5|--name|desk host|--agent|x;" "$(calls)"
+# the session is gone: the fresh start uses the session name
+rm -f "$records"; rm -rf "$CLAUDE_CONFIG_DIR/jobs"
+table "q6|sess-q6|host|$repo|background|0|failed|100"
+SAVED_STATE=stopped saved_opts q6 --name host
+out="$(FAKE_RESUME_GONE=q6 adn 'desk host' wake host "$repo")"
+check 'names: a fresh start after a gone session uses the session name' "$repo|--bg|--resume|sess-q6;$repo|--bg|--name|desk host;" "$(calls)"
+# the history is short
+rm -f "$records"; table
+for n in n1 n2 n3 n4 n5 n6 n7; do
+  out="$(adn "$n" start-bg host "$repo")"
+  end_session "$(awk -F'\t' -v n="$n" '$3 == n { print $1 }' "$FAKE_TABLE")"
+done
+check 'names: the history keeps the last five names before the current one, newest first' "n7	n6+n5+n4+n3+n2" "$(rec | cut -f5,6)"
 
 # Across every call above: never rm (but the one session-remove asked for), never -c or
 # --continue; in the code, never an action by name.

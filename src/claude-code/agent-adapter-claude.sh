@@ -4,19 +4,21 @@
 # agents Feature calls it, nothing else does.
 #
 #   agent-adapter-claude <verb> <name> <folder> [--extras] [-- claude args...]
-#     start-bg   cd <folder> && claude --bg --name <name> <args>; prints the new session's id
+#     (<name> is the agent's handle. The session's own name is $AGENT_SESSION_NAME when the caller
+#     sets it and it is not empty, else the handle: "session name" below; claude-code 1.9.0)
+#     start-bg   cd <folder> && claude --bg --name <session name> <args>; prints the new session's id
 #     wake       the agent's newest stopped or failed session, by its full id:
 #                cd <folder> && claude --bg --resume <session id> (the same id, its conversation,
-#                its saved options) when Claude Code's saved options for it are --name <name>
-#                <args> and its own state.json says it ended; otherwise ... --resume <session id>
-#                --name <name> <args> (a copy)
+#                its saved options) when Claude Code's saved options for it are --name <a name the
+#                agent's session has had> <args> and its own state.json says it ended; otherwise
+#                ... --resume <session id> --name <session name> <args> (a copy)
 #     attach     claude attach <id> of its newest running session (a terminal is needed); an
 #                ended one is attached (restarted) only when wake would wake it bare, else
 #                woken as wake does, then attached
 #     resume     cd <folder> && claude --resume <session id> <args> of its newest session;
 #                refused while that session runs (a second process on one transcript); when
 #                the list cannot be read, claude --resume <args> (its own picker), never new
-#     new        cd <folder> && claude --name <name> <args>
+#     new        cd <folder> && claude --name <session name> <args>
 #     stop       claude stop <id> of its newest running session; --extras: every other one
 #     logs       claude logs <id> of its newest session
 #     hint       how to find and resume the agent by hand (when the list cannot be read)
@@ -29,8 +31,10 @@
 # Exit: 0 done, 1 failed, 2 bad use, 3 not supported.
 #
 # Identity by name and folder, action by id: a session is the agent's when its cwd is the
-# folder and its name is the agent's name (or "<name> (2)", how Claude Code numbers a
-# collision), read from `claude agents --json --all`. attach, stop and logs then take the
+# folder and its name is one the agent's session has had (the handle, the session name now, the
+# name the record holds and the names it held before: a changed template never orphans a
+# session; or "<name> (2)", how Claude Code numbers a collision), read from
+# `claude agents --json --all`. attach, stop and logs then take the
 # session's short id (the "id" field; the full sessionId when there is none), never the
 # name: `claude attach host` would match part of a name ("host-review" too) and only while
 # the session runs. A stopped session is woken by its full id with --bg --resume, never
@@ -148,45 +152,84 @@ sessions() {
 # Claude Code may retitle a background session after a prompt (the name given with --name
 # does not always stay), so the name alone does not find the agent again. The adapter records
 # which session is the agent's when it starts, wakes or opens one: agent name, folder, the
-# session's short job id and its full session id, one line each, in
+# session's short job id and its full session id, and (1.9.0) the name the session was started
+# with and the names it had before (up to 5, separated by \037), one line each, in
 #   $AGENT_ADAPTER_CLAUDE_STATE/agents.tsv  (default $CLAUDE_CONFIG_DIR/agent-adapter-claude,
 #   the claude-code Feature's volume, so it survives a rebuild; folder 700, file 600)
 # never in the repository. A recorded session still listed is the agent's whatever its name
 # now is: by its job id (which stays across /clear, while the session id changes), else by
 # its session id (a wake that continued under a new job id). Otherwise the name and folder
-# find it, as before.
+# find it, as before, by any name the agent has had (a changed session-name template does not
+# lose it). Clearing a record keeps the names (a line without ids).
 state_dir() { printf '%s' "${AGENT_ADAPTER_CLAUDE_STATE:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/agent-adapter-claude}"; }
 RECORDS="$(state_dir)/agents.tsv"
 
-# rec_get <name> <folder>: RID and RSID of the agent's record (empty when none).
-rec_get() {
-  RID='' RSID=''
+US=$'\037'
+MAX_HIST=5
+
+# rec_line <name> <folder>: the agent's record line (the last one), empty when none.
+rec_line() {
   [ -r "$RECORDS" ] || return 0
-  local line
-  line="$(awk -F'\t' -v n="$1" -v f="$2" '$1 == n && $2 == f { l = $0 } END { if (l != "") print l }' "$RECORDS")"
-  [ -n "$line" ] || return 0
-  RID="$(printf '%s' "$line" | cut -f3)" RSID="$(printf '%s' "$line" | cut -f4)"
+  awk -F'\t' -v n="$1" -v f="$2" '$1 == n && $2 == f { l = $0 } END { if (l != "") print l }' "$RECORDS"
 }
 
-# rec_del <name> <folder>: remove the agent's record (never fatal).
+# rec_get <name> <folder>: RID and RSID of the agent's record, RCUR the name its session was
+# started with and RHIST the names before it (empty when none).
+rec_get() {
+  RID='' RSID='' RCUR='' RHIST=''
+  local line
+  line="$(rec_line "$1" "$2")"
+  [ -n "$line" ] || return 0
+  RID="$(printf '%s' "$line" | cut -f3)" RSID="$(printf '%s' "$line" | cut -f4)"
+  RCUR="$(printf '%s' "$line" | cut -f5)" RHIST="$(printf '%s' "$line" | cut -f6)"
+}
+
+# names_next <current> <history>: NCUR and NHIST once STARTED_AS (when set) is the session's name:
+# the name before it goes to the front of the history (no duplicates, at most MAX_HIST).
+names_next() {
+  local cur="$1" hist="$2" new="${STARTED_AS:-}" h n=0
+  NCUR="$cur" NHIST="$hist"
+  [ -n "$new" ] && [ "$new" != "$cur" ] || return 0
+  NCUR="$new" NHIST=''
+  while IFS= read -r h; do
+    { [ -n "$h" ] && [ "$h" != "$new" ]; } || continue
+    case "$US$NHIST$US" in *"$US$h$US"*) continue ;; esac
+    [ "$n" -lt "$MAX_HIST" ] || break
+    NHIST="${NHIST:+$NHIST$US}$h" n=$((n + 1))
+  done <<< "$cur"$'\n'"${hist//$US/$'\n'}"
+}
+
+# cand_names: the names the agent's session may have, one per line: the session name now, the
+# handle, the name its record holds and the names before it (RCUR and RHIST, set by rec_get).
+cand_names() {
+  { printf '%s\n' "$SNAME" "$NAME" "${RCUR:-}"; printf '%s\n' "${RHIST:-}" | tr "$US" '\n'; } | awk 'NF && !seen[$0]++'
+}
+
+# rec_del <name> <folder>: clear the agent's record, keeping its names (never fatal).
 rec_del() {
   [ -e "$RECORDS" ] || return 0
   local tmp
   tmp="$(umask 077 && mktemp "$(state_dir)/.agents.XXXXXX" 2>/dev/null)" || return 0
-  if ! { awk -F'\t' -v n="$1" -v f="$2" '!($1 == n && $2 == f)' "$RECORDS" > "$tmp" && chmod 600 "$tmp" && mv -f "$tmp" "$RECORDS"; }; then
+  # the names stay (the session may be found by one of them), the ids go
+  if ! { awk -F'\t' -v OFS='\t' -v n="$1" -v f="$2" '$1 == n && $2 == f { if ($5 != "") print $1, $2, "", "", $5, $6; next } { print }' "$RECORDS" > "$tmp" && chmod 600 "$tmp" && mv -f "$tmp" "$RECORDS"; }; then
     rm -f "$tmp"
   fi
 }
 
-# rec_put <name> <folder> <id> <session id>: replace the agent's record (never fatal).
+# rec_put <name> <folder> <id> <session id>: replace the agent's record, with its names and
+# STARTED_AS when set (never fatal).
 rec_put() {
-  local d tmp
+  local d tmp old
   d="$(state_dir)"
   if ! (umask 077 && mkdir -p "$d") 2>/dev/null; then note "$1: could not keep its session record under $d."; return 0; fi
   chmod 700 "$d" 2>/dev/null || true
   tmp="$(umask 077 && mktemp "$d/.agents.XXXXXX" 2>/dev/null)" || { note "$1: could not keep its session record under $d."; return 0; }
+  old="$(rec_line "$1" "$2")"
+  names_next "$(printf '%s' "$old" | cut -f5)" "$(printf '%s' "$old" | cut -f6)"
   { [ -r "$RECORDS" ] && awk -F'\t' -v n="$1" -v f="$2" '!($1 == n && $2 == f)' "$RECORDS"
-    printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4"; } > "$tmp"
+    printf '%s\t%s\t%s\t%s' "$1" "$2" "$3" "$4"
+    [ -z "$NCUR" ] || printf '\t%s%s' "$NCUR" "${NHIST:+$'\t'$NHIST}"
+    printf '\n'; } > "$tmp"
   chmod 600 "$tmp" 2>/dev/null || true
   mv -f "$tmp" "$RECORDS" || { rm -f "$tmp"; note "$1: could not keep its session record under $d."; }
 }
@@ -232,20 +275,34 @@ resolve_record() {
   note "$NAME: its recorded session (${RID:-$RSID}) is no longer listed; finding it by name and folder."
 }
 
+# name_is_mine <listed name>: one of CANDS (cand_names), or one of them with Claude Code's
+# collision number ("<name> (2)").
+name_is_mine() {
+  local c
+  while IFS= read -r c; do
+    case "$1" in
+      "$c") return 0 ;;
+      "$c ("*")") [[ "$1" =~ \([0-9]+\)$ ]] && return 0 ;;
+    esac
+  done <<< "$CANDS"
+  return 1
+}
+
 # mine [state]: the agent's sessions, optionally one state: its recorded session first (by id,
-# whatever its name now is), then those with its name ("<name> (2)" too) in its folder, newest
-# first. Callers take a running one before an ended one: a live session always wins.
+# whatever its name now is), then those in its folder with a name it has had (cand_names;
+# "<name> (2)" too), newest first. Callers take a running one before an ended one: a live session always wins.
 mine() {
   local want="${1:-}" nm rest st fo sid first='' others=''
   if [ -z "${ALL+x}" ]; then ALL="$(sessions | apply_records)" || return 1; fi
   [ -n "${REC_SID+x}" ] || resolve_record
+  CANDS="$(cand_names)"
   while IFS=$'\t' read -r nm rest; do
     [ -n "$nm" ] || continue
     sid="$(printf '%s' "$rest" | cut -f1)" st="$(printf '%s' "$rest" | cut -f2)" fo="$(printf '%s' "$rest" | cut -f3)"
     [ -z "$want" ] || [ "$st" = "$want" ] || continue
     if [ -n "$REC_SID" ] && [ "$sid" = "$REC_SID" ]; then first="$nm"$'\t'"$rest"; continue; fi
     [ "$fo" = "$FOLDER" ] || continue
-    case "$nm" in "$NAME") ;; "$NAME ("*")") [[ "$nm" =~ \([0-9]+\)$ ]] || continue ;; *) continue ;; esac
+    name_is_mine "$nm" || continue
     others="$others$nm"$'\t'"$rest"$'\n'
   done <<< "$ALL"
   [ -z "$first" ] || printf '%s\n' "$first"
@@ -255,7 +312,7 @@ col() { printf '%s\n' "$1" | head -n 1 | cut -f"$2"; }
 
 # wait_running <ids before> [<session id>]: after a --bg start or wake, wait (AGENT_ADAPTER_WAIT
 # seconds, default 10) until the session runs: the given session id, else a running session
-# with the agent's name in its folder that was not listed before. Record it as the agent's and
+# with a name the agent's session may have (cand_names) in its folder that was not listed before. Record it as the agent's and
 # print its session id.
 wait_running() {
   local before="$1" want="${2:-}" left="${AGENT_ADAPTER_WAIT:-10}" all got
@@ -263,9 +320,9 @@ wait_running() {
     if all="$(sessions)"; then
       got=''
       [ -n "$want" ] && got="$(printf '%s\n' "$all" | awk -F'\t' -v s="$want" '$2 == s && $3 == "running"' | head -n 1)"
-      [ -n "$got" ] || got="$(printf '%s\n' "$all" | awk -F'\t' -v n="$NAME" -v f="$FOLDER" -v b="$before" '
-        BEGIN { split(b, x, " "); for (k in x) old[x[k]] = 1 }
-        $3 == "running" && $4 == f && ($1 == n || index($1, n " (") == 1) && !($2 in old)' | head -n 1)"
+      [ -n "$got" ] || got="$(printf '%s\n' "$all" | awk -F'\t' -v n="$(cand_names | tr '\n' "$US")" -v f="$FOLDER" -v b="$before" '
+        BEGIN { split(b, x, " "); for (k in x) old[x[k]] = 1; m = split(n, nm, "\037") }
+        $3 == "running" && $4 == f && !($2 in old) { for (k = 1; k <= m; k++) if (nm[k] != "" && ($1 == nm[k] || index($1, nm[k] " (") == 1)) { print; exit } }')"
       if [ -n "$got" ]; then
         rec_put "$NAME" "$FOLDER" "$(col "$got" 5)" "$(col "$got" 2)"
         col "$got" 2; return 0
@@ -286,9 +343,11 @@ ids_now() { sessions 2>/dev/null | cut -f2 | tr '\n' ' '; }
 # one): `note: woke session <id> with its saved options (--name, --agent, --settings, --model)`.
 # Any flag given with --bg --resume makes Claude Code start a copy under a new id instead
 # (`the flags you passed started a copy as <id>`; 2.1.308). So a session is woken bare only when
-# its saved options are exactly what start-bg passes for the agent (--name <name> and its args);
-# when they differ (the args changed, or the session was started without them) or cannot be read,
-# it is woken with --name <name> and the args, so the agent never runs without its options. The
+# its saved options are exactly what start-bg passes for the agent (--name <a name the agent's
+# session has had> and its args; 1.9.0: the name may be the session name now, the handle, or one
+# the record holds, so a changed session-name template never turns a wake into a copy); when they
+# differ (the args changed, or the session was started without them) or cannot be read, it is
+# woken with --name <session name> and the args, so the agent never runs without its options. The
 # same when Claude Code's own state for it (state.json "state") is not an ended one although the
 # list shows it ended: after a rebuild a bare wake of it starts a copy without any options.
 jobs_dir() { printf '%s' "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/jobs"; }
@@ -318,14 +377,14 @@ saved_flags() {
     exit 1 }' "$f"
 }
 
-# want_flags <args...>: what start-bg passes for the agent (--name <name> <args>), as Claude
+# want_flags <args...>: what start-bg passes for the agent (--name <WANT_NAME, else the session name> <args>), as Claude
 # Code saves it (2.1.308, checked): in a fixed order, --name, --settings <path>, --agent <name>,
 # --model <m>, whichever are present, whatever order the list gave them in; a repeated flag keeps
 # the last value (two --settings: the last wins). Any other arg is assumed saved too (not
 # checked), after those four in the order given, so an unknown flag compares strictly. Encoded
 # as saved_flags prints it (JSON string escapes, as Claude Code writes them).
 want_flags() {
-  local a v_name="$NAME" v_settings='' v_agent='' v_model='' rest=() out=()
+  local a v_name="${WANT_NAME:-$SNAME}" v_settings='' v_agent='' v_model='' rest=() out=()
   local h_settings='' h_agent='' h_model=''
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -360,20 +419,27 @@ saved_state() {
 }
 
 # bare_ok <short id> <args...>: 0 when a bare wake (or claude attach) of that ended session is
-# known to bring it back as the agent: its saved options are --name <name> <args>, and Claude
-# Code's own state for it is an ended one. A state that still says running (or starting, or
+# known to bring it back as the agent: its saved options are --name <a name the agent's session has
+# had (cand_names)> <args>, and BARE_NAME is that name. Claude Code's own state for it is an ended one. A state that still says running (or starting, or
 # anything else; after a rebuild the volume keeps the last one) would make Claude Code take it
 # for a live session and start a copy without any options. Else 1, with WHY set for the note.
 bare_ok() {
-  local short="$1" saved st; shift
+  local short="$1" saved st c want; shift
+  BARE_NAME=''
   if ! saved="$(saved_flags "$short")"; then
     WHY="the options Claude Code saved for its session $short cannot be read ($(jobs_dir)/$short/state.json)"; return 1
   fi
   # --remote-control is left out of both sides: whether Claude Code saves it, and where, is not
   # known (no real session was checked), and turning the remoteControl option on must not make
   # every wake a copy (a wake that adds flags is a copy)
-  if [ "$(printf '%s\n' "$saved" | grep -vxF -- --remote-control)" != "$(want_flags "$@" | grep -vxF -- --remote-control)" ]; then
-    WHY="its session $short keeps other options than the agent's (--name and its args from the list)"; return 1
+  saved="$(printf '%s\n' "$saved" | grep -vxF -- --remote-control)"
+  while IFS= read -r c; do
+    WANT_NAME="$c" want="$(want_flags "$@" | grep -vxF -- --remote-control)"
+    [ "$saved" = "$want" ] && { BARE_NAME="$c"; break; }
+  done < <(cand_names)
+  WANT_NAME=''
+  if [ -z "$BARE_NAME" ]; then
+    WHY="its session $short keeps other options than the agent's (--name, one of the agent's session names, and its args from the list)"; return 1
   fi
   st="$(saved_state "$short")" || st=''
   case "${st,,}" in
@@ -416,7 +482,7 @@ stop_done() {
 }
 
 # wake_session <session line> <args...>: wake that ended session in the background, bare when
-# bare_ok, else with --name <name> <args> (said on stderr); wait until it runs, record it and
+# bare_ok, else with --name <session name> <args> (said on stderr); wait until it runs, record it and
 # print its session id (the copy's, when Claude Code started one). When the resume fails because
 # the session is gone (session_gone), start the agent fresh as start-bg does and say so; any
 # other failure fails.
@@ -426,10 +492,12 @@ wake_session() {
   before="$(printf '%s\n' "$ALL" | cut -f2 | tr '\n' ' ')"
   stop_done "$s" || exit 1
   if bare_ok "$short" "$@"; then
+    STARTED_AS="$BARE_NAME"  # the name it keeps (and the record then holds)
     out="$(cd "$FOLDER" && claude --bg --resume "$sid" </dev/null 2>&1)" || rc=$?
   else
     note "$NAME: $WHY; waking it with the agent's options (--name and its args from the list), which Claude Code may start as a copy under a new id."
-    out="$(cd "$FOLDER" && claude --bg --resume "$sid" --name "$NAME" "$@" </dev/null 2>&1)" || rc=$?
+    STARTED_AS="$SNAME"
+    out="$(cd "$FOLDER" && claude --bg --resume "$sid" --name "$SNAME" "$@" </dev/null 2>&1)" || rc=$?
   fi
   [ -z "$out" ] || printf '%s\n' "$out" >&2
   got=''
@@ -439,7 +507,8 @@ wake_session() {
   fi
   if session_gone "$sid" "$out"; then
     note "$NAME: session $sid is gone; started fresh."
-    (cd "$FOLDER" && claude --bg --name "$NAME" "$@" </dev/null >&2) || die 1 "$NAME: session $sid is gone and 'claude --bg' failed."
+    STARTED_AS="$SNAME"
+    (cd "$FOLDER" && claude --bg --name "$SNAME" "$@" </dev/null >&2) || die 1 "$NAME: session $sid is gone and 'claude --bg' failed."
     wait_running "$before"; return 0
   fi
   [ "$rc" -eq 0 ] || die 1 "$NAME: 'claude --bg --resume' failed."
@@ -502,6 +571,22 @@ case "$verb" in
 esac
 [ $# -ge 2 ] || die 2 "$verb needs <name> <folder>"
 NAME="$1" FOLDER="$2"; shift 2
+# The session's name (1.9.0): what the caller renders into AGENT_SESSION_NAME (the agents Feature,
+# from its template), else the handle, as before. Nothing is checked about it here but that it
+# can be one line: the caller renders and checks the template. A name only applies when a
+# session starts; a running session is never renamed.
+SNAME="$NAME"
+case "${AGENT_SESSION_NAME-}" in
+  '' | *[![:space:]]*) ;;
+  *) AGENT_SESSION_NAME='' ;;
+esac
+if [ -n "${AGENT_SESSION_NAME-}" ]; then
+  case "$AGENT_SESSION_NAME" in
+    *$'\n'* | *$'\r'* | *$'\t'*) note "$NAME: AGENT_SESSION_NAME has a line break or a tab; using the handle as the session name." ;;
+    *) SNAME="$AGENT_SESSION_NAME" ;;
+  esac
+fi
+STARTED_AS=''  # set only where a session is started under SNAME (or a wake keeps the name it saved)
 extras=''
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -577,7 +662,8 @@ case "$verb" in
         die 1 "$NAME: its recorded session $REC_SID runs ($(col "$run" 1)); not starting a second one."
       fi
     fi
-    (cd "$FOLDER" && claude --bg --name "$NAME" "$@" </dev/null >&2) || die 1 "$NAME: 'claude --bg' failed (a folder never trusted fails with 'Workspace not trusted': run claude there once and accept)."
+    STARTED_AS="$SNAME"
+    (cd "$FOLDER" && claude --bg --name "$SNAME" "$@" </dev/null >&2) || die 1 "$NAME: 'claude --bg' failed (a folder never trusted fails with 'Workspace not trusted': run claude there once and accept)."
     wait_running "$before" ;;
   wake)
     got="$(mine)"
@@ -618,11 +704,12 @@ case "$verb" in
     sid=''
     case " $* " in *" --session-id "* | *" --session-id="*) ;; *)
       sid="$(tr -d '\n' < /proc/sys/kernel/random/uuid 2>/dev/null || uuidgen 2>/dev/null || true)" ;; esac
+    STARTED_AS="$SNAME"
     if [ -n "$sid" ]; then
       rec_put "$NAME" "$FOLDER" "$sid" "$sid"
-      cd "$FOLDER" && exec claude --name "$NAME" --session-id "$sid" "$@"
+      cd "$FOLDER" && exec claude --name "$SNAME" --session-id "$sid" "$@"
     fi
-    cd "$FOLDER" && exec claude --name "$NAME" "$@" ;;
+    cd "$FOLDER" && exec claude --name "$SNAME" "$@" ;;
   stop)
     # running sessions, and finished ones whose process is still alive (listed stopped, with a pid)
     run="$(mine | awk -F'\t' '$3 == "running" || ($3 == "stopped" && $7 + 0 > 0)')"
