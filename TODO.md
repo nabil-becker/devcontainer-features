@@ -381,6 +381,7 @@ stays. Ids are short descriptive slugs (two to four kebab-case words naming the 
 - [ ] **merge-agents-lease-takeover Review and merge the lease takeover fix (agents 2.0.2)** (the Operator). Fixes three correctness bugs the lease review found in the published agents 2.0.0; merge once its checks pass. Added 2026-10-30.
 - [ ] **release-agents-2-0-2 Release agents 2.0.2 after the lease takeover fix merges** (the Operator). Publishes the fix over the published 2.0.0, which carries the three bugs. The host does not start the release; it says when one is due. Added 2026-10-30.
 - [ ] **merge-pr-git-guidance Review and merge the git guidance and repo:setup PR** (the Operator). Rewords the "commit and push only when asked" lines in CLAUDE.md, the devhost guidance and the seed template to match ADR 0040, and makes `task repo:setup` set the merge driver and the `git cs` alias directly. Merge once validate, lint, tests and DCO pass. Added 2026-10-30.
+- [ ] **git-host-ownership The guidance says git is the host's job, and repo:setup works with an outside git dir** (host). ADR 0040 (2026-10-30) makes git the host's job, but CLAUDE.md and the devhost guidance still said "commit and push only when asked"; and `task repo:setup`'s `include.path ../.gitconfig` resolves next to the git dir's config, so with the git dir under `/git-dirs` (ADR 0020) the tracked `.gitconfig` never loaded (the `git cs` alias and the TODO.md merge driver were inactive). Added 2026-10-30.
 
 ## Next
 

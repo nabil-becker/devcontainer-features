@@ -174,7 +174,7 @@ A stateful agent runs as exactly one live copy. Every start path through `agents
 start of a stateful agent h
   mkdir leases/h ok? -- yes --> write holder (starting) --> start --> holder: held, carrier
         | no
-  read holder: dead? -- yes --> takeover lock, re-read, still dead: rename away, mkdir --> as above
+  read holder: dead? -- yes --> takeover lock, re-read, still dead: replace the holder --> as above
         | starting: wait up to AGENTS_LEASE_WAIT (20 s), then as held
         | held
   resident: join (attach; no terminal: "h: running (id)", exit 0)
@@ -183,7 +183,8 @@ start of a stateful agent h
 
 - **Where.** `/var/lib/devcontainer-features/agents/leases/<name>/holder` (key=value lines:
   `state`, `pid`, `pidstart`, `boot`, `container`, `carrier`, `time`), written to a temporary
-  name and renamed. Folders are mode 0777 without the sticky bit, so a dead holder of another user
+  name and linked in (a new lease: `ln`, which fails if a holder got there first) or renamed over
+  (an update, a takeover). Folders are mode 0777 without the sticky bit, so a dead holder of another user
   (root at post-start, the remote user in a terminal) can be taken over; the container is
   single-tenant. A lease is keyed by name, not by list.
 - **Dead or alive**, the first rule that applies: no holder file and the folder older than 5 s:
@@ -196,10 +197,14 @@ start of a stateful agent h
   container start frees it, or `agents:release -- <name> --force`); the listing failed: nothing
   taken on a guess (exit 1, as 1.x). That is NFR-12: liveness through the CLI adapter's list when
   it has one, else the Feature's own record (the holder's pid).
-- **Takeover** is serialised by `leases/<name>.takeover` (mkdir; a lock whose pid is gone, or
-  older than 5 s, is cleared): the taker re-reads the holder and, only if it is still dead, renames
-  the folder away and takes it with `mkdir`. A third start that wins the `mkdir` first is a
-  legitimate take. A takeover that finds the agent running (restored by the CLI after a restart)
+- **Takeover** is serialised by `leases/<name>.takeover`, a symlink naming its taker's pid and
+  start time (`ln -s` makes it with its owner in one step). It is cleared only when that taker is
+  gone, never because a wait was long (a 2.0.0 lock folder without a pid, after 5 s). The taker
+  re-reads the holder and, only if it is still dead, claims the lease in place: its holder file
+  replaces the dead one (a folder without one: linked in). The folder never goes away during a
+  takeover, so no plain `mkdir` can slip in between. A holder judged dead because its pid is gone
+  is read once more and must be unchanged, since a live holder writes its next state (held, its
+  session) before it exits. A takeover that finds the agent running (restored by the CLI after a restart)
   adopts it: nothing is started.
 - **Held** by a resident's background session after the starting process exits (carrier
   `session:<id>`), and by the `agents start` process of an on-demand agent for the session's life
@@ -213,9 +218,9 @@ start of a stateful agent h
 - **At container start** `agents up` never refuses and never fails: a held lease means running
   (one line, `h: running (id)`); a stale one (the old container start) is taken over and the
   resident started or adopted.
-- **Several takers of one dead lease at once** start exactly one session. Which of them prints
-  "its lease was stale" is a race (one clears it, any of them may claim it), so that line can be
-  missing; the lease itself never doubles.
+- **Several takers of one dead lease at once** start exactly one session: one claims the lease
+  under the lock and prints "its lease was stale" (exactly one line), the others find it starting
+  and join or are refused.
 
 ## Reset (1.0.1, output fixed in 1.0.2)
 
@@ -392,6 +397,20 @@ so they live here and each CLI Feature adds only its adapter.
 
 `ghcr.io/nabil-becker/devcontainer-features/agents:2` follows 2.x; rebuild to update. `agents:1` never
 moves to 2 on its own.
+
+**What 2.x holds so far.** 2.0 brings the lease and the `default` agent. The rest of version 2 arrives in steps (docs/proposals/agents-v2.md, section 12): agent integrations in 2.1, the Claude CLI adapter passing `definition` (as `--agent`) in claude-code 1.9, and ephemeral runs in 2.2. Until then `definition` is stored and shown, and a start that sets it says it is not passed on yet.
+
+### Changes in 2.0.2
+
+Several takers of one dead lease: exactly one claims it, and only that one prints "its lease was
+stale". 2.0.0 cleared a stale lease by renaming its folder away and taking it with `mkdir`, so a
+plain `mkdir` could claim it in between (no line); cleared the takeover lock after any taker had
+waited 5 s, even while its holder still worked (two claims, two lines); and judged a holder dead
+from a pid looked at after the holder had written its session and exited (a fresh lease taken
+over). Now the takeover replaces the holder file in place under the lock, the lock (a symlink
+naming its taker) is cleared only when that taker is gone, a new holder file is linked in so a
+stalled taker cannot overwrite another's, and a holder judged dead is read again and must be
+unchanged. The section "What 2.x holds so far" is new.
 
 ### Changes in 2.0.0
 
