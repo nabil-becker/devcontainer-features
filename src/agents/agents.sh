@@ -1014,7 +1014,9 @@ make_run() {
         echo "$nm: ${CLI[i]} cannot wake a stopped session; starting a fresh one in the background instead."
       elif [ "$rc" -eq 0 ]; then
         mark_started "$nm"; run_sid "$i" "$OUT"
-        [ -z "$SID" ] || [ "$SID" = "$was" ] || echo "$nm: running as a new session ($SID); $was was not woken"
+        # a new id: the adapter says on stderr (above) whether it continues the conversation (a
+        # CLI that resumes under a new id) or is a new one (the old session gone); agents 2.1.1
+        [ -z "$SID" ] || [ "$SID" = "$was" ] || echo "$nm: running under a new session id ($SID, was $was)"
         return 0
       else
         warn "$nm: waking failed."; return 1
