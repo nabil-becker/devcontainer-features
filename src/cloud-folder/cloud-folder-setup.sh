@@ -4,7 +4,8 @@
 #
 #   cloud-folder-setup                 post-start: make the state volume usable, start the rclone
 #                                      mount in mount mode, report on the folder, start the sync
-#                                      timer in sync mode (never fatal)
+#                                      timer in sync mode (never fatal: always exit 0, bounded by
+#                                      DCF_CLOUD_FOLDER_START_BUDGET seconds, default 60)
 #   cloud-folder-setup status [--json] the report; exit 0 when the folder is usable, 1 when not
 #                                      (host: missing, not mounted, not writable; sync: no
 #                                      remote, never synced, last sync failed, not writable;
@@ -73,7 +74,8 @@
 # /dev/fuse, /proc/self/status, /proc/self/attr/current and the fusermount names the FUSE check
 # reads; DCF_CLOUD_FOLDER_RC_ADDR the remote control's address (default 127.0.0.1:5572);
 # DCF_CLOUD_FOLDER_MOUNT_WAIT the seconds a mount gets to appear (default 15);
-# DCF_CLOUD_FOLDER_AUTH_WAIT the seconds rclone authorize gets to print its link (default 15).
+# DCF_CLOUD_FOLDER_AUTH_WAIT the seconds rclone authorize gets to print its link (default 15);
+# DCF_CLOUD_FOLDER_START_BUDGET the seconds the post-start run (report) gets in all (default 60).
 set -u
 
 # Defaults baked by install.sh from the Feature options; CLOUD_FOLDER_* in the environment
@@ -1362,13 +1364,36 @@ cmd="${1:-report}"
 [ $# -gt 0 ] && shift
 case "$cmd" in
   report)
+    # The post-start hook (and `task cloud-folder:setup`): never fatal, never long. A broken pipe or a
+    # hang-up on the exec channel must not end it (SIGPIPE and SIGHUP ignored: a write error is
+    # just a lost line), and the whole run gets a budget (DCF_CLOUD_FOLDER_START_BUDGET, default
+    # 60 s): the work runs again as a child under timeout(1), and whatever it leaves (a mount or
+    # the sync timer, both detached) goes on after the hook returned. The exit status is 0 always.
+    trap '' PIPE HUP
+    if [ -z "${CF_REPORT_INNER:-}" ]; then
+      budget="${DCF_CLOUD_FOLDER_START_BUDGET:-60}"
+      case "$budget" in '' | *[!0-9]*) budget=60 ;; esac
+      if command -v timeout >/dev/null 2>&1; then
+        CF_REPORT_INNER=1 timeout -k 2 "$budget" bash "$self" report </dev/null
+        rc=$?
+      else
+        CF_REPORT_INNER=1 bash "$self" report </dev/null
+        rc=$?
+      fi
+      case "$rc" in
+        0) ;;
+        124 | 137) say "post-start: not finished within ${budget}s, left to go on or to be fixed later; task cloud-folder:status shows where it stands, task cloud-folder:start retries" 2>/dev/null ;;
+        *) say "post-start: the report ended with exit $rc; task cloud-folder:status shows where the folder stands, task cloud-folder:login signs in" 2>/dev/null ;;
+      esac
+      exit 0
+    fi
     prepare_state verbose || true
     resolve
     [ "$MODE_USED" = sync ] && ensure_local "$REAL" >/dev/null 2>&1
-    [ "$MODE_USED" = mount ] && start_mount
+    [ "$MODE_USED" = mount ] && { start_mount || true; }
     assess remote
     print_report
-    [ "$MODE_USED" = sync ] && start_timer
+    [ "$MODE_USED" = sync ] && { start_timer || true; }
     exit 0 ;;
   status)
     json=no

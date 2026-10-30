@@ -400,6 +400,7 @@ stays. Ids are short descriptive slugs (two to four kebab-case words naming the 
 - [ ] **session-names-ci-check Read the first CI run of the session-name tests** (engineers). The container tests for agents 2.1.0 and the devcontainer-cli 1.16.2 machine name have not run with Docker anywhere but CI; read the first CI run and file what it shows. Added 2026-10-30.
 - [ ] **agents-proposal-session-names Record the session-name slices in docs/proposals/agents.md** (host). The slice builds did not edit the agents proposal; once #126 to #129 are merged, record what was built and where the decisions now live, so the proposal does not describe the session names as open. Added 2026-10-30.
 - [ ] **todo-merge-github-conflict GitHub's merge ignores the TODO.md merge driver** (host). A records PR and a branch that both touch `TODO.md` show a conflict on GitHub, though a local merge of `main` resolves it with the driver; until a fix, the host merges `main` into such a branch before the Operator merges it. Added 2026-10-30.
+- [ ] **cloud-folder-start-never-fatal cloud-folder's post-start never fails or blocks the start** (host). A consumer's rebuild (2026-10-30, wslc) failed: `postStartCommand from Feature cloud-folder:1 failed with exit code 1` after 775 s, after WSL's WSAETIMEDOUT, while another post-start waited at ssh-add's passphrase prompt. Setup scripts are never fatal (CONTRIBUTING); cloud-folder-setup at post-start must exit 0 whatever happens and bound its own waits. Added 2026-10-30.
 
 ## Next
 
