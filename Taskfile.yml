@@ -360,7 +360,7 @@ tasks:
           done
 
   repo:setup:
-    desc: 'Once per clone: activate the tracked .gitconfig (git config --local include.path ../.gitconfig), which turns on the repo hooks in .githooks/ (auto DCO sign-off), the `git cs` alias and the devhost-todo merge driver for TODO.md (one line per backlog id; without it git uses its default merge). Touches only this clone''s .git/config, never your global config. Idempotent.'
+    desc: 'Once per clone: activate the tracked .gitconfig (git config --local include.path ../.gitconfig), which turns on the repo hooks in .githooks/ (auto DCO sign-off), the `git cs` alias and the devhost-todo merge driver for TODO.md (one line per backlog id; without it git uses its default merge). Also sets those values directly, since the include does not load when the git dir is outside the worktree (ADR 0020). Touches only this clone''s git config, never your global config. Idempotent.'
     silent: true
     cmds:
       - cmd: |
@@ -369,6 +369,12 @@ tasks:
           else
             echo '.gitconfig already active for this clone.'
           fi
+      # The include resolves ../.gitconfig next to the git dir's config file, so with the git dir
+      # outside the worktree (ADR 0020) it never loads: set what it carries directly as well.
+      - git config --local core.hooksPath .githooks
+      - git config --local alias.cs 'commit -s'
+      - "git config --local merge.devhost-todo.name 'TODO.md - union merge, then one line per backlog id'"
+      - git config --local merge.devhost-todo.driver 'python3 -I .github/scripts/merge_todo.py %O %A %B'
       - git config --get core.hooksPath
 
   repo:govern:
