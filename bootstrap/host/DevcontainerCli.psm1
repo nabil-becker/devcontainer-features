@@ -45,7 +45,9 @@
     which the repository's runArgs read with ${localEnv:<name>:<default>} (the CLI has no option
     for run arguments; the bootstrap's devcontainer.json carries the lines). Unset, the three are
     removed. Never granted by default; `up` warns when the repository's devcontainer.json lacks
-    the lines (Get-FuseSlotMissing).
+    the lines (Get-FuseSlotMissing). Not granted on windows-wslc (or an engine named wslc): wslc
+    run has no --device, --cap-add or --security-opt option and would refuse the start, so `up`
+    warns once and starts the container without FUSE (Get-FuseRefusal, Write-FuseRefusedWarning).
 
     Host mounts: `up` (so `rebuild`) adds the mounts the host type needs with
     `--mount type=bind,source=...,target=...` (Get-HostMount; slice 3: the
@@ -465,12 +467,15 @@ function Resolve-HostProfile {
         default { $env:HOME }
     }
     $agent = Resolve-SshAgent -Type $t.Type
+    # FUSE: asked for (DCF_HOST_FUSE), and granted only where the engine takes the run arguments.
+    $fuseAsked = Test-FuseRequested
+    $fuseRefusal = Get-FuseRefusal -Type $t.Type -Engine $(if ($enginePath) { $enginePath } else { $spec })
     return [pscustomobject]@{
         Type = $t.Type; Why = $t.Why; Priority = $t.Priority
         Engine = $engine; EnginePath = $enginePath
         Home = $hostHome; SshAgent = $agent.Mode; SshSocket = $agent.Socket
         CloudFolder = (Get-SettingOrEnv '' 'DCF_HOST_CLOUD_FOLDER')
-        Fuse = (Test-FuseRequested)
+        Fuse = ($fuseAsked -and -not $fuseRefusal); FuseRequested = $fuseAsked; FuseRefusal = $fuseRefusal
     }
 }
 
@@ -489,6 +494,22 @@ function Test-FuseRequested {
     [OutputType([bool])]
     param()
     return ("$env:DCF_HOST_FUSE".Trim().ToLowerInvariant() -in '1', 'true', 'yes', 'on')
+}
+
+# wslc (WSL Containers 3.0.3: `wslc run --help`) has no --device, --cap-add or --security-opt
+# option and refuses the whole run ("Option name was not recognized") when runArgs carry one, so
+# on that engine the grant is withheld, with a warning: the container starts without FUSE and the
+# cloud-folder Feature's auto mode takes sync.
+function Get-FuseRefusal {
+    <# .SYNOPSIS Why this host cannot carry the FUSE grant, or $null when it can: the windows-wslc host type, or an engine command named wslc, has no run option for a device, a capability or a security option. #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param([Parameter(Mandatory)][string]$Type, [AllowEmptyString()][string]$Engine = '')
+    $leaf = if ($Engine) { [IO.Path]::GetFileNameWithoutExtension($Engine).ToLowerInvariant() } else { '' }
+    if ($Type -eq 'windows-wslc' -or $leaf -eq 'wslc') {
+        return 'wslc run (WSL Containers) has no --device, --cap-add or --security-opt option, so the cloud-folder Feature''s mount mode cannot run here; its auto mode takes sync'
+    }
+    return $null
 }
 
 function Get-FuseRunArgument {
@@ -510,13 +531,23 @@ function Get-FuseSlotMissing {
 }
 
 function Write-FuseSlotWarning {
-    <# .SYNOPSIS When FUSE is requested, one warning if the repository's devcontainer.json cannot carry the grant. #>
+    <# .SYNOPSIS When FUSE is granted, one warning if the repository's devcontainer.json cannot carry the grant (none when the host refuses it: Write-FuseRefusedWarning says why). #>
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$WorkspaceFolder, [string[]]$Arguments = @())
-    if (-not (Test-FuseRequested)) { return }
+    param([Parameter(Mandatory)][string]$WorkspaceFolder, [string[]]$Arguments = @(), [string]$DockerPath)
+    if (-not (Resolve-HostProfile -DockerPath $DockerPath).Fuse) { return }
     $missing = @(Get-FuseSlotMissing -WorkspaceFolder $WorkspaceFolder -Arguments $Arguments)
     if ($missing.Count) {
         Write-Warning "DCF_HOST_FUSE=1, but the repository's devcontainer.json has no runArgs reading $($missing -join ' ') (`${localEnv:<name>:<default>}): FUSE does not reach the container. Copy the three runArgs lines from the bootstrap's devcontainer.json."
+    }
+}
+
+function Write-FuseRefusedWarning {
+    <# .SYNOPSIS When FUSE is asked for and this host cannot carry the grant, one warning naming why; the start goes on without FUSE. #>
+    [CmdletBinding()]
+    param([string]$DockerPath)
+    $p = Resolve-HostProfile -DockerPath $DockerPath
+    if ($p.FuseRequested -and $p.FuseRefusal) {
+        Write-Warning "DCF_HOST_FUSE=1, but FUSE is not granted on this host ($($p.Type)): $($p.FuseRefusal). The container starts without it; unset DCF_HOST_FUSE in .devcontainer/.env on this machine to drop this warning."
     }
 }
 
@@ -803,8 +834,9 @@ function Show-HostProfile {
     Write-MachineSlotWarning -WorkspaceFolder $WorkspaceFolder -Arguments $Arguments
     if ($p.Fuse) {
         Write-Host "DCF_HOST_FUSE      : 1 (runArgs get: $(@((Get-FuseRunArgument -Requested $true).Values) -join ' '))"
-        Write-FuseSlotWarning -WorkspaceFolder $WorkspaceFolder -Arguments $Arguments
+        Write-FuseSlotWarning -WorkspaceFolder $WorkspaceFolder -Arguments $Arguments -DockerPath $DockerPath
     }
+    elseif ($p.FuseRequested) { Write-Host "DCF_HOST_FUSE      : 1 asked for, not granted on $($p.Type): $($p.FuseRefusal)" }
     else { Write-Host 'DCF_HOST_FUSE      : (unset: no FUSE grant)' }
     $r = Resolve-HostMount -WorkspaceFolder $WorkspaceFolder -Arguments $Arguments -DockerPath $DockerPath
     if (-not $r.Enabled) { Write-Host 'host mounts        : off (HOST_MOUNTS=false)'; return }
@@ -1032,7 +1064,8 @@ function Get-DevcontainerCliInvocation {
     # runs in a container that exists. Initialize-HostEnvironment below sets DCF_HOST_*.
     if ($Subcommand -eq 'up') {
         $cliArgs += @(Get-HostMountArgument -WorkspaceFolder $WorkspaceFolder -Arguments $Arguments -DockerPath $DockerPath)
-        Write-FuseSlotWarning -WorkspaceFolder $WorkspaceFolder -Arguments $Arguments
+        Write-FuseRefusedWarning -DockerPath $DockerPath
+        Write-FuseSlotWarning -WorkspaceFolder $WorkspaceFolder -Arguments $Arguments -DockerPath $DockerPath
         Write-MachineSlotWarning -WorkspaceFolder $WorkspaceFolder -Arguments $Arguments
     }
 
@@ -1592,4 +1625,4 @@ function Invoke-DevcontainerCli {
     exit $rc
 }
 
-Export-ModuleMember -Function Get-HostTypeId, Get-DefaultHostTypePriority, Resolve-HostType, Resolve-SshAgent, Resolve-HostProfile, Initialize-HostEnvironment, Test-FuseRequested, Get-FuseRunArgument, Get-FuseSlotMissing, Write-FuseSlotWarning, ConvertTo-MachineName, Get-HostMachineName, Test-MachineSlotMissing, Write-MachineSlotWarning, Get-DevcontainerConfigFile, Get-HostMount, Test-CloudFolderMount, ConvertTo-MountArgument, ConvertTo-JsonWithoutComment, Get-ConfiguredMountTarget, Test-HostMountsEnabled, Resolve-HostMount, Initialize-HostMountSource, Get-HostMountArgument, Show-HostProfile, Import-SshKey, Clear-HostProfileCache, Get-SettingOrEnv, ConvertFrom-TaskCliArgString, Get-PortableNodeDir, Invoke-DcfDownload, Get-DevcontainersCliEntrypoint, Remove-DevcontainersCli, Resolve-DockerPath, Get-WorkspaceFolderVariant, Get-RunningDevcontainerId, Stop-Devcontainer, Test-BuildSubcommand, Enter-DevcontainerBuildLock, Exit-DevcontainerBuildLock, Get-DevcontainerCliInvocation, Invoke-DevcontainerCliProcess, Get-LauncherCacheRoot, Get-CloudFolderRcloneVersion, Get-WorkstationRclone, Open-Browser, Invoke-CloudFolderRelayRequest, Invoke-CloudFolderLoginRelay, Invoke-CloudFolderLogin, Invoke-DevcontainerCli
+Export-ModuleMember -Function Get-HostTypeId, Get-DefaultHostTypePriority, Resolve-HostType, Resolve-SshAgent, Resolve-HostProfile, Initialize-HostEnvironment, Test-FuseRequested, Get-FuseRefusal, Get-FuseRunArgument, Get-FuseSlotMissing, Write-FuseSlotWarning, Write-FuseRefusedWarning, ConvertTo-MachineName, Get-HostMachineName, Test-MachineSlotMissing, Write-MachineSlotWarning, Get-DevcontainerConfigFile, Get-HostMount, Test-CloudFolderMount, ConvertTo-MountArgument, ConvertTo-JsonWithoutComment, Get-ConfiguredMountTarget, Test-HostMountsEnabled, Resolve-HostMount, Initialize-HostMountSource, Get-HostMountArgument, Show-HostProfile, Import-SshKey, Clear-HostProfileCache, Get-SettingOrEnv, ConvertFrom-TaskCliArgString, Get-PortableNodeDir, Invoke-DcfDownload, Get-DevcontainersCliEntrypoint, Remove-DevcontainersCli, Resolve-DockerPath, Get-WorkspaceFolderVariant, Get-RunningDevcontainerId, Stop-Devcontainer, Test-BuildSubcommand, Enter-DevcontainerBuildLock, Exit-DevcontainerBuildLock, Get-DevcontainerCliInvocation, Invoke-DevcontainerCliProcess, Get-LauncherCacheRoot, Get-CloudFolderRcloneVersion, Get-WorkstationRclone, Open-Browser, Invoke-CloudFolderRelayRequest, Invoke-CloudFolderLoginRelay, Invoke-CloudFolderLogin, Invoke-DevcontainerCli

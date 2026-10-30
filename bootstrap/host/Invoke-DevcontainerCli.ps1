@@ -58,6 +58,8 @@
     DCF_HOST_FUSE: 1 (or true, yes, on) asks for FUSE on this machine (the cloud-folder Feature's
     mount mode): the launcher sets DCF_HOST_FUSE_DEVICE, DCF_HOST_FUSE_CAP and
     DCF_HOST_FUSE_SECURITY for the repository's runArgs. Empty = $env:DCF_HOST_FUSE, else no grant.
+    Not granted on windows-wslc (wslc run has no such options): a warning, and the start goes on
+    without FUSE.
 
 .PARAMETER NodeVersion
     Portable Node.js version (Windows). Empty = $env:DEVCONTAINER_NODE_VERSION

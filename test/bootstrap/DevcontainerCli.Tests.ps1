@@ -270,7 +270,7 @@ Describe 'Host type (HOST_TYPE, HOST_TYPE_PRIORITY, DCF_HOST_*)' {
     # The detection evidence is mocked inside the module: the OS the launcher runs
     # on, whether docker / `wsl -e docker` answer, whether wslc.exe exists.
     BeforeAll {
-        $script:EnvNames = 'HOST_TYPE', 'HOST_TYPE_PRIORITY', 'DEVCONTAINER_DOCKER_PATH', 'DCF_HOST_TYPE', 'DCF_HOST_HOME', 'DCF_HOST_SSH_AGENT', 'SSH_AGENT_MODE', 'SSH_AUTH_SOCK', 'USERPROFILE', 'HOME'
+        $script:EnvNames = 'HOST_TYPE', 'HOST_TYPE_PRIORITY', 'DEVCONTAINER_DOCKER_PATH', 'DCF_HOST_TYPE', 'DCF_HOST_HOME', 'DCF_HOST_SSH_AGENT', 'SSH_AGENT_MODE', 'SSH_AUTH_SOCK', 'USERPROFILE', 'HOME', 'DCF_HOST_FUSE', 'DCF_HOST_FUSE_DEVICE', 'DCF_HOST_FUSE_CAP', 'DCF_HOST_FUSE_SECURITY'
         $script:SavedEnv = @{}
         foreach ($n in $script:EnvNames) { $script:SavedEnv[$n] = [Environment]::GetEnvironmentVariable($n) }
         function Initialize-Evidence {
@@ -431,6 +431,85 @@ Describe 'Host type (HOST_TYPE, HOST_TYPE_PRIORITY, DCF_HOST_*)' {
         $t = Resolve-HostType
         $t.Type | Should -Be 'windows-docker'
         $t.Why | Should -Match 'DEVCONTAINER_DOCKER_PATH'
+    }
+
+    # The FUSE grant depends on the engine (ADR 0031; the bash twin's fuse_refusal): `wslc run` has
+    # no --device, --cap-add or --security-opt option (WSL 3.0.3) and refuses the start when runArgs
+    # carry one, so on windows-wslc the grant is withheld with a warning. These run on every OS; the
+    # grant's variables on `up` are covered by 'FUSE on request' below, where sh runs.
+    It 'Get-FuseRefusal: the windows-wslc host type or an engine named wslc, never another engine' {
+        Get-FuseRefusal -Type 'windows-wslc' | Should -Match 'wslc run \(WSL Containers\) has no --device, --cap-add or --security-opt option'
+        Get-FuseRefusal -Type 'windows-docker' -Engine 'C:\Program Files\WSL\wslc.exe' | Should -Match 'wslc run'
+        Get-FuseRefusal -Type 'linux' -Engine 'wslc' | Should -Match 'wslc run'
+        Get-FuseRefusal -Type 'windows-docker' | Should -BeNullOrEmpty
+        Get-FuseRefusal -Type 'windows-docker' -Engine '' | Should -BeNullOrEmpty
+        Get-FuseRefusal -Type 'linux' -Engine '/usr/bin/podman' | Should -BeNullOrEmpty
+        Get-FuseRefusal -Type 'macos' -Engine 'docker' | Should -BeNullOrEmpty
+    }
+
+    It 'DCF_HOST_FUSE=1 on windows-wslc: asked for, not granted, no grant variable for the CLI, one warning naming why' {
+        Initialize-Evidence -Os windows -Wslc 'C:\wslc.exe'
+        $env:HOST_TYPE = 'windows-wslc'
+        $env:DCF_HOST_FUSE = '1'
+        $env:DCF_HOST_FUSE_DEVICE = '--device=/dev/fuse'   # left in the environment by something else
+        # As `up` does: the warnings first, then the environment for the CLI.
+        $w = @(Write-FuseRefusedWarning 3>&1)
+        $w | Should -HaveCount 1
+        "$w" | Should -Match 'DCF_HOST_FUSE=1, but FUSE is not granted on this host \(windows-wslc\): wslc run'
+        "$w" | Should -Match 'The container starts without it'
+        # No runArgs lines in this workspace, but while the grant is refused the slot warning stays quiet.
+        @(Write-FuseSlotWarning -WorkspaceFolder $TestDrive 3>&1) | Should -HaveCount 0
+        $p = Initialize-HostEnvironment
+        $p.FuseRequested | Should -BeTrue
+        $p.Fuse | Should -BeFalse
+        $p.FuseRefusal | Should -Match 'wslc run'
+        $env:DCF_HOST_FUSE | Should -BeNullOrEmpty
+        $env:DCF_HOST_FUSE_DEVICE | Should -BeNullOrEmpty
+        $env:DCF_HOST_FUSE_CAP | Should -BeNullOrEmpty
+        $env:DCF_HOST_FUSE_SECURITY | Should -BeNullOrEmpty
+    }
+
+    It 'DCF_HOST_FUSE=1 on windows-docker: granted as before, no refusal warning' {
+        Initialize-Evidence -Os windows -Docker $true -Wslc 'C:\wslc.exe'
+        $env:HOST_TYPE = 'windows-docker'
+        $env:DCF_HOST_FUSE = '1'
+        $p = Initialize-HostEnvironment
+        $p.FuseRequested | Should -BeTrue
+        $p.Fuse | Should -BeTrue
+        $p.FuseRefusal | Should -BeNullOrEmpty
+        $env:DCF_HOST_FUSE | Should -Be '1'
+        $env:DCF_HOST_FUSE_DEVICE | Should -Be '--device=/dev/fuse'
+        $env:DCF_HOST_FUSE_CAP | Should -Be '--cap-add=SYS_ADMIN'
+        $env:DCF_HOST_FUSE_SECURITY | Should -Be '--security-opt=apparmor=unconfined'
+        @(Write-FuseRefusedWarning 3>&1) | Should -HaveCount 0
+    }
+
+    It 'DCF_HOST_FUSE=1 with DEVCONTAINER_DOCKER_PATH naming wslc: refused on any host type' {
+        Initialize-Evidence -Os windows -Docker $true -Wslc 'C:\wslc.exe'
+        $env:HOST_TYPE = 'windows-docker'
+        $env:DEVCONTAINER_DOCKER_PATH = 'wslc'
+        $env:DCF_HOST_FUSE = '1'
+        $p = Initialize-HostEnvironment
+        $p.Fuse | Should -BeFalse
+        $p.FuseRefusal | Should -Match 'wslc run'
+        $env:DCF_HOST_FUSE_DEVICE | Should -BeNullOrEmpty
+    }
+
+    It 'no request on windows-wslc: nothing said about FUSE' {
+        Initialize-Evidence -Os windows -Wslc 'C:\wslc.exe'
+        $env:HOST_TYPE = 'windows-wslc'
+        $p = Initialize-HostEnvironment
+        $p.FuseRequested | Should -BeFalse
+        $p.Fuse | Should -BeFalse
+        @(Write-FuseRefusedWarning 3>&1) | Should -HaveCount 0
+    }
+
+    It 'host says the grant was asked for and why it is not given' {
+        Initialize-Evidence -Os windows -Wslc 'C:\wslc.exe'
+        $env:HOST_TYPE = 'windows-wslc'
+        $env:DCF_HOST_FUSE = '1'
+        $text = (Show-HostProfile -WorkspaceFolder $TestDrive 6>&1 3>$null | ForEach-Object { $_.MessageData.Message }) -join "`n"
+        $text | Should -Match 'DCF_HOST_FUSE      : 1 asked for, not granted on windows-wslc: wslc run \(WSL Containers\) has no --device'
     }
 }
 
@@ -796,6 +875,7 @@ Describe 'The up argument list carries the host mounts' -Skip:$IsWindows {
 # FUSE on request (cloud-folder proposal, slice 3; ADR 0031), the counterpart of the FUSE part of
 # test/bootstrap/host_mounts_test.sh: DCF_HOST_FUSE=1 sets the three DCF_HOST_FUSE_* variables the
 # repository's runArgs read, unset removes them, and the CLI's argument list is the same either way.
+# The grant refused on a wslc engine is tested in 'Host type' above, where no sh is needed.
 Describe 'FUSE on request (DCF_HOST_FUSE)' -Skip:$IsWindows {
     BeforeAll {
         $script:FuseEnvNames = 'HOST_TYPE', 'HOST_MOUNTS', 'DEVCONTAINER_DOCKER_PATH', 'HOME', 'SSH_AUTH_SOCK', 'SSH_AGENT_MODE', 'DCF_HOST_TYPE', 'DCF_HOST_HOME', 'DCF_HOST_SSH_AGENT', 'DCF_HOST_CLOUD_FOLDER', 'DCF_HOST_FUSE', 'DCF_HOST_FUSE_DEVICE', 'DCF_HOST_FUSE_CAP', 'DCF_HOST_FUSE_SECURITY'

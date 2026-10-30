@@ -7,7 +7,8 @@
 # --config), HOST_MOUNTS=false, no mount for build/exec/read-configuration, what `host`
 # lists, the SSH agent socket mount, and the cloud folder (DCF_HOST_CLOUD_FOLDER, a Windows path,
 # a missing folder, the fixed target), and FUSE on request (DCF_HOST_FUSE: the three grant
-# variables or none, the argument list unchanged, the runArgs lines checked). A stub `devcontainer` first on PATH records its arguments, one per line.
+# variables or none, the argument list unchanged, the runArgs lines checked, the grant refused on a
+# wslc engine). A stub `devcontainer` first on PATH records its arguments, one per line.
 # Part of `task lint` (`task test:host-mounts`). CLI_SH points the tests at another copy of the
 # script (used to show a test fails when the code it covers is broken).
 set -u
@@ -278,6 +279,28 @@ check 'host shows the grant' 'DCF_HOST_FUSE      : 1 (runArgs get: --device=/dev
 check 'host warns when the runArgs lines are missing' 1 "$(grep -c 'FUSE does not reach' <<<"$out")"
 ws="$(new_ws "$plain")"; run linux "$ws" -- host
 check 'host shows no grant when not asked' 'DCF_HOST_FUSE      : (unset: no FUSE grant)' "$(grep '^DCF_HOST_FUSE ' <<<"$out")"
+# A wslc engine cannot carry the grant: `wslc run` (WSL Containers 3.0.3) has no --device, --cap-add
+# or --security-opt option and refuses the whole start. The grant is withheld with one warning, the
+# container starts without FUSE, and the slot warning stays quiet. (The windows-wslc host type
+# itself cannot be chosen from this launcher; the PowerShell twin's tests cover it.)
+printf '#!/bin/sh\nexit 0\n' > "$bin/wslc"; chmod +x "$bin/wslc"
+ws="$(new_ws "$slots")"; run linux "$ws" DCF_HOST_FUSE=1 DEVCONTAINER_DOCKER_PATH=wslc -- up
+check 'DCF_HOST_FUSE=1 on a wslc engine: asked for, not granted, no grant variable' 'DCF_HOST_FUSE=' "$(fuse_env)"
+check 'DCF_HOST_FUSE=1 on a wslc engine: one warning naming the refusal' 1 "$(grep -c 'DCF_HOST_FUSE=1, but FUSE is not granted on this host (linux): wslc run (WSL Containers) has no --device, --cap-add or --security-opt option' <<<"$out")"
+check 'DCF_HOST_FUSE=1 on a wslc engine: the start goes on' 1 "$(grep -c 'The container starts without it' <<<"$out")"
+check 'DCF_HOST_FUSE=1 on a wslc engine: the CLI is still run, with the engine' 1 "$(grep -c -x -- '--docker-path' <<<"$args")"
+ws="$(new_ws "$plain")"; run linux "$ws" DCF_HOST_FUSE=1 DEVCONTAINER_DOCKER_PATH=wslc -- up
+check 'a wslc engine without the runArgs lines: the refusal, not the slot warning' 0 "$(grep -c 'has no runArgs reading' <<<"$out")"
+run linux "$ws" DCF_HOST_FUSE=1 DEVCONTAINER_DOCKER_PATH=wslc -- host
+check 'host says asked for and why not granted on a wslc engine' "DCF_HOST_FUSE      : 1 asked for, not granted on linux: wslc run (WSL Containers) has no --device, --cap-add or --security-opt option, so the cloud-folder Feature's mount mode cannot run here; its auto mode takes sync" "$(grep '^DCF_HOST_FUSE ' <<<"$out")"
+run linux "$ws" DEVCONTAINER_DOCKER_PATH=wslc -- up
+check 'a wslc engine without a request: nothing said about FUSE' 0 "$(grep -c 'DCF_HOST_FUSE' <<<"$out")"
+ws="$(new_ws "$slots")"; run linux "$ws" DCF_HOST_FUSE=1 DEVCONTAINER_DOCKER_PATH="$bin/docker" -- up
+check 'DCF_HOST_FUSE=1 with another engine named by path: granted' 'DCF_HOST_FUSE=1
+DCF_HOST_FUSE_CAP=--cap-add=SYS_ADMIN
+DCF_HOST_FUSE_DEVICE=--device=/dev/fuse
+DCF_HOST_FUSE_SECURITY=--security-opt=apparmor=unconfined' "$(fuse_env)"
+rm -f "$bin/wslc"
 
 # --- The machine name (session-names proposal, slice 1): DCF_HOST_MACHINE is the workstation's
 # name, sanitised, set for up (and so rebuild); `up` and `host` warn once when the repository's
