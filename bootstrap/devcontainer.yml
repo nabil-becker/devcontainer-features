@@ -313,6 +313,22 @@ tasks:
           SUBCOMMAND: up
           ARGS: '--remove-existing-container --build-no-cache'
 
+  lock:
+    desc: 'Rewrite .devcontainer/devcontainer-lock.json to the Feature versions devcontainer.json asks for now (devcontainer upgrade), so a changed version or tag is locked again; run it after editing a Feature version, then commit the lock file. Features referenced by a local path are never locked. Runs from the host; no container needed.'
+    cmds:
+      - task: cli
+        vars:
+          SUBCOMMAND: upgrade
+          ARGS: '{{.CLI_ARGS}}'
+
+  outdated:
+    desc: 'List the Features in devcontainer.json whose locked version is older than the newest one their version or tag allows (devcontainer outdated); task lock updates them. Runs from the host; no container needed.'
+    cmds:
+      - task: cli
+        vars:
+          SUBCOMMAND: outdated
+          ARGS: '{{.CLI_ARGS}}'
+
   build:
     desc: 'Build the devcontainer image without starting a container (validates devcontainer.json and every Feature install).'
     cmds:
