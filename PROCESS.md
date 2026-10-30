@@ -169,3 +169,7 @@ The way of working grows from what real work shows it lacks, never ahead of it:
 - Pictures tell a thousand words: balance visuals and paragraphs. Where a flow, a structure, a
   state or a trend is the point, draw it (Mermaid in documents, ASCII in the terminal) and keep
   the prose for the why. A picture never replaces the words it summarises.
+- Agents control the container: it is the safety boundary, so a step inside it that only a human
+  can do today (a trust prompt, a terminal-only accept) is automated the documented way, offered
+  as an opt-in Feature option. User-level configuration is changed only after the Operator
+  confirms it the first time, and the guards still hold (no destructive git, no bypassed hooks).
