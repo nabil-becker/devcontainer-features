@@ -274,6 +274,14 @@ out="$(FAKE_RESUME_GONE=a8 ad wake host "$repo" -- --agent host)"; rc=$?
 check 'wake: the session is gone: started fresh with the agent'"'"'s args (exit 0)' "0:$repo|--bg|--resume|sess-a8;$repo|--bg|--name|host|--agent|host;" "$rc:$(calls)"
 contains 'wake: the session is gone: says so' "$out" 'session sess-a8 is gone; started fresh'
 check 'wake: the session is gone: the fresh session is recorded' 1 "$(grep -c "^host	$repo	b" "$records")"
+# the contract: wake prints the id of the session that runs, here the fresh one, never the gone one
+# (agents records the lease's carrier from it)
+table "a8|sess-a8|host|$repo|background|0|failed|1500"
+saved_opts a8 --name host --agent host
+out="$(cd "$T" && FAKE_RESUME_GONE=a8 PATH="$bin:$PATH" agent-adapter-claude wake host "$repo" -- --agent host 2>/dev/null)"
+check 'wake: the session is gone: stdout is the fresh session'"'"'s id, one line' \
+  "$(awk -F'\t' '$3 == "host" && $7 == "running" { print $2 }' "$FAKE_TABLE" | tail -n 1)" "$out"
+lacks 'wake: the session is gone: stdout never names the gone session' "$out" sess-a8
 # any other resume failure still fails
 table "a8|sess-a8|host|$repo|background|0|failed|1500"
 saved_opts a8 --name host --agent host

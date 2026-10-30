@@ -42,7 +42,8 @@ case "$verb" in
   start-bg) n=$(( $(grep -c . "$SESS_A" 2>/dev/null) + 1 ))
     { printf '%s\tida-%s\trunning\t%s\n' "$name" "$n" "$folder"; cat "$SESS_A" 2>/dev/null; } > "$SESS_A.new"
     mv "$SESS_A.new" "$SESS_A"; echo "ida-$n" ;;
-  wake) sed -i "s/^\($name\t[^\t]*\t\)\(stopped\|failed\)\t/\1running\t/" "$SESS_A" ;;
+  wake) sed -i "s/^\($name\t[^\t]*\t\)\(stopped\|failed\)\t/\1running\t/" "$SESS_A"
+    awk -F'\t' -v n="$name" '$1 == n && $3 == "running" { print $2; exit }' "$SESS_A" ;;
   stop) sed -i "s/^\($name\t[^\t]*\t\)running\t/\1stopped\t/" "$SESS_A" ;;
   logs) echo "fakea log of $name" ;;
   attach | resume | new) ;;
@@ -139,14 +140,14 @@ check "resume on-demand (fakeb): exit 0, resume called" "0 resume" "$RC $(verbs 
 # --- a resident on fakea: make sure it runs, then attach
 reset; run 1 start a-res
 check "resident (fakea): exit 0" 0 "$RC"
-check "resident (fakea): list, start-bg, list, attach" "list start-bg list attach" "$(verbs "$CALLS_A")"
+check "resident (fakea): list, start-bg (prints its id: no second list), attach" "list start-bg attach" "$(verbs "$CALLS_A")"
 reset; run 0 start a-res
 check "resident (fakea) without a terminal: exit 0" 0 "$RC"
 lacks "resident (fakea) without a terminal: no attach" "$(verbs "$CALLS_A")" attach
 contains "resident (fakea) without a terminal: prints the attach command" "$OUT" "attach from a terminal with"
 printf 'a-res\tida-9\tstopped\t%s\n' "$D" > "$SESS_A"; : > "$CALLS_A"
 run 1 start a-res
-check "stopped resident (fakea): woken, not started a second time" "list wake attach" "$(verbs "$CALLS_A")"
+check "stopped resident (fakea): woken (prints its id), not started a second time" "list wake attach" "$(verbs "$CALLS_A")"
 printf 'a-res\tida-9\trunning\t%s\n' "$D" > "$SESS_A"; : > "$CALLS_A"
 run 1 start a-res
 check "running resident (fakea): only attached" "list attach" "$(verbs "$CALLS_A")"
