@@ -10,8 +10,9 @@
 #     wake       the agent's newest stopped or failed session, by its full id:
 #                cd <folder> && claude --bg --resume <session id> (the same id, its conversation,
 #                its saved options) when Claude Code's saved options for it are --name <a name the
-#                agent's session has had> <args> and its own state.json says it ended; otherwise
-#                ... --resume <session id> --name <session name> <args> (a copy)
+#                agent's session has had> <args>, in any order; otherwise
+#                ... --resume <session id> --name <session name> <args> (a copy). Woken bare, it
+#                may stay idle (no prompt): that is the agent's session, its id printed (1.9.1)
 #     attach     claude attach <id> of its newest running session (a terminal is needed); an
 #                ended one is attached (restarted) only when wake would wake it bare, else
 #                woken as wake does, then attached
@@ -311,15 +312,17 @@ mine() {
 col() { printf '%s\n' "$1" | head -n 1 | cut -f"$2"; }
 
 # wait_running <ids before> [<session id>]: after a --bg start or wake, wait (AGENT_ADAPTER_WAIT
-# seconds, default 10) until the session runs: the given session id, else a running session
-# with a name the agent's session may have (cand_names) in its folder that was not listed before. Record it as the agent's and
-# print its session id.
+# seconds, default 10) until the session runs: the given session id with a live process (listed
+# running, or with a pid whatever its state: a finished session woken bare comes back idle with
+# its state still done, 1.9.1), else a running session with a name the agent's session may have
+# (cand_names) in its folder that was not listed before. Record it as the agent's and print its
+# session id.
 wait_running() {
   local before="$1" want="${2:-}" left="${AGENT_ADAPTER_WAIT:-10}" all got
   while :; do
     if all="$(sessions)"; then
       got=''
-      [ -n "$want" ] && got="$(printf '%s\n' "$all" | awk -F'\t' -v s="$want" '$2 == s && $3 == "running"' | head -n 1)"
+      [ -n "$want" ] && got="$(printf '%s\n' "$all" | awk -F'\t' -v s="$want" '$2 == s && ($3 == "running" || $7 + 0 > 0)' | head -n 1)"
       [ -n "$got" ] || got="$(printf '%s\n' "$all" | awk -F'\t' -v n="$(cand_names | tr '\n' "$US")" -v f="$FOLDER" -v b="$before" '
         BEGIN { split(b, x, " "); for (k in x) old[x[k]] = 1; m = split(n, nm, "\037") }
         $3 == "running" && $4 == f && !($2 in old) { for (k = 1; k <= m; k++) if (nm[k] != "" && ($1 == nm[k] || index($1, nm[k] " (") == 1)) { print; exit } }')"
@@ -343,13 +346,15 @@ ids_now() { sessions 2>/dev/null | cut -f2 | tr '\n' ' '; }
 # one): `note: woke session <id> with its saved options (--name, --agent, --settings, --model)`.
 # Any flag given with --bg --resume makes Claude Code start a copy under a new id instead
 # (`the flags you passed started a copy as <id>`; 2.1.308). So a session is woken bare only when
-# its saved options are exactly what start-bg passes for the agent (--name <a name the agent's
-# session has had> and its args; 1.9.0: the name may be the session name now, the handle, or one
-# the record holds, so a changed session-name template never turns a wake into a copy); when they
+# its saved options are what start-bg passes for the agent (--name <a name the agent's session
+# has had> and its args; 1.9.0: the name may be the session name now, the handle, or one the
+# record holds, so a changed session-name template never turns a wake into a copy); when they
 # differ (the args changed, or the session was started without them) or cannot be read, it is
-# woken with --name <session name> and the args, so the agent never runs without its options. The
-# same when Claude Code's own state for it (state.json "state") is not an ended one although the
-# list shows it ended: after a rebuild a bare wake of it starts a copy without any options.
+# woken with --name <session name> and the args, so the agent never runs without its options.
+# Claude Code's own state in state.json is not consulted (1.9.1): after a container restart it
+# still says "working" for a session that was idle, since Claude Code's background service
+# writes the ended state only when it starts again, and a bare wake of it continues the same
+# session (checked on 2.1.308); waking it with flags there started a copy under a new id.
 jobs_dir() { printf '%s' "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/jobs"; }
 
 # saved_flags <short id>: the session's saved options, one JSON string per line as the file holds
@@ -377,75 +382,58 @@ saved_flags() {
     exit 1 }' "$f"
 }
 
-# want_flags <args...>: what start-bg passes for the agent (--name <WANT_NAME, else the session name> <args>), as Claude
-# Code saves it (2.1.308, checked): in a fixed order, --name, --settings <path>, --agent <name>,
-# --model <m>, whichever are present, whatever order the list gave them in; a repeated flag keeps
-# the last value (two --settings: the last wins). Any other arg is assumed saved too (not
-# checked), after those four in the order given, so an unknown flag compares strictly. Encoded
-# as saved_flags prints it (JSON string escapes, as Claude Code writes them).
-want_flags() {
-  local a v_name="${WANT_NAME:-$SNAME}" v_settings='' v_agent='' v_model='' rest=() out=()
-  local h_settings='' h_agent='' h_model=''
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --name) [ $# -ge 2 ] && { v_name="$2"; shift 2; continue; } ;;
-      --settings) [ $# -ge 2 ] && { v_settings="$2"; h_settings=1; shift 2; continue; } ;;
-      --agent) [ $# -ge 2 ] && { v_agent="$2"; h_agent=1; shift 2; continue; } ;;
-      --model) [ $# -ge 2 ] && { v_model="$2"; h_model=1; shift 2; continue; } ;;
-    esac
-    rest+=("$1"); shift
-  done
-  out=(--name "$v_name")
-  [ -z "$h_settings" ] || out+=(--settings "$v_settings")
-  [ -z "$h_agent" ] || out+=(--agent "$v_agent")
-  [ -z "$h_model" ] || out+=(--model "$v_model")
-  out+=("${rest[@]}")
-  for a in "${out[@]}"; do
-    a="${a//\\/\\\\}"; a="${a//\"/\\\"}"; a="${a//$'\n'/\\n}"; a="${a//$'\t'/\\t}"; a="${a//$'\r'/\\r}"
-    printf '%s\n' "$a"
-  done
+# canon_flags: the options on stdin (one per line) in one order, so two lists that differ only in
+# order compare equal: --name, --settings <path>, --agent <name>, --model <m>, whichever are present
+# (a repeated one keeps its last value, as Claude Code does: two --settings, the last wins), then
+# every other option in the order given. Claude Code 2.1.308 saves the options in the order they
+# were given (checked 1.9.1; 1.8.7 took it for a fixed order), and start-bg gives --name first,
+# then the args, so the order alone never decides; --remote-control is dropped (see bare_ok).
+canon_flags() {
+  awk '{ t[NR] = $0 }
+    END {
+      for (k = 1; k <= NR; k++) {
+        a = t[k]
+        if (a == "--remote-control") continue
+        if ((a == "--name" || a == "--settings" || a == "--agent" || a == "--model") && k < NR) { v[a] = t[k + 1]; h[a] = 1; k++; continue }
+        r[++n] = a
+      }
+      split("--name --settings --agent --model", o, " ")
+      for (j = 1; j <= 4; j++) if (h[o[j]]) { print o[j]; print v[o[j]] }
+      for (j = 1; j <= n; j++) print r[j]
+    }'
 }
 
-# saved_state <short id>: the session's own state in its state.json (the top-level "state":
-# running, starting, working, stopped, done, failed, ... as Claude Code 2.1.308 writes it);
-# returns 1 when it cannot be read.
-saved_state() {
-  local f v; f="$(jobs_dir)/$1/state.json"
-  [ -n "$1" ] && [ -r "$f" ] || return 1
-  v="$(tr -d '\n\r' < "$f" | sed -n 's/^[[:space:]]*{[[:space:]]*"state"[[:space:]]*:[[:space:]]*"\([^"\\]*\)".*/\1/p')"
-  [ -n "$v" ] || v="$(tr -d '\n\r' < "$f" | grep -o '"state"[[:space:]]*:[[:space:]]*"[^"\\]*"' | head -n 1 | sed 's/.*"\([^"]*\)"$/\1/')"
-  [ -n "$v" ] || return 1
-  printf '%s' "$v"
+# want_flags <args...>: what start-bg passes for the agent (--name <WANT_NAME, else the session
+# name> <args>; a --name in the args wins), encoded as saved_flags prints it (JSON string escapes,
+# as Claude Code writes them) and put in canon_flags' order.
+want_flags() {
+  local a
+  for a in --name "${WANT_NAME:-$SNAME}" "$@"; do
+    a="${a//\\/\\\\}"; a="${a//\"/\\\"}"; a="${a//$'\n'/\\n}"; a="${a//$'\t'/\\t}"; a="${a//$'\r'/\\r}"
+    printf '%s\n' "$a"
+  done | canon_flags
 }
 
 # bare_ok <short id> <args...>: 0 when a bare wake (or claude attach) of that ended session is
 # known to bring it back as the agent: its saved options are --name <a name the agent's session has
-# had (cand_names)> <args>, and BARE_NAME is that name. Claude Code's own state for it is an ended one. A state that still says running (or starting, or
-# anything else; after a rebuild the volume keeps the last one) would make Claude Code take it
-# for a live session and start a copy without any options. Else 1, with WHY set for the note.
+# had (cand_names)> <args> (in any order), and BARE_NAME is that name. Else 1, with WHY set for the
+# note. --remote-control is left out of both sides: Claude Code saves it where it was given (checked
+# 1.9.1: `--name n --remote-control --model m`), and turning the remoteControl option on must not
+# make the wake of a session started without it a copy (a wake that adds flags is a copy).
 bare_ok() {
-  local short="$1" saved st c want; shift
+  local short="$1" saved c want; shift
   BARE_NAME=''
   if ! saved="$(saved_flags "$short")"; then
     WHY="the options Claude Code saved for its session $short cannot be read ($(jobs_dir)/$short/state.json)"; return 1
   fi
-  # --remote-control is left out of both sides: whether Claude Code saves it, and where, is not
-  # known (no real session was checked), and turning the remoteControl option on must not make
-  # every wake a copy (a wake that adds flags is a copy)
-  saved="$(printf '%s\n' "$saved" | grep -vxF -- --remote-control)"
+  saved="$(printf '%s\n' "$saved" | canon_flags)"
   while IFS= read -r c; do
-    WANT_NAME="$c" want="$(want_flags "$@" | grep -vxF -- --remote-control)"
+    WANT_NAME="$c" want="$(want_flags "$@")"
     [ "$saved" = "$want" ] && { BARE_NAME="$c"; break; }
   done < <(cand_names)
   WANT_NAME=''
-  if [ -z "$BARE_NAME" ]; then
-    WHY="its session $short keeps other options than the agent's (--name, one of the agent's session names, and its args from the list)"; return 1
-  fi
-  st="$(saved_state "$short")" || st=''
-  case "${st,,}" in
-    stopped | done | failed | error* | crash* | exited | killed) return 0 ;;
-  esac
-  WHY="its session $short is ended in the list but Claude Code's own state for it says '${st:-(none)}' (after a rebuild a bare wake would start a copy without its options)"
+  [ -n "$BARE_NAME" ] && return 0
+  WHY="its session $short keeps other options than the agent's (--name, one of the agent's session names, and its args from the list)"
   return 1
 }
 
@@ -504,6 +492,13 @@ wake_session() {
   if [ "$rc" -eq 0 ]; then
     got="$(wait_running "$before" "$sid")"
     [ -z "$got" ] || { printf '%s\n' "$got"; return 0; }
+    # Claude Code said it woke this very session (its short id), but the list does not show it
+    # yet: it is the agent's, idle until a prompt reaches it (1.9.1); never a fresh start
+    case "$out" in
+      *"woke session $short "* | *"backgrounded · $short "*)
+        rec_put "$NAME" "$FOLDER" "$short" "$sid"
+        printf '%s\n' "$sid"; return 0 ;;
+    esac
   fi
   if session_gone "$sid" "$out"; then
     note "$NAME: session $sid is gone; started fresh."

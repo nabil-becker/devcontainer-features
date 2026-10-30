@@ -1,3 +1,36 @@
+## Changes in 1.9.1
+
+- **Residents wake into their own session after a container restart.** Reported by a consumer: after each of two
+  restarts, 8 of 9 residents came back as new sessions. The cause was the adapter's own guard, not Claude Code.
+  Facts checked on Claude Code 2.1.308 against a background service of its own, killed the way a restart does
+  (processes gone, job files kept):
+  - A session started with `--bg` and no prompt keeps `"state": "working"` (tempo `blocked`, detail
+    `(idle — send a prompt to start)`) in its `state.json` while it waits. Once its process and the background
+    service are gone, `claude agents --json --all` lists it `failed`, but the file keeps saying `working`. The
+    service writes `failed` (same detail) only when it starts again, and the next `claude --bg` starts it. So the
+    consumer's `failed` + `(idle — send a prompt to start)` is Claude Code's own record, written by the wake.
+  - A bare `claude --bg --resume <id>` of that session continues the same id with its saved options (`note: woke
+    session <id> with its saved options`), even though the file still said `working`. It is the adapter that used
+    to see `working`, decide that a bare wake would start a copy (1.8.3), and wake it with `--name` and the args.
+    Claude Code then started a copy under a new id (`the flags you passed started a copy as <id>`). The adapter
+    no longer consults `state.json`'s state at all.
+  - A finished session (`done`) whose process is gone needs no stop: 1.8.7's stop-then-resume applies only when the
+    list shows a pid. A bare wake continues it under its own id, and it comes back idle with a pid and its state
+    still `done`. The adapter listed it `stopped` (1.8.7), so the wake waited for "running" until
+    `AGENT_ADAPTER_WAIT` ran out (`not recorded`) and printed no id, and the agents Feature carried its lease as
+    `session:unknown`. The woken session now counts once it has a pid, whatever its state. When Claude Code says it
+    woke that very session (`woke session <short id>`, `backgrounded · <short id>`) and the list does not show it
+    yet, the adapter records it and prints its id. In neither case is there a fresh start.
+  - A fresh start still happens only when Claude Code says the session is gone (`source session <id> not found`,
+    1.8.6).
+- **`--remote-control` is saved.** Claude Code keeps it in `respawnFlags` where it was given, for example `--name n
+  --remote-control --model m`. The bare-wake comparison still leaves it out on both sides, so turning
+  `remoteControl` on does not make the wake of a session started without it a copy (1.8.8).
+- **Saved options keep the order they were given.** `--model haiku --remote-control --agent a --settings s --name n`
+  was saved in exactly that order, so 1.8.7's "fixed order" was wrong. Saved and wanted options are now both put in
+  one order before they are compared (`--name`, `--settings`, `--agent`, `--model`, then the rest as given, with
+  the last value of a repeated option winning), so the order never decides between a bare wake and a copy.
+
 ## Changes in 1.9.0
 
 - **Session names: `AGENT_SESSION_NAME`.** The CLI adapter (`agent-adapter-claude`) reads the environment variable
