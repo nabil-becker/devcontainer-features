@@ -23,9 +23,12 @@
 #                one as superseded, and stops the old one if it still has a process (1.9.4)
 #     attach     claude attach <id> of its newest running session (a terminal is needed); an
 #                ended one is woken bare as wake does, then attached
-#     resume     cd <folder> && claude --resume <session id> <args> of its newest session;
-#                refused while that session runs (a second process on one transcript); when
-#                the list cannot be read, claude --resume <args> (its own picker), never new
+#     resume     cd <folder> && claude --resume <session id> <args> of its newest own conversation
+#                (1.9.5): its recorded session, its listed interactive sessions and the ended ones
+#                only on disk (an interactive session leaves the list when it ends), newest by
+#                transcript; never a background session that is not its recorded one. Refused
+#                while one of them runs (a second process on one transcript); when the list
+#                cannot be read, claude --resume <args> (its own picker), never new
 #     new        cd <folder> && claude --name <session name> <args>
 #     stop       claude stop <id> of its newest running session; --extras: every other one
 #     logs       claude logs <id> of its newest session
@@ -301,7 +304,8 @@ resolve_record() {
     rec_put "$NAME" "$FOLDER" "$id" "$RSID"
     REC_SID="$RSID"; return 0
   fi
-  note "$NAME: its recorded session (${RID:-$RSID}) is no longer listed; finding it by name and folder."
+  # resume reads an ended recorded session from its transcript (1.9.5): nothing to say there
+  [ -n "${REC_QUIET:-}" ] || note "$NAME: its recorded session (${RID:-$RSID}) is no longer listed; finding it by name and folder."
 }
 
 # name_is_mine <listed name>: one of CANDS (cand_names), or one of them with Claude Code's
@@ -715,6 +719,74 @@ wake_session() {
   return 0
 }
 
+# ------------------------------------------------------------------ resume ----
+# (1.9.5) `claude agents --json --all` lists an interactive session only while it runs: one ended
+# with /exit is gone from it, its transcript kept at $CLAUDE_CONFIG_DIR/projects/<folder slug>/
+# <session id>.jsonl, which names the session ("agentName" and "customTitle" lines). The list may
+# still hold a background session of the same name and folder (a resident run left it), which is
+# not the on-demand agent's conversation. So resume weighs, by the identity rule (name and folder,
+# the recorded session first): its recorded session (listed, or ended with a transcript); its
+# listed sessions that are interactive (or of no known kind) and not a background job's; and the
+# ended sessions only on disk in the folder's transcript folder whose transcript was made in the
+# folder (cwd), whose last title is a name the agent's session has had, and that no job of
+# $CLAUDE_CONFIG_DIR/jobs names (a background session's). A running one wins (and is refused);
+# else the newest by its transcript's time (a listed one without a transcript by its start).
+project_dir() { printf '%s/projects/%s' "$(config_dir)" "$(printf '%s' "$FOLDER" | sed 's/[^A-Za-z0-9]/-/g')"; }
+transcript_of() { # transcript_of <session id>: its transcript's path (any folder), 1 when none
+  local f
+  [ -n "$1" ] || return 1
+  for f in "$(config_dir)/projects"/*/"$1".jsonl; do [ -s "$f" ] && { printf '%s' "$f"; return 0; }; done
+  return 1
+}
+mtime_of() { stat -c %Y "$1" 2>/dev/null || echo 0; }
+job_sids() { # the session ids the background jobs hold, one per line
+  local f
+  for f in "$(jobs_dir)"/*/state.json; do
+    [ -r "$f" ] && tr -d '\n\r' < "$f" | sed -n 's/.*"sessionId"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'
+  done
+  return 0
+}
+
+# resume_candidates: the agent's conversations, one per line: time<TAB>session id<TAB>state<TAB>pid
+resume_candidates() {
+  local l sid st kind pid started f t nm d seen=' ' jobs listed
+  CANDS="$(cand_names)"
+  jobs="$(job_sids)"
+  listed=" $(printf '%s\n' "$ALL" | cut -f2 | tr '\n' ' ')"
+  while IFS= read -r l; do
+    [ -n "$l" ] || continue
+    sid="$(col "$l" 2)" st="$(col "$l" 3)" kind="$(col "$l" 6)" pid="$(col "$l" 7)" started="$(col "$l" 8)"
+    if [ "$sid" != "$RSID" ] && [ "$sid" != "${REC_SID:-}" ]; then
+      case "$kind" in interactive | unknown) ;; *) continue ;; esac
+      ! printf '%s\n' "$jobs" | grep -qxF -- "$sid" || continue
+    fi
+    if f="$(transcript_of "$sid")"; then t="$(mtime_of "$f")"; else t=$(( ${started:-0} / 1000 )); fi
+    printf '%s\t%s\t%s\t%s\n' "$t" "$sid" "$st" "${pid:-0}"; seen="$seen$sid "
+  done < <(mine)
+  # the recorded session, ended and gone from the list
+  if [ -n "$RSID" ] && [[ "$listed" != *" $RSID "* ]] && f="$(transcript_of "$RSID")"; then
+    printf '%s\t%s\tstopped\t0\n' "$(mtime_of "$f")" "$RSID"; seen="$seen$RSID "
+  fi
+  # the ended sessions only on disk
+  d="$(project_dir)"
+  [ -d "$d" ] || return 0
+  while IFS=$'\t' read -r f nm; do
+    [ -n "$f" ] || continue
+    sid="$(basename "$f" .jsonl)"
+    [[ "$seen$listed" != *" $sid "* ]] || continue
+    ! printf '%s\n' "$jobs" | grep -qxF -- "$sid" || continue
+    name_is_mine "$nm" || continue
+    grep -qF -- "\"cwd\":\"$FOLDER\"" "$f" || continue
+    printf '%s\t%s\tstopped\t0\n' "$(mtime_of "$f")" "$sid"; seen="$seen$sid "
+  done < <(grep -o -H -E '"(agentName|customTitle)":"([^"\\]|\\.)*"' "$d"/*.jsonl 2>/dev/null | awk '
+    { if (!match($0, /:"(agentName|customTitle)":"/)) next
+      f = substr($0, 1, RSTART - 1); v = substr($0, RSTART + RLENGTH); v = substr(v, 1, length(v) - 1)
+      gsub(/\\"/, "\"", v); gsub(/\\\\/, "\\", v)
+      if (!(f in last)) o[++n] = f
+      last[f] = v }
+    END { for (k = 1; k <= n; k++) print o[k] "\t" last[o[k]] }')
+}
+
 extras_note() { # extras_note <running lines>
   local n; n="$(printf '%s\n' "$1" | grep -c .)"
   [ "$n" -gt 1 ] && note "$NAME: $n running sessions; using the newest ($(col "$1" 2)). task agents:stop -- $NAME --extras stops the others."
@@ -840,6 +912,7 @@ case "$verb" in
     echo "resume its conversation by hand, if it does not run: cd '$FOLDER' && claude --resume (pick '$NAME')"
     exit 0 ;;
   resume)
+    REC_QUIET=1
     if ! ALL="$(sessions)"; then
       # never a fresh session in its place: Claude Code's own picker, where the person chooses
       note "$NAME: its latest session cannot be found, so Claude Code's own picker opens instead: pick '$NAME' (and not one that runs elsewhere, which would be a second copy)."
@@ -891,11 +964,14 @@ case "$verb" in
     fi
     exec claude attach "$(col "$run" 5)" ;;
   resume)
-    s="$(mine | head -n 1)"
-    [ -n "$s" ] || die 1 "$NAME: no earlier conversation in $FOLDER to resume; task agents -- $NAME starts one."
-    if [ "$(col "$s" 3)" = running ]; then
-      die 1 "$NAME: its latest session $(col "$s" 2) is running (pid $(col "$s" 7)); resuming it here would be a second copy. Switch to it, or stop it first."
+    # its newest own conversation (1.9.5, see resume_candidates); a running one is refused
+    cands="$(resume_candidates)"
+    s="$(printf '%s\n' "$cands" | awk -F'\t' '$3 == "running"' | head -n 1)"
+    if [ -n "$s" ]; then
+      die 1 "$NAME: its latest session $(col "$s" 2) is running (pid $(col "$s" 4)); resuming it here would be a second copy. Switch to it, or stop it first."
     fi
+    s="$(printf '%s\n' "$cands" | awk NF | sort -s -t $'\t' -k1,1nr | head -n 1)"
+    [ -n "$s" ] || die 1 "$NAME: no earlier conversation in $FOLDER to resume; task agents -- $NAME starts one."
     cd "$FOLDER" && exec claude --resume "$(col "$s" 2)" "$@" ;;
   new)
     # a session id chosen here, so the new conversation is recorded before it starts
