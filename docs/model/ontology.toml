@@ -947,6 +947,16 @@ type = "concept"
 term = "Carrier"
 summary = "What an agent currently runs on (session, process or none): a runtime fact, never assumed to be the agent."
 
+[session-name]
+type = "concept"
+term = "Session name"
+summary = "The label a CLI shows for an agent's session, rendered once per start by the agents Feature from the sessionName template and passed to the CLI adapter in AGENT_SESSION_NAME; stable for a stateful agent."
+
+[[relation]]
+subject = "cli-adapter"
+predicate = "uses"
+object = "session-name"
+
 [agent-integration]
 type = "mechanism"
 term = "Agent integration"
