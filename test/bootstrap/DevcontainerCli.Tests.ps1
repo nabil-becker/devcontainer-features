@@ -443,6 +443,7 @@ Describe 'Host type (HOST_TYPE, HOST_TYPE_PRIORITY, DCF_HOST_*)' {
         Get-FuseRefusal -Type 'linux' -Engine 'wslc' | Should -Match 'wslc run'
         Get-FuseRefusal -Type 'windows-docker' | Should -BeNullOrEmpty
         Get-FuseRefusal -Type 'windows-docker' -Engine '' | Should -BeNullOrEmpty
+        Get-FuseRefusal -Type 'windows-docker' -Engine 'C:\Program Files\Docker\Docker\resources\bin\docker.exe' | Should -BeNullOrEmpty
         Get-FuseRefusal -Type 'linux' -Engine '/usr/bin/podman' | Should -BeNullOrEmpty
         Get-FuseRefusal -Type 'macos' -Engine 'docker' | Should -BeNullOrEmpty
     }

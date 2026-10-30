@@ -505,7 +505,8 @@ function Get-FuseRefusal {
     [CmdletBinding()]
     [OutputType([string])]
     param([Parameter(Mandatory)][string]$Type, [AllowEmptyString()][string]$Engine = '')
-    $leaf = if ($Engine) { [IO.Path]::GetFileNameWithoutExtension($Engine).ToLowerInvariant() } else { '' }
+    # Split on both separators: [IO.Path] on Linux or macOS leaves a Windows path whole.
+    $leaf = if ($Engine) { [IO.Path]::GetFileNameWithoutExtension(($Engine -split '[\\/]')[-1]).ToLowerInvariant() } else { '' }
     if ($Type -eq 'windows-wslc' -or $leaf -eq 'wslc') {
         return 'wslc run (WSL Containers) has no --device, --cap-add or --security-opt option, so the cloud-folder Feature''s mount mode cannot run here; its auto mode takes sync'
     }
