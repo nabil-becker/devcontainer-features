@@ -19,7 +19,7 @@ Included from CLAUDE.md. The words are in [LEXICON.md](../LEXICON.md), the proce
 3. **Close:** `/close-session`: the records checked (the scribe's entries, the backlog, the
    lexicon, the ADRs), `task devhost:verify` green, a Conventional Commit on a topic branch, the
    report in the hand-off shape (Outcome, Outputs, Friction, For the repository, Decisions
-   needed). Commit and push only when asked.
+   needed). The host commits and pushes; the Operator merges (ADR 0040).
 
 ## The ledger
 
@@ -63,7 +63,8 @@ a superseded status), the **tester** runs the suite when code changed.
   message and in the ledger entry).
 - Paths and ids, never content: nothing committed holds real data, credentials, identifiers or a
   name from `.devhost/redact-names.txt` (ignored by git; the person is "the Operator").
-- Commit and push only when asked.
+- Git is the host's job (ADR 0040): it commits, pushes and opens the pull requests on topic
+  branches and keeps the checkout current; the Operator reviews, merges and starts releases.
 
 ## Tasks are the API
 
