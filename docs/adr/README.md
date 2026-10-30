@@ -88,3 +88,4 @@ numbering and a row below.
 | [0037](0037-a-contract-for-agent-clis-must-work-on-two-vendors-or-name-its-fallback.md) | A contract for agent CLIs must work on two vendors or name its fallback (amends ADR-0036) | accepted | 2026-10-29 |
 | [0038](0038-one-cloud-folder-login-task-finds-out-where-it-runs-and-opens-the-sign-in-port-only-while-signing-in.md) | One cloud-folder login task finds out where it runs and opens the sign-in port only while signing in | proposed | 2026-10-29 |
 | [0039](0039-an-architecture-review-comes-before-every-ruling-and-nfr-13-says-we-manage-the-environment-not-the-cli.md) | An architecture review comes before every ruling, and NFR-13 says we manage the environment, not the CLI | accepted | 2026-10-29 |
+| [0040](0040-git-management-is-the-hosts-job-and-the-operator-reviews-merges-and-releases.md) | Git management is the host's job, and the Operator reviews, merges and releases | accepted | 2026-10-30 |
