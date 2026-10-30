@@ -86,7 +86,7 @@ tasks:
           echo "generated READMEs are up to date"
 
   lint:
-    desc: 'shellcheck every shell script, yamllint every YAML file (.yamllint), PSScriptAnalyzer every PowerShell file, the vendored copies of src/common/*.sh (in src/ and local-features/) identical to the canonical ones, every download in a Feature script through dcf_curl (common:curl-check), and the Docker-free unit tests (the dcf_curl retry helper, the go-task Feature''s team task aliases, devhost tooling, the git Feature''s .git-dirs mapping, the ssh-agent Feature''s setup script, the cloud-folder Feature''s status, sync and sign-in, the launcher''s cloud-folder login relay, the agents Feature''s list and verbs, its lease and its contract tests against two fake adapters, the claude-code Feature''s agent adapter, live-session rule and claude-fleet, the phi-check Feature''s patterns and command, the host launcher and its agent task) (CI runs exactly this inside .devcontainer/ci; the tools must be installed - this repo''s devcontainer has them, at the pinned versions).'
+    desc: 'shellcheck, yamllint, PSScriptAnalyzer, the vendored-helper and toolchain checks, the Feature version literals in container tests (versions:check), and every Docker-free unit test (test:*-unit and friends; see each task''s desc). CI runs exactly this inside .devcontainer/ci; the tools must be installed - this repo''s devcontainer has them, at the pinned versions.'
     cmds:
       - shellcheck -x src/*/*.sh local-features/*/*.sh local-features/*/share/bin/*.sh local-features/*/share/jobs/*/*.sh test/*/*.sh test/*/unit/*.sh test/bootstrap/*.sh bootstrap/*.sh bootstrap/host/*.sh .githooks/* .devcontainer/*.sh
       - yamllint --strict .
@@ -95,6 +95,7 @@ tasks:
       - task: common:check
       - task: common:curl-check
       - task: taskfiles:check
+      - task: versions:check
       - task: test:common-unit
       - task: test:go-task-unit
       - task: test:devhost
@@ -154,6 +155,11 @@ tasks:
     desc: 'Docker-free test of how `task devcontainer:claude:fleet` hands SESSIONS (encoded) and its arguments to claude-fleet, inside the container and through the exec task from the host (--dry), and its refusal without SESSIONS; a fake claude-fleet records what it gets; part of lint.'
     cmds:
       - bash test/bootstrap/claude_fleet_task_test.sh
+
+  versions:check:
+    desc: 'Fail, naming file:line, when a container test (test/<id>/*.sh) compares a semver literal with the Feature''s baked version file (/usr/local/share/<id>-feature/version) or `task <id>:version` and it differs from src/<id>/devcontainer-feature.json (or local-features/); container tests run only with Docker, so a version bump otherwise fails only in CI. Part of lint.'
+    cmds:
+      - python3 -I '{{.ROOT_DIR}}/.github/scripts/check_versions.py'
 
   lint:toolchain:
     desc: 'Fail when .devcontainer/ci/devcontainer.json (what the Lint workflow builds) differs from .devcontainer/devcontainer.json in the base image or any Feature it shares (same reference, same options), or when shellcheck, yamllint or powershell has no pinned version; part of lint. Bump a tool version in both files.'
@@ -354,7 +360,7 @@ tasks:
           done
 
   repo:setup:
-    desc: 'Once per clone: activate the tracked .gitconfig (git config --local include.path ../.gitconfig), which turns on the repo hooks in .githooks/ (auto DCO sign-off) and the `git cs` alias. Touches only this clone''s .git/config, never your global config. Idempotent.'
+    desc: 'Once per clone: activate the tracked .gitconfig (git config --local include.path ../.gitconfig), which turns on the repo hooks in .githooks/ (auto DCO sign-off), the `git cs` alias and the devhost-todo merge driver for TODO.md (one line per backlog id; without it git uses its default merge). Touches only this clone''s .git/config, never your global config. Idempotent.'
     silent: true
     cmds:
       - cmd: |
