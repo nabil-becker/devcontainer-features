@@ -1,6 +1,6 @@
 {
   "id": "claude-code",
-  "version": "1.9.4",
+  "version": "1.9.5",
   "name": "Claude Code",
   "description": "Claude Code (https://code.claude.com/docs) as a member of this collection's ecosystem: installs the sha256-verified native release binary at /usr/local/bin/claude (no Node.js, version pinnable) unless a claude is already in the image - e.g. from the official ghcr.io/anthropics/devcontainer-features/claude-code, which is then augmented instead of replaced - and adds agent-adapter-claude (Claude Code's adapter for the agents Feature: task agents -- <name> finds a session by its name and folder and acts on it by id), the deprecated claude-host launcher, claude-fleet command and claude-host-pin hook (still working, each printing one deprecation line; claude-code 2.0 removes them), a named volume mounted at CLAUDE_CONFIG_DIR (/var/lib/devcontainer-features/claude-code) so login and sessions survive rebuilds, a post-create hook that makes that directory usable by the remote user, and the Feature Taskfile. The in-app auto-updater is off; a rebuild updates.",
   "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/claude-code",

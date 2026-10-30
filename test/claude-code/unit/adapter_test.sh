@@ -148,7 +148,9 @@ repo="$T/repo"; mkdir -p "$repo/rooms/review"
 export FAKE_TABLE="$T/table" FAKE_CALLS="$T/calls" FAKE_READS="$T/reads" AGENT_ADAPTER_WAIT=0 AGENT_ADAPTER_CLAUDE_PAUSE=0 AGENT_ADAPTER_SETTLE=0
 # the adapter's records go to a scratch config folder, never the real one
 export CLAUDE_CONFIG_DIR="$T/config"
-unset AGENT_ADAPTER_CLAUDE_STATE
+unset AGENT_ADAPTER_CLAUDE_STATE AGENT_SESSION_NAME  # the session a test runs in may set it
+# the agents Feature installed here (a devhost) has its own session-name template: never read it
+export AGENTS_SHARE_DIR="$T/agents-share"
 records="$T/config/agent-adapter-claude/agents.tsv"
 table() { # rows: id sid name cwd kind pid state started
   : > "$FAKE_TABLE"; : > "$FAKE_CALLS"
@@ -499,6 +501,66 @@ table "a1|sess-a1|reviewer|$repo/rooms/review|interactive|0|done|1000"
 out="$(FAKE_AGENTS_FAIL=1 ad resume reviewer "$repo/rooms/review" -- --model sonnet)"; rc=$?
 check 'resume when the list cannot be read: Claude Code'"'"'s own picker (--resume without an id), never a new session' "$repo/rooms/review|--resume|--model|sonnet;" "$(calls)"
 contains 'resume when the list cannot be read: says to pick the agent' "$out" "pick 'reviewer'"
+# (1.9.5) An interactive session leaves `claude agents --json --all` when it ends (/exit); its
+# transcript stays under projects/<folder slug>/ and names it. A stray background session of the
+# same name and folder (left by a resident run) is still listed; resume reaches the ended
+# interactive conversation, never the stray.
+slug="$(printf '%s' "$repo" | sed 's/[^A-Za-z0-9]/-/g')"
+pdir="$CLAUDE_CONFIG_DIR/projects/$slug"
+transcript() { # transcript <session id> <title> [<cwd>] [<touch date>]
+  mkdir -p "$pdir"
+  printf '{"type":"user","cwd":"%s","sessionId":"%s"}\n{"type":"agent-name","agentName":"%s","sessionId":"%s"}\n{"type":"custom-title","customTitle":"%s","sessionId":"%s"}\n' \
+    "${3:-$repo}" "$1" "$2" "$1" "$2" "$1" > "$pdir/$1.jsonl"
+  [ -z "${4:-}" ] || touch -d "$4" "$pdir/$1.jsonl"
+}
+clean
+table "b9|sess-b9|host|$repo|background|0|blocked|9000"
+saved_opts b9 --name host; sed -i 's/"name": "x"/"name": "x", "sessionId": "sess-b9"/' "$CLAUDE_CONFIG_DIR/jobs/b9/state.json"
+transcript sess-b9 host "$repo" '2026-10-30 16:00'
+transcript sess-i1 'Office host' "$repo" '2026-10-30 19:00'
+out="$(AGENT_SESSION_NAME='Office host' ad resume host "$repo")"; rc=$?
+check 'resume: an ended interactive session only on disk, beside a stray background one of the same name: the interactive one (exit 0)' \
+  "0:$repo|--resume|sess-i1;" "$rc:$(calls)"
+transcript sess-h1 host "$repo" '2026-10-30 18:00'
+table "b9|sess-b9|host|$repo|background|0|blocked|9000"
+out="$(ad resume host "$repo")"; rc=$?
+check 'resume: by the handle alone, the ended interactive session titled so (the stray never; not another title)' "$repo|--resume|sess-h1;" "$(calls)"
+# the recorded session (new wrote it), ended: chosen when it is the newest; an older ended one is not
+transcript sess-i2 'Office host' "$repo" '2026-10-30 20:00'
+mkdir -p "$(dirname "$records")"; printf 'host\t%s\tsess-i2\tsess-i2\tOffice host\n' "$repo" > "$records"
+table "b9|sess-b9|host|$repo|background|0|blocked|9000"
+out="$(AGENT_SESSION_NAME='Office host' ad resume host "$repo")"; rc=$?
+check 'resume: its recorded session, ended and unlisted: resumed by its id' "0:$repo|--resume|sess-i2;" "$rc:$(calls)"
+lacks 'resume: an ended recorded session is no "no longer listed" note' "$out" 'no longer listed'
+# newest by transcript, whatever the record says
+touch -d '2026-10-30 21:00' "$pdir/sess-i1.jsonl"
+table "b9|sess-b9|host|$repo|background|0|blocked|9000"
+out="$(AGENT_SESSION_NAME='Office host' ad resume host "$repo")"
+check 'resume: the newest conversation by its transcript' "$repo|--resume|sess-i1;" "$(calls)"
+# never: another name, another folder (same slug), a background job'"'"'s session
+clean
+transcript sess-o1 'someone else' "$repo" '2026-10-30 22:00'
+transcript sess-o2 host "$T/elsewhere" '2026-10-30 22:00'
+transcript sess-o3 host "$repo" '2026-10-30 22:00'
+saved_opts o3 --name host; sed -i 's/"name": "x"/"name": "x", "sessionId": "sess-o3"/' "$CLAUDE_CONFIG_DIR/jobs/o3/state.json"
+transcript sess-i3 host "$repo" '2026-10-30 10:00'
+table
+out="$(ad resume host "$repo")"
+check 'resume: never a transcript of another name, another folder or a background job' "$repo|--resume|sess-i3;" "$(calls)"
+# a running interactive session of the agent is refused, even when an ended one is newer on disk
+table "i4|sess-i4|host|$repo|interactive|404|idle|1000"
+touch -d '2026-10-30 23:00' "$pdir/sess-i3.jsonl"
+out="$(ad resume host "$repo")"; rc=$?
+check 'resume: a running session of the agent is refused (exit 1), nothing called' "1:" "$rc:$(calls)"
+contains 'resume: the refusal names the running session and its pid' "$out" 'sess-i4 is running (pid 404)'
+# a listed background session that is its recorded one is still its own
+clean
+table "b5|sess-b5|host|$repo|background|0|done|5000"
+printf 'host\t%s\tb5\tsess-b5\n' "$repo" > "$records"
+out="$(ad resume host "$repo")"
+check 'resume: its recorded session, background or not' "$repo|--resume|sess-b5;" "$(calls)"
+clean
+
 out="$(ad hint reviewer "$repo/rooms/review")"; rc=$?
 check 'hint: exit 0' 0 "$rc"
 contains 'hint: how to resume by hand' "$out" "cd '$repo/rooms/review' && claude --resume (pick 'reviewer')"

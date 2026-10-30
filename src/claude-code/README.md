@@ -27,6 +27,21 @@ Claude Code (https://code.claude.com/docs) as a member of this collection's ecos
 
 - `anthropic.claude-code`
 
+## Changes in 1.9.5
+
+- **`agents start <name> --resume` reaches the agent's own conversation.** `claude agents --json --all` lists an
+  interactive session only while it runs: one ended with `/exit` is gone from it, though its transcript stays at
+  `$CLAUDE_CONFIG_DIR/projects/<folder slug>/<session id>.jsonl` and names it (`agentName` and `customTitle`
+  lines). `resume` took the newest listed session of the agent's name and folder, so once the host ended, a stray
+  background session of the same name (left `blocked` by an earlier resident run) was resumed: the wrong
+  conversation. `resume` now weighs, by the identity rule (name and folder, the recorded session first): the
+  agent's recorded session (the one `new` wrote before it started), listed or ended with a transcript; its listed
+  interactive sessions; and the ended sessions found only on disk in the folder's transcript folder, made in that
+  folder (`cwd`), whose last title is a name the agent's session has had. A background session (listed so, or one a
+  job in `$CLAUDE_CONFIG_DIR/jobs` holds) counts only when it is the recorded one. A running one is refused, as
+  before (a second process on one transcript); else the newest by its transcript's time is resumed by its id. When
+  the list cannot be read, Claude Code's own picker opens, as before.
+
 ## Changes in 1.9.4
 
 - **A crashed wake never loops.** Reported by a consumer on claude-code 1.9.2 with Claude Code 2.1.314: a resident
@@ -267,7 +282,7 @@ else should. The contract (verbs, exit codes) is in the `agents` Feature's notes
 | `start-bg` | `cd <folder> && claude --bg --name <name> <args>`; waits until the session is listed and prints its id |
 | `wake` | the agent's newest stopped or failed session, by its full id: `cd <folder> && claude --bg --resume <session id>` (its conversation, under the same id on Claude Code 2.1.308, which says `woke session ... with its saved options (--name, ...)`; 2.1.314 may answer under a new id, which is recorded when it continues the conversation, 1.9.4), always bare (1.9.3); a line says when its saved options lack or differ from `--name <name> <args>`; extra saved options are no difference. If the session is gone (`source session <id> not found`, 1.8.6), has no transcript, or the wake crashes with "not found" within `AGENT_ADAPTER_SETTLE` seconds (1.9.4), the agent is started fresh as `start-bg` does, and stderr says so |
 | `attach` | `claude attach <id>` of its newest running session; an interactive one is refused with the pid and tty of the terminal that holds it. With none running, `claude attach <id>` of its newest ended one (Claude Code restarts it with its saved options; the same line as `wake` says when they lack or differ from the agent's, 1.9.3) |
-| `resume` | `cd <folder> && claude --resume <session id> <args>` of its newest session; refused while that session runs (a second process on one transcript). When the list cannot be read: `claude --resume <args>`, Claude Code's own picker (1.8.0) |
+| `resume` | `cd <folder> && claude --resume <session id> <args>` of its newest own conversation (1.9.5): its recorded session, its listed interactive sessions and the ended ones found only by their transcript in the folder (an interactive session leaves the list when it ends), newest by transcript; never a background session that is not its recorded one. Refused while one of them runs (a second process on one transcript). When the list cannot be read: `claude --resume <args>`, Claude Code's own picker (1.8.0) |
 | `new` | `cd <folder> && claude --name <name> <args>` |
 | `list` | `claude agents --json --all`: name, session id, state (a pid is running, a finished `done` session with a live process included (1.9.2); `blocked` without a pid is stopped; failed; anything else stopped), folder, newest first |
 | `hint` | how to find and resume the agent by hand (`claude agents`; `cd <folder> && claude --resume`, pick it), for when the list cannot be read (1.8.0) |
