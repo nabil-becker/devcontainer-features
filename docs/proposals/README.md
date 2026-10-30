@@ -1,6 +1,6 @@
 # Proposals
 
-Drafts the Operator decides on. A proposal is never in force until the Operator accepts it; once accepted, the change is made through the backlog and, where the reasoning is long, an ADR in `docs/adr/`. A proposal that is declined stays here with its status line, so the question is not asked twice.
+Drafts the Operator decides on. Before a ruling a proposal carries an "Architecture review (date)" section, written by the `architecture-review` skill (verdict, findings, open questions; the design sections stay the author's). A proposal is never in force until the Operator accepts it; once accepted, the change is made through the backlog and, where the reasoning is long, an ADR in `docs/adr/`. A proposal that is declined stays here with its status line, so the question is not asked twice.
 
 | Proposal | Status |
 |---|---|

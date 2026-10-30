@@ -13,7 +13,7 @@ tasks:
 
   default:
     dir: '{{.USER_WORKING_DIR}}'
-    desc: 'Start an agent of the agent list (.devcontainer/agents.yml, or AGENTS_FILE): task agents -- <name>. A resident is made to run in the background and attached; an on-demand agent opens a new session in this terminal. -- <name> --resume resumes an on-demand agent''s latest conversation; -- <name> --new gives a resident a fresh session (it asks first; --yes skips the question). Extra CLI arguments follow the name. Without a terminal a resident is started and the attach command printed (exit 0); an on-demand agent is refused (exit 2). From the host: task devcontainer:agent -- <name>.'
+    desc: 'Start an agent of the agent list (.devcontainer/agents.yml, or AGENTS_FILE): task agents -- <name>, or plain task agents for the agent marked default: true. A resident is made to run in the background and attached (a second start joins it); an on-demand agent opens a new session in this terminal (a stateful one is refused while it runs elsewhere: one live copy, its lease). -- <name> --resume resumes an on-demand agent''s latest conversation; -- <name> --new gives a resident a fresh session (it asks first; --yes skips the question). Extra CLI arguments follow the name. Without a terminal a resident is started and the attach command printed (exit 0); an on-demand agent is refused (exit 2). From the host: task devcontainer:agent -- <name>.'
     interactive: true
     cmds:
       - '{{if .AGENTS_FILE}}AGENTS_FILE_TASK_VAR={{shellQuote .AGENTS_FILE}} {{end}}agents start {{.CLI_ARGS}}'
@@ -26,13 +26,13 @@ tasks:
 
   list:
     dir: '{{.USER_WORKING_DIR}}'
-    desc: 'List the agents: name, kind, CLI, state (running, stopped, failed, none; +N when it has extra running sessions), the session id and the folder. -- --json prints a JSON array for agents and scripts.'
+    desc: 'List the agents: name, kind, lifecycle, CLI, state (running, stopped, failed, none; +N when it has extra running sessions), lease (held and its carrier, starting, stale, free; - for an ephemeral agent), the session id and the folder. -- --json prints a JSON array for agents and scripts.'
     cmds:
       - '{{if .AGENTS_FILE}}AGENTS_FILE_TASK_VAR={{shellQuote .AGENTS_FILE}} {{end}}agents list {{.CLI_ARGS}}'
 
   stop:
     dir: '{{.USER_WORKING_DIR}}'
-    desc: 'Stop an agent''s running session, keeping its conversation: task agents:stop -- <name>. -- <name> --extras stops only the extra running sessions of that agent and keeps the newest.'
+    desc: 'Stop an agent''s running session, keeping its conversation, and release its lease: task agents:stop -- <name>. -- <name> --extras stops only the extra running sessions of that agent and keeps the newest.'
     cmds:
       - '{{if .AGENTS_FILE}}AGENTS_FILE_TASK_VAR={{shellQuote .AGENTS_FILE}} {{end}}agents stop {{.CLI_ARGS}}'
 
@@ -49,8 +49,20 @@ tasks:
     cmds:
       - '{{if .AGENTS_FILE}}AGENTS_FILE_TASK_VAR={{shellQuote .AGENTS_FILE}} {{end}}agents reset {{.CLI_ARGS}}'
 
+  leases:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Show the leases of the stateful agents (one live copy each): handle, state (held, starting, stale, unknown), carrier (session:<id> or process:<pid>), since when and the holder. -- --json prints a JSON array.'
+    cmds:
+      - '{{if .AGENTS_FILE}}AGENTS_FILE_TASK_VAR={{shellQuote .AGENTS_FILE}} {{end}}agents leases {{.CLI_ARGS}}'
+
+  release:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Free a stateful agent''s lease whose holder is gone: task agents:release -- <name>. A live holder is refused (exit 2) unless -- <name> --force, which lets a second copy start; use it only when you know the agent does not run.'
+    cmds:
+      - '{{if .AGENTS_FILE}}AGENTS_FILE_TASK_VAR={{shellQuote .AGENTS_FILE}} {{end}}agents release {{.CLI_ARGS}}'
+
   check:
     dir: '{{.USER_WORKING_DIR}}'
-    desc: 'Read and check the agent list without starting anything: which file (and where AGENTS_FILE came from), each agent with its CLI, kind, folder and args; a broken list exits 2 naming the file, the line and the problem.'
+    desc: 'Read and check the agent list without starting anything: which file (and where AGENTS_FILE came from), the default agent, each agent with its CLI, definition, kind, lifecycle, identity, lease, folder and args; a broken list exits 2 naming the file, the line and the problem.'
     cmds:
       - '{{if .AGENTS_FILE}}AGENTS_FILE_TASK_VAR={{shellQuote .AGENTS_FILE}} {{end}}agents check'

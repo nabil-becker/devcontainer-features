@@ -363,7 +363,7 @@ out="$(cd "$repo" && AGENTS_TTY=1 AGENTS_STATE_DIR="$T/agents-state" PATH="$bin:
 check 'agents start of a retitled resident: attaches to it, no second session' "$repo|attach|$newid;" "$(calls)"
 contains 'agents start of a retitled resident: says it runs' "$out" "host: running ($newsid)"
 out="$(cd "$repo" && AGENTS_STATE_DIR="$T/agents-state" PATH="$bin:$PATH" agents list 2>&1)"
-contains 'agents list of a retitled resident: running with its id' "$out" "$(printf '%-16s %-10s %-8s %-9s %-38s %s' host resident claude running "$newsid" .)"
+contains 'agents list of a retitled resident: running with its id' "$out" "$(printf '%-16s %-10s %-10s %-8s %-9s %-24s %-38s %s' host resident stateful claude running "held session:$newsid" "$newsid" .)"
 : > "$FAKE_CALLS"
 out="$(cd "$repo" && AGENTS_STATE_DIR="$T/agents-state" PATH="$bin:$PATH" agents up --no-wait 2>&1)"
 check 'agents up with a retitled resident: starts nothing' "" "$(calls)"
@@ -479,6 +479,44 @@ out="$(ad attach)"; rc=$?
 check 'a verb without name and folder: exit 2' 2 "$rc"
 out="$(ad attach host "$T/nope")"; rc=$?
 check 'a missing folder: exit 1' 1 "$rc"
+
+
+# The remoteControl option: --remote-control on every session the adapter starts, unless the
+# agent's args have it or --no-remote-control; off: unchanged; a wake does not become a copy.
+rcfile="$T/rc-file"
+rcad() { (cd "$T" && PATH="$bin:$PATH" AGENT_ADAPTER_CLAUDE_REMOTE_CONTROL_FILE="$rcfile" agent-adapter-claude "$@" 2>&1); }
+rm -f "$rcfile"; table
+out="$(rcad start-bg rcagent "$repo" -- --model opus)"
+check 'remoteControl off: start-bg unchanged' "$repo|--bg|--name|rcagent|--model|opus;" "$(calls)"
+echo 1 > "$rcfile"; table
+out="$(rcad start-bg rcagent "$repo" -- --model opus)"
+check 'remoteControl on: start-bg adds --remote-control' "$repo|--bg|--name|rcagent|--model|opus|--remote-control;" "$(calls)"
+table
+out="$(rcad start-bg rcagent "$repo" -- --remote-control)"
+check 'remoteControl on: not doubled when the agent has it' "$repo|--bg|--name|rcagent|--remote-control;" "$(calls)"
+table
+out="$(rcad start-bg rcagent "$repo" -- --no-remote-control --model opus)"
+check 'remoteControl on: --no-remote-control opts out and is not passed on' "$repo|--bg|--name|rcagent|--model|opus;" "$(calls)"
+table
+out="$(rcad new rcagent "$repo" -- --model opus)"
+contains 'remoteControl on: new adds --remote-control' "$(calls)" '|--name|rcagent|--session-id|'
+contains 'remoteControl on: new passes --remote-control' "$(cat "$FAKE_CALLS")" '|--model|opus|--remote-control'
+rm -f "$rcfile"; table
+out="$(AGENT_ADAPTER_CLAUDE_REMOTE_CONTROL=1 rcad start-bg rcagent "$repo")"
+check 'remoteControl: the env override turns it on for one run' "$repo|--bg|--name|rcagent|--remote-control;" "$(calls)"
+echo 1 > "$rcfile"; table
+out="$(AGENT_ADAPTER_CLAUDE_REMOTE_CONTROL=0 rcad start-bg rcagent "$repo")"
+check 'remoteControl: the env override turns it off for one run' "$repo|--bg|--name|rcagent;" "$(calls)"
+# wake with the option on: saved options with or without --remote-control stay a bare wake
+for sv in "--name rcagent" "--name rcagent --remote-control" "--name rcagent --model opus --remote-control"; do
+  table "a8|sess-a8|rcagent|$repo|background|0|stopped|1000"
+  # shellcheck disable=SC2086
+  saved_opts a8 $sv
+  # shellcheck disable=SC2086
+  out="$(rcad wake rcagent "$repo" -- ${sv#--name rcagent})"
+  check "remoteControl on: a bare wake when the saved options are '$sv'" "$repo|--bg|--resume|sess-a8;" "$(calls)"
+done
+rm -f "$rcfile"
 
 # Across every call above: never rm (but the one session-remove asked for), never -c or
 # --continue; in the code, never an action by name.

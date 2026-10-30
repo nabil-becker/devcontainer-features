@@ -1,6 +1,6 @@
 # Non-functional requirements for Features
 
-Status: accepted by the Operator 2026-10-19 as the Feature principles FP-1 to FP-10; renamed non-functional requirements NFR-1 to NFR-10 on 2026-10-20 (same content and order); binding (ADR 0011). NFR-11 added 2026-10-29 (ADR 0035). NFR-12 added 2026-10-29. Every work item that touches a Feature must meet them, or record a backlog item or a written exception in the Feature's NOTES; a failing requirement does not block a release. The proposal and its reasoning stay in `docs/proposals/feature-principles.md`, under the old FP ids.
+Status: accepted by the Operator 2026-10-19 as the Feature principles FP-1 to FP-10; renamed non-functional requirements NFR-1 to NFR-10 on 2026-10-20 (same content and order); binding (ADR 0011). NFR-11 added 2026-10-29 (ADR 0035). NFR-12 added 2026-10-29. NFR-13 added 2026-10-29. Every work item that touches a Feature must meet them, or record a backlog item or a written exception in the Feature's NOTES; a failing requirement does not block a release. The proposal and its reasoning stay in `docs/proposals/feature-principles.md`, under the old FP ids.
 
 These are the requirements every Feature in this collection meets. Today they are implicit, spread over README, CONTRIBUTING and the code. They are what sets these Features apart from other Features for the same tool: this collection has its own Claude Code Feature because the others do not meet them.
 
@@ -8,7 +8,7 @@ They are checked, not aspirational. Each rule names how it is checked and whethe
 
 ## The principles at a glance
 
-Twelve requirements, grouped by the question each one answers.
+Thirteen requirements, grouped by the question each one answers.
 
 ```mermaid
 flowchart LR
@@ -26,6 +26,7 @@ flowchart LR
     nfr7["NFR-7 agent-ready"]
     nfr11["NFR-11 linter-cli-contract"]
     nfr12["NFR-12 vendor-neutral-contracts"]
+    nfr13["NFR-13 manages-the-environment-not-the-cli"]
   end
   subgraph told["How it is explained"]
     nfr8["NFR-8 documented-to-the-standard"]
@@ -148,6 +149,14 @@ A contract this repository defines for agent CLIs (the adapter verbs, the agents
 - **Checked by:** the contract tests against two fake adapters with different capabilities; review against the matrix. Partly automatable.
 - **Today:** one adapter, Claude; Copilot next.
 
+### NFR-13 manages-the-environment-not-the-cli
+A Feature MUST manage the agent's environment (which agent, its state, its skills, its records, how it is started and found again) and use each CLI's own features through its options and flags instead of re-implementing them. A capability that one CLI has MUST be exposed as that CLI adapter's or Feature's option, not as a new concept in the agents spec, unless NFR-12's two-vendor test is met.
+
+- **Why:** the Operator, 2026-10-29: "enable us to utilize their advances and just make sure that we care about what we care about, which is managing our environment". A CLI improves faster than this collection can follow; what it already does is used as it is, and what this collection adds is the environment around it.
+- **Source:** the Operator, 2026-10-29; NFR-12 and `docs/proposals/agents-v2.md` section 14.
+- **Checked by:** the architecture review (the `architecture-review` skill, a placement finding for each element); review. Not automatable.
+- **Today:** Remote Control stays a claude-code option, not a concept in the agents spec; session naming is neutral in the spec (two vendors name sessions natively) and mapped per adapter.
+
 Where each requirement is checked, from each "Checked by" line: how far the check can be automated.
 
 ```mermaid
@@ -169,6 +178,7 @@ flowchart LR
   end
   subgraph review["Mostly review"]
     c4["NFR-4 review"]
+    c13["NFR-13 the architecture review, a placement finding per element"]
   end
 ```
 
@@ -195,6 +205,7 @@ flowchart LR
     t7["NFR-7: interactive used in 8 Features;<br/>machine-readable output not written yet"]
     t11["NFR-11: phi-check, the first (2026-10-29)"]
     t12["NFR-12: one adapter, Claude; Copilot next"]
+    t13["NFR-13: Remote Control a claude-code option;<br/>session naming neutral, mapped per adapter"]
   end
 ```
 

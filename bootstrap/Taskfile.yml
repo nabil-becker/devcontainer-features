@@ -14,6 +14,13 @@ includes:
     taskfile: './{{BOOTSTRAP_DIR}}/devcontainer.yml'
     optional: true
     aliases: [dc]   # task dc:up == task devcontainer:up
+  # task cloud-folder:login on the workstation (the launcher signs the cloud-folder Feature in
+  # through the running devcontainer). Left out inside the container, where the cloud-folder
+  # Feature's own cloud-folder:login comes from features.yml: its containerEnv sets RCLONE_CONFIG
+  # to this path. See {{BOOTSTRAP_DIR}}/cloud-folder.yml.
+  cloud-folder:
+    taskfile: '{{if or (eq (.RCLONE_CONFIG | default "") "/var/lib/devcontainer-features/cloud-folder/rclone.conf") (eq (.DEVCONTAINER_IN_CONTAINER | default "") "1")}}./{{BOOTSTRAP_DIR}}/none.yml{{else}}./{{BOOTSTRAP_DIR}}/cloud-folder.yml{{end}}'
+    optional: true
   # Tasks contributed by the Features installed in the devcontainer (dsc:*,
   # velero:*, ...). The file only exists inside the container; on the host it
   # is skipped. See the go-task Feature README.

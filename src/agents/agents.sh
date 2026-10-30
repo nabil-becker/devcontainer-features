@@ -4,12 +4,15 @@
 # agents:* tasks inside, and `task devcontainer:agent -- <name>` from the host.
 #
 #   agents start <name> [--resume | --new [--yes]] [--] [extra CLI args...]
+#   agents [start]   (no name: starts the agent marked `default: true` in the list; none: this text)
 #   agents up [--no-wait] [--post-start]
 #   agents list [--json]
 #   agents stop <name> [--extras]
 #   agents logs <name>
 #   agents check          (the list, and each CLI adapter's `supports`)
 #   agents reset <name>... | --all [--purge] [--include-unlisted] [--yes] [--force]
+#   agents leases [--json]
+#   agents release <name> [--force]
 #
 # The list (the agent list) is a small YAML file, .devcontainer/agents.yml unless
 # AGENTS_FILE names another path, relative to the repository root (the nearest folder at
@@ -23,10 +26,21 @@
 #       kind: on-demand       # resident | on-demand
 #       folder: .             # repo-relative (default .)
 #       args: [--remote-control]   # handed to the CLI as they are (default none)
+#       lifecycle: stateful   # stateful (default) | ephemeral (on-demand only)
+#       identity: host        # the principal it acts as (default the name)
+#       lease: container      # container (stateful, the default) | none (ephemeral)
+#       definition: host      # the CLI's agent profile; read and checked, not passed yet
+#       default: true         # at most one: what `agents` with no name starts
 #
 # Only that subset of YAML is read (comments, plain and quoted scalars, a flow or block
 # list for args); the parser is awk, because bash, awk and sed are what every base image
 # has (python3 and jq are not). Unknown keys are a warning.
+#
+# The lease (2.0). A stateful agent runs as exactly one live copy: every start through
+# agents takes its lease first (the folder leases/<name> in the state folder, made with
+# mkdir), a second start of a resident joins the running one and a second start of an
+# on-demand agent is refused (exit 2). A dead holder's lease is taken over. An ephemeral
+# agent takes none. `leases` shows them; `release` frees a dead one (--force a live one).
 #
 # Kinds. resident: runs in the background; start = make sure it runs, then attach.
 # on-demand: start = a new session in this terminal; --resume opens its latest one.
@@ -103,7 +117,7 @@ resolve_file() {
 
 # The parser: the YAML subset above, one record per line out:
 #   I <n> <line>             an entry starts
-#   K <n> <key> <value>      name, cli, kind or folder
+#   K <n> <key> <value>      name, cli, kind, folder, lifecycle, identity, lease, definition, default
 #   A <n>                    the entry has args
 #   G <n> <value>            one arg
 #   W <line> <message>       a warning
@@ -183,8 +197,9 @@ function keyline(t,   k, v) {
     if (substr(v, 1, 1) == "[") { flow(v); return }
     fail("args must be a list: args: [--model, opus], or one - value per line below it")
   }
-  if (k == "name" || k == "cli" || k == "kind" || k == "folder") {
+  if (k == "name" || k == "cli" || k == "kind" || k == "folder" || k == "lifecycle" || k == "identity" || k == "lease" || k == "definition" || k == "default") {
     if (v == "" || substr(v, 1, 1) == "#") fail("'" k "' has no value")
+    if (k == "lease" && substr(v, 1, 1) == "{") fail("lease is one word, not a map: lease: container (or none)")
     v = scalar(v, "'" k "'")
     if (v ~ /\t/) fail("a tab in the value of '" k "'")
     printf "K\t%d\t%s\t%s\n", n, k, v
@@ -258,11 +273,14 @@ load_list() {
     die 2 "no agent list at $AF_ABS (from $AF_SOURCE); write one (see the agents Feature notes) or set AGENTS_FILE to its path relative to $ROOT."
   fi
   out="$(awk "$PARSER" "$AF_ABS")"; rc=$?
-  N=0 NAME=() CLI=() KIND=() FOLDER=() ARGS=() LINE=() HASARGS=()
+  N=0 NAME=() CLI=() KIND=() FOLDER=() ARGS=() LINE=() HASARGS=() LIFE=() IDENT=() LEASE=() DEF=() DFLT=()
   while IFS=$'\t' read -r rec a b c; do
     case "$rec" in
       I) N="$a"; LINE[a]="$b" FOLDER[a]=. ARGS[a]='' ;;
-      K) case "$b" in name) NAME[a]="$c" ;; cli) CLI[a]="$c" ;; kind) KIND[a]="$c" ;; folder) FOLDER[a]="$c" ;; esac ;;
+      K) case "$b" in
+           name) NAME[a]="$c" ;; cli) CLI[a]="$c" ;; kind) KIND[a]="$c" ;; folder) FOLDER[a]="$c" ;;
+           lifecycle) LIFE[a]="$c" ;; identity) IDENT[a]="$c" ;; lease) LEASE[a]="$c" ;; definition) DEF[a]="$c" ;; default) DFLT[a]="$c" ;;
+         esac ;;
       A) HASARGS[a]=1 ;;
       G) if [ -n "${ARGS[a]:-}" ]; then ARGS[a]="${ARGS[a]}"$'\x1f'"$b"; else ARGS[a]="$b"; fi ;;
       W) warn "$AF:$a: $b" ;;
@@ -292,8 +310,72 @@ load_list() {
         warn "$at: name '${NAME[i]}' is already used by entry $j"; errs=$((errs + 1))
       fi
     done
+    check_v2 "$i" "$at"; errs=$((errs + V2ERRS))
   done
   [ "$errs" -eq 0 ] || die 2 "$AF: $errs problem(s) in the agent list (above)."
+}
+
+# check_v2 <i> <at>: the 2.0 keys of entry i (lifecycle, identity, lease, definition), their
+# defaults filled in; V2ERRS counts the problems (each said with its file and line).
+check_v2() {
+  local i="$1" at="$2" j a
+  V2ERRS=0
+  case "${LIFE[i]:-}" in
+    '') LIFE[i]=stateful ;;
+    stateful | ephemeral) ;;
+    *) warn "$at: lifecycle '${LIFE[i]}' is neither stateful nor ephemeral"; V2ERRS=$((V2ERRS + 1)) ;;
+  esac
+  if [ "${LIFE[i]}" = ephemeral ] && [ "${KIND[i]:-}" = resident ]; then
+    warn "$at: an ephemeral agent cannot be resident (the container start would create and discard it every time); make it on-demand, or stateful"; V2ERRS=$((V2ERRS + 1))
+  fi
+  case "${LEASE[i]:-}" in
+    '') if [ "${LIFE[i]}" = ephemeral ]; then LEASE[i]=none; else LEASE[i]=container; fi ;;
+    container)
+      if [ "${LIFE[i]}" = ephemeral ]; then
+        warn "$at: lease 'container' is for a stateful agent; an ephemeral agent takes no lease (lease: none, or leave it out)"; V2ERRS=$((V2ERRS + 1))
+      fi ;;
+    none)
+      if [ "${LIFE[i]}" != ephemeral ]; then
+        warn "$at: a stateful agent always holds its lease (lease: container); an agent without one is lifecycle: ephemeral"; V2ERRS=$((V2ERRS + 1))
+      fi ;;
+    machine | cluster)
+      warn "$at: lease '${LEASE[i]}' is not supported: a lease beyond one container needs an atomic step shared by the containers, which bash, awk and sed do not have (the agents Feature notes say why); use lease: container"; V2ERRS=$((V2ERRS + 1)) ;;
+    *) warn "$at: lease '${LEASE[i]}' is neither container nor none"; V2ERRS=$((V2ERRS + 1)) ;;
+  esac
+  [ -n "${IDENT[i]:-}" ] || IDENT[i]="${NAME[i]:-}"
+  if [ -n "${IDENT[i]}" ] && ! [[ "${IDENT[i]}" =~ ^[A-Za-z0-9_-]+$ ]]; then
+    warn "$at: identity '${IDENT[i]}' may hold only letters, digits, - and _"; V2ERRS=$((V2ERRS + 1))
+  fi
+  if [ -n "${DEF[i]:-}" ]; then
+    if ! [[ "${DEF[i]}" =~ ^[A-Za-z0-9_.:-]+$ ]]; then
+      warn "$at: definition '${DEF[i]}' may hold only letters, digits, ., :, - and _"; V2ERRS=$((V2ERRS + 1))
+    fi
+    args_of "$i"
+    for a in ${CLIARGS[@]+"${CLIARGS[@]}"}; do
+      case "$a" in
+        --agent | --agent=*)
+          warn "$at: definition '${DEF[i]}' and --agent in args name the profile twice; keep one"; V2ERRS=$((V2ERRS + 1)); break ;;
+      esac
+    done
+  fi
+  case "${DFLT[i]:-}" in
+    '' | false) DFLT[i]='' ;;
+    true)
+      DFLT[i]=1
+      for ((j = 1; j < i; j++)); do
+        if [ -n "${DFLT[j]:-}" ]; then
+          warn "$at: '${NAME[i]:-}' is marked default, and so is '${NAME[j]:-}' (entry $j); mark at most one agent default: true"; V2ERRS=$((V2ERRS + 1))
+        fi
+      done ;;
+    *) warn "$at: default '${DFLT[i]}' is neither true nor false"; DFLT[i]=''; V2ERRS=$((V2ERRS + 1)) ;;
+  esac
+  [ "${LIFE[i]}" = stateful ] || return 0
+  for ((j = 1; j < i; j++)); do
+    if [ "${LIFE[j]}" = stateful ] && [ -n "${IDENT[i]}" ] && [ "${IDENT[i]}" = "${IDENT[j]}" ]; then
+      warn "$at: identity '${IDENT[i]}' is already the identity of the stateful agent '${NAME[j]:-}' (entry $j); two stateful agents cannot share one (it would run as two live copies)"
+      V2ERRS=$((V2ERRS + 1))
+    fi
+  done
 }
 
 # find_agent <name>: AI, the entry's index; exits 2 naming the agents when there is none.
@@ -304,6 +386,15 @@ find_agent() {
     names="$names ${NAME[i]}"
   done
   die 2 "no agent '$1' in $AF (agents:${names:- none})."
+}
+
+# default_agent: the name of the agent marked default: true, empty when none (or no list)
+default_agent() {
+  local i
+  resolve_file
+  [ -f "$AF_ABS" ] || return 0
+  load_list
+  for ((i = 1; i <= N; i++)); do [ -z "${DFLT[i]:-}" ] || { printf '%s' "${NAME[i]}"; return 0; }; done
 }
 
 args_of() { # the entry's args into the array CLIARGS
@@ -420,6 +511,263 @@ mark_started() {
 }
 marked() { [ -e "$(marker "$1")" ]; }
 
+# ------------------------------------------------------------------ the lease ----
+# A stateful agent's exclusive lease (docs/proposals/agents-v2.md section 6): the folder
+# leases/<name> under the state folder exists while someone holds it; mkdir is the atomic take.
+# Its holder file (key=value lines, written to a temporary name and renamed): state
+# (starting|held), pid and pidstart (the agents process that took it), boot (field 22 of
+# /proc/1/stat, or AGENTS_START_ID) and container (the hostname), carrier (session:<id>,
+# process:<pid> or pending), time. Liveness (first rule that applies): no holder file and the
+# folder older than 5 s: dead, younger: starting; another boot or container: dead; starting:
+# alive while its pid is; held: alive while its pid is or the adapter's list shows the agent
+# running; the adapter cannot list: cannot tell (held; never taken over on a guess); the
+# listing failed: error (held). A takeover is serialised by leases/<name>.takeover (mkdir),
+# re-judges the holder, renames the old folder away and takes it with mkdir. Folders are
+# made 0777 (no sticky bit), so a holder of another user can be taken over and removed.
+LEASE_DIR="$STATE_DIR/leases"
+declare -A LEASE_TIME=()
+LEASES_MINE='' # names whose lease this process holds and releases when it exits
+LV='' LV_WHY='' LH_STATE='' LH_PID='' LH_PIDSTART='' LH_BOOT='' LH_CONTAINER='' LH_CARRIER='' LH_TIME='' LH_RAW='' JOINED=''
+
+container_id() { cat /proc/sys/kernel/hostname 2>/dev/null || uname -n; }
+# proc_start <pid>: when the process started (field 22 of its stat); fails when it is gone or a zombie
+proc_start() {
+  local s
+  case "$1" in '' | *[!0-9]*) return 1 ;; esac
+  s="$(sed 's/.*) //' "/proc/$1/stat" 2>/dev/null)" || return 1
+  [ -n "$s" ] || return 1
+  printf '%s\n' "$s" | awk '$1 == "Z" { exit 1 } { print $20 }'
+}
+pid_alive() { local s; s="$(proc_start "$1")" && [ -n "$s" ] && [ "$s" = "$2" ]; }
+fmt_time() { date -d "@$1" +%H:%M:%S 2>/dev/null || printf '%s' "$1"; }
+
+holder_write() { # <name> <state> <carrier>
+  local d="$LEASE_DIR/$1" t
+  t="$d/.holder.$$"
+  [ -n "${LEASE_TIME[$1]:-}" ] || LEASE_TIME[$1]="$(date +%s)"
+  { printf 'state=%s\npid=%s\npidstart=%s\nboot=%s\ncontainer=%s\ncarrier=%s\ntime=%s\n' \
+      "$2" "$$" "$(proc_start $$)" "$(start_id)" "$(container_id)" "$3" "${LEASE_TIME[$1]}" > "$t" &&
+      mv -f "$t" "$d/holder"; } 2>/dev/null
+}
+# holder_read <folder>: LH_* from its holder file (LH_RAW the whole file); 1 when there is none
+holder_read() {
+  local k v
+  LH_STATE='' LH_PID='' LH_PIDSTART='' LH_BOOT='' LH_CONTAINER='' LH_CARRIER='' LH_TIME='' LH_RAW=''
+  [ -f "$1/holder" ] || return 1
+  LH_RAW="$(cat "$1/holder" 2>/dev/null)" || return 1
+  while IFS='=' read -r k v; do
+    case "$k" in
+      state) LH_STATE="$v" ;; pid) LH_PID="$v" ;; pidstart) LH_PIDSTART="$v" ;; boot) LH_BOOT="$v" ;;
+      container) LH_CONTAINER="$v" ;; carrier) LH_CARRIER="$v" ;; time) LH_TIME="$v" ;;
+    esac
+  done <<< "$LH_RAW"
+}
+
+# lease_verdict <i or empty> <name> [fresh]: LV (free, dead, starting, held, cannot-tell, error)
+# and LV_WHY (why dead: no-holder, new-container, start-died, session-gone), the holder in LH_*.
+# fresh: read the adapter's list again rather than this run's copy (a taker must see now).
+lease_verdict() {
+  local i="$1" h="$2" fresh="${3:-}" d="$LEASE_DIR/$2" age
+  LV='' LV_WHY=''
+  if ! holder_read "$d"; then
+    [ -d "$d" ] || { LV=free; return 0; }
+    age=$(($(date +%s) - $(stat -c %Y "$d" 2>/dev/null || date +%s)))
+    if [ "$age" -gt 5 ]; then LV=dead LV_WHY=no-holder; else LV=starting; fi
+    return 0
+  fi
+  if [ "$LH_BOOT" != "$(start_id)" ] || [ "$LH_CONTAINER" != "$(container_id)" ]; then
+    LV=dead LV_WHY=new-container; return 0
+  fi
+  if [ "$LH_STATE" = starting ]; then
+    if pid_alive "$LH_PID" "$LH_PIDSTART"; then LV=starting; else LV=dead LV_WHY=start-died; fi
+    return 0
+  fi
+  if pid_alive "$LH_PID" "$LH_PIDSTART"; then LV=held; return 0; fi
+  if [ -z "$i" ] || ! adapter_of "$i" 2>/dev/null; then LV=cannot-tell; return 0; fi
+  [ -z "$fresh" ] || unset 'LIST_RC[${CLI[i]}]'
+  if ! state_of "$i"; then LV=error; return 0; fi
+  case "$STATE" in
+    running) LV=held ;;
+    unknown) LV=cannot-tell ;;
+    *) LV=dead LV_WHY=session-gone ;;
+  esac
+}
+
+# takeover_lock <name>: mkdir leases/<name>.takeover, waiting 0.2 s at a time; a lock whose pid
+# is gone, or still there after 5 s, is stale and cleared.
+takeover_lock() {
+  local t="$LEASE_DIR/$1.takeover" n=0 p='' ps='' p2 ps2
+  while ! mkdir -m 0777 "$t" 2>/dev/null; do
+    if read -r p ps < "$t/pid" 2>/dev/null && ! pid_alive "$p" "$ps"; then
+      read -r p2 ps2 < "$t/pid" 2>/dev/null && [ "$p2 $ps2" = "$p $ps" ] && rm -rf "$t"
+      continue
+    fi
+    n=$((n + 1))
+    if [ "$n" -ge 25 ]; then rm -rf "$t"; n=0; continue; fi
+    sleep 0.2
+  done
+  printf '%s %s\n' "$$" "$(proc_start $$)" > "$t/pid" 2>/dev/null
+}
+takeover_unlock() { rm -rf "$LEASE_DIR/$1.takeover"; }
+
+# lease_own <name>: this process now holds it (state starting) and releases it when it exits,
+# also on TERM and HUP, unless lease_keep hands it to a background carrier.
+lease_own() {
+  LEASE_TIME[$1]="$(date +%s)"
+  LEASES_MINE="$LEASES_MINE $1"
+  holder_write "$1" starting pending
+  trap 'exit 143' TERM; trap 'exit 129' HUP
+}
+lease_hold() { holder_write "$1" held "$2"; }
+lease_drop() { # <name>: no longer this process's to release
+  local h out=''
+  for h in $LEASES_MINE; do [ "$h" = "$1" ] || out="$out $h"; done
+  LEASES_MINE="$out"
+  [ -n "${LEASES_MINE// /}" ] || trap - TERM HUP
+}
+lease_keep() { lease_drop "$1"; } # the lease outlives this process (a background session holds it)
+# lease_release_own <name>: remove the lease if this process holds it
+lease_release_own() {
+  local d="$LEASE_DIR/$1"
+  holder_read "$d" || return 0
+  [ "$LH_PID" = "$$" ] || return 0
+  mv "$d" "$d.released.$$" 2>/dev/null && rm -rf "$d.released.$$"
+}
+lease_exit() { local h; for h in $LEASES_MINE; do lease_release_own "$h"; done; }
+# lease_remove <name>: remove the lease whoever holds it (stop, release), under the takeover lock
+lease_remove() {
+  local d="$LEASE_DIR/$1"
+  [ -d "$d" ] || return 0
+  takeover_lock "$1"
+  mv "$d" "$d.released.$$" 2>/dev/null && rm -rf "$d.released.$$"
+  takeover_unlock "$1"
+  lease_drop "$1"
+}
+
+# lease_takeover <i>: the lease was judged dead (LV_WHY, LH_*); take it over under the lock.
+# 0 taken; 1 not (someone else was quicker, or the holder came back to life).
+lease_takeover() {
+  local i="$1" h="${NAME[$1]}" d="$LEASE_DIR/${NAME[$1]}" raw="$LH_RAW" why="$LV_WHY" prev="$LH_CARRIER" took=''
+  takeover_lock "$h"
+  if [ -d "$d" ]; then
+    holder_read "$d"
+    if [ "$LH_RAW" != "$raw" ]; then
+      lease_verdict "$i" "$h" fresh
+      if [ "$LV" != dead ]; then takeover_unlock "$h"; return 1; fi
+      why="$LV_WHY" prev="$LH_CARRIER"
+    fi
+    if mv "$d" "$d.stale.$$" 2>/dev/null; then
+      mkdir -m 0777 "$d" 2>/dev/null && took=1
+      rm -rf "$d.stale.$$"
+    fi
+  else
+    mkdir -m 0777 "$d" 2>/dev/null && took=1
+  fi
+  [ -z "$took" ] || lease_own "$h"
+  takeover_unlock "$h"
+  [ -n "$took" ] || return 1
+  echo "$h: its lease was stale ($why${prev:+, held by $prev}); taken over."
+}
+
+# lease_take <i>: take entry i's lease. 0 taken (this process holds it, state starting); 10 held
+# by a live holder (LV, LH_*); 11 a start of it still in progress after AGENTS_LEASE_WAIT seconds
+# (default 20); 12 the adapter's listing failed (nothing is taken on a guess); 1 the lease folder
+# cannot be written.
+lease_take() {
+  local i="$1" h="${NAME[$1]}" polls=0 tries=0 max
+  max=$((${AGENTS_LEASE_WAIT:-20} * 2))
+  if [ ! -d "$LEASE_DIR" ]; then
+    mkdir -p "$STATE_DIR" 2>/dev/null
+    mkdir -m 0777 "$LEASE_DIR" 2>/dev/null
+  fi
+  if [ ! -d "$LEASE_DIR" ] || [ ! -w "$LEASE_DIR" ]; then
+    warn "$h: the lease folder $LEASE_DIR cannot be written; nothing started."
+    return 1
+  fi
+  while :; do
+    if mkdir -m 0777 "$LEASE_DIR/$h" 2>/dev/null; then lease_own "$h"; return 0; fi
+    tries=$((tries + 1))
+    if [ "$tries" -gt 200 ]; then warn "$h: could not take its lease under $LEASE_DIR; nothing started."; return 1; fi
+    lease_verdict "$i" "$h" fresh
+    case "$LV" in
+      free) ;;
+      dead) lease_takeover "$i" && return 0 ;;
+      starting)
+        [ "$polls" -lt "$max" ] || return 11
+        polls=$((polls + 1)); sleep 0.5 ;;
+      error) return 12 ;;
+      *) return 10 ;;
+    esac
+  done
+}
+
+# holder_desc: the live holder in words (from LV and LH_*)
+holder_desc() {
+  local since=''
+  [ -z "$LH_TIME" ] || since=" since $(fmt_time "$LH_TIME")"
+  case "$LV" in
+    starting) printf 'a start of it is in progress (pid %s%s)' "${LH_PID:-?}" "$since" ;;
+    cannot-tell) printf 'its lease is held%s and its CLI cannot say whether it still runs' "$since" ;;
+    error) printf 'its lease is held%s and its sessions could not be listed' "$since" ;;
+    *) printf 'its lease is held by %s%s (pid %s, this container)' "${LH_CARRIER:-?}" "$since" "${LH_PID:-?}" ;;
+  esac
+}
+# refuse_held <i>: a second copy of a stateful agent that cannot be joined: exit 2
+refuse_held() {
+  local h="${NAME[$1]}"
+  die 2 "$h is a stateful agent and already runs: $(holder_desc). A second copy is refused. Use that session; if it is gone, task agents:release -- $h frees the lease (--force for a live holder). To run several at once, make it lifecycle: ephemeral."
+}
+# join_line <i> <lease_take's code>: say that the resident runs already (its lease is held)
+join_line() {
+  local i="$1" h="${NAME[$1]}"
+  if [ "$LV" = cannot-tell ]; then
+    echo "$h: ${CLI[i]} cannot list its sessions; started earlier in this container start ($(holder_desc)), so not started again."
+  elif [ "$2" = 11 ] || [ "$LV" = starting ]; then
+    echo "$h: $(holder_desc); not starting a second copy."
+  elif adapter_of "$i" 2>/dev/null && state_of "$i" && [ "$STATE" = running ]; then
+    echo "$h: running ($SID)"
+    [ "$EXTRAS" -eq 0 ] || echo "$h: $EXTRAS more running session(s) for this agent; task agents:stop -- $h --extras stops them."
+  else
+    echo "$h: running ($(holder_desc))"
+  fi
+}
+# definition_note <i>: 2.0 reads and checks definition but hands it to no CLI yet
+definition_note() {
+  [ -z "${DEF[$1]:-}" ] || warn "${NAME[$1]}: definition '${DEF[$1]}' is read and checked, but agents 2.0 does not pass it to the CLI yet; the session starts without it."
+}
+
+# lease_run <i>: make_run (the resident runs in the background) under its lease. Returns as
+# make_run; on 3 (no background mode) the lease stays this process's (the caller opens the
+# session in the foreground, or releases it). JOINED=1 when another holder has it: nothing is
+# started, one line says it runs.
+lease_run() {
+  local i="$1" h="${NAME[$1]}" r
+  JOINED=''
+  [ "${LEASE[i]}" = container ] || { make_run "$i"; return; }
+  lease_take "$i"; r=$?
+  case "$r" in
+    0) ;;
+    10 | 11) join_line "$i" "$r"; JOINED=1; return 0 ;;
+    12) list_failed "$i"; return 1 ;;
+    *) return 1 ;;
+  esac
+  make_run "$i"; r=$?
+  case "$r" in
+    0) lease_hold "$h" "session:${SID:-unknown}"; lease_keep "$h" ;;
+    3) ;;
+    *) lease_release_own "$h"; lease_drop "$h" ;;
+  esac
+  return "$r"
+}
+
+# fg_hold <i>: this process holds the lease for a session in this terminal (released on exit;
+# an interrupt goes to the session, the release follows when it ends)
+fg_hold() {
+  [ "${LEASE[$1]}" = container ] || return 0
+  lease_hold "${NAME[$1]}" "process:$$"
+  trap ':' INT
+}
+
 # make_run <i>: make the resident run in the background (no attach). Prints one line on
 # what it did. Returns 0 running, 1 failed, 3 the CLI has no background mode.
 make_run() {
@@ -459,9 +807,15 @@ make_run() {
 cmd_start() {
   local name='' mode=plain yes='' rc
   PASS=()
-  [ $# -gt 0 ] || die 2 "start needs an agent name: agents start <name> [--resume|--new] [-- extra CLI args]"
-  name="$1"; shift
-  case "$name" in -*) die 2 "start needs an agent name first, then flags: agents start <name> [--resume|--new]" ;; esac
+  if [ $# -eq 0 ] || [ "${1#-}" != "$1" ]; then # no name: the list's default agent
+    name="$(default_agent)"
+    if [ -z "$name" ]; then
+      [ $# -gt 0 ] || die 2 "start needs an agent name: agents start <name> [--resume|--new] [-- extra CLI args] (or mark one agent default: true in the list)"
+      die 2 "start needs an agent name first, then flags: agents start <name> [--resume|--new] (or mark one agent default: true in the list)"
+    fi
+  else
+    name="$1"; shift
+  fi
   while [ $# -gt 0 ]; do
     case "$1" in
       --resume) [ "$mode" = plain ] || die 2 "--resume and --new exclude each other"; mode=resume ;;
@@ -476,6 +830,7 @@ cmd_start() {
   find_agent "$name"
   local i="$AI"
   adapter_of "$i" || exit 1
+  definition_note "$i"
   if [ "${KIND[i]}" = resident ]; then
     if [ "$mode" = new ]; then
       state_of "$i" || { list_failed "$i"; exit 1; }
@@ -490,23 +845,33 @@ cmd_start() {
         call stop "$i" </dev/null; rc=$?
         [ "$rc" -eq 0 ] || die "$rc" "$name: stopping the running session failed; nothing started."
       fi
+      if [ "${LEASE[i]}" = container ]; then # released and taken again in this one run
+        lease_remove "$name"
+        lease_take "$i"; rc=$?
+        [ "$rc" -eq 0 ] || refuse_held "$i"
+      fi
       call start-bg "$i" </dev/null >/dev/null; rc=$?
       if [ "$rc" -eq 3 ]; then
         echo "$name: ${CLI[i]} has no background mode; opening a new session in this terminal instead."
         has_tty || die 2 "$name: a new interactive session needs a terminal."
+        fg_hold "$i"
         call new "$i"; exit $?
       fi
       [ "$rc" -eq 0 ] || die 1 "$name: starting a fresh session failed."
       mark_started "$name"; reread "${CLI[i]}"; state_of "$i"
+      if [ "${LEASE[i]}" = container ]; then lease_hold "$name" "session:${SID:-unknown}"; lease_keep "$name"; fi
       echo "$name: started a fresh session${SID:+ ($SID)}"
     else
-      make_run "$i"; rc=$?
+      lease_run "$i"; rc=$?
       if [ "$rc" -eq 3 ]; then
         echo "$name: ${CLI[i]} has no background mode; opening a new session in this terminal instead (it runs as on-demand)."
         has_tty || die 2 "$name: a new interactive session needs a terminal."
+        fg_hold "$i"
         call new "$i"; exit $?
       fi
       [ "$rc" -eq 0 ] || exit 1
+      # a resident run in another terminal (its CLI has no background mode) cannot be joined
+      case "$JOINED:$LH_CARRIER" in 1:process:*) [ "$LV" != held ] || refuse_held "$i" ;; esac
     fi
     if ! has_tty; then
       echo "$name: running; attach from a terminal with: task agents -- $name (from the host: task devcontainer:agent -- $name)"
@@ -523,6 +888,18 @@ cmd_start() {
   # on-demand
   if ! has_tty; then
     die 2 "$name is an on-demand agent: it opens a new interactive session, which needs a terminal (stdin and stdout); refusing without one."
+  fi
+  if [ "$mode" = resume ] && [ "${LIFE[i]}" = ephemeral ]; then
+    die 2 "$name is an ephemeral agent: nothing of it is kept, so there is no conversation to resume (--resume is for stateful agents)."
+  fi
+  if [ "${LEASE[i]}" = container ]; then # a stateful on-demand agent: one copy, held by this process
+    lease_take "$i"; rc=$?
+    case "$rc" in
+      0) fg_hold "$i" ;;
+      10 | 11) refuse_held "$i" ;;
+      12) list_failed "$i"; exit 1 ;;
+      *) exit 1 ;;
+    esac
   fi
   if [ "$mode" = resume ]; then
     call resume "$i"; rc=$?
@@ -571,10 +948,12 @@ cmd_up_body() {
     if [ -n "$wait" ] && [ -z "${settled[${CLI[i]}]:-}" ]; then
       settle "${CLI[i]}"; settled[${CLI[i]}]=1
     fi
-    make_run "$i"; r=$?
+    definition_note "$i"
+    lease_run "$i"; r=$?
     case "$r" in
       0) ;;
-      3) echo "${NAME[i]}: skipped, ${CLI[i]} has no background mode (it runs as on-demand: task agents -- ${NAME[i]})" ;;
+      3) lease_release_own "${NAME[i]}"; lease_drop "${NAME[i]}"
+         echo "${NAME[i]}: skipped, ${CLI[i]} has no background mode (it runs as on-demand: task agents -- ${NAME[i]})" ;;
       *) rc=1 ;;
     esac
   done
@@ -614,7 +993,7 @@ cmd_list() {
   done
   load_list
   [ -n "$json" ] && printf '['
-  [ -z "$json" ] && printf '%-16s %-10s %-8s %-9s %-38s %s\n' NAME KIND CLI STATE ID FOLDER
+  [ -z "$json" ] && printf '%-16s %-10s %-10s %-8s %-9s %-24s %-38s %s\n' NAME KIND LIFECYCLE CLI STATE LEASE ID FOLDER
   for ((i = 1; i <= N; i++)); do
     STATE='' SID='' EXTRAS=0
     if adapter_of "$i" 2>/dev/null; then
@@ -627,16 +1006,20 @@ cmd_list() {
       STATE=no-folder
     fi
     st="$STATE"; [ "$EXTRAS" -gt 0 ] && st="$STATE+$EXTRAS"
+    local state="$STATE" sid="$SID" extras="$EXTRAS"
+    lease_of "$i"
     if [ -n "$json" ]; then
       [ -z "$first" ] && printf ','
       first=''
       printf '{"name":%s,"kind":%s,"cli":%s,"folder":%s,"state":%s,"id":%s,"extras":%d' \
         "$(json_str "${NAME[i]}")" "$(json_str "${KIND[i]}")" "$(json_str "${CLI[i]}")" \
-        "$(json_str "${FOLDER[i]}")" "$(json_str "$STATE")" "$(json_str "$SID")" "$EXTRAS"
-      [ "$STATE" = error ] && printf ',"error":%s' "$(json_str "${failed[${CLI[i]}]}")"
-      printf '}'
+        "$(json_str "${FOLDER[i]}")" "$(json_str "$state")" "$(json_str "$sid")" "$extras"
+      [ "$state" = error ] && printf ',"error":%s' "$(json_str "${failed[${CLI[i]}]}")"
+      printf ',"lifecycle":%s,"identity":%s,"lease":%s,"carrier":%s}' "$(json_str "${LIFE[i]}")" \
+        "$(json_str "${IDENT[i]}")" "$(json_str "$LO_LEASE")" "$(json_str "$LO_CARRIER")"
     else
-      printf '%-16s %-10s %-8s %-9s %-38s %s\n' "${NAME[i]}" "${KIND[i]}" "${CLI[i]}" "$st" "${SID:--}" "${FOLDER[i]}"
+      printf '%-16s %-10s %-10s %-8s %-9s %-24s %-38s %s\n' "${NAME[i]}" "${KIND[i]}" "${LIFE[i]}" "${CLI[i]}" "$st" \
+        "$LO_TEXT" "${sid:--}" "${FOLDER[i]}"
     fi
   done
   [ -n "$json" ] && printf ']\n'
@@ -660,7 +1043,90 @@ cmd_stop() {
   adapter_of "$AI" || exit 1
   call stop "$AI" ${extras[@]+"${extras[@]}"} </dev/null; rc=$?
   [ "$rc" -eq 3 ] && die 3 "$name: ${CLI[AI]} cannot stop its sessions from outside; stop it where it runs."
+  # stopped: the lease ends with it (not with --extras, which keeps the agent running)
+  if [ "$rc" -eq 0 ] && [ "${#extras[@]}" -eq 0 ] && [ "${LEASE[AI]}" = container ]; then lease_remove "$name"; fi
   exit "$rc"
+}
+
+# lease_of <i>: entry i's lease for list: LO_LEASE (none, free, held, starting, stale),
+# LO_CARRIER (none when unknown) and LO_TEXT (the LEASE column)
+lease_of() {
+  local i="$1"
+  LO_LEASE=none LO_CARRIER=none LO_TEXT=-
+  [ "${LEASE[i]}" = container ] || return 0
+  lease_verdict "$i" "${NAME[i]}"
+  case "$LV" in
+    free) LO_LEASE=free LO_TEXT=free ;;
+    dead) LO_LEASE=stale LO_TEXT=stale ;;
+    starting) LO_LEASE=starting LO_TEXT=starting ;;
+    *) LO_LEASE=held LO_TEXT="held ${LH_CARRIER:-?}" ;;
+  esac
+  [ "$LO_LEASE" = free ] || [ -z "$LH_CARRIER" ] || LO_CARRIER="$LH_CARRIER"
+}
+
+# agents leases [--json]: every lease in the state folder, judged as a start would judge it
+cmd_leases() {
+  local json='' a d h i first=1 st holder n=0
+  for a in "$@"; do
+    case "$a" in --json) json=1 ;; *) die 2 "leases: unknown argument '$a' (--json)" ;; esac
+  done
+  resolve_file
+  N=0
+  [ ! -f "$AF_ABS" ] || load_list
+  [ -n "$json" ] && printf '['
+  [ -z "$json" ] && printf '%-16s %-10s %-24s %-9s %s\n' HANDLE STATE CARRIER SINCE HOLDER
+  for d in "$LEASE_DIR"/*/; do
+    [ -d "$d" ] || continue
+    h="$(basename "$d")"
+    case "$h" in *.*) continue ;; esac
+    i=''
+    for ((a = 1; a <= N; a++)); do [ "${NAME[a]}" = "$h" ] && i="$a"; done
+    lease_verdict "$i" "$h"
+    case "$LV" in dead) st=stale ;; cannot-tell) st=unknown ;; *) st="$LV" ;; esac
+    if [ "$LV_WHY" = new-container ]; then holder="pid ${LH_PID:-?}, an earlier container start"
+    elif pid_alive "$LH_PID" "$LH_PIDSTART"; then holder="pid ${LH_PID:-?} (running), this container"
+    else holder="pid ${LH_PID:-?} (exited), this container"; fi
+    [ -n "$i" ] || holder="$holder; not in the list"
+    n=$((n + 1))
+    if [ -n "$json" ]; then
+      [ -z "$first" ] && printf ','
+      first=''
+      printf '{"handle":%s,"state":%s,"carrier":%s,"since":%s,"pid":%s,"listed":%s}' "$(json_str "$h")" "$(json_str "$st")" \
+        "$(json_str "${LH_CARRIER:-none}")" "${LH_TIME:-0}" "${LH_PID:-0}" "$([ -n "$i" ] && echo true || echo false)"
+    else
+      printf '%-16s %-10s %-24s %-9s %s\n' "$h" "$st" "${LH_CARRIER:--}" "$([ -n "$LH_TIME" ] && fmt_time "$LH_TIME" || echo -)" "$holder"
+    fi
+  done
+  [ -n "$json" ] && printf ']\n'
+  [ -n "$json" ] || [ "$n" -gt 0 ] || echo "agents: no lease is held."
+  return 0
+}
+
+# agents release <name> [--force]: free a lease whose holder is dead; --force also a live one
+cmd_release() {
+  local name='' force='' a i=''
+  for a in "$@"; do
+    case "$a" in
+      --force) force=1 ;;
+      -*) die 2 "release: unknown argument '$a' (--force)" ;;
+      *) [ -z "$name" ] || die 2 "release takes one name: agents release <name> [--force]"; name="$a" ;;
+    esac
+  done
+  [ -n "$name" ] || die 2 "release needs an agent name: agents release <name> [--force]"
+  [[ "$name" =~ ^[A-Za-z0-9_-]+$ ]] || die 2 "release: '$name' is not an agent name"
+  resolve_file
+  N=0
+  [ ! -f "$AF_ABS" ] || load_list
+  for ((a = 1; a <= N; a++)); do [ "${NAME[a]}" = "$name" ] && i="$a"; done
+  if [ ! -d "$LEASE_DIR/$name" ]; then echo "$name: holds no lease; nothing to release."; exit 0; fi
+  lease_verdict "$i" "$name" fresh
+  case "$LV" in
+    free) echo "$name: holds no lease; nothing to release." ;;
+    dead) lease_remove "$name"; echo "$name: lease released (its holder was gone: $LV_WHY)." ;;
+    *)
+      [ -n "$force" ] || die 2 "$name: $(holder_desc); releasing it would let a second copy start. Add --force if you know it does not run."
+      lease_remove "$name"; echo "$name: lease released (forced; $(holder_desc))." ;;
+  esac
 }
 
 cmd_logs() {
@@ -678,12 +1144,10 @@ cmd_logs() {
 cmd_check() {
   local i
   load_list
-  echo "agents: $AF_ABS (from $AF_SOURCE): $N agent(s)"
+  local d=""; for ((i = 1; i <= N; i++)); do [ -z "${DFLT[i]:-}" ] || d="${NAME[i]}"; done
+  echo "agents: $AF_ABS (from $AF_SOURCE): $N agent(s)${d:+, default $d (agents with no name starts it)}"
   for ((i = 1; i <= N; i++)); do
-    args_of "$i"
-    printf '  %s: cli %s, %s, folder %s, args:' "${NAME[i]}" "${CLI[i]}" "${KIND[i]}" "${FOLDER[i]}"
-    if [ "${#CLIARGS[@]}" -eq 0 ]; then printf ' none'; else printf ' [%s]' "${CLIARGS[@]}"; fi
-    printf '\n'
+    check_line "$i"
   done
   # What each CLI adapter says it can do (its `supports` verb), one line per CLI in the list.
   # Information only: at run time the verb's own exit 3 stays the authority.
@@ -706,6 +1170,16 @@ cmd_check() {
       printf '  %s: %s\n' "$c" "$(printf '%s' "$sup" | tr -s '[:space:]' ' ' | sed 's/^ //; s/ $//')"
     fi
   done
+}
+
+# check_line <i>: one agent as agents check prints it
+check_line() {
+  local i="$1"
+  args_of "$i"
+  printf '  %s: cli %s, %s%s, %s (identity %s, lease %s), folder %s, args:' "${NAME[i]}" "${CLI[i]}" \
+    "${DEF[i]:+definition ${DEF[i]}, }" "${KIND[i]}" "${LIFE[i]}" "${IDENT[i]}" "${LEASE[i]}" "${FOLDER[i]}"
+  if [ "${#CLIARGS[@]}" -eq 0 ]; then printf ' none'; else printf ' [%s]' "${CLIARGS[@]}"; fi
+  printf '\n'
 }
 
 # ------------------------------------------------------------------- reset ----
@@ -866,8 +1340,8 @@ cmd_reset() {
   for i in "${starts[@]+"${starts[@]}"}"; do
     ADAPTER="${AADP[i]}" DIR="${ADIR[i]}"
     reread "${CLI[i]}"
-    make_run "$i"; a=$?
-    case "$a" in 0) ;; 3) echo "${NAME[i]}: skipped, ${CLI[i]} has no background mode" ;; *) rc=1 ;; esac
+    lease_run "$i"; a=$?
+    case "$a" in 0) ;; 3) lease_release_own "${NAME[i]}"; lease_drop "${NAME[i]}"; echo "${NAME[i]}: skipped, ${CLI[i]} has no background mode" ;; *) rc=1 ;; esac
   done
   [ "$refused" -eq 0 ] || [ "$rc" -ne 0 ] || rc=2
   exit "$rc"
@@ -875,7 +1349,10 @@ cmd_reset() {
 
 verb="${1:-}"
 [ $# -gt 0 ] && shift
+trap lease_exit EXIT
 case "$verb" in
+  leases) cmd_leases "$@" ;;
+  release) cmd_release "$@" ;;
   start) cmd_start "$@" ;;
   up) cmd_up "$@" ;;
   list) cmd_list "$@" ;;
@@ -884,6 +1361,7 @@ case "$verb" in
   check) cmd_check ;;
   reset) cmd_reset "$@" ;;
   -h | --help | help) usage ;;
-  '') usage >&2; exit 2 ;;
-  *) die 2 "unknown verb '$verb' (start, up, list, stop, logs, check, reset)" ;;
+  '') if [ -n "$(default_agent 2>/dev/null)" ]; then cmd_start; fi
+      usage >&2; exit 2 ;;
+  *) die 2 "unknown verb '$verb' (start, up, list, stop, logs, check, reset, leases, release)" ;;
 esac

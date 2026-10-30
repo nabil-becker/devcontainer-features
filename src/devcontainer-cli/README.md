@@ -19,6 +19,17 @@ Installs @devcontainers/cli as /usr/local/bin/devcontainer, backed by a private,
 | version | @devcontainers/cli npm version to install (e.g. '0.89.0'), or 'latest'. | string | latest |
 | nodeVersion | Node.js release used privately by the CLI. Downloaded from nodejs.org and verified against its SHASUMS256.txt. | string | 24.21.0 |
 
+## Changes in 1.16.0
+
+- **`task cloud-folder:login` from the workstation.** A new host command, `run cloud-folder-login`
+  (bash) and `Invoke-CloudFolderLogin` (PowerShell), behind `task devcontainer:cloud-folder-login`
+  and, when the root Taskfile includes the vendored `cloud-folder.yml` (the bootstrap's template
+  does), `task cloud-folder:login`: the cloud-folder Feature's (1.3.0) sign-in through the running
+  devcontainer. See "Cloud-folder sign-in" below. The bootstrap vendors `cloud-folder.yml` and prints
+  the include lines for a Taskfile that lacks them. Nothing changes for the other tasks; the
+  PowerShell module gains `Get-DevcontainerCliInvocation`, the argument list every CLI call already
+  built, now shared with the login.
+
 ## What it installs
 
 The `@devcontainers/cli` npm package, run on a private Node.js build, so
@@ -175,7 +186,7 @@ first; the old `./bootstrap/` form keeps working until the bootstrap is re-run,
 see the README); nothing is
 installed globally on any host. Its host settings are
 `DEVCONTAINER_DOCKER_PATH`, `DEVCONTAINER_NODE_VERSION`,
-`DEVCONTAINER_CLI_VERSION`, `HOST_TYPE`, `HOST_TYPE_PRIORITY` and `HOST_MOUNTS` (see "Host type" and "Host mounts").
+`DEVCONTAINER_CLI_VERSION`, `HOST_TYPE`, `HOST_TYPE_PRIORITY` and `HOST_MOUNTS` (see "Host type" and "Host mounts"); the cloud-folder sign-in reads `CLOUD_FOLDER_LOGIN_TIMEOUT` (see "Cloud-folder sign-in").
 
 `task devcontainer:up` (alias `start`) and `task devcontainer:stop` (alias
 `down`) are idempotent, so other tasks can require them. `up` starts a stopped
@@ -241,6 +252,39 @@ devcontainer for <folder>. Start it with: task dc:start`, exit 1); or the
 engine could not be reached (its own error plus `the container engine (<path>)
 could not be reached`, exit 2). Other subcommands keep their generic failure
 message.
+
+## Cloud-folder sign-in
+
+`task cloud-folder:login` (or `task devcontainer:cloud-folder-login`) on the workstation signs the
+cloud-folder Feature's remote in. rclone's sign-in sends the browser back to the fixed
+`http://localhost:53682/` (its app registration allows nothing else), where rclone listens inside
+the container; the workstation's `localhost:53682` is not the container's. So, by default, the
+launcher:
+
+1. finds the running container by its `devcontainer.local_folder` label (none: `task dc:start`);
+2. opens a listener on `127.0.0.1:53682` on the workstation, for this sign-in only (a python3
+   program in the bash twin, a `TcpListener` in PowerShell);
+3. starts `cloud-folder-setup login --relay` in the container through `devcontainer exec`, which
+   runs `rclone authorize "onedrive" --auth-no-open-browser` there and prints its link;
+4. opens the default browser at that link (`DCF_BROWSER` names another command; without an opener
+   the address is printed);
+5. relays each request of the browser into the container: `<engine> exec -i <id> bash -c` opens
+   `/dev/tcp/127.0.0.1/53682` there, writes the request (made HTTP/1.0 with `Connection: close`)
+   and copies rclone's answer back. No port mapping, no socat, nothing in `devcontainer.json`;
+6. closes the listener when the login ends, fails, or after `CLOUD_FOLDER_LOGIN_TIMEOUT` seconds
+   (default 600), and says so.
+
+When `53682` is taken on the workstation, or (bash twin) there is no `python3`, it says so and runs
+the container's login on this terminal instead: paste back the address the browser fails to open
+(`-- --paste` chooses that). `-- --workstation-rclone` signs in with rclone on the workstation
+instead: the version is the repository's cloud-folder `rcloneVersion` in `devcontainer.json`, else
+the Feature's default (both twins carry it; a test keeps it equal), `latest` asks the publisher;
+the release zip is downloaded once into the launcher cache (`%LOCALAPPDATA%\devcontainer-features\rclone`,
+`~/.cache/devcontainer-features/rclone`) with the retrying download helper, checked against the
+release's `SHA256SUMS` (saved to a file and read as text on Windows), and its `rclone authorize
+"onedrive"` opens the browser itself; the token goes to `cloud-folder-setup login --token` in the
+container on stdin, never as an argument, and is never printed. Not verified on a real host: the
+relay through Docker Desktop, `wslc exec -i` and a WSL distro's localhost forwarding.
 
 ## Host type
 

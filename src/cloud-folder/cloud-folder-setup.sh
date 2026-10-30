@@ -11,10 +11,14 @@
 #                                      mount: no remote, no FUSE, not mounted, uploads failed; or
 #                                      a mode this version does not know). --json: one object.
 #   cloud-folder-setup version         the Feature version, the mode, the mount point, rclone
-#   cloud-folder-setup login           sign in (interactive: a token pasted from `rclone
-#                                      authorize "onedrive"`; or client credentials from
-#                                      CLOUD_FOLDER_CLIENT_* without a prompt) and write the
-#                                      remote into the Feature's rclone.conf; then start the timer
+#   cloud-folder-setup login [--relay | --token]
+#                                      sign in (interactive: rclone's browser flow in the
+#                                      container, the browser's address pasted back or relayed by
+#                                      the launcher (--relay), or a token from `rclone authorize
+#                                      "onedrive"` elsewhere (--token: only that); or client
+#                                      credentials from CLOUD_FOLDER_CLIENT_* without a prompt) and
+#                                      write the remote into the Feature's rclone.conf; then start
+#                                      the timer
 #   cloud-folder-setup sync [--resync] [--force]
 #                                      one `rclone bisync` between the remote and the folder
 #                                      (the first run of a folder is a --resync on its own)
@@ -68,7 +72,8 @@
 # DCF_CLOUD_FOLDER_PROC_STATUS, DCF_CLOUD_FOLDER_APPARMOR and DCF_CLOUD_FOLDER_FUSERMOUNT replace
 # /dev/fuse, /proc/self/status, /proc/self/attr/current and the fusermount names the FUSE check
 # reads; DCF_CLOUD_FOLDER_RC_ADDR the remote control's address (default 127.0.0.1:5572);
-# DCF_CLOUD_FOLDER_MOUNT_WAIT the seconds a mount gets to appear (default 15).
+# DCF_CLOUD_FOLDER_MOUNT_WAIT the seconds a mount gets to appear (default 15);
+# DCF_CLOUD_FOLDER_AUTH_WAIT the seconds rclone authorize gets to print its link (default 15).
 set -u
 
 # Defaults baked by install.sh from the Feature options; CLOUD_FOLDER_* in the environment
@@ -1070,8 +1075,230 @@ drive_lookup() {
   return 1
 }
 
+# ------------------------------------------------------------- sign-in ----
+# The sign-in runs rclone's own browser flow in the container: `rclone authorize "onedrive"
+# --auth-no-open-browser` listens on 127.0.0.1:53682 (fixed: rclone's app registration allows only
+# the redirect http://localhost:53682/) and prints a link to its /auth page, which redirects to
+# Microsoft's sign-in; after the sign-in Microsoft sends the browser to
+# http://localhost:53682/?code=...&state=..., rclone takes the code, gets the token and prints it
+# between "Paste the following into your remote machine --->" and "<---End paste". Three ways the
+# browser's redirect reaches rclone (task cloud-folder:login picks one):
+#   relay   the devcontainer-cli launcher listens on the workstation's 127.0.0.1:53682 for the
+#           sign-in only and relays each request into the container (docker exec, bash /dev/tcp);
+#           here the login just prints the link and waits (login --relay).
+#   paste   the person opens Microsoft's sign-in address in any browser; the redirect fails
+#           ("cannot be reached"); they paste that address here and the login requests it on
+#           127.0.0.1:53682 itself, so rclone receives the code.
+#   token   `rclone authorize "onedrive"` ran on a machine with a browser (the launcher's
+#           --workstation-rclone, or by hand) and its one-line token is pasted (login --token,
+#           or at the paste prompt).
+# The token never reaches a command line: rclone writes it into a private file in the volume's
+# run folder, read and removed at once.
+AUTH_PID='' AUTH_DIR='' AUTH_LINK='' AUTH_HOST='' AUTH_PORT='' LOGIN_TOKEN='' PASTE_KIND='' PASTE_PATH=''
+
+# shellcheck disable=SC2329  # called from the EXIT trap
+auth_stop() {
+  if [ -n "$AUTH_PID" ]; then kill -TERM "$AUTH_PID" 2>/dev/null; wait "$AUTH_PID" 2>/dev/null; AUTH_PID=''; fi
+  if [ -n "$AUTH_DIR" ]; then rm -rf -- "$AUTH_DIR"; AUTH_DIR=''; fi
+  return 0
+}
+
+# auth_start: rclone authorize in the background; AUTH_LINK (its /auth link), AUTH_HOST and
+# AUTH_PORT (where it listens). Waits up to DCF_CLOUD_FOLDER_AUTH_WAIT seconds (default 15) for
+# the link. Exit 1, with AUTH_ERROR set, when it does not start.
+auth_start() {
+  local i max="${DCF_CLOUD_FOLDER_AUTH_WAIT:-15}" text
+  AUTH_ERROR=''
+  AUTH_DIR="$(umask 077; mktemp -d "$run_dir/login.XXXXXX")" || { AUTH_ERROR="cannot make a private folder in $run_dir"; return 1; }
+  trap auth_stop EXIT
+  trap 'auth_stop; exit 130' INT TERM HUP
+  # A plain command, not rcl: the background job is rclone itself, so auth_stop's signal reaches it.
+  RCLONE_CONFIG="$conf" RCLONE_CACHE_DIR="$state_dir/cache" rclone authorize onedrive --auth-no-open-browser > "$AUTH_DIR/out" 2> "$AUTH_DIR/err" < /dev/null &
+  AUTH_PID=$!
+  for ((i = 0; i < max * 10; i++)); do
+    text="$(cat "$AUTH_DIR/err" "$AUTH_DIR/out" 2>/dev/null)"
+    if [[ "$text" =~ (http://(127\.0\.0\.1|localhost):([0-9]+)/auth\?state=[A-Za-z0-9_.~-]+) ]]; then
+      AUTH_LINK="${BASH_REMATCH[1]}"; AUTH_HOST="${BASH_REMATCH[2]}"; AUTH_PORT="${BASH_REMATCH[3]}"
+      return 0
+    fi
+    if ! kill -0 "$AUTH_PID" 2>/dev/null; then
+      wait "$AUTH_PID" 2>/dev/null; i=$?; AUTH_PID=''
+      AUTH_ERROR="exit $i: $(tail -n 1 "$AUTH_DIR/err" 2>/dev/null | sed 's/^[0-9\/: ]*//')"
+      auth_stop
+      return 1
+    fi
+    sleep 0.1
+  done
+  AUTH_ERROR="rclone authorize printed no sign-in link within ${max}s"
+  auth_stop
+  return 1
+}
+
+# auth_error_line: rclone's last error line (never a token: those lines are on stdout).
+auth_error_line() {
+  grep -E 'ERROR|Failed|failed|error' "$AUTH_DIR/err" 2>/dev/null | tail -n 1 | sed 's/^[0-9\/: ]*//'
+}
+
+# http_get <host> <port> <path>: one HTTP/1.0 GET over bash's /dev/tcp; the response on stdout.
+http_get() {
+  local fd
+  exec {fd}<>"/dev/tcp/$1/$2" || return 1
+  printf 'GET %s HTTP/1.0\r\nHost: localhost:53682\r\nConnection: close\r\n\r\n' "$3" >&"$fd"
+  cat <&"$fd"
+  exec {fd}>&-
+}
+
+# parse_paste <text>: PASTE_KIND token (one line of JSON with access_token), code (the address the
+# browser shows after the sign-in, http://localhost:53682/?code=..., with or without the scheme;
+# PASTE_PATH is its path and query) or bad.
+parse_paste() {
+  local t="$1" rest
+  PASTE_KIND=bad PASTE_PATH=''
+  case "$t" in '{'*'"access_token"'*'}') PASTE_KIND=token; return 0 ;; esac
+  rest="${t#http://}"; rest="${rest#https://}"
+  case "$rest" in
+    localhost:53682/* | 127.0.0.1:53682/* | localhost/* | 127.0.0.1/*) rest="/${rest#*/}" ;;
+    localhost:53682\?* | 127.0.0.1:53682\?* | localhost\?* | 127.0.0.1\?*) rest="/?${rest#*\?}" ;;
+    *) return 0 ;;
+  esac
+  [[ "$rest" =~ ^/[^[:space:]]*\?([^[:space:]]*&)?(code|error)=[^[:space:]]+$ ]] || return 0
+  PASTE_KIND=code PASTE_PATH="$rest"
+}
+
+# deliver_code <path>: request it on rclone's listener, as the browser would have. Exit 0 when
+# rclone took it (HTTP 200), 1 otherwise (AUTH_ERROR: its status line).
+deliver_code() {
+  local resp status
+  resp="$(http_get "$AUTH_HOST" "$AUTH_PORT" "$1" 2>/dev/null)" || { AUTH_ERROR='rclone is no longer listening'; return 1; }
+  status="$(head -n 1 <<<"$resp" | tr -d '\r')"
+  case "$status" in 'HTTP/'*' 200'*) return 0 ;; esac
+  AUTH_ERROR="${status:-no answer}"
+  return 1
+}
+
+# auth_token: the token rclone printed between its paste markers, into LOGIN_TOKEN.
+auth_token() {
+  LOGIN_TOKEN="$(awk '/^Paste the following into your remote machine --->/ { on = 1; next } /^<---End paste/ { exit } on && NF { print; exit }' "$AUTH_DIR/out" 2>/dev/null)"
+  [ -n "$LOGIN_TOKEN" ]
+}
+
+# read_line_from_stdin: one line (no echo on a terminal), in LINE, waiting up to 1 s. Exit 0 with
+# a line, 1 at the end of input, 2 when nothing came yet.
+read_line_from_stdin() {
+  local part='' rc
+  if [ -t 0 ]; then IFS= read -r -s -t 1 part; else IFS= read -r -t 1 part; fi
+  rc=$?
+  if [ "$rc" -eq 0 ]; then LINE="$LINE_BUF$part"; LINE_BUF=''; [ -t 0 ] && echo; return 0; fi
+  if [ "$rc" -gt 128 ]; then LINE_BUF+="$part"; return 2; fi
+  if [ -n "$LINE_BUF$part" ]; then LINE="$LINE_BUF$part"; LINE_BUF=''; return 0; fi
+  return 1
+}
+
+trim() { local t="${1//$'\r'/}"; t="${t#"${t%%[![:space:]]*}"}"; printf '%s' "${t%"${t##*[![:space:]]}"}"; }
+
+# read_token <route> <rclone version>: the sign-in, by the route (relay, paste or token), into
+# LOGIN_TOKEN; exit 1 (nothing changed) when there is none.
+read_token() {
+  local route="$1" v="$2" timeout="${CLOUD_FOLDER_LOGIN_TIMEOUT:-600}" start ms_url='' input=yes LINE='' LINE_BUF='' rc delivered=no
+  local hint="rclone authorize \"onedrive\""
+  say "sign-in for remote '$remote_name' (remoteType $remote_type), rclone $v."
+  if [ "$route" != token ]; then
+    if ! auth_start; then
+      if [ "$route" = relay ]; then say "rclone authorize could not start here: $AUTH_ERROR"; return 1; fi
+      say "rclone authorize could not start here ($AUTH_ERROR); paste a token instead."
+      route=token
+    fi
+  fi
+  if [ "$route" = token ]; then
+    say "On a machine with a web browser, install the same rclone version ($v, https://downloads.rclone.org/$v/) and run:"
+    echo
+    echo "    $hint"
+    echo
+    say 'sign in in the browser it opens; it prints a token between "Paste the following into your remote machine --->" and "<---End paste".'
+    [ -t 0 ] && printf 'cloud-folder: paste that token here and press Enter (it is not shown): '
+    if [ -t 0 ]; then read -r -s LINE || LINE=''; echo; else read -r LINE || true; fi
+    LINE="$(trim "$LINE")"
+    parse_paste "$LINE"
+    case "$PASTE_KIND" in
+      token) LOGIN_TOKEN="$LINE"; return 0 ;;
+      *) if [ -z "$LINE" ]; then say 'no token pasted; nothing changed'; else say 'that is not the token rclone authorize prints (one line of JSON with access_token); nothing changed. Check that both sides run the same rclone version.'; fi
+         return 1 ;;
+    esac
+  fi
+
+  if [ "$route" = relay ]; then
+    say "sign-in URL: $AUTH_LINK"
+    say "waiting up to ${timeout}s for the sign-in in the browser (the launcher relays it here)..."
+  else
+    ms_url="$(http_get "$AUTH_HOST" "$AUTH_PORT" "/${AUTH_LINK#http://*/}" 2>/dev/null | tr -d '\r' | sed -n 's/^[Ll]ocation: //p' | head -n 1)"
+    ms_url="${ms_url:-$AUTH_LINK}"
+    say 'open this address in a web browser (on any machine) and sign in:'
+    echo
+    echo "    sign-in URL: $ms_url"
+    echo
+    say 'the browser then shows an error page for http://localhost:53682/?code=... ("cannot be reached"): that is expected.'
+    say 'copy that whole address from the address bar and paste it here.'
+    say "or paste the token that $hint prints on a machine with a browser (rclone $v, https://downloads.rclone.org/$v/)."
+    [ -t 0 ] && printf 'cloud-folder: address or token (not shown): '
+  fi
+
+  start=$SECONDS
+  while kill -0 "$AUTH_PID" 2>/dev/null; do
+    if [ $((SECONDS - start)) -ge "$timeout" ]; then
+      say "no sign-in within ${timeout}s; nothing changed (CLOUD_FOLDER_LOGIN_TIMEOUT sets the wait)"
+      auth_stop; return 1
+    fi
+    if [ "$input" = no ]; then sleep 0.2; continue; fi
+    read_line_from_stdin; rc=$?
+    if [ "$rc" -eq 2 ]; then continue; fi
+    if [ "$rc" -eq 1 ]; then
+      input=no
+      if [ "$route" != relay ] && [ "$delivered" = no ]; then say 'no address or token pasted; nothing changed'; auth_stop; return 1; fi
+      continue
+    fi
+    LINE="$(trim "$LINE")"
+    [ -n "$LINE" ] || continue
+    parse_paste "$LINE"
+    case "$PASTE_KIND" in
+      token) LOGIN_TOKEN="$LINE"; auth_stop; return 0 ;;
+      code)
+        if deliver_code "$PASTE_PATH"; then
+          say 'address received; rclone is getting the token...'
+          delivered=yes input=no
+        else
+          say "rclone refused that address ($AUTH_ERROR): it belongs to another sign-in, or was pasted twice. Sign in again with the sign-in URL above and paste the new address."
+          if [ ! -t 0 ]; then auth_stop; return 1; fi
+          printf 'cloud-folder: address or token (not shown): '
+        fi ;;
+      *)
+        say 'that is neither the address the browser shows after the sign-in (http://localhost:53682/?code=...) nor the token rclone authorize prints; nothing changed.'
+        if [ ! -t 0 ]; then auth_stop; return 1; fi
+        printf 'cloud-folder: address or token (not shown): ' ;;
+    esac
+  done
+  wait "$AUTH_PID" 2>/dev/null; rc=$?
+  AUTH_PID=''
+  if [ "$rc" -ne 0 ] || ! auth_token; then
+    AUTH_ERROR="$(auth_error_line)"
+    say "rclone authorize failed (exit $rc${AUTH_ERROR:+: $AUTH_ERROR}); nothing changed"
+    auth_stop; return 1
+  fi
+  auth_stop
+  parse_paste "$LOGIN_TOKEN"
+  if [ "$PASTE_KIND" != token ]; then LOGIN_TOKEN=''; say 'rclone authorize printed something that is not a token; nothing changed'; return 1; fi
+  say 'signed in in the browser; rclone has the token'
+  return 0
+}
+
 do_login() {
-  local v token secret='' auth lines drive_id="${CLOUD_FOLDER_DRIVE_ID:-}" ctype
+  local v token secret='' auth lines drive_id="${CLOUD_FOLDER_DRIVE_ID:-}" ctype login_route=paste a
+  for a in "$@"; do
+    case "$a" in
+      --relay) login_route=relay ;;
+      --token) login_route=token ;;
+      *) say "login: unknown argument '$a' (--relay or --token)"; return 2 ;;
+    esac
+  done
   local -a answers=()
   command -v rclone >/dev/null 2>&1 || { say 'rclone is not on PATH: rebuild with the Feature in mode auto or sync'; return 3; }
   prepare_state || { say "the state folder $state_dir is not writable"; return 3; }
@@ -1101,21 +1328,8 @@ do_login() {
     lines=("type = onedrive" "client_id = $CLOUD_FOLDER_CLIENT_ID" "client_secret = $secret" "tenant = $CLOUD_FOLDER_TENANT" "client_credentials = true" "drive_type = $drive_type")
   else
     auth=token
-    say "sign-in for remote '$remote_name' (remoteType $remote_type), rclone $v."
-    say "On a machine with a web browser, install the same rclone version ($v, https://downloads.rclone.org/$v/) and run:"
-    echo
-    echo '    rclone authorize "onedrive"'
-    echo
-    say 'sign in in the browser it opens; it prints a token between "Paste the following into your remote machine --->" and "<---End paste".'
-    [ -t 0 ] && printf 'cloud-folder: paste that token here and press Enter (it is not shown): '
-    if [ -t 0 ]; then read -r -s token || token=''; echo; else read -r token || true; fi
-    token="${token//$'\r'/}"
-    token="${token#"${token%%[![:space:]]*}"}"; token="${token%"${token##*[![:space:]]}"}"
-    case "$token" in
-      '{'*'"access_token"'*'}') ;;
-      '') say 'no token pasted; nothing changed'; return 1 ;;
-      *) say 'that is not the token rclone authorize prints (one line of JSON with access_token); nothing changed. Check that both sides run the same rclone version.'; return 1 ;;
-    esac
+    read_token "$login_route" "$v" || return 1
+    token="$LOGIN_TOKEN"; LOGIN_TOKEN=''
     secret="$token"
     lines=("type = onedrive" "token = $token" "drive_type = $drive_type")
     answers+=(config_refresh_token=false)
@@ -1175,7 +1389,7 @@ case "$cmd" in
     if command -v rclone >/dev/null 2>&1; then say "rclone: $(rclone version 2>/dev/null | head -n 1)${rclone_version_option:+ (option rcloneVersion $rclone_version_option)}"
     else say "rclone: not installed (mode host needs none)"; fi
     exit 0 ;;
-  login) do_login; exit $? ;;
+  login) do_login "$@"; exit $? ;;
   sync) do_sync "$@"; exit $? ;;
   start) start_any; exit $? ;;
   stop) stop_any "$@"; exit $? ;;
@@ -1197,6 +1411,6 @@ case "$cmd" in
     make_folder "$1"
     exit $? ;;
   *)
-    echo "usage: cloud-folder-setup [status [--json] | version | login | sync [--resync] [--force] | start | stop | unmount [--force] | fuse-check | shutdown-check [SECONDS] | link MOUNT_POINT HOST_MOUNT | folder MOUNT_POINT]" >&2
+    echo "usage: cloud-folder-setup [status [--json] | version | login [--relay | --token] | sync [--resync] [--force] | start | stop | unmount [--force] | fuse-check | shutdown-check [SECONDS] | link MOUNT_POINT HOST_MOUNT | folder MOUNT_POINT]" >&2
     exit 2 ;;
 esac

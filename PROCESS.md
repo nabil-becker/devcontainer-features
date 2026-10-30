@@ -44,6 +44,14 @@ sequenceDiagram
 5. **The loop.** Entries and costs, then the ledger review, then the backlog, then the change with
    its test, then the next sessions show whether it paid off.
 
+**A proposal is reviewed before the Operator rules.** Between "the proposal is written" and "the
+Operator rules", a subagent briefed with the hand-off shape and given the proposal alone runs the
+architecture review (`/architecture-review`): the design checked against the non-functional
+requirements, the ADRs, the CLI capability matrix, the lexicon and the line in NFR-13, with each
+element placed in its layer. It writes an "Architecture review" section into the proposal (verdict,
+findings with a recommended change each, open questions) and never changes the design sections; the
+author or the host applies what the Operator accepts.
+
 ## Who does what
 
 ```mermaid
