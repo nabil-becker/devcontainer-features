@@ -148,6 +148,29 @@ Slices 1 and 2 are safe in either order and before 3; the Feature that renders c
 6. **Other CLIs**: should the spec say now that an adapter whose CLI names only after the fact (Codex's `/rename`) applies the name at a later verb, or only that it ignores it until the CLI has a start flag (recommended)?
 7. **Rename in place**: is leaving a running session under its old name until stopped acceptable, or should `agents` offer an explicit `agents rename-session <handle>` that does stop-and-start for the Operator?
 
+### Facts checked 2026-10-30 (Claude Code 2.1.308)
+
+Checked in the trusted folder, haiku sessions named `factcheck-*` (5 started, all stopped by id).
+
+**Verdict: a name given with `--name` stays the displayed name** in every field observed, through the first turn, a stop and bare wake, and a resume with a prompt. Claude Code retitles only a session that has no `--name`.
+
+| Step | Command (abridged) | Fields (`claude agents --json --all` `name`; state.json `name`, `nameSource`; transcript `customTitle`, `agentName`) |
+| --- | --- | --- |
+| start | `claude --bg --name factcheck-a --model haiku "<one line>"` | all `factcheck-a`; `nameSource: user` |
+| after first turn | same session, `done` | unchanged |
+| stop, bare wake | `claude stop <id>`, `claude --bg --resume <full id>` | unchanged |
+| resume with a long, off-topic prompt | `claude --bg --resume <full id> "<prompt>"` | unchanged (state.json `intent` stays the first prompt) |
+| different topic, named | `--name factcheck-b` with a multi-sentence prompt | unchanged |
+| no `--name` (control) | `claude --bg --model haiku "<prompt>"` | `name` becomes `explain-tide-mechanics`, `nameSource: auto`; transcript `aiTitle` "How tides work" |
+| `--remote-control` | `--name factcheck-rc --remote-control factcheck-rc-remote` | `name` and `customTitle` stay `factcheck-rc`; `respawnFlags` keeps a bare `--remote-control` (the value is dropped); state.json gains `bridgeSessionId` |
+
+- **Title-like fields:** there is no `title` field in `claude agents --json`; the transcript carries `customTitle` and `agentName` (from `--name`), and `aiTitle` only for an unnamed session. `nameSource` (`user` or `auto`) in state.json says which.
+- **Pinning:** `--name` is the supported way, and it is pinned by `nameSource: user`. `--help` has no `--title` or rename command; `/rename` and `Ctrl+R` in agent view are interactive only (from the docs, not run).
+- **Remote Control:** the web side was not visible from the container. The local fields do not differ, and a name given to `--remote-control` is not stored, so the displayed name there is expected to follow `--name`.
+- **Not reproduced:** the retitle the adapter notes saw (a resident named `framework` listed as "d47 d50 personalization medallion"). It is consistent with a session started without `--name` or one whose name was lost, or with a `/clear`, which was not tried. The adapter's records remain a sound safeguard, but a template-rendered `--name` can be relied on for a session started or woken by the adapter.
+
+Consequence for this proposal: it can work on Claude Code 2.1.308, provided every start and wake passes `--name`.
+
 ## Architecture review (2026-10-30)
 
 **Verdict:** fit with changes
