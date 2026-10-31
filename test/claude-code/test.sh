@@ -56,7 +56,8 @@ check "agent-adapter-claude list reads claude agents --json --all" bash -c '
   t=$(mktemp -d); mkdir -p "$t/bin"
   echo "[{\"id\":\"b1\",\"cwd\":\"/tmp\",\"kind\":\"background\",\"startedAt\":1,\"sessionId\":\"s1\",\"name\":\"host\",\"pid\":5}]" > "$t/agents.json"
   printf "#!/bin/sh\n[ \"\$1\" = agents ] && exec cat %s/agents.json\nexit 1\n" "$t" > "$t/bin/claude"; chmod +x "$t/bin/claude"
-  [ "$(PATH="$t/bin:$PATH" agent-adapter-claude list)" = "$(printf "host\ts1\trunning\t/tmp")" ]'
+  mkdir -p "$t/proc/5"; printf "claude\0--bg\0" > "$t/proc/5/cmdline"
+  [ "$(PATH="$t/bin:$PATH" AGENT_ADAPTER_CLAUDE_PROC="$t/proc" agent-adapter-claude list)" = "$(printf "host\ts1\trunning\t/tmp")" ]'
 
 check "claude-host-pin on PATH" command -v claude-host-pin
 # shellcheck disable=SC2016
