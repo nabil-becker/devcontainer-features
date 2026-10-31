@@ -56,15 +56,16 @@
       "sessionName": "{machine} {handle}"
     },
     "./features/devhost": {},
-    // The Operator's own personal OneDrive, mounted live at /mnt/cloud-folder
-    // (`task cloud-folder:login` once, with the personal Microsoft account).
-    // mount needs FUSE, granted per machine: DCF_HOST_FUSE=1 in
-    // .devcontainer/.env on the workstation (ADR 0031); remotePath narrows it
-    // to one folder of the drive.
+    // One folder of the Operator's own personal OneDrive (remotePath), mounted
+    // live at /mnt/cloud-folder, never the whole drive (`task cloud-folder:login`
+    // once, with the personal Microsoft account). mount needs FUSE, granted per
+    // machine: DCF_HOST_FUSE=1 in .devcontainer/.env on the workstation
+    // (ADR 0031).
     "./features/cloud-folder": {
       "mode": "mount",
       "remoteType": "onedrive",
-      "driveType": "personal"
+      "driveType": "personal",
+      "remotePath": "Agent Artifacts/devcontainer-features"
     }
   },
   // FUSE on request, per machine (ADR 0031): with DCF_HOST_FUSE=1 in
