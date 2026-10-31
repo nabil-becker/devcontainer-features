@@ -6,9 +6,9 @@ so a rebuild loses nothing. Every figure is a list-price estimate (Opus $5/$25, 
 Numbers and ids only. Read first by the ledger review: see "What to look for".
 Regenerated, never edited by hand.
 
-Total: $834.31. Inter sessions: $546.10 in 13 sessions. Cons: $246.37 in 94 runs. Backs: $41.84 in 1555 runs, 6 undone by guards. Ledger corrections: 19.
+Total: $834.31. Inter sessions: $546.10 in 13 sessions. Cons: $246.37 in 94 runs. Backs: $41.84 in 1555 runs, 6 undone by guards. Ledger corrections: 21.
 
-Entry rate: 481 entries on 13 days with entries, 37.0 per day, 160.3 per week (over 3 weeks with entries). A review every 75 entries (DEVHOST_REVIEW_EVERY) comes every 2.0 days at this rate.
+Entry rate: 506 entries on 13 days with entries, 38.9 per day, 168.7 per week (over 3 weeks with entries). A review every 75 entries (DEVHOST_REVIEW_EVERY) comes every 1.9 days at this rate.
 
 Spend $834.31 of the $200 target (417%), a tracking point, not a cap.
 
