@@ -1,0 +1,50 @@
+{
+  "id": "agentic-register",
+  "version": "0.14.1",
+  "name": "agentic register (signed, mergeable shared registers: the ledger and others)",
+  "description": "Shared registers for agentic stacks, each a set of signed entries that merges without conflicts across branches, machines and writers that are not trusted, and lives in git or outside it (SPEC.md). One Feature keeps any number of registers, each a name, a type and a store; the ledger (one entry per unit of work and per model run) is the first type. Installs the agentic-register command, its Taskfile (agentic-register:* through the go-task Feature) and an MCP server whose tools mirror the tasks; keeps keys, anchors and the reader's own records in a named volume. Supersedes agentic-ledger.",
+  "documentationURL": "https://github.com/KGO-Solutions/agentic-operating-framework/tree/main/aof/tooling/src/agentic-register",
+  "options": {
+    "installTaskfile": {
+      "type": "boolean",
+      "default": true,
+      "description": "Install this Feature's Taskfile into /usr/local/share/go-task/includes.d so its tasks appear under agentic-register: in a root Taskfile that includes /usr/local/share/go-task/features.yml (the go-task Feature)."
+    },
+    "registers": {
+      "type": "string",
+      "default": "",
+      "description": "The registers, without quotes: one entry per register separated by ';', each name:type[:store][:mirror=<folder>][:guard=<command>][:guard_timeout=<seconds>], for example ledger:ledger:mirror=docs/ledger/entries; notes:log. A relative store or mirror is taken from the top of the git repository the command runs in; no store = $AGENTIC_REGISTER_HOME/registers/<name>, in the volume (the live store), and `agentic-register mirror` keeps the mirror level with it. A guard is a command, its first word an absolute path, run on every entry with a fixed PATH and no other environment, before it is written: the entry's body on stdin, the register's name in AGENTIC_REGISTER_GUARD_REGISTER; any exit but 0, a crash, or no answer within guard_timeout seconds (default 10, at most 300) refuses the entry (README.md, \"A guard\"). A value starting with [ is read as a JSON list of {name, type, store, mirror, guard, guard_timeout}, which survives the devcontainer CLI only with each quote escaped for the shell (README.md, \"The registers option\"). Empty = one register, ledger. AGENTIC_REGISTER_REGISTERS overrides it, but never drops or replaces a guard set here."
+    },
+    "anchors": {
+      "type": "string",
+      "default": "",
+      "description": "The file of operator keys this reader trusts (<principal> ssh-ed25519 <base64> per line). Empty = $AGENTIC_REGISTER_HOME/anchors. Never read from a store. AGENTIC_REGISTER_ANCHORS overrides it."
+    },
+    "registerMcp": {
+      "type": "boolean",
+      "default": true,
+      "description": "At post-create, register the MCP server (agentic-register mcp) with Claude Code at user scope when Claude Code is installed. Registering again changes nothing. Setup run from a source copy (no options.env) never registers it."
+    },
+    "mcpTools": {
+      "type": "string",
+      "default": "",
+      "description": "The MCP tools the server offers, comma-separated, in full (agentic_register_add) or short (add, new-thread). Empty = every tool. A tool not named is not listed and cannot be called. AGENTIC_REGISTER_MCP_TOOLS narrows it further (only what both name); it never widens it. A name that is no tool fails the install."
+    }
+  },
+  "containerEnv": {
+    "AGENTIC_REGISTER_HOME": "/var/lib/devcontainer-features/agentic-register"
+  },
+  "mounts": [
+    {
+      "source": "agentic-register-state-${devcontainerId}",
+      "target": "/var/lib/devcontainer-features/agentic-register",
+      "type": "volume"
+    }
+  ],
+  "installsAfter": [
+    "ghcr.io/nabil-becker/devcontainer-features/go-task",
+    "ghcr.io/devcontainers/features/python",
+    "ghcr.io/devcontainers/features/common-utils"
+  ],
+  "postCreateCommand": "agentic-register-setup"
+}

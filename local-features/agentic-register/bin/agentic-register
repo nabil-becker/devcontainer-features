@@ -1,0 +1,9 @@
+#!/usr/bin/env python3
+"""The agentic-register command; the library sits in ../lib/agentic-register beside this file's folder."""
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib" / "agentic-register"))
+from register.cli import main  # noqa: E402
+
+sys.exit(main(sys.argv[1:]))

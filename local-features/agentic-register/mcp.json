@@ -1,0 +1,25 @@
+{
+  "tools": [
+    "agentic_register_version",
+    "agentic_register_registers",
+    "agentic_register_forks",
+    "agentic_register_check",
+    "agentic_register_add",
+    "agentic_register_verify",
+    "agentic_register_sync",
+    "agentic_register_show",
+    "agentic_register_query",
+    "agentic_register_threads",
+    "agentic_register_thread",
+    "agentic_register_inbox",
+    "agentic_register_new_thread",
+    "agentic_register_send",
+    "agentic_register_mark_read",
+    "agentic_register_invite",
+    "agentic_register_leave",
+    "agentic_register_tasks",
+    "agentic_register_ask",
+    "agentic_register_task_status",
+    "agentic_register_watch"
+  ]
+}

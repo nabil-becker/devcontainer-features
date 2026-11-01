@@ -1,0 +1,151 @@
+# Tasks contributed by the agentic-register Feature (namespace: agentic-register). Each works on one
+# register: -- --register <name> (default: $AGENTIC_REGISTER_DEFAULT, else the first).
+# Each runs the agentic-register command; its MCP tools run the same (REQUIREMENTS.md, R6, R7).
+# Extra arguments after --, for example: task agentic-register:add -- --title "Plant the seed"
+version: '3'
+
+tasks:
+  version:
+    desc: 'Show what is installed: the agentic-register version, the format version, Python and ssh-keygen.'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['agentic-register version {{.CLI_ARGS}}']
+
+  setup:
+    desc: 'Re-run the post-create setup: the home folder in the volume, the anchors file, the MCP registration (idempotent, never fatal).'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['agentic-register-setup']
+
+  check:
+    desc: 'Say in one line per part what is ready (Python, ssh-keygen, home, store, anchors, your key) and exit non-zero when not ready.'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['agentic-register check {{.CLI_ARGS}}']
+
+  key:
+    desc: 'Make or show a principal''s signing key: -- new <principal> | show <principal>. Prints the line for the anchors file or the roster.'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['agentic-register key {{.CLI_ARGS}}']
+
+  roster:
+    desc: 'An operator adds or removes a key: -- --as <operator> --add-key ''<key>'' --principal <id> --role agent|operator, or --remove-key ''<key>''.'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['agentic-register roster {{.CLI_ARGS}}']
+
+  add:
+    desc: 'Sign an entry as the next in your chain and put it in the store: -- [--as <principal>] [--kind work] --title <t> [--data <json> | --file <f>].'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['agentic-register add {{.CLI_ARGS}}']
+
+  verify:
+    desc: 'Check every entry in the store; exit non-zero on a refused entry, a held entry or a fork.'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['agentic-register verify {{.CLI_ARGS}}']
+
+  mirror:
+    desc: 'Copy each way between a register''s live store and its mirror, a folder in the repository; only adds: -- [--register <name> | --all].'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['agentic-register mirror {{.CLI_ARGS}}']
+
+  sync:
+    desc: 'Merge entries from other store folders into the store: -- --from <folder> [--from <folder>] [--to <folder>].'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['agentic-register sync {{.CLI_ARGS}}']
+
+  show:
+    desc: 'The ledger as Markdown, in its order, what needs a person first: -- [--out <file>].'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['agentic-register show {{.CLI_ARGS}}']
+
+  query:
+    desc: 'Run read-only SQL on a freshly built index: -- "SELECT who, sum(usd_micro) FROM costs GROUP BY who".'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['agentic-register query {{.CLI_ARGS}}']
+
+  import:
+    desc: 'Backfill records kept before the register (a ledger: --markdown, --runs; a backlog: --todo), each marked as backfill with its source and the hash of its original: -- --as <principal> --markdown <ledger.md> | --runs <runs.jsonl> [--dry-run].'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['agentic-register import {{.CLI_ARGS}}']
+
+  registers:
+    desc: 'List the registers this Feature keeps: name, type, store, how many entries.'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['agentic-register registers {{.CLI_ARGS}}']
+
+  rekey:
+    desc: 'An operator gives agents new keys (lost, or --replace) and adds them to every register''s roster, in one sitting: -- --as <operator> --key <op.pub> <principal>... [--replace] [--register <name>].'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['agentic-register rekey {{.CLI_ARGS}}']
+
+  forks:
+    desc: 'List the forks of a register (two entries of one key with one seq), with their entries and whether each is ruled.'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['agentic-register forks {{.CLI_ARGS}}']
+
+  rule:
+    desc: 'An operator settles a fork: -- --as <operator> --key <their .pub> --keep <entry id>. The key goes on from that side; the other stays, flagged ruled-out.'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['agentic-register rule {{.CLI_ARGS}}']
+
+  prune:
+    desc: 'An anchor lets a store leave out what a ruling ruled out: -- --as <operator> --key <their .pub> --ruling <entry id>. Prune first, then delete the line.'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['agentic-register prune {{.CLI_ARGS}}']
+
+  threads:
+    desc: 'The threads you are in in a messages register, with unread counts: -- [--as <principal>] [--register <name>].'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['agentic-register threads {{.CLI_ARGS}}']
+
+  thread:
+    desc: 'One thread of a messages register, its messages, members, sub-threads and tasks: -- <thread> [--mark-read].'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['agentic-register thread {{.CLI_ARGS}}']
+
+  inbox:
+    desc: 'What is unread for you in a messages register, and your open tasks: -- [--as <principal>].'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['agentic-register inbox {{.CLI_ARGS}}']
+
+  new-thread:
+    desc: 'Start a thread in a messages register: -- <thread> --members a,b [--kind group|direct] [--title t] [--parent p].'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['agentic-register new-thread {{.CLI_ARGS}}']
+
+  send:
+    desc: 'Post a message to a thread: -- --thread <id> --text <t> [--reply-to <message_id>] [--mention a,b] [--ref <thread>].'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['agentic-register send {{.CLI_ARGS}}']
+
+  mark-read:
+    desc: 'Move your read marker in a thread: -- --thread <id> [--upto <message_id>] (default: its last message).'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['agentic-register mark-read {{.CLI_ARGS}}']
+
+  invite:
+    desc: 'Invite a principal to a thread you are in: -- --thread <id> --principal <p>.'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['agentic-register invite {{.CLI_ARGS}}']
+
+  leave:
+    desc: 'Leave a thread: -- --thread <id>.'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['agentic-register leave {{.CLI_ARGS}}']
+
+  tasks:
+    desc: 'Tasks you asked for or were given in a messages register; open ones unless -- --all.'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['agentic-register tasks {{.CLI_ARGS}}']
+
+  ask:
+    desc: 'Ask a member for something, as a message and an A2A task: -- --thread <id> --to <assignee> --title <t> [--text <t>].'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['agentic-register ask {{.CLI_ARGS}}']
+
+  task-status:
+    desc: 'Move a task on (its assignee) or cancel it (its creator): -- --task <id> --state working|completed|failed|rejected|canceled.'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['agentic-register task-status {{.CLI_ARGS}}']
+
+  watch:
+    desc: 'The change feed of a register: entries new since a cursor, one JSON line each, then the next cursor: -- [--register <name>] [--since <cursor>] [--follow] [--interval 2] [--for <seconds>].'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['agentic-register watch {{.CLI_ARGS}}']
