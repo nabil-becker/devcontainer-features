@@ -25,7 +25,7 @@ class Briefing(h.RepoCase):
         state = self.base / "state"
         h.write(state / "secretary" / "pending-1.txt", "id clash")
         h.write(state / "scribe" / "job.log", "ts=1 status=changed notice=ok\nts=2 status=pending notice=the entry needs a title\n")
-        h.write(state / "runs.jsonl", json.dumps({"ts": "2026-10-05T01:00:00Z", "job": "scribe", "model": "claude-haiku-5",
+        h.write(state / "runs.jsonl", json.dumps({"ts": f"{self.b.month()}-05T01:00:00Z", "job": "scribe", "model": "claude-haiku-5",
                                                   "status": "changed", "cost_usd": 0.02, "undone": 1, "output_tokens": 50}) + "\n"
                 + "not json\n")
         text = self.b.briefing(self.root)
