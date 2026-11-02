@@ -13,7 +13,8 @@ up a new repository or adapt an existing one.
 - `foundation/`: the pieces worth adopting: the agent principles, the decisions (ADRs) that explain
   the why, and this project's lexicon, process and ontology as worked examples. The person's
   project builds its own lexicon and process; it does not take these as they are.
-- `starter/`: files to copy into the target (`devcontainer.json`, `SETUP.md`, `CONTEXT.md`).
+- `starter/`: files to copy into the target (`devcontainer.json`, `SETUP.md`, `CONTEXT.md`, and
+  `features/devhost/`, the devhost Feature as files, which goes to `.devcontainer/features/devhost/`).
 - `skills/`: the skills that run the cycle: `plant-a-seed` and `drop-a-seed`, `ledger-review`
   (turning the records into changes), and `shutdown-devhost` with `restart-devhost` (stopping
   and resuming a dev container where agents run in the background).

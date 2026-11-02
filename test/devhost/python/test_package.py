@@ -34,6 +34,11 @@ class Package(h.RepoCase):
             skill = self.root / ".claude" / "skills" / name
             h.write(skill / "SKILL.md", f"---\nname: {name}\n---\nBody.\r\n")
         (self.root / ".claude" / "skills" / "drop-a-seed" / "journalist.md").write_bytes(PNG)
+        feature = self.root / "local-features" / "devhost"
+        h.write(feature / "devcontainer-feature.json", '{"id": "devhost", "version": "1.0.0"}\n')
+        h.write(feature / "install.sh", "#!/bin/sh\n")
+        (feature / "share" / "bin").mkdir(parents=True)
+        (feature / "share" / "bin" / "blob.bin").write_bytes(PNG)
 
     def run_cli(self, *extra: str):
         args = ["package", "--iteration", "3", "--date", "2026-10-19", "--out", "out",
@@ -52,7 +57,7 @@ class Package(h.RepoCase):
     def test_the_first_package_from_nothing_received(self):
         done = self.run_cli()
         self.assertEqual(done.returncode, 0, done.stderr)
-        self.assertIn("wrote 15 files", done.stdout)
+        self.assertIn("wrote 18 files", done.stdout)
         self.assertIn("(`drop-a-seed`, `ledger-review`, `plant-a-seed`, `restart-devhost`, `shutdown-devhost`): "
                       "`plant-a-seed` imports the seed", (self.out / "PACKAGE.md").read_text(encoding="utf-8"))
         rows = self.rows()
@@ -200,6 +205,35 @@ class Package(h.RepoCase):
         self.assertEqual(done.returncode, 2)
         self.assertIn("nope", done.stderr)
         self.assertFalse(self.out.exists())
+
+    def test_the_devhost_feature_travels_as_files_under_the_starter(self):
+        self.assertEqual(self.run_cli().returncode, 0)
+        base = self.out / "starter/features/devhost"
+        self.assertEqual((base / "devcontainer-feature.json").read_bytes(),
+                         b'{"id": "devhost", "version": "1.0.0"}\n')
+        self.assertTrue((base / "install.sh").is_file())
+        self.assertEqual((base / "share/bin/blob.bin").read_bytes(), PNG)
+        rows = self.rows()
+        self.assertEqual(rows["starter/features/devhost/share/bin/blob.bin"], (sha(PNG), "original"))
+
+    def test_the_devhost_folder_can_be_changed(self):
+        h.write(self.root / "elsewhere" / "devcontainer-feature.json", "{}\n")
+        self.assertEqual(self.run_cli("--devhost", "elsewhere").returncode, 0)
+        self.assertTrue((self.out / "starter/features/devhost/devcontainer-feature.json").is_file())
+        self.assertFalse((self.out / "starter/features/devhost/install.sh").exists())
+
+    def test_a_missing_devhost_feature_is_refused(self):
+        done = self.run_cli("--devhost", "local-features/nodevhost")
+        self.assertEqual(done.returncode, 2)
+        self.assertIn("nodevhost", done.stderr)
+        self.assertFalse(self.out.exists())
+
+    def test_the_real_starter_names_the_local_devhost_and_not_the_registry(self):
+        starter = (h.HERE.parents[2] / "docs/iterations/starter/devcontainer.json").read_text(encoding="utf-8")
+        code = "\n".join(l for l in starter.splitlines() if not l.strip().startswith("//"))
+        self.assertNotIn("/devhost", code.replace("./features/devhost", ""))
+        self.assertIn('"./features/devhost"', code)
+        self.assertIn("ghcr.io/nabil-becker/devcontainer-features/go-task:1", code)
 
     def test_usage(self):
         self.assertEqual(h.run(["package"], self.root, self.env).returncode, 2)

@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# devhost-shutdown-check: runs the devhost's shutdown.py (installed under /usr/local/share/devhost).
+exec python3 /usr/local/share/devhost/python/shutdown.py "$@"

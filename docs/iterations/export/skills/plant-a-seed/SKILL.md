@@ -58,8 +58,10 @@ one confirmation of the plan:
 2. **The README.** A short `README.md` with the purpose in the person's words and how to start.
 3. **The dev container and the Taskfile.** Run the collection's bootstrap (`starter/SETUP.md`): it
    writes `Taskfile.yml`, `.devcontainer/devcontainer.json` and `.devcontainer/.env.example`.
-   Replace that `devcontainer.json` with `starter/devcontainer.json`, and copy
-   `starter/CONTEXT.md`, filled in from the purpose.
+   Replace that `devcontainer.json` with `starter/devcontainer.json`, copy
+   `starter/features/devhost/` to `.devcontainer/features/devhost/` (the devhost is not on the
+   registry; the starter references that local copy, and it is updated later by re-copying from
+   a newer seed, see `starter/SETUP.md`), and copy `starter/CONTEXT.md`, filled in from the purpose.
 4. **Stop before the container.** Tell the person the two commands that start it and the agent
    session inside: `task devcontainer:up`, then `task devcontainer:claude`.
 5. **Inside the container**, in that session: `task devhost:init` writes the records (`LEXICON.md`,

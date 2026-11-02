@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# devhost-adr: runs the devhost's adr.py (installed under /usr/local/share/devhost).
+exec python3 /usr/local/share/devhost/python/adr.py "$@"

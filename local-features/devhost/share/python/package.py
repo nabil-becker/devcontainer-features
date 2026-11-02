@@ -19,6 +19,10 @@ Options (paths are relative to the repository root unless absolute):
                     (default docs/iterations/seed/README.md)
     --starter DIR   the starter folder, copied untouched to starter/
                     (default docs/iterations/starter)
+    --devhost DIR   the devhost Feature, copied whole and untouched to starter/features/devhost/, so
+                    a planted repository holds it at .devcontainer/features/devhost and the starter
+                    references it by local path ("./features/devhost"); it is updated by re-copying
+                    from a newer seed (default local-features/devhost; ADR 0025 keeps it unpublished)
     --skills LIST   comma-separated skill names whose folders .claude/skills/<name>/ are copied
                     whole and untouched to skills/<name>/
                     (default plant-a-seed,drop-a-seed,ledger-review,shutdown-devhost,restart-devhost)
@@ -27,7 +31,7 @@ Options (paths are relative to the repository root unless absolute):
     --date D        YYYY-MM-DD (default today)
 
 The package is a seed: a plain folder holding `README.md` (the entry point an agent is pointed
-at), `starter/` (what the next place begins with), `skills/` (`plant-a-seed`, which imports it,
+at), `starter/` (what the next place begins with, with the devhost Feature under `starter/features/devhost/`), `skills/` (`plant-a-seed`, which imports it,
 `drop-a-seed`, which exports the next one, `ledger-review`, and `shutdown-devhost` with
 `restart-devhost`), `papers/` (every paper received,
 byte for byte, the papers kept here, the new paper), `foundation/<repository path>` (the
@@ -38,7 +42,7 @@ script writes gets front matter (iteration, date, sources) only where it has non
 only copies stays as it was: papers received and originals (non-Markdown, or marked `!`) are
 never touched, a Markdown foundation file that gains front matter is `derived`.
 
-Refuses, exit 2, writing nothing: a missing README, starter folder or skill folder, a manifest or
+Refuses, exit 2, writing nothing: a missing README, starter folder, devhost folder or skill folder, a manifest or
 listed file that is missing, an output folder that
 is not empty, a received package without a `PACKAGE.md`, a received paper that is missing or whose
 sha256 differs from its index, two different files for one paper name.
@@ -58,7 +62,7 @@ INDEX = "PACKAGE.md"
 ROW = re.compile(r"^\|\s*`([^`]+)`\s*\|\s*([0-9a-f]{64})\s*\|\s*(\w+)\s*\|\s*$")
 DEFAULTS = {"received": "docs/iterations/package", "papers": "docs/iterations/papers",
             "foundation": "docs/iterations/foundation.txt", "readme": "docs/iterations/seed/README.md",
-            "starter": "docs/iterations/starter",
+            "starter": "docs/iterations/starter", "devhost": "local-features/devhost",
             "skills": "plant-a-seed,drop-a-seed,ledger-review,shutdown-devhost,restart-devhost", "out": "docs/iterations/export"}
 
 
@@ -137,7 +141,8 @@ def received_papers(folder: Path) -> list[tuple[str, bytes]]:
 
 
 def assemble(root: Path, iteration: str, paper: Path, received: Path, papers_dir: Path, manifest: Path,
-             out: Path, date: str, readme: Path, starter: Path, skills: list[str]) -> list[tuple[str, str, str]]:
+             out: Path, date: str, readme: Path, starter: Path, skills: list[str],
+             devhost: Path) -> list[tuple[str, str, str]]:
     """Check everything, then write the package; returns (path, sha256, kind) per file."""
     if out.exists() and (not out.is_dir() or any(out.iterdir())):
         raise Refused(f"the output folder {out} is not empty: the package is written into a fresh folder")
@@ -148,6 +153,8 @@ def assemble(root: Path, iteration: str, paper: Path, received: Path, papers_dir
         raise Refused(f"the seed README {readme} is missing")
     if not starter.is_dir():
         raise Refused(f"the starter folder {starter} is missing")
+    if not devhost.is_dir():
+        raise Refused(f"the devhost Feature folder {devhost} is missing")
     skill_files: list[tuple[str, Path]] = []
     for name in skills:
         folder = root / ".claude" / "skills" / name
@@ -188,6 +195,8 @@ def assemble(root: Path, iteration: str, paper: Path, received: Path, papers_dir
     plan["README.md"] = (readme.read_bytes(), "original")
     for path in sorted(p for p in starter.rglob("*") if p.is_file()):
         plan[f"starter/{path.relative_to(starter).as_posix()}"] = (path.read_bytes(), "original")
+    for path in sorted(p for p in devhost.rglob("*") if p.is_file()):
+        plan[f"starter/features/devhost/{path.relative_to(devhost).as_posix()}"] = (path.read_bytes(), "original")
     for key, path in skill_files:
         plan[key] = (path.read_bytes(), "original")
 
@@ -253,7 +262,7 @@ def main(argv: list[str]) -> int:
         files = assemble(root, args.iteration, resolve(root, args.paper), resolve(root, args.received),
                          resolve(root, args.papers), resolve(root, args.foundation), resolve(root, args.out),
                          args.date or today(), resolve(root, args.readme), resolve(root, args.starter),
-                         [n.strip() for n in args.skills.split(",") if n.strip()])
+                         [n.strip() for n in args.skills.split(",") if n.strip()], resolve(root, args.devhost))
     except Refused as exc:
         print(f"devhost-package: {exc}", file=sys.stderr)
         return 2
