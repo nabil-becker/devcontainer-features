@@ -319,7 +319,7 @@ The domain words of the project itself are not here; they live with the project'
   personalization from process, continuous improvement, the agent knows its place, claims need
   evidence, right-size the work. Generic by design: each Operator sets them up
   (`docs/principles/agents.md`, ADR-0013).
-- **Non-functional requirement** (NFR): one of ten requirements (NFR-1 to NFR-10) that every work
+- **Non-functional requirement** (NFR): one of thirteen requirements (NFR-1 to NFR-13) that every work
   item touching a Feature must meet, or else record a backlog item or a written exception in the
   Feature's NOTES (`docs/principles/non-functional-requirements.md`).
 
