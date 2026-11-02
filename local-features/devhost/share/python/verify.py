@@ -18,6 +18,14 @@ word itself), and needs only git and python3:
   (`DEVHOST_REDACT_FILE`) appears in a tracked text file; reported as `forbidden word #N`.
   `.devhost/name-exceptions.txt` (one path per line) lists the files the Operator has approved
   to carry them, such as a published paper with its byline.
+- `staged_emails`: no staged added line holds an email address unless it ends in `.invalid` (the
+  placeholder for a bot or a test; `noreply@anthropic.com`, which the rules name as never to use, may be quoted); only what a commit would add is checked (AOF's commit check),
+  so addresses already tracked are not reported; `.devhost/name-exceptions.txt` paths are skipped.
+- `commit_identity`: with changes staged, the author and committer a commit would record
+  (`git var GIT_AUTHOR_IDENT`, `GIT_COMMITTER_IDENT`) have an address ending in `.invalid`; quiet
+  with nothing staged or no identity set.
+- `checked_copies`: when `docs/aof/<name>.md` and `docs/aof/<name>.md.sha256` exist (AOF's pages
+  held word for word), the copy's sha256 equals the one in the checksum file; absent, it passes.
 - `adrs`: `NNNN-title.md` records are numbered consecutively from 0001, titled
   `# ADR-NNNN: `, carry the fixed sections and a known status word, and are in the index.
 - `taskfile`: every task in `Taskfile.yml` has a `desc` (`default` excepted).
@@ -36,6 +44,7 @@ word itself), and needs only git and python3:
 """
 from __future__ import annotations
 
+import hashlib
 import re
 import sys
 try:
@@ -58,7 +67,7 @@ SECRET_PATTERNS = {
     "password in a connection string": re.compile(r"(?i)(?:password|pwd)=([^;\s\"'{}$<>]{6,})"),
     "private key block": re.compile(r"(-----BEGIN [A-Z ]*PRIVATE KEY-----)"),
     "shared access signature": re.compile(r"(?i)(?:sharedaccesssignature=|[?&]sig=)([A-Za-z0-9%+/]{20,})"),
-    "GitHub token": re.compile(r"\b(ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{20,})\b"),
+    "GitHub token": re.compile(r"\b(gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{20,})\b"),
     "Anthropic key": re.compile(r"\b(sk-ant-[A-Za-z0-9_-]{20,})\b"),
     "AWS key id": re.compile(r"\b(AKIA[0-9A-Z]{16})\b"),
     "Slack token": re.compile(r"\b(xox[bp]-[A-Za-z0-9-]{10,})\b"),
@@ -209,6 +218,70 @@ def forbidden_words(root: Path) -> list[str]:
             for index, word in enumerate(words, 1):
                 if word in low:
                     findings.append(f"{where}:{number}: forbidden word #{index}")
+    return findings
+
+
+EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,})")
+
+
+def staged_additions(root: Path) -> list[tuple[str, int, str]]:
+    """(path, line number, text) of every line the staged changes add; empty outside git."""
+    diff = git(root, "diff", "--cached", "-U0", "--no-color", "--no-ext-diff") or ""
+    out, path, number = [], "", 0
+    for line in diff.splitlines():
+        if line.startswith("+++ "):
+            path = line[6:] if line.startswith("+++ b/") else ""
+        elif line.startswith("@@"):
+            hunk = re.match(r"^@@ -\S+ \+(\d+)", line)
+            number = int(hunk.group(1)) if hunk else 0
+        elif line.startswith("+") and path:
+            out.append((path, number, line[1:]))
+            number += 1
+    return out
+
+
+# The address the way of working names as never to be used (it links to a stranger's account): the
+# rule that says so may quote it.
+NEVER_USE = "noreply@anthropic.com"
+
+
+def staged_emails(root: Path) -> list[str]:
+    approved = name_exceptions(root)
+    findings = []
+    for path, number, text in staged_additions(root):
+        if path in approved:
+            continue
+        if any(not m.group(1).lower().endswith(".invalid") for m in EMAIL.finditer(text.replace(NEVER_USE, ""))):
+            findings.append(f"{path}:{number}: an email address not ending in .invalid; use a placeholder")
+    return findings
+
+
+def commit_identity(root: Path) -> list[str]:
+    if not (git(root, "diff", "--cached", "--name-only") or "").strip():
+        return []  # nothing staged: not at commit time
+    findings = []
+    for role in ("AUTHOR", "COMMITTER"):
+        ident = git(root, "var", f"GIT_{role}_IDENT")
+        match = re.search(r"<([^>]*)>", ident or "")
+        if match is None:
+            continue  # no identity set: git itself refuses the commit
+        if not match.group(1).lower().endswith(".invalid"):
+            findings.append(f"git {role.lower()} identity: the address does not end in .invalid; "
+                            f"commit as the bot identity (devhost agent <devhost-agent@noreply.invalid>)")
+    return findings
+
+
+def checked_copies(root: Path) -> list[str]:
+    findings = []
+    for sumfile in sorted(p for p in tracked_files(root)
+                          if p.parent.name == "aof" and p.parent.parent.name == "docs" and p.name.endswith(".md.sha256")):
+        where, copy = rel(root, sumfile), sumfile.with_suffix("")
+        words = read_text(sumfile).split()
+        if not copy.is_file():
+            findings.append(f"{where}:1: the checked copy {rel(root, copy)} is missing")
+        elif not words or hashlib.sha256(copy.read_bytes()).hexdigest() != words[0].lower():
+            findings.append(f"{rel(root, copy)}:1: changed: it is AOF's, word for word; a new version comes by copier update, "
+                            f"with its {sumfile.name} (checked against {where})")
     return findings
 
 
@@ -470,7 +543,7 @@ def model(root: Path) -> list[str]:
     return findings
 
 
-GUARDS = (ledger_append_only, ledger_shape, secrets, forbidden_words, conflict_markers, adrs, taskfile, skills, hook_modes, backlog_ids, model)
+GUARDS = (ledger_append_only, ledger_shape, secrets, forbidden_words, conflict_markers, staged_emails, commit_identity, checked_copies, adrs, taskfile, skills, hook_modes, backlog_ids, model)
 
 
 def run(root: Path) -> tuple[dict[str, list[str]], list[str]]:

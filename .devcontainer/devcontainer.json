@@ -56,6 +56,18 @@
       "sessionName": "{machine} {handle}"
     },
     "./features/devhost": {},
+    // The AOF seed's agentic-register (0.14.1), vendored in local-features/agentic-register
+    // (VENDORED.md: replace with the GHCR package once access exists). One register, ledger,
+    // with its live store in the Feature's volume and no mirror yet (the import and the mirror
+    // to the OneDrive folder come later). Every entry passes the devhost's register guard first:
+    // the redact names, forbidden words and secrets of devhost-verify. The guard gets no
+    // environment and runs in /, so it is told the repository by path, quote-free (no : ; or
+    // spaces). registerMcp is off until keys and rosters exist (nothing could write through it
+    // yet); turn it on with the keys.
+    "./features/agentic-register": {
+      "registers": "ledger:ledger:guard=/usr/local/bin/devhost-register-guard --root=/workspaces/devcontainer-features",
+      "registerMcp": false
+    },
     // One folder of the Operator's own personal OneDrive (remotePath), mounted
     // live at /mnt/cloud-folder, never the whole drive (`task cloud-folder:login`
     // once, with the personal Microsoft account). mount needs FUSE, granted per

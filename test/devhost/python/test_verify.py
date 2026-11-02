@@ -1,6 +1,9 @@
 """verify.py: each guard on a repository that breaks exactly one rule."""
 from __future__ import annotations
 
+import os
+from unittest import mock
+
 import helpers as h
 
 ADR_OK = ("# ADR-{n}: Title {n}\n\n| | |\n|---|---|\n| **Status** | proposed |\n| **Date** | 2026-10-01 |\n\n"
@@ -382,3 +385,82 @@ class Model(h.RepoCase):
         done = h.run(["verify", "--quiet"], self.root, self.env)
         self.assertEqual(done.returncode, 1)
         self.assertIn("FAIL model", done.stdout)
+
+
+class AofChecks(h.RepoCase):
+    """The checks AOF's commit check has: added emails, the commit identity, checked copies."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.v = h.load("verify")
+        # the identity comes from the repository's config, whatever the machine's environment says
+        patch = mock.patch.dict(os.environ)
+        patch.start()
+        self.addCleanup(patch.stop)
+        for name in [k for k in os.environ if k.startswith(("GIT_AUTHOR_", "GIT_COMMITTER_"))]:
+            del os.environ[name]
+
+    def test_a_staged_real_email_is_refused_and_never_quoted(self):
+        h.write(self.root / "notes.md", "ok\nwrite to someone@" "example.com\n")
+        h.track(self.root)
+        findings = self.v.staged_emails(self.root)
+        self.assertEqual(findings, ["notes.md:2: an email address not ending in .invalid; use a placeholder"])
+        self.assertNotIn("someone", findings[0])
+
+    def test_an_invalid_address_and_an_already_committed_one_pass(self):
+        h.write(self.root / "old.md", "old@" "example.com\n")
+        h.git(self.root, "add", "-A")
+        h.git(self.root, "commit", "-q", "-m", "old")
+        h.write(self.root / "new.md", "bot <bot@noreply.invalid>\n")
+        h.track(self.root)
+        self.assertEqual(self.v.staged_emails(self.root), [])
+
+    def test_an_excepted_path_may_carry_an_email(self):
+        h.write(self.root / ".devhost" / "name-exceptions.txt", "paper.md\n")
+        h.write(self.root / "paper.md", "by a@" "example.com\n")
+        h.track(self.root)
+        self.assertEqual(self.v.staged_emails(self.root), [])
+
+    def test_the_identity_must_end_in_invalid_when_something_is_staged(self):
+        h.write(self.root / "a.txt", "x\n")
+        h.track(self.root)
+        os.environ.update(GIT_AUTHOR_EMAIL="a@x.invalid", GIT_COMMITTER_EMAIL="c@x.invalid")
+        self.assertEqual(self.v.commit_identity(self.root), [])
+        os.environ.update(GIT_AUTHOR_EMAIL="me@" "example.com", GIT_COMMITTER_EMAIL="me@" "example.com")
+        findings = self.v.commit_identity(self.root)
+        self.assertEqual(len(findings), 2, findings)
+        self.assertTrue(findings[0].startswith("git author identity"))
+        self.assertTrue(findings[1].startswith("git committer identity"))
+        self.assertNotIn("me@" "example.com", " ".join(findings))
+
+    def test_the_identity_is_not_checked_with_nothing_staged(self):
+        os.environ.update(GIT_AUTHOR_EMAIL="me@" "example.com", GIT_COMMITTER_EMAIL="me@" "example.com")
+        self.assertEqual(self.v.commit_identity(self.root), [])
+
+    def test_a_checked_copy_matches_its_checksum(self):
+        import hashlib
+        self.assertEqual(self.v.checked_copies(self.root), [])  # none yet
+        page = self.root / "docs" / "aof" / "principles.md"
+        h.write(page, "word for word\n")
+        digest = hashlib.sha256(page.read_bytes()).hexdigest()
+        h.write(self.root / "docs" / "aof" / "principles.md.sha256", f"{digest}  principles.md\n")
+        h.track(self.root)
+        self.assertEqual(self.v.checked_copies(self.root), [])
+        h.write(page, "word for word, changed\n")
+        findings = self.v.checked_copies(self.root)
+        self.assertEqual(len(findings), 1, findings)
+        self.assertTrue(findings[0].startswith("docs/aof/principles.md:1: changed"), findings[0])
+        page.unlink()
+        self.assertIn("is missing", self.v.checked_copies(self.root)[0])
+
+    def test_the_guards_run_in_verify(self):
+        h.write(self.root / "notes.md", "x@" "example.com\n")
+        h.track(self.root)
+        done = h.run(["verify", "--quiet"], self.root, self.env)
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("FAIL staged_emails", done.stdout)
+
+    def test_all_github_token_kinds_are_refused(self):
+        h.write(self.root / "t.md", "gho_" + "A" * 36 + "\n")
+        h.track(self.root)
+        self.assertEqual(len(self.v.secrets(self.root)), 1)

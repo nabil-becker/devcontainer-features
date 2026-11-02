@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# devhost-register-guard: the guard of an agentic-register register (see /usr/local/share/devhost/python/register_guard.py).
+# agentic-register runs it with a fixed PATH and none of the writer's environment, so the
+# share folder is the installed one; -I keeps a stray PYTHON* variable or the working directory out of it.
+exec python3 -I /usr/local/share/devhost/python/register_guard.py "$@"
