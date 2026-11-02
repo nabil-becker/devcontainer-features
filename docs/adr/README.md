@@ -73,7 +73,7 @@ numbering and a row below.
 | [0022](0022-the-shutdown-check-is-resolved-in-the-container-from-a-task-contract.md) | The shutdown check is resolved in the container from a task contract | accepted | 2026-10-22 |
 | [0023](0023-the-theme-is-a-bar.md) | The theme is a bar | accepted | 2026-10-23 |
 | [0024](0024-the-host-is-an-adapter-owned-by-devcontainer-cli.md) | The host is an adapter owned by devcontainer-cli | accepted | 2026-10-23 |
-| [0025](0025-the-devhost-feature-is-local-only-and-lives-outside-src.md) | The devhost Feature is local-only and lives outside `src/` | accepted | 2026-10-23 |
+| [0025](0025-the-devhost-feature-is-local-only-and-lives-outside-src.md) | The devhost Feature is local-only and lives outside `src/` | accepted (amended by 0044) | 2026-10-23 |
 | [0026](0026-a-one-shot-command-run-on-the-host-is-allowed-a-background-process-is-not.md) | A one-shot command run on the host is allowed, a background process is not | accepted | 2026-10-24 |
 | [0027](0027-ci-runs-task-lint-inside-the-devcontainer-and-the-tool-versions-are-pinned.md) | CI runs `task lint` inside the devcontainer, and the tool versions are pinned | accepted | 2026-10-24 |
 | [0028](0028-claude-host-refuses-a-second-live-session-and-a-hook-writes-the-pin-back.md) | claude-host refuses a second live session, and an opt-in hook writes the pin back | accepted | 2026-10-24 |
@@ -92,3 +92,4 @@ numbering and a row below.
 | [0041](0041-a-session-name-is-rendered-by-the-agents-feature-from-a-template-and-passed-to-the-cli-adapter-in-an-environment-variable.md) | A session name is rendered by the agents Feature from a template and passed to the CLI adapter in an environment variable | accepted | 2026-10-30 |
 | [0042](0042-devhost-verify-stays-the-one-commit-check-and-gains-the-aof-checks.md) | devhost-verify stays the one commit check and gains the AOF checks | accepted | 2026-11-01 |
 | [0043](0043-the-aof-planting-keeps-four-local-rules-and-moves-the-ledger-onto-the-register-with-a-mirror-outside-git.md) | The AOF planting keeps four local rules and moves the ledger onto the register with a mirror outside git | accepted | 2026-11-02 |
+| [0044](0044-the-seed-carries-the-devhost-feature-as-files-and-its-starter-references-it-by-local-path.md) | The seed carries the devhost Feature as files, and its starter references it by local path | accepted | 2026-11-02 |

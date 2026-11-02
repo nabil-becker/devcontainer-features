@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | accepted |
+| **Status** | accepted (amended by [ADR 0044](0044-the-seed-carries-the-devhost-feature-as-files-and-its-starter-references-it-by-local-path.md): the seed carries the devhost as files) |
 | **Date** | 2026-10-23 |
 | **Deciders** | the Operator; proposed by the host |
 
