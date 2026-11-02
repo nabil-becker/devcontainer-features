@@ -356,6 +356,14 @@ subcommands take no lock; `devcontainer features test` takes it only with
 `DEVCONTAINER_BUILD_LOCK_FEATURES_TEST=true` (default false);
 `DEVCONTAINER_BUILD_LOCK=0` turns it off.
 
+Before `up`, `build`, `exec`, `set-up` and `run-user-commands` the launcher
+checks that the container engine answers (one `docker info`, or `ps -q` for
+another engine, when it does) and otherwise waits for it, printing
+`waiting for the container engine to answer...` once, for
+`DEVCONTAINER_ENGINE_WAIT` seconds (default 60; `0` = no wait), then fails
+naming the engine and how to start it. A failed `up` or `build` asks the engine
+once more and prints its own error, which `@devcontainers/cli` hides.
+
 Both honour the settings above. The include must be a *local* include - the
 tasks run the scripts next to the Taskfile, which remote includes cannot
 reach. It declares no global `env:` on purpose: with Task 3.45 an `env:` key

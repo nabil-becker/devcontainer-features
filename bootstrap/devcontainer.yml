@@ -119,6 +119,12 @@
 #                              prints what it would do (and lists duplicate sessions), `-- --no-view`
 #                              starts without the view, `-- --no-wait` skips the wait for restored
 #                              sessions, `-- --stop-duplicates` stops extra sessions (claude stop).
+#   DEVCONTAINER_ENGINE_WAIT   seconds to wait for the container engine to answer before
+#                              up, build, exec, set-up and run-user-commands (default 60;
+#                              0 = no wait). One check when it answers; otherwise "waiting for
+#                              the container engine to answer..." once, a check every second,
+#                              and then a failure naming the engine and how to start it. A
+#                              failed up or build prints the engine's own error.
 #   DEVCONTAINER_BUILD_LOCK    0 = do not serialise `up`/`build` host-wide (default:
 #                              one image build at a time, see README).
 #   DEVCONTAINER_BUILD_LOCK_FEATURES_TEST  true = `features test` takes that
@@ -386,9 +392,24 @@ tasks:
           ARGS: 'pwsh -NoLogo'
 
   agent:
-    desc: 'Start an agent of the repository''s agent list inside the devcontainer (the agents Feature: task agents -- <name>), starting the container first (through exec, which runs up; idempotent): task devcontainer:agent -- <name> [--resume|--new] [extra CLI args]. A resident agent is made to run in the background and attached; an on-demand agent opens a new session in this terminal. AGENTS_FILE=<repo-relative path> (before the --) picks another list than .devcontainer/agents.yml. Runs directly when already inside the container.'
+    desc: 'Start an agent of the repository''s agent list inside the devcontainer (the agents Feature: task agents -- <name>), starting the container first (through exec, which runs up; idempotent): task devcontainer:agent -- <name> [--resume|--new] [extra CLI args]. A resident agent is made to run in the background and attached; an on-demand agent opens a new session in this terminal. No name starts the agent the list marks default: true; from the host, with no name and no such agent in the list, it refuses before starting the container. AGENTS_FILE=<repo-relative path> (before the --) picks another list than .devcontainer/agents.yml. Runs directly when already inside the container.'
     interactive: true
+    vars:
+      # "1" when the arguments name no agent (none, or they start with an option such as --resume).
+      _NAMELESS: '{{$a := splitArgs (.CLI_ARGS | default "")}}{{if or (eq (len $a) 0) (hasPrefix "-" (index $a 0))}}1{{end}}'
+      _AGENTS_LIST: '{{.AGENTS_FILE | default ".devcontainer/agents.yml"}}'
     cmds:
+      # From the host with no name: the agent list must mark a default, else `agents start` inside
+      # would refuse only after a whole `up`. A plain line match in the shell Task runs on every
+      # platform (no grep on Windows); a list that is missing or cannot be read is let through, so
+      # a valid list is never refused (the Feature then says what is wrong).
+      - cmd: >-
+          {{if and (not ._IN_CONTAINER) ._NAMELESS}}f={{printf "%s/%s" .WORKSPACE_FOLDER ._AGENTS_LIST | shellQuote}};
+          [ -f "$f" ] || exit 0;
+          while IFS= read -r l || [ -n "$l" ]; do case "$l" in *default:*true*) exit 0 ;; esac; done < "$f";
+          echo {{printf "devcontainer:agent needs an agent name: task devcontainer:agent -- <name> [--resume|--new] [extra CLI args] (or mark one agent default: true in %s). Nothing was started." ._AGENTS_LIST | shellQuote}} >&2;
+          exit 2{{else}}:{{end}}
+        silent: true
       - task: run
         vars:
           CMD: '{{if .AGENTS_FILE}}AGENTS_FILE_TASK_VAR={{.AGENTS_FILE | shellQuote}} {{end}}agents start {{.CLI_ARGS}}'

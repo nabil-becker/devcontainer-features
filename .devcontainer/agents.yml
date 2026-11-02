@@ -1,5 +1,6 @@
 # The agents of this repository (the agents Feature): task agents -- <name> inside,
-# task devcontainer:agent -- <name> from the workstation; task agents:list shows them.
+# task devcontainer:agent -- <name> from the workstation (no name: the default, host);
+# task agents:list shows them.
 agents:
   # The host session, driven from the workstation and from the phone. On-demand with
   # --remote-control until a background session is shown to be reachable through Remote
@@ -9,3 +10,4 @@ agents:
     kind: on-demand
     folder: .
     args: [--remote-control]
+    default: true          # task dc:agent with no name starts it
