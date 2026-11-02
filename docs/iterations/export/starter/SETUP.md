@@ -47,7 +47,25 @@ task devcontainer:claude
 from scratch, `task devcontainer:shell` opens a shell inside. `devcontainer:claude` starts or
 resumes the Claude Code session inside the container.
 
+The starter sets the agents' commit identity: git run by Claude Code commits as `devhost agent
+<devhost-agent@noreply.invalid>`, while your own terminal keeps your identity (ADR 0016).
+
 ## More
 
 The Features' README (`github.com/nabil-becker/devcontainer-features`) lists every Feature, its
 options and its tasks; each Feature has its own README under `src/<id>`.
+
+## The devhost Feature travels with the seed
+
+`devhost` is no longer published from this collection (ADR 0025), so the starter does not pull it
+from the registry (an old `devhost:1` there is frozen and takes no fixes). The seed carries the
+Feature as files instead: `starter/features/devhost/`, the current one at the time of the export.
+
+- **Plant it:** copy `starter/features/devhost/` to `.devcontainer/features/devhost/` in the
+  project and commit it. `starter/devcontainer.json` references it by local path
+  (`"./features/devhost"`), relative to `.devcontainer/`; the other Features stay on the registry.
+- **Update it:** re-copy `starter/features/devhost/` from a newer seed over
+  `.devcontainer/features/devhost/` (delete the old folder first so removed files go), commit, then
+  `task devcontainer:rebuild`. Nothing updates it by itself.
+- **Order:** its `installsAfter` names the registry Features (`go-task`, `claude-code`) by their
+  published ids, which is how the starter reaches them, so they still resolve.

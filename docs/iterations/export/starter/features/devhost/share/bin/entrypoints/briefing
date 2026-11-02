@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# devhost-briefing: runs the devhost's briefing.py (installed under /usr/local/share/devhost).
+# From a terminal it prints the text; as a SessionStart hook (stdin is the hook JSON, not a
+# terminal) it swallows stdin and prints the JSON the hook expects.
+set -uo pipefail
+if [ -t 0 ]; then
+  exec python3 /usr/local/share/devhost/python/briefing.py "$@"
+fi
+cat >/dev/null
+exec python3 /usr/local/share/devhost/python/briefing.py --json "$@"

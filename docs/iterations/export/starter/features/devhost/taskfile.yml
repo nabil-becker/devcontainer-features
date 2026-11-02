@@ -1,0 +1,134 @@
+# Tasks contributed by the devhost Feature (namespace: devhost).
+version: '3'
+
+tasks:
+  version:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Show the installed devhost version, where its scripts live, which devhost-* tools are on PATH and where the job state is (DEVHOST_STATE).'
+    silent: true
+    cmds:
+      - |
+        share="${DEVHOST_SHARE:-/usr/local/share/devhost}"
+        echo "devhost : $(cat "$share/VERSION" 2>/dev/null || echo unknown) at $share"
+        echo "tools   : $(ls /usr/local/bin/devhost-* 2>/dev/null | xargs -n1 basename | paste -sd' ' -)"
+        echo "state   : ${DEVHOST_STATE:-/var/lib/devcontainer-features/devhost}"
+        echo "claude  : $(command -v claude >/dev/null 2>&1 && claude --version 2>/dev/null | head -n1 || echo 'not on PATH')"
+
+  setup:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Re-run the post-create setup: create DEVHOST_STATE (by default the Feature''s named volume), hand it to the current user and report whether the repository in the current directory is wired (hooks, ledger). Idempotent.'
+    cmds:
+      - devhost-setup
+
+  log:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Show the last N lines (default 20) of every back''s job.log under DEVHOST_STATE: what each run did, what a guard undid, why a model call failed.'
+    silent: true
+    vars:
+      N: '{{.N | default "20"}}'
+    cmds:
+      - |
+        state="${DEVHOST_STATE:-/var/lib/devcontainer-features/devhost}"
+        found=0
+        for f in "$state"/*/job.log; do
+          [ -f "$f" ] || continue
+          found=1
+          echo "== $f"; tail -n {{.N}} "$f"
+        done
+        [ "$found" = 1 ] || echo "no job logs under $state yet"
+
+  jobs:state:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'List the backs'' state under DEVHOST_STATE: per job the sessions read (offsets), what is pending, whether its lock is held, the tester''s last verdict, and the number of metrics lines in runs.jsonl.'
+    silent: true
+    cmds:
+      - |
+        state="${DEVHOST_STATE:-/var/lib/devcontainer-features/devhost}"
+        [ -d "$state" ] || { echo "no state at $state (run task devhost:setup)"; exit 0; }
+        for d in "$state"/*/; do
+          [ -d "$d" ] || continue
+          job="$(basename "$d")"
+          offsets="$(ls "$d/offsets" 2>/dev/null | wc -l | tr -d ' ')"
+          pending="$(find "$d" -maxdepth 1 -name 'pending-*' -size +0 2>/dev/null | wc -l | tr -d ' ')"
+          if [ -f "$d/lock" ] && ! flock -n "$d/lock" true 2>/dev/null; then lock=held; else lock=free; fi
+          extra=""
+          [ -f "$d/last_result" ] && extra=" last_result=$(cat "$d/last_result")"
+          echo "$job: sessions=$offsets pending=$pending lock=$lock$extra"
+        done
+        echo "runs.jsonl: $(wc -l < "$state/runs.jsonl" 2>/dev/null || echo 0) lines"
+
+  briefing:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Print the briefing an inter gets at session start: where the records stand (ledger entries since the last review, open backlog items, pending decisions). No model.'
+    silent: true
+    cmds:
+      - devhost-briefing
+
+  branch:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Start work on a backlog item: create <type>/<id>/<n> (type feature, fix, docs or chore; n the next free workstream number) from origin/main and switch to it; arguments after --, e.g. task devhost:branch -- branch-work-ids [type]. Refuses an id that is not in TODO.md.'
+    cmds:
+      - devhost-branches new {{.CLI_ARGS}}
+
+  branches:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'List every local and remote branch with its backlog item, its pull request state and what it still adds to main; PRUNE=1 deletes (locally, on the remote, and its worktree) only branches whose pull request merged and that add nothing.'
+    vars:
+      PRUNE: '{{.PRUNE | default ""}}'
+    cmds:
+      - devhost-branches {{if .PRUNE}}--prune{{end}}
+
+  report:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Write the monthly cost report for MONTH (YYYY-MM, default the current month) from the transcripts and the backs'' metrics lines.'
+    vars:
+      MONTH: '{{.MONTH | default ""}}'
+    cmds:
+      - devhost-report {{.MONTH}}
+
+  costs:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'What the newest session cost, by model and by con, from Claude Code''s own transcripts (list-price estimate); SINCE=<ISO timestamp> limits it.'
+    silent: true
+    cmds:
+      - devhost-costs {{if .SINCE}}--since {{.SINCE}}{{end}}
+
+  adr:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Create or list architecture decision records in DEVHOST_ADR_DIR; arguments after --, e.g. task devhost:adr -- new "Short title".'
+    cmds:
+      - devhost-adr {{.CLI_ARGS}}
+
+  verify:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Run the repository checks the way of working relies on: the ledger append-only, no forbidden word or redacted name in what is committed, the records in shape.'
+    cmds:
+      - devhost-verify
+
+  package:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Assemble the iteration package (the seed) into a fresh folder: the seed README, the starter and the skills untouched, the papers received unchanged, the new paper, the foundation files of the manifest, and PACKAGE.md with every file''s sha256. Arguments after --, e.g. task devhost:package -- --iteration 3 --paper docs/iterations/papers/iteration-3.md; refuses (exit 2) a missing README, starter or skill, a missing manifest entry, a non-empty output folder or a changed paper.'
+    cmds:
+      - devhost-package {{.CLI_ARGS}}
+
+  init:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Scaffold the devhost way of working in the repository in the current directory: the hooks in .claude/settings.json, the ledger folder, the backlog, the lexicon and the ADR folder (existing files are kept). Arguments after --.'
+    interactive: true
+    cmds:
+      - devhost-init {{.CLI_ARGS}}
+
+  site:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Build the repository''s homepage: one self-contained HTML page of the backlog, ledger, Features, records and every tracked doc, into OUT (default .devhost/site/index.html); PRS=1 adds the open pull requests. Publishing it is the publish-site skill.'
+    vars:
+      OUT: '{{.OUT | default ""}}'
+      PRS: '{{.PRS | default ""}}'
+    cmds:
+      - devhost-site {{if .OUT}}--out {{.OUT}}{{end}} {{if .PRS}}--prs{{end}}
+
+  shutdown-check:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Check the devhost is safe to stop: working tree clean and pushed, no back running or holding a stretch to log, no tester run, no night shift mid-plan; lists stashes and untracked files. One line per finding, exit 1 when not ready. devcontainer:stop runs it first.'
+    cmds:
+      - devhost-shutdown-check

@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# devhost-init: runs the devhost's init.py (installed under /usr/local/share/devhost).
+exec python3 /usr/local/share/devhost/python/init.py "$@"
