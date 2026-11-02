@@ -100,6 +100,9 @@ Describe 'Invoke-DevcontainerCli and the build lock' {
         Mock -ModuleName DevcontainerCli Invoke-DevcontainerCliProcess { $script:CliExitCode = 0 }
         Mock -ModuleName DevcontainerCli Enter-DevcontainerBuildLock { [pscustomobject]@{ Held = $true } }
         Mock -ModuleName DevcontainerCli Exit-DevcontainerBuildLock { }
+        # The engine wait has its own Describe below; here the engine always answers.
+        Mock -ModuleName DevcontainerCli Wait-ContainerEngine { }
+        Mock -ModuleName DevcontainerCli Write-ContainerEngineDiagnosis { }
     }
 
     It 'takes and releases the lock for <sub>' -ForEach @(
@@ -156,6 +159,190 @@ Describe 'Invoke-DevcontainerCli and the build lock' {
             Should -Invoke -ModuleName DevcontainerCli Enter-DevcontainerBuildLock -Times 0 -Exactly
         }
         finally { $env:DEVCONTAINER_BUILD_LOCK_FEATURES_TEST = $null }
+    }
+}
+
+Describe 'The container engine wait (DEVCONTAINER_ENGINE_WAIT)' {
+    # Right after a rebuild the engine may not answer for a moment, and `devcontainer up`
+    # then fails inside with "Command failed: docker ps ..." and docker's stderr hidden.
+    BeforeAll {
+        $script:EnvNames = 'DEVCONTAINER_ENGINE_WAIT', 'DEVCONTAINER_DOCKER_PATH', 'HOST_TYPE'
+        $script:SavedEnv = @{}
+        foreach ($n in $script:EnvNames) { $script:SavedEnv[$n] = [Environment]::GetEnvironmentVariable($n) }
+    }
+    BeforeEach {
+        foreach ($n in $script:EnvNames) { [Environment]::SetEnvironmentVariable($n, $null) }
+        Clear-HostProfileCache
+        $script:answers = @()
+        $script:checks = 0
+        # The engine answers when the next entry of $script:answers says so (the last one repeats).
+        Mock -ModuleName DevcontainerCli Test-ContainerEngineResponding {
+            $i = [Math]::Min($script:checks, $script:answers.Count - 1)
+            $script:checks++
+            [bool]$script:answers[$i]
+        }
+        Mock -ModuleName DevcontainerCli Start-Sleep { }
+        Mock -ModuleName DevcontainerCli Resolve-DockerPath { $null }
+        Mock -ModuleName DevcontainerCli Get-CachedHostType { @{ Type = 'windows-docker'; Why = 'test'; Priority = @('windows-docker') } }
+    }
+    AfterAll { foreach ($n in $script:EnvNames) { [Environment]::SetEnvironmentVariable($n, $script:SavedEnv[$n]) } }
+
+    It 'a healthy engine costs one check: no sleep, no waiting line' {
+        $script:answers = @($true)
+        $out = Wait-ContainerEngine 6>&1
+        $script:checks | Should -Be 1
+        Should -Invoke -ModuleName DevcontainerCli Start-Sleep -Times 0 -Exactly
+        @($out | Where-Object { "$_" -match 'waiting' }).Count | Should -Be 0
+    }
+
+    It 'an engine that answers on the third check: one waiting line, two pauses of a second' {
+        $script:answers = @($false, $false, $true)
+        $out = Wait-ContainerEngine 6>&1
+        $script:checks | Should -Be 3
+        Should -Invoke -ModuleName DevcontainerCli Start-Sleep -Times 2 -Exactly -ParameterFilter { $Seconds -eq 1 }
+        @($out | Where-Object { "$_" -match 'waiting for the container engine to answer\.\.\.' }).Count | Should -Be 1
+    }
+
+    It 'gives up after DEVCONTAINER_ENGINE_WAIT seconds, naming the engine, how to start it and the setting' {
+        $script:answers = @($false)
+        $env:DEVCONTAINER_ENGINE_WAIT = '3'
+        Mock -ModuleName DevcontainerCli Get-ContainerEngineError { 'Cannot connect to the Docker daemon' }
+        { Wait-ContainerEngine 6>$null } | Should -Throw '*docker*did not answer within 3 s*Cannot connect to the Docker daemon*Docker Desktop*DEVCONTAINER_ENGINE_WAIT*'
+        $script:checks | Should -Be 4
+    }
+
+    It 'DEVCONTAINER_ENGINE_WAIT=0 checks nothing' {
+        $script:answers = @($false)
+        $env:DEVCONTAINER_ENGINE_WAIT = '0'
+        Wait-ContainerEngine
+        $script:checks | Should -Be 0
+    }
+
+    It 'a DEVCONTAINER_ENGINE_WAIT that is not a whole number is refused, naming the setting' {
+        $env:DEVCONTAINER_ENGINE_WAIT = 'soon'
+        { Wait-ContainerEngine } | Should -Throw "*DEVCONTAINER_ENGINE_WAIT*'soon'*"
+    }
+
+    It 'how to start the engine, per host type: <type>' -ForEach @(
+        @{ type = 'windows-docker'; hint = 'Docker Desktop' }
+        @{ type = 'windows-wsl-docker'; hint = 'WSL distro' }
+        @{ type = 'windows-wslc'; hint = 'wsl --status' }
+        @{ type = 'linux'; hint = 'systemctl start docker' }
+        @{ type = 'macos'; hint = 'Docker Desktop' }
+    ) {
+        Get-ContainerEngineStartHint -Type $type | Should -Match ([regex]::Escape($hint))
+    }
+
+    Context 'Invoke-DevcontainerCli' {
+        BeforeEach {
+            $script:order = [System.Collections.Generic.List[string]]::new()
+            Mock -ModuleName DevcontainerCli Enter-DevcontainerBuildLock { $script:order.Add('lock'); [pscustomobject]@{ Held = $true } }
+            Mock -ModuleName DevcontainerCli Exit-DevcontainerBuildLock { if ($Lock) { $script:order.Add('unlock') } }
+            Mock -ModuleName DevcontainerCli Wait-ContainerEngine { $script:order.Add('wait') }
+            Mock -ModuleName DevcontainerCli Invoke-DevcontainerCliProcess { $script:order.Add('cli'); & (Get-Module DevcontainerCli) { $script:CliExitCode = 0 } }
+            Mock -ModuleName DevcontainerCli Write-ContainerEngineDiagnosis { $script:order.Add('diagnosis') }
+        }
+
+        It 'waits for the engine before <sub>' -ForEach @(
+            @{ sub = 'up'; seq = 'lock,wait,cli,unlock' }
+            @{ sub = 'build'; seq = 'lock,wait,cli,unlock' }
+            @{ sub = 'exec'; seq = 'wait,cli' }
+            @{ sub = 'set-up'; seq = 'wait,cli' }
+            @{ sub = 'run-user-commands'; seq = 'wait,cli' }
+        ) {
+            Invoke-DevcontainerCli -Subcommand $sub -WorkspaceFolder $TestDrive
+            ($script:order -join ',') | Should -Be $seq
+        }
+
+        It 'does not wait for <sub>, which needs no engine' -ForEach @(
+            @{ sub = 'read-configuration' }
+            @{ sub = 'features' }
+            @{ sub = 'outdated' }
+        ) {
+            Invoke-DevcontainerCli -Subcommand $sub -WorkspaceFolder $TestDrive
+            Should -Invoke -ModuleName DevcontainerCli Wait-ContainerEngine -Times 0 -Exactly
+        }
+
+        It 'an engine that never answers: the CLI is not run and the lock is released' {
+            Mock -ModuleName DevcontainerCli Wait-ContainerEngine { throw 'the container engine (docker) did not answer' }
+            { Invoke-DevcontainerCli -Subcommand up -WorkspaceFolder $TestDrive } | Should -Throw '*did not answer*'
+            ($script:order -join ',') | Should -Be 'lock,unlock'
+        }
+
+        It 'a failed <sub> asks the engine once and still fails' -ForEach @(
+            @{ sub = 'up' }
+            @{ sub = 'build' }
+        ) {
+            Mock -ModuleName DevcontainerCli Invoke-DevcontainerCliProcess { $script:order.Add('cli'); & (Get-Module DevcontainerCli) { $script:CliExitCode = 1 } }
+            { Invoke-DevcontainerCli -Subcommand $sub -WorkspaceFolder $TestDrive } | Should -Throw "*devcontainer $sub failed*"
+            ($script:order -join ',') | Should -Be 'lock,wait,cli,unlock,diagnosis'
+        }
+
+        It 'a successful up asks nothing more' {
+            Invoke-DevcontainerCli -Subcommand up -WorkspaceFolder $TestDrive
+            Should -Invoke -ModuleName DevcontainerCli Write-ContainerEngineDiagnosis -Times 0 -Exactly
+        }
+    }
+}
+
+Describe 'The container engine check, with a stub engine' -Skip:$IsWindows {
+    BeforeAll {
+        # Runs $Body with [Console]::Error captured; returns what it wrote there.
+        function Get-ConsoleError([scriptblock]$Body) {
+            $saved = [Console]::Error
+            $sw = [System.IO.StringWriter]::new()
+            [Console]::SetError($sw)
+            try { & $Body | Out-Null } finally { [Console]::SetError($saved) }
+            $sw.ToString()
+        }
+        $script:Stub = Join-Path $TestDrive 'stub'
+        New-Item -ItemType Directory -Path $script:Stub -Force | Out-Null
+        $script:Calls = Join-Path $TestDrive 'engine-calls'
+        # The stub records its arguments; STUB_DOWN=1 makes it fail as a stopped daemon does.
+        $body = "#!/bin/sh`necho `"`$*`" >> '$($script:Calls)'`nif [ `"`$STUB_DOWN`" = 1 ]; then echo 'Client: ok'; echo 'Cannot connect to the Docker daemon at unix:///var/run/docker.sock' >&2; exit 1; fi`necho 'Server: ok'`n"
+        foreach ($n in 'docker', 'wslc') {
+            [IO.File]::WriteAllText((Join-Path $script:Stub $n), $body)
+            & chmod +x (Join-Path $script:Stub $n)
+        }
+    }
+    BeforeEach {
+        Remove-Item $script:Calls -ErrorAction SilentlyContinue
+        $env:STUB_DOWN = $null
+        Mock -ModuleName DevcontainerCli Get-CachedHostType { @{ Type = 'windows-docker'; Why = 'test'; Priority = @('windows-docker') } }
+    }
+    AfterAll { $env:STUB_DOWN = $null }
+
+    It 'asks a docker engine `info` and a wslc engine `ps -q`' {
+        Mock -ModuleName DevcontainerCli Resolve-DockerPath { Join-Path $script:Stub 'docker' }
+        InModuleScope DevcontainerCli { Test-ContainerEngineResponding } | Should -BeTrue
+        Mock -ModuleName DevcontainerCli Resolve-DockerPath { Join-Path $script:Stub 'wslc' }
+        InModuleScope DevcontainerCli { Test-ContainerEngineResponding } | Should -BeTrue
+        (Get-Content $script:Calls) -join '|' | Should -Be 'info|ps -q'
+    }
+
+    It 'a stopped engine does not answer, and its own error is what Get-ContainerEngineError returns' {
+        $env:STUB_DOWN = '1'
+        Mock -ModuleName DevcontainerCli Resolve-DockerPath { Join-Path $script:Stub 'docker' }
+        InModuleScope DevcontainerCli { Test-ContainerEngineResponding } | Should -BeFalse
+        $e = InModuleScope DevcontainerCli { Get-ContainerEngineError }
+        $e | Should -Match 'Cannot connect to the Docker daemon'
+        $e | Should -Not -Match 'Client: ok'
+    }
+
+    It 'after a failed up: the engine''s own error and how to start it, when it does not answer' {
+        $env:STUB_DOWN = '1'
+        Mock -ModuleName DevcontainerCli Resolve-DockerPath { Join-Path $script:Stub 'docker' }
+        $err = Get-ConsoleError { Write-ContainerEngineDiagnosis }
+        $err | Should -Match 'does not answer'
+        $err | Should -Match 'Cannot connect to the Docker daemon'
+        $err | Should -Match 'Docker Desktop'
+    }
+
+    It 'after a failed up: says the engine answers now, when it does' {
+        Mock -ModuleName DevcontainerCli Resolve-DockerPath { Join-Path $script:Stub 'docker' }
+        $err = Get-ConsoleError { Write-ContainerEngineDiagnosis }
+        $err | Should -Match 'answers now'
+        $err | Should -Match 'run the task again'
     }
 }
 

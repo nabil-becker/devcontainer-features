@@ -104,6 +104,7 @@ tasks:
       - task: test:shutdown
       - task: test:psscriptanalyzer-files
       - task: test:host-type
+      - task: test:engine-wait
       - task: test:bootstrap-dir
       - task: test:host-mounts
       - task: test:ssh-key-import
@@ -147,7 +148,7 @@ tasks:
       - bash test/agents/unit/agents_test.sh
 
   test:agent-task:
-    desc: 'Docker-free test of how `task devcontainer:agent`, `devcontainer:agent:list` and `devcontainer:agent:reset` hand the name, the flags and AGENTS_FILE to the agents command, inside the container and through the exec task from the host (--dry), and that the deprecated devcontainer:claude and devcontainer:claude:fleet still run and print one deprecation line; fake commands record what they get; part of lint.'
+    desc: 'Docker-free test of how `task devcontainer:agent`, `devcontainer:agent:list` and `devcontainer:agent:reset` hand the name, the flags and AGENTS_FILE to the agents command, inside the container and through the exec task from the host (--dry), that from the host with no name it refuses before `up` unless the agent list marks one agent default: true (stub devcontainer and docker), and that the deprecated devcontainer:claude and devcontainer:claude:fleet still run and print one deprecation line; fake commands record what they get; part of lint.'
     cmds:
       - bash test/bootstrap/agent_task_test.sh
 
@@ -181,6 +182,11 @@ tasks:
     desc: 'Docker-free bash test that the PSScriptAnalyzer step checks tracked and non-ignored files only: a bad script in a git-ignored folder is not scanned, a bad tracked one still fails (test/lint/psscriptanalyzer_files_test.sh); part of lint.'
     cmds:
       - bash test/lint/psscriptanalyzer_files_test.sh
+
+  test:engine-wait:
+    desc: 'Docker-free bash tests of the engine wait in the bash twin (src/devcontainer-cli/devcontainer-cli.sh): one check before up, build, exec, set-up and run-user-commands when the engine answers (docker info, ps -q for another engine), none for the subcommands that need no engine; a late engine waited for with one waiting line; one that never answers failing after DEVCONTAINER_ENGINE_WAIT seconds without running the CLI, naming the engine, its own error and how to start it; DEVCONTAINER_ENGINE_WAIT=0 and a bad value; a failed up printing what the engine says; a stub engine and CLI; part of lint. The PowerShell twin is in test:bootstrap.'
+    cmds:
+      - bash test/bootstrap/engine_wait_test.sh
 
   test:host-type:
     desc: 'Docker-free bash tests of HOST_TYPE resolution in the bash twin (src/devcontainer-cli/devcontainer-cli.sh): explicit id, unknown id, auto and HOST_TYPE_PRIORITY (default and an organisation list), the DCF_HOST_* variables handed to the CLI, DEVCONTAINER_DOCKER_PATH still naming the engine; evidence faked with DCF_HOST_UNAME, DCF_HOST_PROC_VERSION and fake docker and devcontainer commands; part of lint. The PowerShell twin is covered by test:bootstrap.'
@@ -224,7 +230,7 @@ tasks:
       - bash test/bootstrap/bootstrap_dir_test.sh
 
   test:bootstrap:
-    desc: 'Pester tests of the Windows host launcher (bootstrap/host/DevcontainerCli.psm1) and of bootstrap/bootstrap.ps1 (vendoring folder, BOOTSTRAP_DIR, git-ignore, Taskfile template, old form): the build lock that serialises devcontainer up/build across repositories, the stop check, HOST_TYPE resolution and the DCF_HOST_* variables (evidence mocked), and the cloud-folder login (relay, busy port, timeout, --workstation-rclone; stub devcontainer and docker, so those run where bash runs). Needs pwsh with Pester 5 or later (Install-Module Pester -Scope CurrentUser); runs on any host, so it is part of lint.'
+    desc: 'Pester tests of the Windows host launcher (bootstrap/host/DevcontainerCli.psm1) and of bootstrap/bootstrap.ps1 (vendoring folder, BOOTSTRAP_DIR, git-ignore, Taskfile template, old form): the build lock that serialises devcontainer up/build across repositories, the engine wait before the subcommands that need the engine (DEVCONTAINER_ENGINE_WAIT) and the engine''s own error after a failed up, the stop check, HOST_TYPE resolution and the DCF_HOST_* variables (evidence mocked), and the cloud-folder login (relay, busy port, timeout, --workstation-rclone; stub devcontainer and docker, so those run where bash runs). Needs pwsh with Pester 5 or later (Install-Module Pester -Scope CurrentUser); runs on any host, so it is part of lint.'
     cmds:
       - pwsh -NoLogo -NoProfile -Command "Import-Module Pester -MinimumVersion 5.0; Invoke-Pester -Path '{{.ROOT_DIR}}/test/bootstrap' -Output Detailed -CI"
 

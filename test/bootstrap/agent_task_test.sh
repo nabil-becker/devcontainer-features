@@ -2,7 +2,9 @@
 # Docker-free test of how `task devcontainer:agent`, `devcontainer:agent:list` and `:agent:reset`
 # (bootstrap/devcontainer.yml) hand the agent name, its flags and AGENTS_FILE to the agents
 # Feature's `agents` command: inside the container directly, from the host through the exec
-# task (--dry shows the command, nothing runs); and that the deprecated devcontainer:claude and
+# task (--dry shows the command, nothing runs); that from the host with no agent name it refuses
+# before the container is started unless the list marks a default (stub devcontainer and docker
+# record what runs); and that the deprecated devcontainer:claude and
 # devcontainer:claude:fleet still run and print one deprecation line. Fake agents, claude-host
 # and claude-fleet commands on PATH record what they get. Needs the real `task` (the lint
 # environment has it). YAML_FILE points the test at another copy of devcontainer.yml.
@@ -57,6 +59,55 @@ out="$(fromhost devcontainer:agent:list --dry)"
 contains 'host: agent:list through the exec task' "$out" 'agents list'
 out="$(fromhost devcontainer:agent:reset --dry -- --all)"
 contains 'host: agent:reset through the exec task' "$out" 'agents reset --all'
+
+# --- From the host with no agent name: refused before anything starts, unless the list marks a
+# default. A stub `devcontainer` (and an answering `docker`) stand in for the launcher's CLI, so a
+# run that gets through records its up and its exec; one that is refused records nothing.
+mkdir -p "$T/stub" "$T/home"
+# shellcheck disable=SC2016  # the stub's own $*
+printf '#!/bin/sh\necho "$*" >> "$REC_OUT/cli-calls"\nexit 0\n' > "$T/stub/devcontainer"
+printf '#!/bin/sh\nexit 0\n' > "$T/stub/docker"
+chmod +x "$T/stub/devcontainer" "$T/stub/docker"
+nodefault='agents:
+  - name: host
+    cli: claude
+    kind: on-demand'
+withdefault="$nodefault
+    default: true"
+# hoststart <agents.yml text, or - for no file> [task args...]: rc, out, ran (the CLI subcommands,
+# space-joined). LIST_AT=<repo-relative path> writes the list there instead of .devcontainer/agents.yml.
+hoststart() {
+  local list="$1" at="${LIST_AT:-.devcontainer/agents.yml}"; shift
+  rm -rf "$T/repo/.devcontainer" "$T/repo/ops" "$T/cli-calls"
+  mkdir -p "$T/repo/.devcontainer" "$T/repo/ops"
+  [ "$list" = - ] || printf '%s\n' "$list" > "$T/repo/$at"
+  rc=0
+  out="$(cd "$T/repo" && DEVCONTAINER_IN_CONTAINER=0 HOST_MOUNTS=false HOME="$T/home" DEVCONTAINER_BUILD_LOCK=0 PATH="$T/stub:$T/bin:$PATH" task "$@" 2>&1)" || rc=$?
+  ran="$(cut -d' ' -f1 "$T/cli-calls" 2>/dev/null | paste -sd' ')"
+}
+hoststart "$nodefault" devcontainer:agent
+check 'host, no name, no default: refused' 1 "$([ "$rc" -ne 0 ] && echo 1)"
+contains 'host, no name, no default: says what to do' "$out" 'devcontainer:agent needs an agent name: task devcontainer:agent -- <name> [--resume|--new]'
+contains 'host, no name, no default: names the list and default: true' "$out" '(or mark one agent default: true in .devcontainer/agents.yml)'
+check 'host, no name, no default: nothing started (no up)' '' "$ran"
+hoststart "$nodefault" devcontainer:agent -- --resume
+check 'host, only flags, no default: refused before up' '' "$ran"
+contains 'host, only flags, no default: says what to do' "$out" 'needs an agent name'
+hoststart "$withdefault" devcontainer:agent
+check 'host, no name, a default: up, then the exec' 'up exec' "$ran"
+contains 'host, no name, a default: agents start runs inside' "$(cat "$T/cli-calls" 2>/dev/null)" 'agents start'
+hoststart "$nodefault" devcontainer:agent -- host
+check 'host, a name: up, then the exec' 'up exec' "$ran"
+hoststart - devcontainer:agent
+check 'host, no list file: let through (the Feature says what is wrong)' 'up exec' "$ran"
+LIST_AT=ops/agents.yml hoststart "$withdefault" devcontainer:agent AGENTS_FILE=ops/agents.yml
+check 'host, AGENTS_FILE with a default: let through' 'up exec' "$ran"
+LIST_AT=ops/agents.yml hoststart "$nodefault" devcontainer:agent AGENTS_FILE=ops/agents.yml
+contains 'host, AGENTS_FILE without a default: refused, naming that list' "$out" '(or mark one agent default: true in ops/agents.yml)'
+check 'host, AGENTS_FILE without a default: nothing started' '' "$ran"
+rm -rf "$T/repo/ops" "$T/repo/.devcontainer"
+out="$(inside devcontainer:agent)"; rc=$?
+check 'inside, no name: not refused by the task (the Feature decides)' 'agents start' "$(head -n 1 "$T/agents")"
 
 out="$(inside devcontainer:claude)"; rc=$?
 check 'devcontainer:claude still runs claude-host' 0 "$rc"

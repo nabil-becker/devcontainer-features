@@ -32,7 +32,7 @@
     (loaded by Task's dotenv: or by bootstrap.ps1) can drive it:
       DEVCONTAINER_DOCKER_PATH, DEVCONTAINER_NODE_VERSION,
       DEVCONTAINER_CLI_VERSION, HOST_TYPE, HOST_TYPE_PRIORITY, HOST_MOUNTS, SSH_AGENT_MODE,
-      DCF_HOST_CLOUD_FOLDER, DCF_HOST_FUSE. Explicit parameters win over the environment.
+      DCF_HOST_CLOUD_FOLDER, DCF_HOST_FUSE, DEVCONTAINER_ENGINE_WAIT. Explicit parameters win over the environment.
 
     DCF_HOST_MACHINE is always the launcher's own value: the workstation's machine name
     ($env:COMPUTERNAME on Windows, else the host name before its first dot), cut to letters, digits,
@@ -65,6 +65,13 @@
     Image builds are serialised host-wide: `up` and `build` hold the named
     mutex Global\devcontainer-features-build while they run (see
     Enter-DevcontainerBuildLock). DEVCONTAINER_BUILD_LOCK=0 turns that off.
+
+    Engine wait: up, build, exec, set-up and run-user-commands first check that the
+    engine answers (one check when it does) and otherwise wait for it, printing
+    "waiting for the container engine to answer..." once, for DEVCONTAINER_ENGINE_WAIT
+    seconds (default 60; 0 = no wait), then fail naming the engine and how to start it.
+    A failed up or build asks the engine once more and prints its own error (see
+    Wait-ContainerEngine, Write-ContainerEngineDiagnosis).
 #>
 
 $script:CacheRoot = if ($IsWindows) { Join-Path $env:LOCALAPPDATA 'devcontainer-features\devcontainer-node' } else { $null }
@@ -74,6 +81,9 @@ $script:BuildLockName = 'Global\devcontainer-features-build'
 # --remove-existing-container). `run-user-commands`, `set-up` and `exec` work on a
 # container that exists, so they take no lock.
 $script:BuildSubcommands = @('up', 'build')
+# The subcommands that talk to the container engine, so wait for it to answer first
+# (Wait-ContainerEngine). read-configuration and upgrade take --docker-path but read files only.
+$script:EngineSubcommands = @('up', 'build', 'exec', 'set-up', 'run-user-commands')
 
 function Get-SettingOrEnv {
     <# .SYNOPSIS Explicit value if non-empty, else the environment variable, else the default. #>
@@ -1036,6 +1046,148 @@ function Exit-DevcontainerBuildLock {
     try { $Lock.ReleaseMutex() } finally { $Lock.Dispose() }
 }
 
+# --------------------------------------------------------- engine wait ----
+# Right after a rebuild or an engine restart the engine may not answer for a moment, and
+# `devcontainer up` then fails inside ("Command failed: docker ps -q -a --filter label=...")
+# with the engine's own stderr hidden by @devcontainers/cli. So the engine subcommands wait for
+# it first, and a failed up or build asks it once more and prints what it says.
+
+function Test-EngineSubcommand {
+    <# .SYNOPSIS $true for a subcommand that talks to the container engine (it waits for the engine first). #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param([Parameter(Mandatory)][string]$Subcommand)
+    return ($Subcommand -in $script:EngineSubcommands)
+}
+
+function Get-ContainerEngineCheck {
+    <#
+    .SYNOPSIS
+        The command that asks the engine whether it answers: @{ Exe; Arguments; Shown }.
+        Docker (and podman) answer `info`, which fails while the daemon is down; any other
+        engine (wslc has no `info`) is asked `ps -q`, which the launcher already relies on
+        (Get-RunningDevcontainerId). Exe is the engine the CLI gets as --docker-path, so the
+        check asks what the CLI will use (for windows-wsl-docker driven from Windows that is
+        the docker CLI on PATH, not `wsl -e docker`).
+    #>
+    [CmdletBinding()]
+    param([string]$DockerPath)
+    $engine = Resolve-DockerPath -DockerPath $DockerPath
+    $exe = if ($engine) { $engine } else { 'docker' }
+    $leaf = [System.IO.Path]::GetFileNameWithoutExtension($exe)
+    $checkArgs = if ($leaf -in 'docker', 'podman') { @('info') } else { @('ps', '-q') }
+    return [pscustomobject]@{ Exe = $exe; Arguments = [string[]]$checkArgs; Shown = "$exe $($checkArgs -join ' ')"; OnPath = (-not $engine) }
+}
+
+function Test-ContainerEngineResponding {
+    <# .SYNOPSIS $true when the engine the CLI will use answers (one check: Test-DockerResponding for docker on PATH, else the engine's own check). #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param([string]$DockerPath)
+    $check = Get-ContainerEngineCheck -DockerPath $DockerPath
+    if ($check.OnPath) { return [bool](Test-DockerResponding) }
+    $checkArgs = $check.Arguments
+    & $check.Exe @checkArgs *> $null
+    return ($LASTEXITCODE -eq 0)
+}
+
+function Get-ContainerEngineError {
+    <# .SYNOPSIS Runs the engine check once and returns its stderr (empty when it answers; '(no message)' when it fails silently). #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param([string]$DockerPath)
+    $check = Get-ContainerEngineCheck -DockerPath $DockerPath
+    $checkArgs = $check.Arguments
+    $lines = @()
+    try {
+        $lines = @(& $check.Exe @checkArgs 2>&1 | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] } | ForEach-Object { "$_".Trim() } | Where-Object { $_ })
+        $rc = $LASTEXITCODE
+    }
+    catch { return $_.Exception.Message }
+    if ($rc -eq 0) { return '' }
+    if ($lines.Count -eq 0) { return "(no message; $($check.Shown) exited with code $rc)" }
+    return ($lines -join ' ')
+}
+
+function Get-ContainerEngineStartHint {
+    <# .SYNOPSIS How to start the engine of a host type, in one sentence. #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param([string]$Type)
+    switch ($Type) {
+        'windows-docker' { return 'Start Docker Desktop and wait until it says the engine is running.' }
+        'macos' { return 'Start Docker Desktop and wait until it says the engine is running.' }
+        'windows-wsl-docker' { return 'Start the Docker Engine in the WSL distro (for example: wsl -e sudo service docker start).' }
+        'windows-wslc' { return 'Check that WSL runs (wsl --status) and that `wslc ps` answers; after a "read-only file system" error, task devcontainer:reset-storage.' }
+        'linux' { return 'Start the Docker daemon (for example: sudo systemctl start docker).' }
+    }
+    return 'Start the container engine.'
+}
+
+function Get-ContainerEngineHostType {
+    # The host type for a hint; never throws (a hint must not hide the engine's error).
+    try { return (Get-CachedHostType).Type } catch { return '' }
+}
+
+function Wait-ContainerEngine {
+    <#
+    .SYNOPSIS
+        Waits until the container engine answers, before a subcommand that needs it.
+    .DESCRIPTION
+        One check when the engine answers (the healthy path). Otherwise prints
+        "waiting for the container engine to answer..." once and checks again every second
+        for DEVCONTAINER_ENGINE_WAIT seconds (default 60; 0 = no wait, no check), then throws
+        naming the engine, its own error and how to start it.
+    #>
+    [CmdletBinding()]
+    param([string]$DockerPath, [string]$Seconds)
+    $text = Get-SettingOrEnv $Seconds 'DEVCONTAINER_ENGINE_WAIT' '60'
+    $limit = 0
+    if (-not [int]::TryParse($text.Trim(), [ref]$limit) -or $limit -lt 0) {
+        throw "DEVCONTAINER_ENGINE_WAIT must be a whole number of seconds (0 = no wait), not '$text'."
+    }
+    if ($limit -eq 0) { return }
+    if (Test-ContainerEngineResponding -DockerPath $DockerPath) { return }
+    Write-Host 'waiting for the container engine to answer...'
+    $watch = [System.Diagnostics.Stopwatch]::StartNew()
+    # A count as well as the clock: a slow check must not stretch the wait, and a test's
+    # Start-Sleep that returns at once must still end it.
+    for ($i = 0; $i -lt $limit -and $watch.Elapsed.TotalSeconds -lt $limit; $i++) {
+        Start-Sleep -Seconds 1
+        if (Test-ContainerEngineResponding -DockerPath $DockerPath) { return }
+    }
+    $check = Get-ContainerEngineCheck -DockerPath $DockerPath
+    $why = Get-ContainerEngineError -DockerPath $DockerPath
+    if (-not $why) { $why = '(it answers only now)' }
+    $hint = Get-ContainerEngineStartHint -Type (Get-ContainerEngineHostType)
+    throw "the container engine ($($check.Exe)) did not answer within $limit s ($($check.Shown)): $why $hint Then run the task again. DEVCONTAINER_ENGINE_WAIT sets how long to wait (seconds; 0 = no wait)."
+}
+
+function Write-ContainerEngineDiagnosis {
+    <#
+    .SYNOPSIS
+        After a failed up or build: asks the engine once and prints, on stderr, what it says
+        (@devcontainers/cli hides the engine's stderr, so "Command failed: docker ps ..." alone
+        says nothing about why).
+    #>
+    [CmdletBinding()]
+    param([string]$DockerPath)
+    try {
+        $check = Get-ContainerEngineCheck -DockerPath $DockerPath
+        $why = Get-ContainerEngineError -DockerPath $DockerPath
+    }
+    catch {
+        [Console]::Error.WriteLine("the container engine could not be asked: $($_.Exception.Message)")
+        return
+    }
+    if ($why) {
+        [Console]::Error.WriteLine("the container engine ($($check.Exe)) does not answer ($($check.Shown)): $why")
+        [Console]::Error.WriteLine((Get-ContainerEngineStartHint -Type (Get-ContainerEngineHostType)))
+        return
+    }
+    [Console]::Error.WriteLine("the container engine ($($check.Exe)) answers now ($($check.Shown)). If the error above names an engine command (Command failed: docker ...), the engine did not answer for a moment: run the task again.")
+}
+
 function Get-DevcontainerCliInvocation {
     <#
     .SYNOPSIS
@@ -1598,6 +1750,8 @@ function Invoke-DevcontainerCli {
     # the CLI's own temp image name is shared by every repository.
     $lock = if (Test-BuildSubcommand -Subcommand $Subcommand -Arguments $Arguments) { Enter-DevcontainerBuildLock }
     try {
+        # Inside the lock, right before the CLI: the build that held it may have left the engine busy.
+        if (Test-EngineSubcommand -Subcommand $Subcommand) { Wait-ContainerEngine -DockerPath $DockerPath }
         Invoke-DevcontainerCliProcess -Subcommand $Subcommand -WorkspaceFolder $WorkspaceFolder -Arguments $Arguments `
             -CommandB64 $CommandB64 -NodeVersion $NodeVersion -CliVersion $CliVersion -DockerPath $DockerPath
     }
@@ -1605,7 +1759,10 @@ function Invoke-DevcontainerCli {
     $rc = $script:CliExitCode
     if ($rc -eq 0) { return }
 
-    if ($Subcommand -ne 'exec') { throw "devcontainer $Subcommand failed with exit code $rc." }
+    if ($Subcommand -ne 'exec') {
+        if (Test-EngineSubcommand -Subcommand $Subcommand) { Write-ContainerEngineDiagnosis -DockerPath $DockerPath }
+        throw "devcontainer $Subcommand failed with exit code $rc."
+    }
 
     # A failed exec: say which of three things failed, by asking the engine.
     $folder = (Resolve-Path $WorkspaceFolder).Path
@@ -1626,4 +1783,4 @@ function Invoke-DevcontainerCli {
     exit $rc
 }
 
-Export-ModuleMember -Function Get-HostTypeId, Get-DefaultHostTypePriority, Resolve-HostType, Resolve-SshAgent, Resolve-HostProfile, Initialize-HostEnvironment, Test-FuseRequested, Get-FuseRefusal, Get-FuseRunArgument, Get-FuseSlotMissing, Write-FuseSlotWarning, Write-FuseRefusedWarning, ConvertTo-MachineName, Get-HostMachineName, Test-MachineSlotMissing, Write-MachineSlotWarning, Get-DevcontainerConfigFile, Get-HostMount, Test-CloudFolderMount, ConvertTo-MountArgument, ConvertTo-JsonWithoutComment, Get-ConfiguredMountTarget, Test-HostMountsEnabled, Resolve-HostMount, Initialize-HostMountSource, Get-HostMountArgument, Show-HostProfile, Import-SshKey, Clear-HostProfileCache, Get-SettingOrEnv, ConvertFrom-TaskCliArgString, Get-PortableNodeDir, Invoke-DcfDownload, Get-DevcontainersCliEntrypoint, Remove-DevcontainersCli, Resolve-DockerPath, Get-WorkspaceFolderVariant, Get-RunningDevcontainerId, Stop-Devcontainer, Test-BuildSubcommand, Enter-DevcontainerBuildLock, Exit-DevcontainerBuildLock, Get-DevcontainerCliInvocation, Invoke-DevcontainerCliProcess, Get-LauncherCacheRoot, Get-CloudFolderRcloneVersion, Get-WorkstationRclone, Open-Browser, Invoke-CloudFolderRelayRequest, Invoke-CloudFolderLoginRelay, Invoke-CloudFolderLogin, Invoke-DevcontainerCli
+Export-ModuleMember -Function Get-HostTypeId, Get-DefaultHostTypePriority, Resolve-HostType, Resolve-SshAgent, Resolve-HostProfile, Initialize-HostEnvironment, Test-FuseRequested, Get-FuseRefusal, Get-FuseRunArgument, Get-FuseSlotMissing, Write-FuseSlotWarning, Write-FuseRefusedWarning, ConvertTo-MachineName, Get-HostMachineName, Test-MachineSlotMissing, Write-MachineSlotWarning, Get-DevcontainerConfigFile, Get-HostMount, Test-CloudFolderMount, ConvertTo-MountArgument, ConvertTo-JsonWithoutComment, Get-ConfiguredMountTarget, Test-HostMountsEnabled, Resolve-HostMount, Initialize-HostMountSource, Get-HostMountArgument, Show-HostProfile, Import-SshKey, Clear-HostProfileCache, Get-SettingOrEnv, ConvertFrom-TaskCliArgString, Get-PortableNodeDir, Invoke-DcfDownload, Get-DevcontainersCliEntrypoint, Remove-DevcontainersCli, Resolve-DockerPath, Get-WorkspaceFolderVariant, Get-RunningDevcontainerId, Stop-Devcontainer, Test-BuildSubcommand, Enter-DevcontainerBuildLock, Exit-DevcontainerBuildLock, Test-EngineSubcommand, Get-ContainerEngineCheck, Test-ContainerEngineResponding, Get-ContainerEngineError, Get-ContainerEngineStartHint, Wait-ContainerEngine, Write-ContainerEngineDiagnosis, Get-DevcontainerCliInvocation, Invoke-DevcontainerCliProcess, Get-LauncherCacheRoot, Get-CloudFolderRcloneVersion, Get-WorkstationRclone, Open-Browser, Invoke-CloudFolderRelayRequest, Invoke-CloudFolderLoginRelay, Invoke-CloudFolderLogin, Invoke-DevcontainerCli

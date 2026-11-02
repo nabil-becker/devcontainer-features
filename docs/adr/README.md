@@ -91,3 +91,4 @@ numbering and a row below.
 | [0040](0040-git-management-is-the-hosts-job-and-the-operator-reviews-merges-and-releases.md) | Git management is the host's job, and the Operator reviews, merges and releases | accepted | 2026-10-30 |
 | [0041](0041-a-session-name-is-rendered-by-the-agents-feature-from-a-template-and-passed-to-the-cli-adapter-in-an-environment-variable.md) | A session name is rendered by the agents Feature from a template and passed to the CLI adapter in an environment variable | accepted | 2026-10-30 |
 | [0042](0042-devhost-verify-stays-the-one-commit-check-and-gains-the-aof-checks.md) | devhost-verify stays the one commit check and gains the AOF checks | accepted | 2026-11-01 |
+| [0043](0043-the-aof-planting-keeps-four-local-rules-and-moves-the-ledger-onto-the-register-with-a-mirror-outside-git.md) | The AOF planting keeps four local rules and moves the ledger onto the register with a mirror outside git | accepted | 2026-11-02 |

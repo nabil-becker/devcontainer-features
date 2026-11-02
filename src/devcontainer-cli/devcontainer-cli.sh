@@ -63,6 +63,9 @@
 #                              three are removed from the CLI's environment. Never by default.
 #                              Not granted when the engine is wslc (no --device, --cap-add or
 #                              --security-opt option): a warning, the start goes on without.
+#   DEVCONTAINER_ENGINE_WAIT   seconds to wait for the container engine to answer before
+#                              up, build, exec, set-up and run-user-commands (default 60;
+#                              0 = no wait, no check). See "engine wait" below.
 #   DEVCONTAINER_BUILD_LOCK    0 = do not serialise image builds (below).
 #   DEVCONTAINER_BUILD_LOCK_FEATURES_TEST  true = `features test` takes the
 #                              lock too (default false).
@@ -821,6 +824,87 @@ take_build_lock() {
   fi
 }
 
+# ---------------------------------------------------------- engine wait ----
+# Right after a rebuild or an engine restart the engine may not answer for a moment, and
+# `devcontainer up` then fails inside ("Command failed: docker ps -q -a --filter label=...")
+# with the engine's own stderr hidden by @devcontainers/cli. So the subcommands that talk to
+# the engine wait for it first: one check when it answers (`docker info`, which fails while the
+# daemon is down; `ps -q` for an engine that is not docker or podman, as wslc has no `info`),
+# else "waiting for the container engine to answer..." once and a check every second for
+# DEVCONTAINER_ENGINE_WAIT seconds (default 60; 0 = no wait), then a failure naming the engine,
+# its own error and how to start it. A failed up or build asks the engine once more and prints
+# what it says. The PowerShell twin's Wait-ContainerEngine does the same.
+engine_subcommand() { case "$1" in up | build | exec | set-up | run-user-commands) return 0 ;; esac; return 1; }
+
+# engine_check: ENGINE_CHECK = the engine, then its check's arguments.
+engine_check() {
+  local e
+  e="$(engine_name)" || return 1
+  case "${e##*/}" in
+    docker | podman) ENGINE_CHECK=("$e" info) ;;
+    *) ENGINE_CHECK=("$e" ps -q) ;;
+  esac
+}
+
+engine_responds() { "${ENGINE_CHECK[@]}" > /dev/null 2>&1; }
+
+# engine_error: the check's stderr on one line; empty when the engine answers.
+engine_error() {
+  local err rc=0
+  err="$("${ENGINE_CHECK[@]}" 2>&1 > /dev/null)" || rc=$?
+  [ "$rc" -ne 0 ] || return 0
+  [ -n "$err" ] || err="(no message; ${ENGINE_CHECK[*]} exited with code $rc)"
+  printf '%s' "${err//$'\n'/ }"
+}
+
+# engine_start_hint: how to start the engine of this host's type, in one sentence.
+engine_start_hint() {
+  local t
+  t="$( (resolve_host_type && printf '%s' "$HT_TYPE") 2> /dev/null)" || t=''
+  case "$t" in
+    macos) echo 'Start Docker Desktop and wait until it says the engine is running.' ;;
+    windows-wsl-docker) echo 'Start the Docker Engine in this WSL distro (for example: sudo service docker start).' ;;
+    linux) echo 'Start the Docker daemon (for example: sudo systemctl start docker).' ;;
+    *) echo 'Start the container engine.' ;;
+  esac
+}
+
+wait_for_engine() {
+  local limit="${DEVCONTAINER_ENGINE_WAIT:-60}" i=0 start why
+  case "$limit" in '' | *[!0-9]*) die "DEVCONTAINER_ENGINE_WAIT must be a whole number of seconds (0 = no wait), not '$limit'." ;; esac
+  limit=$((10#$limit))
+  [ "$limit" -gt 0 ] || return 0
+  # No engine at all (not on PATH) fails at once: resolve_docker_path said why.
+  engine_check || exit 1
+  engine_responds && return 0
+  echo 'waiting for the container engine to answer...' >&2
+  start=$SECONDS
+  # A count as well as the clock, so a slow check does not stretch the wait.
+  while [ "$i" -lt "$limit" ] && [ $((SECONDS - start)) -lt "$limit" ]; do
+    sleep 1
+    i=$((i + 1))
+    engine_responds && return 0
+  done
+  why="$(engine_error)"
+  die "the container engine (${ENGINE_CHECK[0]}) did not answer within $limit s (${ENGINE_CHECK[*]}): ${why:-(it answers only now)} $(engine_start_hint) Then run the task again. DEVCONTAINER_ENGINE_WAIT sets how long to wait (seconds; 0 = no wait)."
+}
+
+# explain_engine_failure: after a failed up, build, set-up or run-user-commands, what the engine says now (on stderr).
+explain_engine_failure() {
+  local why
+  if ! engine_check 2> /dev/null; then
+    echo 'devcontainer-cli: the container engine could not be asked.' >&2
+    return 0
+  fi
+  why="$(engine_error)"
+  if [ -n "$why" ]; then
+    echo "devcontainer-cli: the container engine (${ENGINE_CHECK[0]}) does not answer (${ENGINE_CHECK[*]}): $why" >&2
+    echo "devcontainer-cli: $(engine_start_hint)" >&2
+  else
+    echo "devcontainer-cli: the container engine (${ENGINE_CHECK[0]}) answers now (${ENGINE_CHECK[*]}). If the error above names an engine command (Command failed: docker ...), the engine did not answer for a moment: run the task again." >&2
+  fi
+}
+
 # A failed exec: say which of three things failed, by asking the engine.
 explain_exec_failure() { # <exit code> <workspace> <command text>
   local rc="$1" workspace="$2" text="$3" ids lrc=0
@@ -1201,8 +1285,11 @@ mode_run() {
   esac
 
   if builds_image "$subcommand" "${1:-}"; then take_build_lock; fi
+  # Inside the lock, right before the CLI: the build that held it may have left the engine busy.
+  if engine_subcommand "$subcommand"; then wait_for_engine; fi
   local rc=0
   run_cli "$subcommand" "$workspace" "$cmd_b64" "$@" || rc=$?
+  if [ "$rc" -ne 0 ] && [ "$subcommand" != exec ] && engine_subcommand "$subcommand"; then explain_engine_failure; fi
   if [ "$rc" -ne 0 ] && [ "$subcommand" = exec ]; then
     local text="$*"
     [ -z "$cmd_b64" ] || text="$(printf '%s' "$cmd_b64" | base64 -d)"

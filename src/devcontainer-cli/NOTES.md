@@ -1,3 +1,19 @@
+## Changes in 1.17.0
+
+- **The launcher waits for the container engine** (new setting `DEVCONTAINER_ENGINE_WAIT`). Right
+  after a rebuild an `up` failed inside with `Command failed: docker ps -q -a --filter label=...`
+  and "An error occurred setting up the container", and a second run went through: the engine had
+  not answered for a moment, and `@devcontainers/cli` hides its error. Now `up`, `build`, `exec`,
+  `set-up` and `run-user-commands` first check that the engine answers (one check when it does);
+  otherwise they print `waiting for the container engine to answer...` once and check every second
+  for `DEVCONTAINER_ENGINE_WAIT` seconds (default 60; `0` = no wait), then fail naming the engine,
+  its own error and how to start it. A failed `up` or `build` asks the engine once more and prints
+  what it says. Both launchers (PowerShell and bash); see "Host-side counterpart".
+- **`task devcontainer:agent` with no name** refuses on the host, before the container is started,
+  when the agent list (`AGENTS_FILE`, else `.devcontainer/agents.yml`) marks no agent
+  `default: true`; before, a whole `up` ran first and `agents start` inside then said so. A list
+  that is missing or cannot be read is let through, as is any line that reads `default: true`.
+
 ## Changes in 1.16.3
 
 - **FUSE is not granted on wslc.** `wslc run` (WSL Containers 3.0.3) has no `--device`, `--cap-add`
@@ -227,6 +243,26 @@ counts as free). It applies on every engine, harmless with Docker Desktop;
 and `devcontainer features test` takes it only with
 `DEVCONTAINER_BUILD_LOCK_FEATURES_TEST=true` (default false, so a long test run
 does not hold up every rebuild). `DEVCONTAINER_BUILD_LOCK=0` turns the lock off.
+
+The engine answers first. Right after a rebuild or an engine restart the engine
+may not answer for a moment, and `devcontainer up` then fails inside with
+`Command failed: docker ps -q -a --filter label=...` and "An error occurred
+setting up the container", the engine's own error hidden by `@devcontainers/cli`.
+So `up`, `build`, `exec`, `set-up` and `run-user-commands` first check that the
+engine the CLI will use answers: `docker info` (or `podman info`), `ps -q` for
+any other engine (`wslc` has no `info`). When it answers that is the one check;
+otherwise the launcher prints `waiting for the container engine to answer...`
+once, checks every second for `DEVCONTAINER_ENGINE_WAIT` seconds (default 60;
+`0` = no wait, no check), and then fails without running the CLI, naming the
+engine, its own error and how to start it (Docker Desktop; the Docker Engine in
+the WSL distro; `wsl --status` for `wslc`; `systemctl start docker`). The wait
+runs inside the build lock, right before the CLI. When `up`, `build`, `set-up` or
+`run-user-commands` fails anyway, the launcher asks the engine once more and
+prints what it says: its error and how to start it, or that it answers now (the
+failure was a moment when it did not, and a second run usually goes through).
+On Windows with `HOST_TYPE=auto` the host type is detected before the wait, and
+detection asks the engines too: with every engine down it fails at detection,
+as before.
 
 `stop` is the one host task that is not a CLI subcommand (the CLI has none),
 and it is one host-script command, the same in `run stop` and
