@@ -8,6 +8,15 @@ here; `task lint` fails when the entry is missing.
 
 Entries from 1.0.0 to 1.0.3 were generated from the commit history (`.github/scripts/changelog.py backfill`) and the "Changes in x.y.z" sections that NOTES.md used to hold; most list commit subjects as written then; the newest of them is in wording for users.
 
+## [1.1.0] - 2026-11-03
+
+### Added
+
+- **Your `bao login` now survives a rebuild.** The Feature owns a named volume (`openbao-config-<devcontainerId>`, at `/var/lib/devcontainer-features/openbao`, named by `OPENBAO_STATE_DIR`) and a post-create hook, `openbao-setup` (also `task openbao:setup`), that links `~/.vault-token` into it, the way `gh` and `az` keep their logins. **You must act once:** rebuild the container and run `bao login` again, because the volume starts empty. Nothing to configure; a repo that wants the state on the host disk bind-mounts the same target. A `BAO_TOKEN` in the environment still takes precedence over the saved login.
+- **`dcf-secret`**, a command for scripts and other Features to read and write a secret without knowing where the server runs: `dcf-secret get <name>`, `dcf-secret put <name> --field <field>` (the value on stdin) and `dcf-secret status`. It fails with fixed exit codes (10 unreachable, 11 sealed, 12 not logged in, 13 denied, 14 no such secret), each with one line saying what to do, and never falls back to a key on disk. Secrets live in a KV v2 mount named `dcf` (`DCF_SECRET_MOUNT` changes it). Nothing to do unless you want it; `task openbao:kv:get` is unchanged.
+- **The `mode` option**, with the one value `client` (the default, what the Feature always did: the CLI against a server outside the container). A later version adds `server`. `OPENBAO_SETUP_MODE` in `containerEnv` overrides it per container. Nothing to do.
+- `task openbao:setup`: re-runs the post-create hook.
+
 ## [1.0.4] - 2026-11-03
 
 ### Added

@@ -7,5 +7,32 @@
       }
     },
     "remoteUser": "vscode"
+  },
+  "no_taskfile": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "remoteUser": "vscode",
+    "features": {
+      "openbao": {
+        "installTaskfile": false
+      }
+    }
+  },
+  "mode_client": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "remoteUser": "vscode",
+    "features": {
+      "openbao": {
+        "mode": "client"
+      }
+    }
+  },
+  "dev_server": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "remoteUser": "vscode",
+    "features": {
+      "openbao": {
+        "version": "2.7.1"
+      }
+    }
   }
 }

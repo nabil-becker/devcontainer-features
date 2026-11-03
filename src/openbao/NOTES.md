@@ -7,6 +7,12 @@ checks the tarball with `sha256sum -c`, and installs the binary only if the
 check passes. It runs `bao version` at the end, so the version is in the
 build log. It installs no OpenBao server and no `vault` command.
 
+Besides the binary, `install.sh` puts three scripts on PATH (nothing is downloaded for them):
+`dcf-secret` (the interface callers use to read and write secrets, see below), `openbao-setup`
+(the post-create hook, see State) and `dcf-persist` (a verbatim copy of `src/common/dcf-persist.sh`,
+which makes the state directory usable and says what backs it). It writes the option defaults the
+hook reads to `/usr/local/share/openbao-feature/options.env`.
+
 - `version` takes a number with or without a leading `v` (`2.7.1`,
   `v2.7.1`), or `latest` (the default). `latest` is resolved once, at image
   build time, through the `releases/latest` redirect (no API call, no
@@ -22,61 +28,95 @@ build log. It installs no OpenBao server and no `vault` command.
 - `version` (default `latest`): set it to the version of the OpenBao server
   you talk to, so the CLI and the server agree. A value that does not start
   with an `x.y.z` number fails the build.
+- `mode` (default `client`, the only value in this version): the CLI and `dcf-secret` against a
+  server outside the container, whose address is `BAO_ADDR`. Any other value fails the build. A
+  later version adds `server`; a consumer that changes nothing keeps `client`. Override per
+  container with `OPENBAO_SETUP_MODE` in `containerEnv` (the hook reads it; an unknown value is
+  reported and the hook runs as `client`).
 - `installTaskfile` (default `true`): set it to `false` when you do not use
   the go-task registry and do not want
   `/usr/local/share/go-task/includes.d/openbao.yml` in the image.
 
-There is no run-time override of either; both are fixed at build. The
-server address is a run-time setting: see State.
+`version` and `installTaskfile` are fixed at build. `mode` has the run-time twin
+`OPENBAO_SETUP_MODE`. The server address is a run-time setting: see State.
 
 ## State
 
-The Feature has no state volume, no `containerEnv` and no post-create hook
-of its own. Two things live outside the binary:
+Owned by the Feature (NFR-1), like `gh` and `az`:
 
-- **The server address**: `BAO_ADDR`, which the Feature does not set. Put it
-  in your `devcontainer.json`.
-- **The login token**: `bao login` writes it to `~/.vault-token` of the
-  remote user, which sits in the container's own filesystem. **A rebuild
-  deletes it and you are logged out.** The sibling CLIs (`gh`, `az`,
-  `argocd`, `coder-cli`) own their login state in a named volume under
-  `/var/lib/devcontainer-features/<id>`; this one does not yet.
+- `containerEnv` sets `OPENBAO_STATE_DIR=/var/lib/devcontainer-features/openbao`.
+- `mounts` declares the named volume `openbao-config-${devcontainerId}` on that path.
+- The post-create hook `openbao-setup` (also `task openbao:setup`) runs `dcf-persist`, so the
+  folder belongs to the remote user and the log says what backs it, then makes `~/.vault-token`,
+  where `bao login` keeps its token, a link to `$OPENBAO_STATE_DIR/token`. **A rebuild keeps the
+  login.** The hook never contacts the server and never fails the rest of post-create.
 
-One route keeps a login across rebuilds without a Feature change.
+`bao` has no variable for the token's folder (`gh` has `GH_CONFIG_DIR`), which is why the link
+exists and `OPENBAO_STATE_DIR` is this Feature's own name. A repo that wants the state on the host
+disk bind-mounts the same target and its mount wins (the README's "How the pieces fit"); a repo can
+point `OPENBAO_STATE_DIR` elsewhere in its own `containerEnv`.
 
-**`BAO_TOKEN` from the environment.** The CLI uses `BAO_TOKEN` in place of
-`~/.vault-token`, and the tasks pass the container's environment straight to
-`bao`, so `task openbao:status` and the others pick it up. Set it in
-`containerEnv`, reading from a variable on the host:
+- **The server address** is `BAO_ADDR`, which the Feature does not set. Put it in `containerEnv`.
+- **`bao token revoke -self`** removes the link (the CLI deletes `~/.vault-token`, not what it
+  points at). The next `bao login` writes a real file; the next run of the hook moves it into the
+  volume and links it again, so the newer login wins over the revoked one left in the volume.
+- **`BAO_TOKEN`** in the environment takes precedence over the saved login (the hook says so). It
+  is a way to give a container a token without a login, for a service that cannot run `bao login`:
+  set it in `containerEnv` from a host variable (`"BAO_TOKEN": "${localEnv:BAO_TOKEN}"`) or an env
+  file the repo keeps out of git. A stale value there makes `permission denied` appear even right
+  after a fresh `bao login`; unset it or update it. Never commit it.
+- Not offered: a bind mount of the single file `~/.vault-token` from the host (a single-file mount
+  breaks when `bao login` replaces the file rather than writing into it).
 
-```json
-"containerEnv": {
-  "BAO_ADDR": "https://bao.example.com",
-  "BAO_TOKEN": "${localEnv:BAO_TOKEN}"
-}
-```
+Upgrading from 1.0.x: the volume starts empty, so log in once after the rebuild; a login made
+before it was in `~/.vault-token` of the old container is gone with that container.
 
-or from an env file the repo keeps out of git:
+## `dcf-secret`
 
-```json
-"runArgs": ["--env-file", "${localWorkspaceFolder}/.devcontainer/bao.env"]
-```
-
-with `.devcontainer/bao.env` holding plain `NAME=value` lines (no quotes, no
-`export`):
+The interface every Feature and script of this collection uses to read and write a secret, so
+where the server runs does not matter to the caller. `openbao:kv:get` stays as the raw `bao kv
+get` for people; `dcf-secret` is for callers.
 
 ```text
-BAO_ADDR=https://bao.example.com
-BAO_TOKEN=<token>
+dcf-secret get <name> [--field <field>]    the value on stdout, nothing else (field default: value)
+dcf-secret put <name> --field <field>      the value on stdin, never an argument
+dcf-secret status [<name>]                 one word on stdout, the fix on stderr
 ```
 
-The token then sits in the container's environment and the env file; tokens
-expire, so renew the value there. Never commit it.
+- **Names are logical** (`ssh/<key>`, `register/<principal>`, `token/<name>`; letters, digits,
+  `.`, `_`, `-`, with `/` between parts) and live at `<mount>/<name>` in a KV v2 mount. The mount is
+  `dcf`; `DCF_SECRET_MOUNT` names another one (a client of a shared server uses its own).
+- **Who asks**: the token `bao` uses (`BAO_TOKEN`, else the saved login). `DCF_SECRET_AS` (logging
+  in as an AppRole) is not in this version: setting it exits 2 rather than asking as someone else.
+- **`put` replaces the whole secret** with the one field (it is `bao kv put`); it refuses a
+  terminal on stdin. **`get` writes the value only to stdout**: it is never put in a file or a
+  variable.
+- **No fallback, ever.** On a non-zero exit nothing is read from a file, a volume or the
+  environment instead. A second source would be a second master.
 
-A bind-mount of `~/.vault-token` from the host is not offered here: it is
-untested, and a single-file mount breaks if `bao login` replaces the file
-rather than writing into it. Until the Feature owns its state, use
-`BAO_TOKEN`.
+Exit codes, the same for every caller, each with one plain line on stderr naming the fix:
+
+| Exit | Meaning | `status` prints |
+| --- | --- | --- |
+| 0 | done (`get`: the value is on stdout) | `ready` |
+| 10 | the server is unreachable (`BAO_ADDR` wrong, server not running, no `bao`) | `unreachable` |
+| 11 | the server is sealed, or not initialised | `sealed`, `not-initialised` |
+| 12 | no token, or it expired | `logged-out` |
+| 13 | the token may not use this name | `denied` (only with a name) |
+| 14 | no such secret, or no such field | |
+| 1 | `bao` failed and none of its signals say why (`put` only; its message follows) | |
+| 2 | a wrong call (usage, a bad name, `DCF_SECRET_AS`) | |
+
+The code is worked out from `bao`'s own signals, never from the words of a message: after a failed
+call it asks `bao status -format=json` (exit 2 is sealed, the JSON says `initialized`; anything
+else is unreachable), then `bao token capabilities` on `<mount>/data/<name>` (a refused call is no
+valid token; no `read` or `root` for a get, no `create`, `update` or `root` for a put, is denied),
+and a get that gets this far is a missing secret. A token therefore needs the default policy (every
+token has it unless removed) besides `read` on `<mount>/data/<name>` to get and `create` and
+`update` to put. It speaks only `bao`, so it works the same against a Vault server.
+
+A caller without this Feature finds no `dcf-secret` and says so; the Features stay independent at
+build time.
 
 ## Minimal `devcontainer.json`
 
@@ -92,6 +132,7 @@ rather than writing into it. Until the Feature owns its state, use
 ```
 
 Drop the `version` line to follow the newest release at each image build.
+The login is kept in the Feature's volume: `bao login` once, and a rebuild keeps it.
 For a server with a private CA, trust the certificate in the image
 (`update-ca-certificates`) rather than setting `BAO_SKIP_VERIFY`.
 
@@ -100,13 +141,17 @@ For a server with a private CA, trust the certificate in the image
 ```bash
 bao version          # prints the installed version
 task openbao:version
-bao status           # needs BAO_ADDR; prints seal state and server version
+openbao-setup        # the post-create report, any time
+dcf-secret status    # needs BAO_ADDR; prints ready, or why not (exit codes above)
 ```
 
 The build log carries the first line (`openbao: downloading OpenBao
 v<version> (openbao_<version>_linux_<arch>.tar.gz)...`, then the `bao
 version` output). A failed checksum stops the build with `sha256sum`'s
-`FAILED` line. There is no post-create line: nothing runs after the build.
+`FAILED` line. The post-create log has the hook's lines: `openbao: /var/lib/devcontainer-features/openbao
+(volume, writable)`, `openbao: mode client ...`, `openbao: login token linked into the state dir`,
+the version, `BAO_ADDR`, and whether a login is saved. `volume` in the first line is what keeps the
+login across rebuilds; `image` means the mount is missing.
 
 ## Composition
 
@@ -114,8 +159,11 @@ version` output). A failed checksum stops the build with `sha256sum`'s
   the Taskfile registry exists and is refreshed) and the official
   `common-utils`.
 - It augments no official Feature and replaces none.
+- `dcf-secret` is what later Features (`ssh-agent`, `gh`, `az`, `cloud-folder`) are to call for
+  their secrets; none does yet, and none names this Feature in `installsAfter` (the Features stay
+  independent at build time).
 - Independent of `kube-state` and `git`: no kubeconfig is read and no git
-  config is written.
+  config is written. Its volume and hook are the shape of `gh` and `az`.
 
 ## Tasks
 
@@ -132,6 +180,9 @@ registry, these appear under `openbao:`:
   flags go after `--`, e.g.
   `task openbao:kv:get KEY=secret/app -- -format=json`.
 
+- `openbao:setup`: re-run the post-create hook (`openbao-setup`): make the state directory usable,
+  link `~/.vault-token` into it, report the address and the saved login.
+
 No task reads a variable besides `KEY`; the address and token come from
 `BAO_ADDR` and `BAO_TOKEN` in the container's environment, as for `bao`
 itself.
@@ -146,16 +197,41 @@ itself.
 - A missing release asset or `checksums.txt` line fails the build (`curl
   -f`, or `sha256sum` finding no matching line). The binary is never
   installed unchecked.
-- Logged out after every rebuild: expected, see State. Use `BAO_TOKEN`.
+- Logged out after a rebuild: the volume is gone (a container-engine storage reset, or another
+  engine) or the hook's first line says `image` instead of `volume`. Log in again.
+- Client mode only: there is no server, backup, onboarding or `DCF_SECRET_AS` in this version.
+- `dcf-secret` asks `bao` up to three questions after a failure, so a failure costs a few round
+  trips; a success costs one. It assumes a KV v2 mount (the data lives under `<mount>/data/`).
+- The link relies on `bao login` writing through the link to the volume; the container test
+  `dev_server` checks it against a real `bao`.
 - `bao status` fails with a connection or certificate error: `BAO_ADDR` is
   unset or wrong, or the server's CA is not trusted in the image.
-- A `BAO_TOKEN` in the environment takes precedence over `~/.vault-token`,
-  so a stale value there makes `permission denied` appear even right after
-  a fresh `bao login`; unset it or update it.
+- A `BAO_TOKEN` in the environment takes precedence over the saved login (see State).
 
 ## Why this one exists
 
-No published Dev Container Feature for the OpenBao CLI is known to this
-repository, so there is no alternative to compare. The binary is checked
-against the release's `checksums.txt`; OpenBao also signs releases with GPG
-and Sigstore, which this Feature does not verify.
+Checked 2026-11-03 (NFR-9): no published Dev Container Feature is a general OpenBao CLI Feature
+with state, a setup hook and a tested interface, and none is in the containers.dev index (searched
+by name and description for `openbao` and `vault`). Three repositories on GitHub hold a Feature
+that installs `bao` for their own purpose: `openbao-agent` in `wyrd-company/devcontainers` (installs
+OpenBao and runs OpenBao Agent as an s6-overlay service from the user's own config; the archive is
+checked against `checksums.txt`), `openbao-secrets` in `dever-labs/devcontainers` (installs `bao` and
+a helper that logs `gh` in with a token read from OpenBao through OIDC, a session volume at a fixed
+home path; the archive is checked against `checksums.txt`) and `bao-env` in
+`stevetfidalgo/mindmap-devcontainer-features` (a manifest tool for KV stores that installs `bao` 2.1.1
+and `yq`; no checksum check in its install script, a read of the script, not a test). They install
+the binary as a means to something else, and none gives the CLI a login that survives a rebuild
+(besides `openbao-secrets`' own session) or a command other Features can call. Here the binary is
+checked against the release's `checksums.txt` (OpenBao also signs releases with GPG and Sigstore,
+which this Feature does not verify), the login is in a volume the Feature owns, and `dcf-secret`
+is the one interface the collection's Features use. The
+official `devcontainers/features` collection has no OpenBao or Vault Feature; the Vault ones
+elsewhere (`devcontainers-extra`, `postfinance`, `roul`) install HashiCorp's `vault`, not `bao`.
+
+## Version and upgrade
+
+`version` pins the OpenBao release at build (`2.7.1`, with or without `v`) or follows `latest`; pin
+it to your server's version. The Feature's own version is the tag you reference
+(`openbao:1` follows 1.x; see Changes). **1.1.0** adds the volume, `openbao-setup`, `dcf-secret`
+and `mode`, all additive: rebuild to get them, and log in once, because the volume starts empty.
+Nothing is removed; `mode` stays `client`.

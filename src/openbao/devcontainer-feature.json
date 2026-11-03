@@ -1,8 +1,8 @@
 {
   "id": "openbao",
-  "version": "1.0.4",
+  "version": "1.1.0",
   "name": "OpenBao CLI",
-  "description": "Installs the OpenBao CLI (https://openbao.org), the open-source Vault fork, as a release binary at /usr/local/bin/bao, verified against the release's checksums.txt. Set BAO_ADDR in containerEnv to point it at your server.",
+  "description": "Installs the OpenBao CLI (https://openbao.org), the open-source Vault fork, as a release binary at /usr/local/bin/bao, verified against the release's checksums.txt. Owns the login state as a named volume at OPENBAO_STATE_DIR=/var/lib/devcontainer-features/openbao (~/.vault-token is linked into it by the post-create hook openbao-setup) so `bao login` survives rebuilds, and installs dcf-secret, the one command the collection's Features use to read and write secrets (get, put, status, with fixed exit codes). Set BAO_ADDR in containerEnv to point it at your server.",
   "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/openbao",
   "licenseURL": "https://github.com/nabil-becker/devcontainer-features/blob/main/LICENSE",
   "options": {
@@ -11,12 +11,31 @@
       "default": true,
       "description": "Also install this Feature's Taskfile into /usr/local/share/go-task/includes.d so its tasks appear under the <id>: namespace of a root Taskfile that includes /usr/local/share/go-task/features.yml (see the go-task Feature)."
     },
+    "mode": {
+      "type": "string",
+      "enum": [
+        "client"
+      ],
+      "default": "client",
+      "description": "How the Feature is used. Only 'client' exists in this version: the bao CLI and dcf-secret against a server outside the container (BAO_ADDR). Override per container with OPENBAO_SETUP_MODE in containerEnv."
+    },
     "version": {
       "type": "string",
       "default": "latest",
       "description": "OpenBao release to install (e.g. '2.7.1', with or without a leading 'v'), or 'latest'. Match your OpenBao server's version."
     }
   },
+  "containerEnv": {
+    "OPENBAO_STATE_DIR": "/var/lib/devcontainer-features/openbao"
+  },
+  "mounts": [
+    {
+      "source": "openbao-config-${devcontainerId}",
+      "target": "/var/lib/devcontainer-features/openbao",
+      "type": "volume"
+    }
+  ],
+  "postCreateCommand": "openbao-setup",
   "installsAfter": [
     "ghcr.io/nabil-becker/devcontainer-features/go-task",
     "ghcr.io/devcontainers/features/common-utils"

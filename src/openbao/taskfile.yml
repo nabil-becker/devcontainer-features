@@ -29,3 +29,9 @@ tasks:
       vars: [KEY]
     cmds:
       - bao kv get {{.CLI_ARGS}} '{{.KEY}}'
+
+  setup:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Re-run the post-create setup: make OPENBAO_STATE_DIR usable by the current user, link ~/.vault-token into it, report the address and whether a login is saved (idempotent; OPENBAO_SETUP_MODE overrides the Feature option).'
+    cmds:
+      - openbao-setup
