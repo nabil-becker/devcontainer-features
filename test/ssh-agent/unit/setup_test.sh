@@ -95,6 +95,11 @@ run DCF_HOST_SSH_AGENT=socket SSH_AUTH_SOCK=/nonexistent/forwarded -- check
 check 'a dead SSH_AUTH_SOCK in this shell does not hide the fixed path' 0 "$rc"
 run -- key-load
 check 'key-load refuses when key mode is off' 1 "$rc"
+run DCF_HOST_SSH_AGENT=socket -- key-unlock timed
+check 'key-unlock refuses when key mode is off' 1 "$rc"
+has 'key-unlock off: says how to turn key mode on' 'keyMode: true' "$out"
+run DCF_HOST_SSH_AGENT=socket -- key-lock timed
+check 'key-lock refuses when key mode is off' 1 "$rc"
 has 'the refusal says how to turn key mode on' 'keyMode: true' "$out"
 run DCF_HOST_SSH_AGENT=socket -- key-add "$T/b"
 check 'key-add refuses in socket mode' 1 "$rc"
@@ -206,6 +211,45 @@ check 'git-signing in key mode with two keys needs KEY' 1 "$rc"
 run DCF_HOST_SSH_AGENT=key -- key-remove loose 1
 check 'key-remove exits 0' 0 "$rc"
 check 'key-remove DELETE=1 deletes it from the volume' no "$([ -e "$KEYS/loose" ] && echo yes || echo no)"
+# key-unlock / key-lock: one key for a sitting. A wrapper ahead of ssh-add records its arguments (the lifetime).
+mkdir -p "$T/bin"
+printf '#!/bin/sh\necho "$*" >>"%s/sshadd.args"\nexec %s "$@"\n' "$T" "$(command -v ssh-add)" >"$T/bin/ssh-add"
+chmod +x "$T/bin/ssh-add"
+ssh-keygen -q -t ed25519 -N '' -C timed -f "$KEYS/timed"
+: >"$T/sshadd.args"
+run DCF_HOST_SSH_AGENT=key "PATH=$T/bin:$PATH" -- key-unlock timed 20
+check 'key-unlock exits 0' 0 "$rc"
+has 'key-unlock says for how long and until when' 'timed is in the agent for 20 minute(s), until about' "$out"
+has 'key-unlock passed the lifetime to ssh-add in seconds' '-t 1200 ' "$(cat "$T/sshadd.args")"
+SSH_AUTH_SOCK="$SOCK" ssh-add -L | grep -q "$(awk '{print $2}' "$KEYS/timed.pub")" && timed_loaded=yes || timed_loaded=no
+check 'key-unlock: the agent holds the key' yes "$timed_loaded"
+run DCF_HOST_SSH_AGENT=key -- key-lock timed
+check 'key-lock exits 0' 0 "$rc"
+has 'key-lock says it removed the key' 'removed timed from the agent' "$out"
+SSH_AUTH_SOCK="$SOCK" ssh-add -L | grep -q "$(awk '{print $2}' "$KEYS/timed.pub")" && timed_loaded=yes || timed_loaded=no
+check 'key-lock: the agent no longer holds it' no "$timed_loaded"
+check 'key-lock leaves the key in the volume' yes "$([ -f "$KEYS/timed" ] && echo yes || echo no)"
+run DCF_HOST_SSH_AGENT=key -- key-lock timed
+check 'key-lock of an unloaded key exits 0' 0 "$rc"
+has 'key-lock of an unloaded key says so' 'timed was not in the agent' "$out"
+run DCF_HOST_SSH_AGENT=key -- key-lock nosuch
+check 'key-lock of a key not in the volume exits 1' 1 "$rc"
+has 'key-lock says no such key' 'no key nosuch in' "$out"
+run DCF_HOST_SSH_AGENT=key -- key-unlock nosuch
+check 'key-unlock of a key not in the volume exits 1' 1 "$rc"
+has 'key-unlock says no private key' 'no private key nosuch' "$out"
+run DCF_HOST_SSH_AGENT=key -- key-unlock ''
+check 'key-unlock without NAME exits 1' 1 "$rc"
+for bad in 0 -5 abc 1.5 007 481 99999999999; do
+  run DCF_HOST_SSH_AGENT=key -- key-unlock timed "$bad"
+  check "key-unlock MINUTES=$bad exits 1" 1 "$rc"
+  has "key-unlock MINUTES=$bad says why" 'MINUTES' "$out"
+  lacks "key-unlock MINUTES=$bad loads nothing" 'is in the agent' "$out"
+done
+run DCF_HOST_SSH_AGENT=key -- key-unlock timed 480
+check 'key-unlock at the limit (480) exits 0' 0 "$rc"
+run DCF_HOST_SSH_AGENT=key -- key-lock timed
+rm -f "$KEYS/timed" "$KEYS/timed.pub"
 run DCF_HOST_SSH_AGENT=key -- git-signing '' repo
 check 'with one key left git-signing needs no KEY' 0 "$rc"
 run DCF_HOST_SSH_AGENT=key -- git-verify

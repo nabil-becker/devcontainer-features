@@ -37,6 +37,8 @@ check "task keys lists both keys" bash -c "task -t $registry ssh-agent:keys | gr
 check "task git:signing needs KEY with two keys" bash -c "! task -t $registry ssh-agent:git:signing SCOPE=global"
 check "task git:signing by public key file" bash -c "task -t $registry ssh-agent:git:signing KEY=$keys/sign.pub SCOPE=global && [ \"\$(git config --global gpg.format)\" = ssh ]"
 check "task git:verify signs and verifies through the in-container agent" bash -c "task -t $registry ssh-agent:git:verify | grep -F 'ok:'"
+check "task key:unlock loads one key for a sitting, key:lock drops it and keeps the file" bash -c "task -t $registry ssh-agent:key:unlock NAME=sign MINUTES=5 | grep -F 'for 5 minute(s), until about' && ssh-add -l | grep -F ' ci ' && task -t $registry ssh-agent:key:lock NAME=sign | grep -F 'removed sign from the agent' && ! ssh-add -l | grep -F ' ci ' && [ -f $keys/sign ]"
+check "task key:unlock refuses a bad MINUTES" bash -c "! task -t $registry ssh-agent:key:unlock NAME=sign MINUTES=0"
 check "task key:remove DELETE=1 removes it from the volume" bash -c "task -t $registry ssh-agent:key:remove NAME=sign DELETE=1 && [ ! -e $keys/sign ]"
 
 # key:age, and rotation without gh (the image has none; DCF_GH makes that certain): it stops after the new key is
