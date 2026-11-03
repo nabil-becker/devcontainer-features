@@ -1,6 +1,6 @@
 {
   "id": "agentic-register",
-  "version": "0.14.1",
+  "version": "0.14.4",
   "name": "agentic register (signed, mergeable shared registers: the ledger and others)",
   "description": "Shared registers for agentic stacks, each a set of signed entries that merges without conflicts across branches, machines and writers that are not trusted, and lives in git or outside it (SPEC.md). One Feature keeps any number of registers, each a name, a type and a store; the ledger (one entry per unit of work and per model run) is the first type. Installs the agentic-register command, its Taskfile (agentic-register:* through the go-task Feature) and an MCP server whose tools mirror the tasks; keeps keys, anchors and the reader's own records in a named volume. Supersedes agentic-ledger.",
   "documentationURL": "https://github.com/KGO-Solutions/agentic-operating-framework/tree/main/aof/tooling/src/agentic-register",

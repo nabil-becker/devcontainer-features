@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Installs the OpenBao CLI (https://openbao.org) from GitHub releases,
-# verified against the release's checksums.txt. Feature options arrive as
-# upper-cased environment variables (see devcontainer-feature.json): VERSION.
+# verified against the release's checksums.txt, plus the pieces that make it part of this
+# collection's ecosystem: dcf-secret, dcf-persist, the post-create setup (openbao-setup) and the
+# Feature Taskfile. Feature options arrive as upper-cased environment variables (see
+# devcontainer-feature.json): VERSION, MODE.
 set -euo pipefail
 
 # Every download goes through dcf_curl (dcf-curl.sh, the collection's retry helper, vendored from
@@ -10,10 +12,16 @@ set -euo pipefail
 . "$(cd "$(dirname "$0")" && pwd)/dcf-curl.sh"
 
 VERSION="${VERSION:-latest}"
+MODE="${MODE:-client}"
 repo="openbao/openbao"
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "openbao: install.sh must run as root (the devcontainer Feature lifecycle does this)." >&2
+  exit 1
+fi
+
+if [ "$MODE" != "client" ]; then
+  echo "openbao: mode '$MODE' is not available in this version (only 'client')." >&2
   exit 1
 fi
 
@@ -66,6 +74,31 @@ tar -xzf "$tmp/$asset" -C "$tmp/x" bao
 install -m 0755 "$tmp/x/bao" /usr/local/bin/bao
 
 /usr/local/bin/bao version
+
+# ------------------------------------------------------- ecosystem pieces ----
+# dcf-secret is the interface every caller uses to ask for a secret; dcf-persist (verbatim copy of
+# src/common/dcf-persist.sh) makes the state directory usable; openbao-setup is this Feature's
+# postCreateCommand (see devcontainer-feature.json) and reads its option defaults from
+# options.env, so the hook and `task openbao:setup` behave the same. Nothing is written into
+# OPENBAO_STATE_DIR here: the volume is not mounted at image build.
+feature_dir="$(cd "$(dirname "$0")" && pwd)"
+share=/usr/local/share/openbao-feature
+mkdir -p "$share"
+{
+  echo "# Written by the openbao Feature's install.sh from its options; sourced by openbao-setup."
+  printf 'MODE=%q\n' "$MODE"
+} > "$share/options.env"
+chmod 0644 "$share/options.env"
+install -m 0755 "$feature_dir/dcf-secret.sh" /usr/local/bin/dcf-secret
+install -m 0755 "$feature_dir/openbao-setup.sh" /usr/local/bin/openbao-setup
+install -m 0755 "$feature_dir/dcf-persist.sh" /usr/local/bin/dcf-persist
+# bao's token helper: the CLI's own way to keep its token elsewhere than ~/.vault-token. bao finds
+# the config through BAO_CONFIG_PATH (containerEnv of this Feature, so it holds for every process,
+# `devcontainer exec` included); the helper keeps the token in OPENBAO_STATE_DIR.
+install -m 0755 "$feature_dir/openbao-token-helper.sh" /usr/local/bin/openbao-token-helper
+printf '%s\n' '# Written by the openbao Feature: bao keeps its login token in the Feature'"'"'s volume.' \
+  'token_helper = "/usr/local/bin/openbao-token-helper"' > "$share/bao-config.hcl"
+chmod 0644 "$share/bao-config.hcl"
 
 # ---------------------------------------------------- Feature Taskfile ----
 # Drop this Feature's taskfile.yml where the go-task Feature's registry picks

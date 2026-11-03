@@ -14,6 +14,8 @@ check "agent-adapter-claude" command -v agent-adapter-claude
 check "devcontainer" devcontainer --version
 check "coder" coder version
 check "bao" bao version
+check "dcf-secret" command -v dcf-secret
+check "openbao-setup" command -v openbao-setup
 check "velero" velero version --client-only
 check "kustomize" kustomize version
 check "kubeconform" kubeconform -v
@@ -37,7 +39,7 @@ check "node not leaked onto PATH" bash -c "! command -v node"
 # Every state-owning Feature points its tool at its own mounted directory,
 # and the post-create hooks (run by `devcontainer up` before this script)
 # have made them usable by the remote user.
-for v in CLAUDE_CONFIG_DIR GH_CONFIG_DIR AZURE_CONFIG_DIR KUBECONFIG GIT_CONFIG_GLOBAL CODER_CONFIG_DIR ARGOCD_CONFIG_DIR; do
+for v in CLAUDE_CONFIG_DIR GH_CONFIG_DIR AZURE_CONFIG_DIR KUBECONFIG GIT_CONFIG_GLOBAL CODER_CONFIG_DIR ARGOCD_CONFIG_DIR OPENBAO_STATE_DIR; do
   check "$v points under /var/lib/devcontainer-features" bash -c "case \"\$$v\" in /var/lib/devcontainer-features/*) ;; *) exit 1 ;; esac"
 done
 check "claude-code state dir writable" test -w "$CLAUDE_CONFIG_DIR"
@@ -47,6 +49,7 @@ check "kube state dir writable" test -w "$(dirname "$KUBECONFIG")"
 check "git global config dir writable" test -w "$(dirname "$GIT_CONFIG_GLOBAL")"
 check "coder state dir writable" test -w "$CODER_CONFIG_DIR"
 check "argocd state dir writable" test -w "$ARGOCD_CONFIG_DIR"
+check "openbao state dir writable" test -w "$OPENBAO_STATE_DIR"
 check "ssh-agent socket folder writable" test -w /var/lib/devcontainer-features/ssh-agent
 check "ssh-agent key volume present" test -d /var/lib/devcontainer-features/ssh-agent-key
 

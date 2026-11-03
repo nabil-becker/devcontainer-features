@@ -56,26 +56,56 @@ def _sha(text: str) -> str:
 
 
 def markdown_records(text: str, source: str) -> list[dict]:
+    """The entries of a Markdown ledger (markdown_scan), without its warnings."""
+    return markdown_scan(text, source)[0]
+
+
+def _fences(lines: list[str]) -> tuple[list[tuple[int, int]], int | None]:
+    """The fenced blocks of a file as (first, last) line indexes, both fence lines, paired in order;
+    and the index of a fence that nothing closes, if any. A fence still open at the end of the file
+    is a stray (a code block runs to the end of a ledger only by mistake): it is read as text, not
+    code, so it hides nothing after it."""
+    marks = [i for i, line in enumerate(lines) if line.startswith("```")]
+    stray = marks.pop() if len(marks) % 2 else None
+    return list(zip(marks[::2], marks[1::2])), stray
+
+
+def markdown_scan(text: str, source: str) -> tuple[list[dict], list[dict]]:
     """The entries of a Markdown ledger in the `### YYYY-MM-DD <title>` / `- **Field:** ...` shape,
-    in file order. Headings inside fenced code (a template) are not entries. Another heading at an
-    entry's level or above (`## Review ...`) ends the entry before it; its section is not an entry.
-    An entry with no bold field is read in the plain `- Field: ...` shape."""
+    in file order, and the warnings a reader should see before trusting the count.
+
+    Headings inside fenced code (a template) are not entries: each one is a warning, so a fence
+    that hides real entries shows in the dry run. A fence that nothing closes is read as text and
+    is a warning too. An entry heading does not close a fence: a fence that is closed keeps a dated
+    example out, and one that is not is caught above. Fence lines are never part of an entry's text.
+    Another heading at an entry's level or above (`## Review ...`) ends the entry before it; its
+    section is not an entry. An entry with no bold field is read in the plain `- Field: ...` shape."""
+    lines = text.splitlines()
+    pairs, stray = _fences(lines)
+    inside = {i: (a, b) for a, b in pairs for i in range(a, b + 1)}
+    warnings: list[dict] = []
+    if stray is not None:
+        warnings.append({"line": stray + 1, "problem": "unclosed-fence",
+                         "detail": "a code fence opened here is never closed; read as text, not code"})
     blocks: list[tuple[int, list[str]]] = []
-    fenced = open_ = False
-    for n, line in enumerate(text.splitlines(), 1):
-        if line.startswith("```"):
-            fenced = not fenced
+    open_ = False
+    for i, line in enumerate(lines):
+        if i == stray:
             continue
-        if fenced:
+        if i in inside:
+            a, b = inside[i]
+            if HEADING.match(line):
+                warnings.append({"line": i + 1, "problem": "heading-in-fence",
+                                 "detail": f"an entry heading inside fenced code (lines {a + 1}-{b + 1}) is not imported"})
             continue
         if HEADING.match(line):
-            blocks.append((n, [line]))
+            blocks.append((i + 1, [line]))
             open_ = True
         elif OTHER_HEADING.match(line):   # a section that is not an entry (a review): not part of the one before
             open_ = False
         elif blocks and open_:
             blocks[-1][1].append(line)
-    return [_record(lines, n, source) for n, lines in blocks]
+    return [_record(ls, n, source) for n, ls in blocks], warnings
 
 
 def _record(lines: list[str], line_no: int, source: str) -> dict:
