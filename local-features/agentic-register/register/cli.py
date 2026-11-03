@@ -420,6 +420,10 @@ def signing_key(a, who: str) -> Path:
     if kp.suffix == ".pub" and not os.environ.get("SSH_AUTH_SOCK"):
         raise SystemExit("agentic-register: --key names a public key, so the private key must be in an SSH agent, "
                          "and SSH_AUTH_SOCK is not set")
+    try:
+        core.public_key(kp)
+    except core.NoPublicKey as e:
+        raise SystemExit(f"agentic-register: {e}")
     return kp
 
 
@@ -456,7 +460,8 @@ def cmd_roster(a) -> int:
     data: dict = {}
     if a.add_key:
         if not (a.principal and a.role):
-            raise SystemExit("agentic-register: --add-key needs --principal and --role")
+            raise SystemExit("agentic-register: --add-key needs --principal <name> and --role agent "
+                             "(or --role operator)")
         data["add"] = [{"key": a.add_key, "as": a.principal, "role": a.role}]
     if a.remove_key:
         data["remove"] = [{"key": a.remove_key}]
@@ -641,16 +646,19 @@ def cmd_import(a) -> int:
     src = Path(a.markdown or a.runs)
     text = src.read_text()
     name = backfill.source_name(src)
-    records = backfill.markdown_records(text, name) if a.markdown else backfill.run_records(text, name)
+    records, warned = backfill.markdown_scan(text, name) if a.markdown else (backfill.run_records(text, name), [])
     kind = "work" if a.markdown else "run"
+    notes = "".join(f"\nagentic-register: {name}:{w['line']}: {w['detail']}" for w in warned)
     led = read_ledger(a)
     done = backfill.already(led)
     titles = {k: i for i in led.order for e in [led.valid[i]] if e.kind == "work"
               for k in backfill.title_keys(e.data, e.at)}
     todo = [d for d in records if d["backfill"]["sha256"] not in done]
     if a.dry_run:
-        emit(a, {"source": name, "records": len(records), "new": len(todo), "already": len(records) - len(todo)},
-             f"agentic-register: {name}: {len(records)} records, {len(todo)} to import, {len(records) - len(todo)} already in")
+        emit(a, {"source": name, "records": len(records), "new": len(todo), "already": len(records) - len(todo),
+                 "warnings": warned},
+             f"agentic-register: {name}: {len(records)} records, {len(todo)} to import, {len(records) - len(todo)} already in"
+             + notes)
         return 0
     who = principal(a)
     kp = signing_key(a, who)
@@ -663,14 +671,16 @@ def cmd_import(a) -> int:
             i = adapters.add(store, kp, who, kind, d, anchors_of(a), checked=c,
                              register=selected(a)["name"], kinds=rtype(a).kinds, guard=guard_of(a))
         except core.Refused as r:
-            emit(a, {"refused": r.code, "detail": r.detail, "line": d["backfill"]["line"], "imported": added},
-                 f"agentic-register: refused at {name}:{d['backfill']['line']}, {r}; {len(added)} imported before it")
+            emit(a, {"refused": r.code, "detail": r.detail, "line": d["backfill"]["line"], "imported": added,
+                     "warnings": warned},
+                 f"agentic-register: refused at {name}:{d['backfill']['line']}, {r}; {len(added)} imported before it"
+                 + notes)
             return 1
         added.append(i)
         if kind == "work":
             titles.update({k: i for k in backfill.title_keys(d)})
-    emit(a, {"source": name, "imported": added, "already": len(records) - len(todo)},
-         f"agentic-register: {name}: {len(added)} imported, {len(records) - len(todo)} already in")
+    emit(a, {"source": name, "imported": added, "already": len(records) - len(todo), "warnings": warned},
+         f"agentic-register: {name}: {len(added)} imported, {len(records) - len(todo)} already in" + notes)
     return 0
 
 
@@ -739,7 +749,8 @@ def cmd_rekey(a) -> int:
             retired.mkdir(parents=True, exist_ok=True)
             stamp = adapters.now().replace(":", "")
             for f in (kp, Path(str(kp) + ".pub")):
-                f.rename(retired / f"{f.name}.{stamp}")
+                if f.exists():   # a key whose .pub is gone is still retired, and still taken off the rosters
+                    f.rename(retired / f"{f.name}.{stamp}")
         made = not kp.is_file()
         if made:
             kp.parent.mkdir(parents=True, exist_ok=True)
@@ -755,7 +766,7 @@ def cmd_rekey(a) -> int:
                 report.append({"principal": p, "register": name, "done": "already on the roster"})
                 continue
             if not (a.role or p in known_as or old):
-                report.append({"principal": p, "register": name, "done": "skipped: not on this roster (give --role to add)"})
+                report.append({"principal": p, "register": name, "done": "skipped: not on this roster; give --role agent to add it"})
                 continue
             role = a.role or next((r for k, (pr, r) in added.items() if pr == p), "agent")
             data = {"add": [{"key": new, "as": p, "role": role}]}
