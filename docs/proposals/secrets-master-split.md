@@ -495,3 +495,279 @@ retention, and the start hook returning at once on a sealed server. The server i
 9. **The interface's name.** Recommendation: `dcf-secret`, in the collection's helper naming, since
    any server that speaks the API works behind it; the alternative `openbao-secret` ties callers to
    the product name.
+
+## Architecture review (2026-11-03)
+
+**Verdict:** fit with changes
+
+Reviewed against two rulings the Operator gave during the review.
+
+1. **Local only.** OpenBao does not use the shared folder itself. Server mode is a local
+   instance whose data lives in its own volume. Persistence outside the container is what client
+   mode against an external server is for, and the Feature takes no dependency on the cloud folder.
+2. **Ad-hoc backup and restore.** A backup task takes a raft snapshot and writes it to any path
+   (`DEST=`, for example the cloud folder) under a new timestamped name that is never overwritten.
+   A restore task restores one (`FROM=`), after which the server needs unsealing.
+   - Scheduling is optional. The host recommends a host scheduler (Windows Task Scheduler running
+     the task through `task dc:exec`), and a Feature option `backupInterval`, off by default, runs
+     backups while the server is up and unsealed.
+   - The status task shows when the last backup was taken and where.
+   - This is how server mode meets ADR 0045: a machine loss loses at most what came after the last
+     backup.
+
+Findings that concerned only the earlier design are dropped: section 4's automatic copy into
+`snapshotDir`, the snapshot after every write, and the snapshot in the shutdown check. What the
+rulings leave uncovered is finding 1.
+
+**Requirements (NFR-1 to NFR-13):**
+
+- NFR-1 owns-its-state: met (section 3: the `openbao-${devcontainerId}` volume, `openbao-setup`
+  through `dcf-persist`, the token in the volume). The live store is tier 4 and is carried out of
+  the machine only by the backups (finding 1).
+- NFR-2 registered-taskfile: needs a change. The Feature's namespace is `openbao:`, so the ruled
+  `bao:backup` / `bao:restore` / `bao:status` are `openbao:backup`, `openbao:restore` and
+  `openbao:status` (finding 2). Each new task needs a `desc`.
+- NFR-3 verified-and-pinned: met. The server is the same `bao` binary the Feature already
+  installs and verifies; no new download.
+- NFR-4 augments-not-replaces: does not apply (no official OpenBao Feature is in play).
+- NFR-5 idempotent-and-user-neutral: met for the start hook (section 3: a live PID is reused, it
+  never waits or prompts). The `backupInterval` timer must also start once and never fail the start
+  (finding 1).
+- NFR-6 one-way-to-configure: not met as written. `OPENBAO_MODE` breaks the collection's
+  `<ID>_SETUP_*` override naming; `backupInterval` needs its twin too (finding 4).
+- NFR-7 agent-ready: not met as written. No task is marked `interactive`, and `openbao:init` prints
+  the shares (finding 3). `openbao:backup` must be non-interactive to be schedulable.
+- NFR-8 documented-to-the-standard: needs work at build. Item 3 (state) gets the volume and the
+  backup. Item 8 (limits) gets the window since the last backup, the sealed-server case and
+  retention. Item 2 gets `backupInterval`. Item 6 says the Feature only writes to the backup
+  destination and takes no dependency on the cloud folder.
+- NFR-9 says-why-it-exists: unchanged by this proposal.
+- NFR-10 tested-on-base-images: met in plan (section 12). Add a `mode=server` scenario,
+  a `backupInterval` scenario, and Docker-free tests of the backup naming (never overwritten), the
+  status line and a sealed server.
+- NFR-11 linter-cli-contract: does not apply (`dcf-secret` is not a check or transform tool).
+- NFR-12 vendor-neutral-contracts: does not apply. No contract for agent CLIs is defined; the
+  backs' identities sit below the CLI (finding 10).
+- NFR-13 manages-the-environment-not-the-cli: met. The backup is `bao operator raft snapshot save`
+  plus naming, a destination and a status record, which is environment management. One overlap is
+  finding 8.
+
+**Facts checked:**
+
+- OpenBao `file` storage removed in v2.7.0: confirmed. The v2.7.0 release notes (2026-09-23) say
+  "command/server: Remove `file` storage backend support" (GH-3879); the deprecation page says
+  deprecated in v2.6.0. The latest release is v2.7.2.
+  - Section 4's "two embedded backends" is no longer complete: v2.7.0 adds a PebbleDB backend
+    ("non-HA, durable").
+  - The ruled backup is a raft snapshot, which settles raft over pebble. The NOTES should say why.
+- `ssh-add -t <life> -` from stdin: confirmed here with OpenSSH 10.0p2.
+  - The key loads from stdin ("Identity added: (stdin)", "Lifetime set to 60 seconds").
+  - `ssh-keygen -Y sign` then signs through the agent with only the `.pub` present.
+  - `ssh-add -d -` removes the key with its public key on stdin, so `key:lock` needs no file either.
+- GitHub SSH-certificate verification: confirmed as far as the documentation goes.
+  - "About commit signature verification" describes SSH verification only against public keys
+    added to the account, requires Git 2.34 or later, and mentions no SSH certificates.
+  - It also says a verified signature "remains verified within its repository's network" after the
+    key is revoked, so section 13 is right.
+- Raft needs (bbolt, `fsync`, lock, `disable_mlock` recommended with raft): not confirmed. The
+  OpenBao configuration page fetched does not mention `disable_mlock`, and no `bao` binary was
+  available to run a raft server. The claims match Vault's documentation; check them in the server
+  slice.
+- Restore onto a fresh server: not confirmed. `bao operator raft snapshot restore` needs a token,
+  so a new machine's server must first be initialised with throwaway shares and logged in. Only
+  then does `-force` restore the snapshot, which is unsealed with the original shares (Vault's
+  documented flow). The ruled restore task must do or explain that step (finding 1).
+
+### Findings
+
+1. **ADR 0045 and the ruled backup: what it does not cover yet.** The backup makes server mode meet
+   ADR 0045 to the extent the ruling states: a machine loss loses what came after the last backup.
+   The rest of what the backup needs is not specified.
+   - **Snapshot privileges.** A raft snapshot needs a token allowed `read` on
+     `sys/storage/raft/snapshot`, and a restore `update` on `sys/storage/raft/snapshot-force`.
+     Section 5 gives the Operator's policy "not `sys/` beyond that". `backupInterval` and a host
+     scheduler run when no Operator is there, and the Operator's token lives 4 to 8 hours
+     (decision 4), so an overnight scheduled backup has no valid token.
+     Recommended change: a dedicated AppRole `backup` whose policy allows only the snapshot read,
+     bound to loopback like the backs' (section 7). The Operator's policy gets the restore path.
+     The root token stays revoked.
+   - **A sealed server.** No backup can be taken while sealed, and after a container start the
+     server stays sealed until the Operator unseals it. A host scheduler firing then fails every
+     time, unnoticed.
+     Recommended change: the backup task exits with its own code and one line when sealed or not
+     logged in (the `dcf-secret` codes 11 and 12). The status task shows the last backup's age and
+     warns past a limit. The briefing's sealed line also says how old the last backup is.
+   - **Retention.** "Never overwritten" means the destination only grows, and a snapshot carries
+     every secret (ciphertext under the barrier, useless without the shares). Old snapshots also
+     keep keys that were retired since.
+     Recommended change: an option `backupKeep` (the last N, default for example 30) that removes
+     only files matching the Feature's own name pattern in `DEST`. Never remove anything else.
+   - **The window.** The rare writes (`openbao:ssh:new`, `:rotate`, `:import`, `approle:issue`) are
+     the ones a loss would cost.
+     Recommended change: after a write, the task prints "not backed up since <time>; task
+     openbao:backup DEST=…". It runs the backup itself only when a default destination is
+     configured (`OPENBAO_SETUP_BACKUP_DEST`).
+   - **Two machines, one destination.** If two machines back up into one cloud folder, the
+     section-4 fork comes back.
+     Recommended change: the file name carries the container or machine name. The restore task
+     warns when the newest file in the folder is from another machine than its store's last
+     backup. This keeps decision 3 open (open question 4).
+   - **A fresh machine.** `openbao:init` should refuse when a backup is named or found and point
+     at `openbao:restore`. The restore task does the throwaway init described under "Facts checked".
+   - **The host scheduler.** ADR 0026 allows a one-shot command on the host, and a Task Scheduler
+     entry running `task dc:exec` is one. ADR 0024 decision 3 rules out a background process of
+     ours on the host, so the launcher must not install or own the schedule.
+     Recommended change: the NOTES give the Task Scheduler line as the consumer's own setup on the
+     workstation, and no launcher task registers it.
+   - **The operator key.** A key that cannot be made again (the register's operator key) is still
+     lost for whatever window a backup leaves. Recommended change: keep decision 2's offline second
+     anchor, now as the backstop to the backup window rather than the only protection.
+
+2. **NFR-2: the ruled task names are outside the Feature's namespace.** A Feature's tasks appear
+   under `<id>:`, and the id is `openbao`.
+   - `bao:backup`, `bao:restore` and `bao:status` would be `openbao:backup`, `openbao:restore` and
+     `openbao:status`.
+   - `openbao:status` already exists as a pass-through of `bao status`. Adding the last-backup line
+     there changes a pass-through.
+   Recommended change: `openbao:backup DEST=`, `openbao:restore FROM=`, and the last backup shown
+   by `openbao:server:status` (new in section 3). `openbao:status` stays the CLI's own.
+
+3. **NFR-7: `openbao:init` must never run in an agent's session.** It prints the unseal shares
+   once. Run by an agent, or by the Operator in a session a back condenses, the shares land in a
+   transcript and then in the stretch the scribe reads. Section 9 says "never in the container",
+   and a transcript is in the container.
+   Recommended change: mark `openbao:init`, `openbao:unseal`, `openbao:login`, `openbao:restore`
+   and `openbao:ssh:import` `interactive: true`. Make `init` refuse without a terminal, and when
+   `DEVHOST_JOB_CHILD` or an agent's environment is set. The NOTES tell the Operator to run it in a
+   plain terminal (or with `-pgp-keys`). `openbao:backup` stays non-interactive.
+
+4. **NFR-6: the override variables are misnamed.** The collection's per-container override of an
+   option is `<ID>_SETUP_<OPTION>`, as in `SSH_AGENT_SETUP_KEY_MODE` and `GIT_SETUP_HOOKS_PATH`.
+   Recommended change: rename `OPENBAO_MODE` to `OPENBAO_SETUP_MODE`. `backupInterval` gets
+   `OPENBAO_SETUP_BACKUP_INTERVAL`. `DEST` and `FROM` are task variables. `DCF_SECRET_MOUNT` and
+   `DCF_SECRET_AS` are plain runtime variables and stay.
+
+5. **Decision 1 ("every private key") contradicts socket mode, which section 10 keeps unchanged.**
+   ssh-agent's default rule is that a host-held key never enters the container. Section 10 says
+   a socket-mode consumer changes nothing, so its keys stay on the workstation. That is a second
+   master by the definition in section 6. And `key:load` in socket mode puts an OpenBao key into
+   the workstation's agent. Section 7 refuses this for the backs but allows it for the Operator's
+   register key.
+   Recommended change: scope decision 1 as "every private key the collection creates or stores".
+   Keys the workstation holds stay the workstation's. Say what `key:load` does in socket mode:
+   load into the host agent with the lifetime, or refuse.
+
+6. **ADRs this amends, beyond 0046, are not named.** Section 10.4 names only ADR 0046. The design
+   also changes:
+   - ADR 0029: rotation moves from `ssh-agent:key:rotate` to `openbao:ssh:rotate`, and retiring no
+     longer keeps a local `allowed_signers` history in the key volume (it moves to a committed file).
+   - ADR 0026: `dc:ssh-key-import` streams into the key volume today; it becomes a stream into
+     `openbao:ssh:import FROM=file`.
+   - ADR 0024 decision 7: the opt-in `DCF_HOST_SSH_AGENT=key` and its "key never enters the
+     container" trade-off are renamed (decision 6).
+
+   The backup ruling also needs its ADR: how server mode meets ADR 0045, which does not change
+   0045 itself. Recommended change: section 10.4 names a new ADR that supersedes 0046 and the parts
+   of 0029 and 0026 it changes, and records the backup route. One ADR may do all of it. ADR 0024
+   decision 7's value stays accepted for one major.
+
+7. **The storage choice should be stated as settled by the backup.** Section 4 weighs only raft
+   against `file`, and v2.7.0 also offers PebbleDB. The ruled backup is a raft snapshot, which
+   decides it.
+   Recommended change: section 4 says raft is chosen because `bao operator raft snapshot` is the
+   backup, and pebble is not used.
+
+8. **NFR-13: `dcf-secret get` overlaps the existing `openbao:kv:get` task.** Both are
+   `bao kv get`. The exit-code mapping in `dcf-secret` is environment management (callers learn one
+   contract), so it belongs. But two read paths for one action goes against "Tasks are the API".
+   Mapping sealed, denied and missing also needs `bao`'s own signals (`bao status` exit 2 when
+   sealed, the HTTP status in `-format=json`), not parsed English.
+   Recommended change: keep `openbao:kv:get` as the raw CLI pass-through and document
+   `dcf-secret` as the callers' interface. Build the mapping on `bao status` and JSON output.
+
+9. **Placement: the AppRole roles for the backs belong to the devhost, not the openbao Feature.**
+   Section 3 has `openbao:init` create "approle for the backs". The names scribe, secretary,
+   librarian and tester are this way of working's and mean nothing to another consumer of a
+   published Feature.
+   Recommended change: the openbao Feature offers generic `openbao:approle:issue ROLE=
+   POLICY_PATH=` and `:revoke`, and ships one role of its own, `backup` (finding 1). The devhost
+   local Feature creates one role per back and its policy on `dcf/register/<principal>`.
+
+10. **Placement: a back's key fetch belongs in the back's shell runner, not the model's session.**
+    Backs run as `claude -p` from `run-job.sh`. If the model itself ran
+    `DCF_SECRET_AS=scribe dcf-secret get ...`, the private key would pass through its tool output
+    and transcript. The route would also depend on Claude Code's environment handling (matrix row
+    "Env or settings into the session": Claude Code takes the settings file only).
+    Recommended change: section 7 says the fetch to tmpfs, the signing and the removal run in the
+    devhost's job runner around the CLI, never as a tool call. The key then never reaches a model,
+    and the route is the same for every CLI.
+
+11. **The register's own key creation is a second writer.** `agentic-register key new` and `rekey`
+    generate keys into the volume's `keys/<principal>` (`cli.py`). Section 10 deprecates that path,
+    but the register would still write new keys there, and section 6 rules out a second master.
+    Recommended change: the agentic-register slice gives `key new` and `rekey` a way to hand the
+    new private key to `dcf-secret put` on stdin (or to print it to stdout only), and stops writing
+    `keys/` when the openbao Feature is present.
+
+12. **Placement: the SSH lifecycle tasks reach back into ssh-agent.** `openbao:ssh:rotate` keeps
+    ADR 0029's four steps. Two of them belong to ssh-agent (`key:load`, `git:signing`/`git:verify`)
+    and one to gh. The openbao Feature would then know SSH, git and GitHub, and depend on
+    ssh-agent at run time, the reverse of the split in section 2.
+    Recommended change: the openbao Feature keeps the secret record (create, put, retire versions,
+    age from KV metadata). The SSH steps call `task ssh-agent:*` and `gh`, refusing plainly when
+    absent.
+
+13. **`allowed_signers` in the repository needs a path git resolves the same everywhere.**
+    `git:signing` writes either global config (the git Feature's volume, in this devhost) or repo
+    config, which is shared with Windows through `.git-dirs` (ADR 0020).
+    - A repo-relative `.devcontainer/allowed_signers` in global config points at the wrong file in
+      every other repository.
+    - An absolute container path in repo config means nothing to git on the Windows host.
+    Recommended change: section 8 states how `gpg.ssh.allowedSignersFile` is set (repo scope with a
+    work-tree-relative path checked against git's resolution, or written per repository by
+    `git-setup`), and adds a test for it.
+
+14. **ADR 0040: the Operator does not commit.** Section 10's table, step 3, has the Operator
+    "commit the `allowed_signers` file".
+    Recommended change: "the host commits the `allowed_signers` file", as section 8 already says.
+
+15. **Lexicon: new concepts need terms.** `LEXICON.md` has none of these:
+    - sitting (used in ADR 0046 and throughout; proposed: the span between the Operator's login and
+      the token's end)
+    - seal and unseal, and unseal share
+    - the gate
+    - master of secrets
+    - server mode and client mode
+    - backup (a raft snapshot written once to a destination) and restore
+    - secret name (the logical `ssh/`, `register/`, `token/` names)
+    - back identity (an AppRole role per back)
+    - the register's operator key, anchor and principal (used here and in the register's README, not
+      in the lexicon)
+    - key mode, and its 2.0 successor
+
+    Terms used and already defined are used as defined: back, stretch, storage tier, shared
+    folder, shutdown check, host.
+    Recommended change: the librarian adds these terms when the proposal is accepted, and section 9
+    or 14 defines the sitting, since decision 4 rests on it.
+
+### Open questions for the Operator
+
+- **The backup's identity** (finding 1): an unattended backup needs a token outliving the
+  Operator's sitting. Recommendation: a `backup` AppRole limited to the snapshot read, loopback
+  only.
+- **Retention in the destination** (finding 1): keep every backup forever, or let the Feature
+  remove its own oldest files. Recommendation: `backupKeep`, default 30, touching only the Feature's
+  own file pattern.
+- **Back up after each write** (finding 1): only print the reminder, or also back up automatically
+  when a default destination is configured. Recommendation: both. The reminder always prints, and
+  the automatic backup runs only with `OPENBAO_SETUP_BACKUP_DEST` set.
+- **Two machines, one destination** (finding 1, decision 3): recommendation: one machine is the
+  master. File names carry the machine, and the restore task warns about a newer backup from
+  another machine.
+- **Who owns the SSH key lifecycle** (finding 12): the openbao Feature calling ssh-agent and gh,
+  or ssh-agent's tasks with OpenBao as their store. Recommendation: the record in openbao, the SSH
+  steps in ssh-agent's tasks, which the openbao tasks call.
+- **Decision 1's reach in socket mode** (finding 5): do keys held by a workstation stay out of
+  OpenBao, and may `key:load` put an OpenBao key into the workstation's agent? Recommendation:
+  workstation keys stay the workstation's, and `key:load` into a host agent is allowed with the
+  lifetime, said in the output.
