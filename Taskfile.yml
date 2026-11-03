@@ -112,6 +112,7 @@ tasks:
       - task: test:host-mounts
       - task: test:ssh-key-import
       - task: test:ssh-agent-unit
+      - task: test:openbao-unit
       - task: test:cloud-folder-unit
       - task: test:cloud-folder-login
       - task: test:agents-unit
@@ -238,6 +239,14 @@ tasks:
     cmds:
       - bash test/ssh-agent/unit/setup_test.sh
       - bash test/ssh-agent/unit/passphrase_test.sh
+
+  test:openbao-unit:
+    desc: 'Docker-free tests of the openbao Feature''s scripts. dcf-secret against a stub bao that answers from environment variables and logs every call (dcf_secret_test.sh): get (the value alone on stdout, the mount, the field and the name checks, a multi-line value untouched), each exit code with its one-line fix (10 unreachable, 11 sealed or not initialised, 12 no token, 13 denied, 14 no such secret, and 1 and 2 for a put bao cannot explain and a wrong call) worked out from bao status, the JSON field initialized and the capabilities bao token capabilities reports, put (the value on stdin and in no argument, kept byte for byte; a merge by default with kv patch, a create with -cas=0 when the secret is absent, one retry as a patch when it appeared in between, --replace with kv put, a token without the patch capability refused with 13 and nothing written; nothing on stdout, a terminal refused), status in every state, DCF_SECRET_AS refused, no bao on PATH, and no fallback to a file in the state folder or a variable when the server is sealed, unreachable or the secret is missing. openbao-setup over temp folders (setup_test.sh) with the real dcf-persist: the state folder made and reported, a token left in ~/.vault-token moved into it once (only with the token helper in effect, never over one already there, mode 600), the token helper reported in effect, unset or another file, an unwritable folder reported, the mode (client, an unknown one reported, run as client), BAO_ADDR, BAO_TOKEN and a saved login reported without their text, bao missing, never fatal. The token helper bao calls (token_helper_test.sh): get, store and erase through `sh -c`, the token at OPENBAO_STATE_DIR/token with mode 600, written atomically, a missing token read as nothing, erase of a missing one no error, a failing store non-zero. `task openbao:logout` (logout_test.sh): revoke then erase, the erase when the revoke fails, nothing stored. That the real bao gives the signals the stub plays is the container test test/openbao/dev_server.sh (CI). Part of lint. Needs bash, grep and task (script(1) for one check, skipped without it).'
+    cmds:
+      - bash test/openbao/unit/dcf_secret_test.sh
+      - bash test/openbao/unit/setup_test.sh
+      - bash test/openbao/unit/token_helper_test.sh
+      - bash test/openbao/unit/logout_test.sh
 
   test:ssh-key-import:
     desc: 'Docker-free bash tests of the host task devcontainer:ssh-key-import in the bash twin (src/devcontainer-cli/devcontainer-cli.sh): the key file reaches `devcontainer exec` on stdin and never in an argument, the .pub follows, the key load runs last, the refusals (no file, no running container, key mode off in the container), and the host-side warnings (default name, a public key also in authorized_keys or another ~/.ssh/*.pub, never printing the key); stub devcontainer and docker record what they get; part of lint. The PowerShell twin is in test:bootstrap.'
