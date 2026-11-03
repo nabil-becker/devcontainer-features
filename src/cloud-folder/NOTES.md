@@ -512,6 +512,22 @@ override the options for one call.
     fake the device and the mount, and the `mount_fuse` scenario runs the real mount only where the
     test's engine has `/dev/fuse`.
 
+## Anti-patterns
+
+### Don't build on file semantics of the mount you have not probed
+
+- **Don't:** put a store on the cloud folder (mount mode is rclone FUSE) that needs hard links, particular modes (`0444`), atomic rename or fixed conflict names.
+- **Why:** 2026-11-03, "Ledger and register storage location answered; shared-folder mirror blocked by hard links": the design assumed a mirror that rclone FUSE cannot take, though the architecture review of 2026-10-31 had flagged modes and conflict names.
+- **Instead:** before choosing a store, run `ln`, `mv` and `chmod` on the target; keep such a store on a local volume and copy to the folder; use sync mode when the mount cannot do what the store needs.
+- **Caught by:** nothing yet (open item `register-store-no-hardlink`, upstream).
+
+### Don't use different rclone versions on the workstation and in the container, or leave the sign-in port open
+
+- **Don't:** pin one rclone version in the container and run another on the workstation for the sign-in, or keep a listener on `53682` after signing in.
+- **Why:** 2026-10-29, "Question answered: personal OneDrive mount for this repository": the pasted token was rejected, and a token is only readable when both sides run the same rclone (see "Limits"); and 2026-10-29, "Question answered: can the rclone callback port be dynamic" (Microsoft allows only `http://localhost:53682/`).
+- **Instead:** pin one version in `devcontainer.json` (`rcloneVersion`); `task cloud-folder:login` runs the workstation rclone at the same version, verified against `SHA256SUMS`, and opens `53682` only while you sign in.
+- **Caught by:** `task test:cloud-folder-login` (the default pin equals the Feature's; the listener is closed after success, failure and timeout).
+
 ## Why it exists
 
 The two Features for rclone published on containers.dev (checked 2026-10-27:
