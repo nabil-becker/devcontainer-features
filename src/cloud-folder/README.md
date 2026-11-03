@@ -25,30 +25,6 @@ One fixed path in the devcontainer (mountPoint, default /mnt/cloud-folder) for a
 | syncInterval | sync: how often the timer runs a sync (a number of seconds, or with s, m or h: 900, 15m, 1h). 0: no timer, sync on demand only (task cloud-folder:sync). Override with CLOUD_FOLDER_SYNC_INTERVAL. | string | 15m |
 | rcloneVersion | The rclone release to install for sync and mount (with or without a leading v), or 'latest'. The default is pinned with its sha256 per architecture in this Feature; another version is verified against the release's SHA256SUMS. Not installed in mode host, nor when the image already has rclone (that one is kept). | string | 1.75.2 |
 
-## Changes in 1.3.1
-
-- **The post-start hook never fails and never holds the start.** A consumer's rebuild ended with
-  `postStartCommand from Feature 'cloud-folder' failed with exit code 1` after 775 s, while another
-  Feature's hook waited at a prompt and WSL reported a connection timeout. `cloud-folder-setup` with
-  no argument (the hook, and `task cloud-folder:setup`) now always exits 0: a broken pipe or hang-up
-  on the exec channel (SIGPIPE, SIGHUP) is ignored, and the whole run gets a budget of 60 s
-  (`DCF_CLOUD_FOLDER_START_BUDGET`) after which it reports that it did not finish and returns; the
-  mount and the sync timer are detached and go on in the background. A problem is a warning with
-  the command to fix it (`task cloud-folder:status`, `:login`, `:start`). The explicit tasks
-  (`start`, `sync`, `status`, `login`) keep their real exit codes.
-
-## Changes in 1.3.0
-
-- **One sign-in command, wherever it runs.** `task cloud-folder:login` now runs rclone's own browser
-  sign-in (`rclone authorize "onedrive" --auth-no-open-browser`) in the container instead of
-  asking for a token from another machine with the same rclone version. Sign in in any browser and
-  paste back the address it fails to open (`http://localhost:53682/?code=...`), or, from the
-  workstation with `devcontainer-cli` 1.16.0, let the launcher relay the browser into the container.
-  A pasted token is still accepted at the same prompt, and `-- --token` asks for nothing else. See
-  "Signing in". `login` takes `-- --relay` (the launcher's) and `-- --token`;
-  `CLOUD_FOLDER_LOGIN_TIMEOUT` bounds the wait (default 600 s). The token is still written only into
-  the volume's `rclone.conf`.
-
 ## What it gives you
 
 One fixed path in the container, `/mnt/cloud-folder` by default (option `mountPoint`), for a
@@ -589,6 +565,43 @@ To pin another rclone version without a network lookup at build, add its two dig
 v=1.75.2; curl -fsSL https://downloads.rclone.org/v$v/SHA256SUMS | grep -E "rclone-v$v-linux-(amd64|arm64)\.zip$"
 ```
 
+## Changes
+
+### [1.3.2] - 2026-11-03
+
+#### Added
+
+- This changelog: every release of this Feature now has an entry here, written for its users, and the Feature's README shows the latest three under "Changes". Nothing to do.
+
+### [1.3.1] - 2026-10-30
+
+#### Changed
+
+- **The post-start hook never fails and never holds the start.** A consumer's rebuild ended with
+  `postStartCommand from Feature 'cloud-folder' failed with exit code 1` after 775 s, while another
+  Feature's hook waited at a prompt and WSL reported a connection timeout. `cloud-folder-setup` with
+  no argument (the hook, and `task cloud-folder:setup`) now always exits 0: a broken pipe or hang-up
+  on the exec channel (SIGPIPE, SIGHUP) is ignored, and the whole run gets a budget of 60 s
+  (`DCF_CLOUD_FOLDER_START_BUDGET`) after which it reports that it did not finish and returns; the
+  mount and the sync timer are detached and go on in the background. A problem is a warning with
+  the command to fix it (`task cloud-folder:status`, `:login`, `:start`). The explicit tasks
+  (`start`, `sync`, `status`, `login`) keep their real exit codes.
+
+### [1.3.0] - 2026-10-29
+
+#### Changed
+
+- **One sign-in command, wherever it runs.** `task cloud-folder:login` now runs rclone's own browser
+  sign-in (`rclone authorize "onedrive" --auth-no-open-browser`) in the container instead of
+  asking for a token from another machine with the same rclone version. Sign in in any browser and
+  paste back the address it fails to open (`http://localhost:53682/?code=...`), or, from the
+  workstation with `devcontainer-cli` 1.16.0, let the launcher relay the browser into the container.
+  A pasted token is still accepted at the same prompt, and `-- --token` asks for nothing else. See
+  "Signing in". `login` takes `-- --relay` (the launcher's) and `-- --token`;
+  `CLOUD_FOLDER_LOGIN_TIMEOUT` bounds the wait (default 600 s). The token is still written only into
+  the volume's `rclone.conf`.
+
+The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/cloud-folder/CHANGELOG.md).
 
 ---
 

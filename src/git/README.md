@@ -288,6 +288,27 @@ install order. A git it finds at `/usr/local/bin/git` (the source-built one)
 is moved to `/usr/local/libexec/git-feature/git` and the wrapper forwards to
 it.
 
+## Changes
+
+### [1.4.5] - 2026-11-03
+
+#### Added
+
+- This changelog: every release of this Feature now has an entry here, written for its users, and the Feature's README shows the latest three under "Changes". Nothing to do.
+
+### [1.4.4] - 2026-10-28
+
+#### Fixed
+
+- The install no longer fails sporadically: every download error is retried, and a check no longer closes its pipe early under `pipefail`. Rebuild to pick it up; no change to options or tasks. ([#89](https://github.com/nabil-becker/devcontainer-features/pull/89))
+
+### [1.4.3] - 2026-10-23
+
+#### Added
+
+- The ssh-agent Feature 1.0.0, the agent mount and key tasks (slice 4; devcontainer-cli 1.8.0, git 1.4.3) ([#68](https://github.com/nabil-becker/devcontainer-features/pull/68))
+
+The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/git/CHANGELOG.md).
 
 ---
 

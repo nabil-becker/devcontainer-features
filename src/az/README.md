@@ -113,6 +113,27 @@ other mounted path; `az-setup` follows the variable.
 - `task az:login` / `task az:account` from a root Taskfile that includes
   the go-task registry.
 
+## Changes
+
+### [1.1.2] - 2026-11-03
+
+#### Added
+
+- This changelog: every release of this Feature now has an entry here, written for its users, and the Feature's README shows the latest three under "Changes". Nothing to do.
+
+### [1.1.1] - 2026-10-22
+
+#### Changed
+
+- Maintenance release; nothing changes for you (no option, task or behaviour change). ([#54](https://github.com/nabil-becker/devcontainer-features/pull/54))
+
+### [1.1.0] - 2026-10-21
+
+#### Fixed
+
+- Az installs the Azure CLI; Feature tasks run in the caller's folder ([#48](https://github.com/nabil-becker/devcontainer-features/pull/48))
+
+The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/az/CHANGELOG.md).
 
 ---
 

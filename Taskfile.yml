@@ -61,7 +61,7 @@ tasks:
           ARGS: 'test -p "{{.ROOT_DIR}}" --global-scenarios-only'
 
   docs:
-    desc: 'Regenerate src/<id>/README.md from each devcontainer-feature.json + NOTES.md with `devcontainer features generate-docs`. Run after changing either and commit the result; CI (lint) fails when a README is stale.'
+    desc: 'Regenerate src/<id>/README.md from each devcontainer-feature.json + NOTES.md with `devcontainer features generate-docs`, then add its "Changes" section (the latest 3 entries of src/<id>/CHANGELOG.md and a link to the file; .github/scripts/changelog.py render). Run after changing either, or a CHANGELOG, changing either and commit the result; CI (lint) fails when a README is stale.'
     # Relative -p on purpose: the CLI embeds the given path in each README's
     # footer link, so an absolute path would leak the local checkout path.
     dir: '{{.ROOT_DIR}}'
@@ -70,6 +70,7 @@ tasks:
         vars:
           SUBCOMMAND: features
           ARGS: 'generate-docs -p src -n nabil-becker/devcontainer-features --github-owner nabil-becker --github-repo devcontainer-features'
+      - python3 -I '{{.ROOT_DIR}}/.github/scripts/changelog.py' render
 
   docs:check:
     desc: 'Fail if any src/<id>/README.md in the working tree differs from what `task docs` generates (the check CI runs). Compares before/after regeneration, so it works on uncommitted changes too.'
@@ -96,6 +97,7 @@ tasks:
       - task: common:curl-check
       - task: taskfiles:check
       - task: versions:check
+      - task: changelog:check
       - task: test:common-unit
       - task: test:go-task-unit
       - task: test:devhost
@@ -162,6 +164,18 @@ tasks:
     desc: 'Fail, naming file:line, when a container test (test/<id>/*.sh) compares a semver literal with the Feature''s baked version file (/usr/local/share/<id>-feature/version) or `task <id>:version` and it differs from src/<id>/devcontainer-feature.json (or local-features/); container tests run only with Docker, so a version bump otherwise fails only in CI. Part of lint.'
     cmds:
       - python3 -I '{{.ROOT_DIR}}/.github/scripts/check_versions.py'
+
+  changelog:check:
+    desc: 'Fail when a Feature''s `version` in src/<id>/devcontainer-feature.json has no `## [version]` entry in src/<id>/CHANGELOG.md, or when its README''s "Changes" section is stale against the CHANGELOG (run `task docs`); Docker-free; part of lint.'
+    cmds:
+      - python3 -I '{{.ROOT_DIR}}/.github/scripts/changelog.py' check
+
+  changelog:draft:
+    desc: 'Print a draft CHANGELOG entry for src/<FEATURE>: the commits that touched it since origin/main (BASE=<ref> to change), grouped Added/Changed/Fixed, under the version now in its devcontainer-feature.json. Copy it into src/<FEATURE>/CHANGELOG.md and rewrite it for a user of the Feature: what changed for them and whether they must act (an option renamed, a task removed, a rebuild needed). Usage: task changelog:draft FEATURE=<id>'
+    requires:
+      vars: [FEATURE]
+    cmds:
+      - python3 -I '{{.ROOT_DIR}}/.github/scripts/changelog.py' draft '{{.FEATURE}}' {{if .BASE}}--base '{{.BASE}}'{{end}}
 
   lint:toolchain:
     desc: 'Fail when .devcontainer/ci/devcontainer.json (what the Lint workflow builds) differs from .devcontainer/devcontainer.json in the base image or any Feature it shares (same reference, same options), or when shellcheck, yamllint or powershell has no pinned version; part of lint. Bump a tool version in both files.'
