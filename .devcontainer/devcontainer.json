@@ -56,6 +56,12 @@
       "sessionName": "{machine} {handle}"
     },
     "./features/devhost": {},
+    // An SSH agent for the register's operator key. The Windows engines cannot forward the
+    // host's agent, so the Operator turns on key mode per machine (SSH_AGENT_MODE=key in
+    // .devcontainer/.env on the workstation) and imports a dedicated, passphrase-protected key
+    // (task devcontainer:ssh-key-import FILE=...); the start hook skips a protected key, so it is
+    // loaded only for an operator act (task ssh-agent:key:load) and removed after (ssh-add -d).
+    "./features/ssh-agent": {},
     // The AOF seed's agentic-register (0.14.1), vendored in local-features/agentic-register
     // (VENDORED.md: replace with the GHCR package once access exists). One register, ledger,
     // with its live store in the Feature's volume and no mirror yet (the import and the mirror
