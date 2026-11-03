@@ -1,17 +1,19 @@
 # Proposal: OpenBao is the master of secrets, ssh-agent only does SSH
 
 Status: Proposed 2026-11-03, reviewed and ruled the same day. The Operator's decisions (section 1)
-and rulings (the section after it) are fixed, and the design sections carry them. One point the
-rulings raise is open (section 16). Build not started.
+and rulings (the section after it) are fixed, and the design sections carry them. This proposal
+draws OpenBao's boundaries (phase 1); distribution and replication are a later phase, listed but
+not designed. Build not started.
 
 Who this serves: the engineers and the consumers' maintainers who use the `ssh-agent` and `openbao`
 Features (they get one place where keys and tokens live, and one gate to open it), and the
 Operator, who rules on the proposal and holds the gate.
 
-How to read it: section 1 is the ask, the Rulings section is what was decided, sections 2 to 15
-are the design as ruled, section 16 is what is still open. The architecture review at the end is
-kept as written; it cites the first draft's section numbers, which sections 1 to 13 keep (the
-first draft's section 14, its decisions, is now the Rulings section and section 16).
+How to read it: section 1 is the ask, the Rulings section is what was decided (and what is
+deferred to phase 2), sections 2 to 15 are the phase 1 design as ruled, section 16 is what is
+still open. The architecture review at the end is kept as written; it cites the first draft's
+section numbers, which sections 1 to 13 keep (the first draft's section 14, its decisions, is now
+the Rulings section and section 16).
 
 ## 1. The ask, and what the Operator decided
 
@@ -88,7 +90,7 @@ named after each says where the design carries it.
    sitting lives no longer than the token. (Sections 5, 8.)
 7. **Topology: option 4 + 1 is the main shape.** One central server, optionally reached over a
    mesh network (Tailscale, WireGuard; the Feature needs only `BAO_ADDR`), plus a local read-only
-   copy in each devcontainer. (Section 14.)
+   copy in each devcontainer. (Section 14; the copy is deferred to phase 2, below.)
    - The copy is refreshed by restoring the central server's latest backup. It unseals itself from
      the central server with transit auto-unseal, so it stays unsealed through an outage. If it
      restarts while the central server is down, it needs the shares by hand.
@@ -122,8 +124,30 @@ named after each says where the design carries it.
    - the Feature's tasks live under `openbao:` (section 3);
    - one new ADR supersedes 0046 and names what it changes in 0029 and 0026, plus the backup
      route; stated here, written when the proposal is accepted (section 10).
-Under discussion (2026-11-03): the register as the source of secret values, with OpenBao rebuilt
-from it; see a follow-up amendment.
+**Phase 1, this proposal's slices** (the Operator's scoping, 2026-11-03): client and server modes;
+local storage; the backup, restore and rekey tasks with the backup rulings; onboarding by restore
+then rekey, and response wrapping (both use only native OpenBao features); `dcf-secret`;
+`key:load` from OpenBao; the backs' AppRoles; the unseal shares, the recovery key and the login
+lifetime; ssh-agent's `keyMode` deprecation; tokens last. One central server reached as a client
+is already supported in phase 1, through `BAO_ADDR`.
+
+### Deferred to a later phase (2026-11-03)
+
+Distribution and replication. Each is named here and not designed; each gets its own amendment or
+proposal. They share one open question: **who the writer is, and how conflicts resolve.**
+
+- **The 4 + 1 topology's local read-only copy and its fallback** (ruling 7's copy): a copy in each
+  devcontainer restored from the central server's latest backup, auto-unsealed by the central
+  server's transit engine, serving stale reads while the central server is down, up to a maximum
+  age, with writes only to the central server. Its design must also check whether a backup taken
+  under the central server's Shamir seal restores into a server with a transit seal, and how a
+  copy is unsealed by hand when it restarts during an outage.
+- **Backups recorded in the register, and hydrate**: each backup written as a signed register
+  entry with its sha256 and the file beside the register's mirror, so a machine with no external
+  server is restored from the shared ledger, with the master named by a claim in the register.
+- **The ledger as the source of secret values, applied periodically**: the register holds the
+  secret values, encrypted, and OpenBao is rebuilt from it by a periodic apply, with the ledger
+  doing the replicating.
 
 **The review's findings.** All fifteen are accepted and carried in the design sections:
 
@@ -145,7 +169,8 @@ from it; see a follow-up amendment.
 | 14 the host commits `allowed_signers` | sections 8, 10 |
 | 15 lexicon terms (the librarian adds them on acceptance); the sitting defined | section 5 |
 
-The review's six open questions are all answered by rulings 2, 7 and 8.
+The review's six open questions are all answered by rulings 2, 7 and 8 (the two-machine one by the phase 2
+writer question above).
 
 ## 2. The split in one picture
 
@@ -159,7 +184,6 @@ The review's six open questions are all answered by rulings 2, 7 and 8.
   |    storage: raft on the openbao volume (tier 4)                           |
   |    openbao:backup DEST= ---> any path, new file each time                 |
   |  mode=client: no server, BAO_ADDR points at the central server            |
-  |    readCopy: a local read-only copy, used only when the central is down   |
   |                                                                           |
   |  KV v2 mount "dcf":  ssh/<key>   register/<principal>   token/<name>      |
   |  auth: userpass (the Operator)    approle (backup; others the consumer's) |
@@ -200,8 +224,7 @@ What goes where:
 
 One new option, `mode`, `client` (default) or `server`, overridable per container with
 `OPENBAO_SETUP_MODE` in `containerEnv` (NFR-6, the collection's `<ID>_SETUP_<OPTION>` naming). A
-consumer that changes nothing keeps today's Feature. Client mode can add a local read-only copy
-(`readCopy`, section 14).
+consumer that changes nothing keeps today's Feature.
 
 **Both modes** get what `openbao-state-build` already plans (NFR-1): a named volume
 `openbao-${devcontainerId}` on `/var/lib/devcontainer-features/openbao`, a setup script
@@ -262,9 +285,6 @@ section 6 (or `DCF_SECRET_MOUNT` naming another mount).
 | `backupKeep` | `30` | `OPENBAO_SETUP_BACKUP_KEEP` | 4 |
 | `backupInterval` | empty (off) | `OPENBAO_SETUP_BACKUP_INTERVAL` | 4 |
 | `backupWarnAfter` | `7d` | `OPENBAO_SETUP_BACKUP_WARN_AFTER` | 4 |
-| `readCopy` | `false` | `OPENBAO_SETUP_READ_COPY` | 14 |
-| `copySource` | empty | `OPENBAO_SETUP_COPY_SOURCE` | 14 |
-| `copyMaxAge` | `24h` | `OPENBAO_SETUP_COPY_MAX_AGE` | 14 |
 
 `DEST`, `FROM`, `KEEP` are task variables; `DCF_SECRET_MOUNT` and `DCF_SECRET_AS` are plain
 runtime variables.
@@ -388,8 +408,7 @@ callers' interface, documented as such (the review's finding 8).
 dcf-secret get <name> [--field <field>]      the value on stdout, nothing else
 dcf-secret put <name> --field <field>        the value on stdin (never an argument)
 dcf-secret status                            one line: ready | sealed | unreachable |
-                                             logged-out | denied | not-initialised |
-                                             copy (since <time>)
+                                             logged-out | denied | not-initialised
 ```
 
 - **Names are logical**: `ssh/<key>`, `register/<principal>`, `token/<name>`. They map onto
@@ -402,21 +421,19 @@ dcf-secret status                            one line: ready | sealed | unreacha
 | Exit | Meaning | The line names |
 |---|---|---|
 | 0 | the value is on stdout | |
-| 10 | the server is unreachable (`BAO_ADDR` wrong, server not running, no openbao Feature); for a write, also while only the copy is reachable | `task openbao:server:status` or `BAO_ADDR` |
+| 10 | the server is unreachable (`BAO_ADDR` wrong, server not running, no openbao Feature) | `task openbao:server:status` or `BAO_ADDR` |
 | 11 | the server is sealed | `task openbao:unseal` (the Operator) |
 | 12 | no token, or it expired | `task openbao:login` |
 | 13 | the token may not read this name | the policy |
 | 14 | no such secret | `task openbao:ssh:import` or `:new` |
-| 15 | the central server is unreachable and the copy is older than `copyMaxAge` | the central server, or `copyMaxAge` |
 
 - **It is a thin wrapper**: `bao kv get -field=...` and `bao kv put ... field=-`. The mapping is
   built on `bao`'s own signals (`bao status` exit 2 when sealed, the HTTP status in
   `-format=json`), never on parsed English. It does not re-implement the CLI (NFR-13), and it works
   the same against a Vault server, whose API the `bao` CLI speaks.
-- **No second source.** A caller that gets a non-zero exit fails with that line. Nothing reads a
-  key from a volume, a file or an environment variable instead. The one fallback is the read-only
-  copy (section 14), which is the same store restored from the master's backup, says so on every
-  read, and never takes a write.
+- **No fallback, ever.** A caller that gets a non-zero exit fails with that line. Nothing reads a
+  key from a volume, a file or an environment variable instead. This is the rule that makes
+  OpenBao the master: a second source would be a second master. (A read-only copy is phase 2.)
 - **A caller without the openbao Feature** finds no `dcf-secret` and says so (`install the openbao
   Feature`); the Features stay independent at build time (no new `installsAfter` is needed, and an
   unpublished Feature could not be named in one anyway).
@@ -577,9 +594,6 @@ The costs, plainly:
   certificate to keep and protect nothing more.
 - **`disable_mlock`**: the server's memory may be swapped. Containers do not grant `IPC_LOCK` by
   default; granting it is a launcher change not proposed here.
-- **The read-only copy serves stale data** while the central server is down (section 14): a
-  revocation made on the central server reaches the copy only at its next refresh, and `copyMaxAge`
-  (24 hours) bounds that. Every stale read says so.
 - **A sealed server stops signing.** That is the intended price: an agent that cannot reach the
   master must not find a key elsewhere.
 
@@ -657,7 +671,6 @@ OpenBao). A Feature that writes back a refreshed long-lived credential puts it b
 | `openbao` | volume and `openbao-setup` (`openbao-state-build`), `dcf-secret`, `mode` | 1.1.0 |
 | `openbao` | server mode, init, unseal, seal, userpass, AppRole tasks and the `backup` role, `openbao:backup` / `:restore` / `:rekey`, `backupKeep`, `backupInterval`, `openbao:wrap` / `:unwrap`, `openbao:server:status` | 1.2.0 |
 | `openbao` | `openbao:ssh:*` records and the import | 1.3.0 |
-| `openbao` | the read-only copy (`readCopy`, `copySource`, `copyMaxAge`), the fallback in `dcf-secret` | 1.4.0 |
 | `ssh-agent` | `key:load`/`key:lock` from OpenBao, `key:rotate` on OpenBao records, deprecations | 1.4.0 |
 | `ssh-agent` | the key volume and key tasks removed, `keyMode` renamed `localAgent` | 2.0.0 (breaking) |
 | `gh` | `gh:ssh-key:add` (signing key registration) | minor |
@@ -688,20 +701,18 @@ Slices, each one pull request with its version bump and `task docs`:
 4. **agentic-register and devhost**: the backs' roles, the fetch in the job runner, the register's
    key creation into `dcf-secret put`, the briefing line; the ADR superseding 0046.
    That ends the first build.
-5. **openbao 1.4.0, the read-only fallback** (section 14): the copy, its refresh and unseal, the
-   stale read in `dcf-secret`, `copyMaxAge`. It starts with the check in section 16.
-6. **ssh-agent 2.0.0**: the removal, after at least one release of 1.4.0 has been adopted by both
+5. **ssh-agent 2.0.0**: the removal, after at least one release of 1.4.0 has been adopted by both
    consumers.
-7. **gh, az, cloud-folder**: credentials from `dcf-secret` (section 11). The last slice.
+6. **gh, az, cloud-folder**: credentials from `dcf-secret` (section 11). The last slice.
 
 Tests are Docker-free where they can be: `dcf-secret` against a fake `bao` (each exit code, no
-second source when sealed, the stale read and its refusal past `copyMaxAge`, no write to the copy),
+fallback when sealed),
 the import against a key volume made in a temp folder, the key piped to `ssh-add -` never touching
 a file (checked by the folder staying empty), the backup naming (never overwritten), `backupKeep`
 touching only its own pattern, the sealed exit 11, the
 `openbao:init` refusal under `DEVHOST_JOB_CHILD`, the status line, and the start hook returning at
 once on a sealed server. The server itself (`bao server -dev` is not enough for raft and seal),
-restore, rekey and the copy's unseal are Feature tests that need a Docker daemon, with a
+restore and rekey are Feature tests that need a Docker daemon, with a
 `mode=server` and a `backupInterval` scenario.
 
 ## 13. For the repository (found while writing)
@@ -714,53 +725,23 @@ restore, rekey and the copy's unseal are Feature tests that need a Docker daemon
   (removed in v2.7.0); nothing uses it today. The NOTES could say raft is the storage the Feature
   uses, why (the snapshot is the backup), and that pebble is not.
 - The lexicon terms of the review's finding 15 (sitting, seal and unseal, unseal share, the gate,
-  master of secrets, server and client mode, backup and restore, read-only copy, secret name, back
+  master of secrets, server and client mode, backup and restore, secret name, back
   identity, the register's operator key, anchor and principal, key mode and `localAgent`) are the
   librarian's when the proposal is accepted.
 
 ## 14. Topology (ruling 7)
 
-**The main shape: one central server, a read-only copy in each devcontainer.**
+Phase 1 draws the boundary: the openbao Feature talks to one server at `BAO_ADDR`, its own
+(server mode) or another (client mode), and replicates nothing.
 
-```
-                     central OpenBao server (outside the Features: a VM, a home server)
-                     the only writer; its backups land at a path (copySource)
-                          ^         ^                         |
-        BAO_ADDR, over    |         | transit auto-unseal     | latest backup
-        a mesh if wanted  |         | (keeps the copy open)   v
-   +-------- devcontainer, openbao mode=client, readCopy=true ---------------+
-   |  dcf-secret get  --> central; if unreachable --> the local copy          |
-   |                      ("stale since <time>"; refused past copyMaxAge)     |
-   |  dcf-secret put  --> central only; unreachable -> exit 10, nothing queued |
-   |  local copy: a second bao server on loopback, restored from the backup    |
-   +--------------------------------------------------------------------------+
-```
+**Supported in phase 1:**
 
-- **The central server** is any OpenBao server reached at `BAO_ADDR`, optionally over a mesh
-  network (Tailscale, WireGuard); the Feature needs only the address. Its TLS, storage and backups
-  are its owner's; `openbao:backup` in client mode can take them with a `backup` role there.
-- **The copy** (`readCopy: true`, client mode only) is a second `bao server` in the container on
-  its own loopback port, its data in the openbao volume. `openbao:copy:refresh` (run by the start
-  hook, and on a timer) restores the newest Feature backup at `copySource`. It unseals itself from
-  the central server with transit auto-unseal, so once open it stays open through an outage. If it
-  restarts while the central server is down, it needs the shares by hand (section 16 checks how).
-- **Reads**: `dcf-secret get` uses the copy only when the central server is unreachable. It says on
-  stderr that it is serving stale data and since when, logs in to the copy itself if the caller's
-  token is not there (a back with its role; the Operator at `openbao:login`'s prompt), and exits 15
-  once the copy is older than `copyMaxAge` (default 24 hours).
-- **Writes**: `dcf-secret put` and every write task go only to the central server. While it is down
-  they exit 10 and nothing is queued. When it is back, clients return to it and the next refresh
-  updates the copy. Changes flow one way only, so there is nothing to merge; a write someone makes
-  to the copy directly is gone at the next refresh.
-- **Revocations** reach a copy only at its next refresh; `copyMaxAge` bounds that.
-- **Order**: this fallback is its own slice after the first build (section 12, slice 5).
-
-**Also supported:**
-
-- **A single machine, no central server**: one devcontainer in server mode is the master; other
-  devcontainers keep read-only copies refreshed from its backups. The master's listener is
-  loopback only, so those copies cannot reach it for writes or transit; they serve reads and are
-  unsealed by hand.
+- **One central server, reached as a client**: any OpenBao server at `BAO_ADDR`, optionally over a
+  mesh network (Tailscale, WireGuard); the Feature needs only the address. Its TLS, storage and
+  backups are its owner's; `openbao:backup` in client mode can take them with a `backup` role
+  there. This is ruling 7's main shape without the local copy, which is phase 2.
+- **A single machine, no central server**: one devcontainer in server mode, backed up as section
+  4 says. Read-only copies in other devcontainers are phase 2.
 - **A team: an external 3-node raft cluster**, in client mode. Nothing in the Features changes.
 
 **Not supported, and why:**
@@ -798,7 +779,7 @@ Two routes, for two needs.
 4. With `ROTATE=1`, `bao operator rotate`: new writes use a new encryption key.
 
 Said plainly: **the sender's old snapshot still opens with the old shares.** A rekey changes how
-this copy is unsealed, not what was already handed over, and a rotate protects only new writes.
+this store is unsealed, not what was already handed over, and a rotate protects only new writes.
 That is why the onboarding instance holds only the shared keys and never the Operator's own store.
 
 **(b) Response wrapping: a few keys into an existing instance.** `openbao:wrap NAMES=<name>,...
@@ -809,23 +790,8 @@ already used, or expired, fails for the receiver, which shows that someone else 
 
 ## 16. Decisions needed
 
-1. **How the read-only copy is unsealed, checked before slice 5 starts.** Ruling 7 has the copy
-   restored from the central server's backup *and* auto-unsealed by the central server's transit
-   engine, and unsealed by hand with the shares when it restarts during an outage. Two things are
-   not confirmed and may not hold together:
-   - a raft snapshot carries the seal setup of the server it came from (the central server's,
-     Shamir); restoring it into a server configured for a transit seal may need a seal migration
-     on every refresh, or be refused;
-   - with a transit seal, OpenBao's shares become recovery keys, which (as in Vault) do not unseal;
-     a hand unseal during an outage then needs a second seal beside transit, if OpenBao offers one.
-
-   Recommendation: the slice starts with that check against a real server. If both hold, build as
-   ruled. If not, the fallback is: the copy keeps the central server's Shamir seal and is unsealed
-   by hand with the shares after each refresh (it then stays open through an outage, as ruled, but
-   a refresh needs the Operator), and transit auto-unseal is dropped. The Operator picks between
-   that and a copy with its own transit seal refreshed by reading `dcf/` rather than restoring the
-   backup (no hand unseal, but the copy's tokens and roles are its own, and the refresh is a copy
-   of secrets the review's NFR-13 line would have to accept).
+None for phase 1. The phase 2 question (who the writer is, and how conflicts resolve) is the
+Operator's when that phase starts.
 
 ## Architecture review (2026-11-03)
 
