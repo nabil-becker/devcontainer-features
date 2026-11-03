@@ -2,7 +2,9 @@
 # dcf-secret: the one way a Feature or a script of this collection asks OpenBao for a secret.
 #
 #   dcf-secret get <name> [--field <field>]     the value on stdout, nothing else
-#   dcf-secret put <name> --field <field>       the value on stdin (never an argument)
+#   dcf-secret put <name> --field <field> [--replace]
+#                                               the value on stdin (never an argument); keeps the
+#                                               secret's other fields, --replace drops them
 #   dcf-secret status [<name>]                  one word: ready | sealed | unreachable |
 #                                               logged-out | denied | not-initialised
 #
@@ -15,7 +17,7 @@
 # Exit codes, the same for every caller, each with one plain line on stderr naming the fix:
 #   0  done        10 the server is unreachable    11 the server is sealed (or not initialised)
 #   12 no token, or it expired    13 the token may not use this name    14 no such secret
-#   1  bao failed for a reason none of the signals explain (bao's own message follows)
+#   1  bao failed for a reason none of the signals explain (a put; bao's own message follows)
 #   2  a wrong call (usage)
 set -u
 
@@ -33,7 +35,9 @@ die() { # <exit code> <line>
 usage() {
   cat >&2 <<'EOF'
 usage: dcf-secret get <name> [--field <field>]    print the value (field default: value)
-       dcf-secret put <name> --field <field>      read the value from stdin
+       dcf-secret put <name> --field <field> [--replace]
+                                                  read the value from stdin; the secret's other
+                                                  fields are kept unless --replace
        dcf-secret status [<name>]                 print ready, sealed, unreachable, logged-out,
                                                   denied or not-initialised
 EOF
@@ -91,12 +95,15 @@ state_exit() { # exit with the line for a server that is not ready; no-op when i
 caps_of() { # <path> -> sets caps, returns bao's exit code
   caps="$(bao token capabilities "$1" 2>/dev/null)"
 }
-can() { # <read|write> : does $caps allow it
-  if [ "$1" = read ]; then
-    grep -Eq '(^|[^a-z])(read|root)([^a-z]|$)' <<<"$caps"
-  else
-    grep -Eq '(^|[^a-z])(create|update|root)([^a-z]|$)' <<<"$caps"
-  fi
+can() { # <read|write|patch|create> : does $caps allow it (write: create or update)
+  local words
+  case "$1" in
+    read) words='read' ;;
+    patch) words='patch' ;;
+    create) words='create' ;;
+    *) words='create|update' ;;
+  esac
+  grep -Eq "(^|[^a-z])($words|root)([^a-z]|\$)" <<<"$caps"
 }
 
 # After a failed call: the server's state, then the token, then what the token may do.
@@ -136,11 +143,12 @@ cmd_get() {
 }
 
 cmd_put() {
-  local name="" field=""
+  local name="" field="" replace=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --field) [ $# -ge 2 ] || usage; field="$2"; shift 2 ;;
       --field=*) field="${1#--field=}"; shift ;;
+      --replace) replace=1; shift ;;
       -*) usage ;;
       *) [ -z "$name" ] || usage; name="$1"; shift ;;
     esac
@@ -150,13 +158,50 @@ cmd_put() {
   field_ok "$field" || die 2 "'$field' is not a field name"
   [ ! -t 0 ] || die 2 "the value is read from stdin: pipe it in (never as an argument)"
 
-  # `field=-` makes bao read the value from our stdin. It replaces the whole secret with this one
-  # field (kv put); bao's table of metadata on stdout is not ours to print.
-  local err rc
-  err="$(bao kv put -mount="$mount" "$name" "$field=-" 2>&1 >/dev/null)"
+  # The value is held in memory only (never a file, never an argument) because a merge may need
+  # to offer it to bao twice. `x` keeps trailing newlines through the command substitution.
+  local value err rc
+  value="$(cat; printf x)"
+  value="${value%x}"
+  # shellcheck disable=SC2069  # stderr is wanted, bao's stdout (a table of metadata) is not
+  send() { printf '%s' "$value" | bao kv "$@" 2>&1 >/dev/null; }
+
+  if [ "$replace" -eq 1 ]; then
+    # --replace: the secret becomes this one field (bao kv put).
+    err="$(send put -mount="$mount" "$name" "$field=-")"
+    rc=$?
+    [ "$rc" -eq 0 ] && exit 0
+    diagnose write "$name" "$err"
+  fi
+
+  # The default merges: patch writes this field and keeps the others. A patch fails on a secret
+  # that does not exist yet, and on a token without the patch capability: the capabilities say
+  # which, never the words of the error.
+  err="$(send patch -mount="$mount" "$name" "$field=-")"
   rc=$?
   [ "$rc" -eq 0 ] && exit 0
-  diagnose write "$name" "$err"
+  server_state
+  state_exit
+  caps_of "$(api_path "$name")" || { fix_login; exit 12; }
+  if ! can patch; then
+    say "the token may not patch '$name' at $mount, so a field cannot be merged: its policy needs the patch capability, or write the whole secret with --replace"
+    exit 13
+  fi
+  if ! can create; then
+    say "the token may not create '$name' at $mount (it does not exist yet, so there is nothing to patch): its policy has to allow it (ask the server's owner)"
+    exit 13
+  fi
+  # Create it, only if it is still absent (-cas=0): a secret that appeared since the patch makes
+  # this fail, and then one more patch merges into it.
+  err="$(send put -cas=0 -mount="$mount" "$name" "$field=-")"
+  rc=$?
+  [ "$rc" -eq 0 ] && exit 0
+  err="$(send patch -mount="$mount" "$name" "$field=-")"
+  rc=$?
+  [ "$rc" -eq 0 ] && exit 0
+  say "bao could not write '$name' at $mount for a reason its signals do not explain:"
+  printf '%s\n' "$err" >&2
+  exit 1
 }
 
 cmd_status() {

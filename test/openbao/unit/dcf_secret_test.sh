@@ -31,11 +31,21 @@ case "$1 $2" in
     if [ "${STUB_KV_RC:-0}" -eq 0 ]; then printf '%s' "${STUB_VALUE-s3cret}"; exit 0; fi
     echo "Error reading dcf/data/x: stub failure" >&2
     exit "$STUB_KV_RC" ;;
-  "kv put")
-    cat > "$STUB_DIR/put-stdin"
-    [ "${STUB_PUT_RC:-0}" -eq 0 ] && { echo "Key  Value"; exit 0; }
+  "kv put" | "kv patch")
+    # The value each call received on stdin is kept per call (stdin.<n>, n counting the kv put and kv patch calls); STUB_PATCH_RCS is a
+    # list of exit codes, one per patch call (the last one repeats), for the race.
+    n="$(grep -cE '^kv (put|patch)' "$STUB_LOG")"
+    cat > "$STUB_DIR/stdin.$n"
+    if [ "$2" = patch ]; then
+      k="$(grep -c '^kv patch' "$STUB_LOG")"
+      rcs=(${STUB_PATCH_RCS:-0})
+      rc="${rcs[$((k - 1))]:-${rcs[${#rcs[@]} - 1]}}"
+    else
+      rc="${STUB_PUT_RC:-0}"
+    fi
+    [ "$rc" -eq 0 ] && { echo "Key  Value"; exit 0; }
     echo "Error writing: stub failure" >&2
-    exit "$STUB_PUT_RC" ;;
+    exit "$rc" ;;
   "token capabilities")
     [ "${STUB_CAPS_RC:-0}" -eq 0 ] || { echo "permission denied" >&2; exit 2; }
     echo "${STUB_CAPS-read}"
@@ -71,7 +81,7 @@ run() {
   while [ "$1" != -- ]; do envs+=("$1"); shift; done
   shift
   : > "$LOG"
-  rm -f "$T/put-stdin"
+  rm -f "$T"/stdin.*
   out="$(printf '%s' "$INPUT" | env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" STUB_LOG="$LOG" STUB_DIR="$T" \
     OPENBAO_STATE_DIR="$T/state" DCF_SECRET_X="from-the-environment" "${envs[@]}" bash "$script" "$@" 2>"$T/err")"
   rc=$?
@@ -166,29 +176,83 @@ check "--field without a value is usage" 2 "$rc"
 run --
 check "no command is usage" 2 "$rc"
 
-# --- put
+# --- put: merge by default (kv patch), create when absent (kv put -cas=0), --replace
+calls() { cat "$LOG"; }
+kvcalls() { grep -E '^kv (put|patch)' "$LOG"; }
+stdin_of() { cat "$T/stdin.$1"; } # the value the <n>th kv put or kv patch call received
 INPUT="topsecret" run -- put ssh/key --field private_key
-check "put: exit 0" 0 "$rc"
+check "put merges: exit 0" 0 "$rc"
 check "put: nothing on stdout (bao's table is not ours)" "" "$out"
-check "put: the value reached bao on stdin" "topsecret" "$(cat "$T/put-stdin")"
-has "put: field=- so bao reads stdin" "kv put -mount=dcf ssh/key private_key=-" "$(cat "$LOG")"
-lacks "put: the value is in no argument" "topsecret" "$(cat "$LOG")"
+has "put: kv patch with field=- so bao reads stdin" "kv patch -mount=dcf ssh/key private_key=-" "$(calls)"
+lacks "put merging never calls kv put" "kv put" "$(calls)"
+check "put: the value reached bao on stdin" "topsecret" "$(stdin_of 1)"
+lacks "put: the value is in no argument" "topsecret" "$(calls)"
+check "put merging: one call to bao" 1 "$(lines "$(calls)")"
 INPUT="x" run -- put ssh/key
 check "put without --field is usage" 2 "$rc"
-INPUT="x" run STUB_PUT_RC=2 STUB_STATUS_RC=2 -- put ssh/key --field f
-check "put: sealed is 11" 11 "$rc"
-INPUT="x" run STUB_PUT_RC=2 STUB_STATUS_RC=1 -- put ssh/key --field f
-check "put: unreachable is 10" 10 "$rc"
-INPUT="x" run STUB_PUT_RC=2 STUB_CAPS_RC=2 -- put ssh/key --field f
-check "put: no token is 12" 12 "$rc"
-INPUT="x" run STUB_PUT_RC=2 STUB_CAPS=read -- put ssh/key --field f
-check "put: read-only token is 13" 13 "$rc"
-has "put: 13 names the write" "may not write" "$err"
-INPUT="x" run STUB_PUT_RC=2 STUB_CAPS="create, update" -- put ssh/key --field f
-check "put: allowed but failed is 1, never 14" 1 "$rc"
+INPUT="x" run -- put ssh/key --field f --bogus
+check "put with an unknown flag is usage" 2 "$rc"
+
+# the secret does not exist yet: patch fails, the token may create, so it is created (-cas=0)
+INPUT="topsecret" run STUB_PATCH_RCS=2 STUB_CAPS="create, patch, read, update" -- put ssh/key --field private_key
+check "put creates an absent secret: exit 0" 0 "$rc"
+has "put: creates with -cas=0, only if still absent" "kv put -cas=0 -mount=dcf ssh/key private_key=-" "$(calls)"
+check "put: the same value reached the create (kept in memory for the second offer)" "topsecret" "$(stdin_of 2)"
+lacks "put create: the value is in no argument" "topsecret" "$(calls)"
+printf -v nl 'line one
+line two
+
+'
+INPUT="$nl" run STUB_PATCH_RCS=2 STUB_CAPS="create, patch" -- put ssh/key --field f
+check "put: a multi-line value with trailing newlines is kept byte for byte" "yes" "$(printf '%s' "$nl" | cmp -s - "$T/stdin.2" && echo yes)"
+
+# the secret appeared between the patch and the create: the create fails, one more patch merges
+INPUT="v" run STUB_PATCH_RCS="2 0" STUB_PUT_RC=2 STUB_CAPS="create, patch" -- put ssh/key --field f
+check "put race: exit 0 after retrying as a patch" 0 "$rc"
+check "put race: patch, create, patch" "kv patch|kv put|kv patch" "$(kvcalls | awk '{printf "%s%s %s", (NR>1?"|":""), $1, $2}')"
+check "put race: the retry carried the value" "v" "$(stdin_of 3)"
+INPUT="x" run STUB_PATCH_RCS=2 STUB_PUT_RC=2 STUB_CAPS="create, patch" -- put ssh/key --field f
+check "put: patch, create and the retry all failing is 1, never 14" 1 "$rc"
 has "put: 1 carries bao's own message" "stub failure" "$err"
-INPUT="x" run STUB_PUT_RC=2 STUB_CAPS=deny -- put ssh/key --field f
-check "put: 14 does not apply to a put" 13 "$rc"
+check "put: the retry is only one" 3 "$(lines "$(kvcalls)")"
+
+# --replace: one field, kv put, no patch
+INPUT="topsecret" run -- put ssh/key --field private_key --replace
+check "put --replace: exit 0" 0 "$rc"
+has "put --replace: kv put of the one field" "kv put -mount=dcf ssh/key private_key=-" "$(calls)"
+lacks "put --replace: no -cas" "-cas" "$(calls)"
+lacks "put --replace: no patch" "kv patch" "$(calls)"
+check "put --replace: the value reached bao" "topsecret" "$(stdin_of 1)"
+
+# patch denied while put is allowed: never a silent replace
+INPUT="x" run STUB_PATCH_RCS=2 STUB_CAPS="create, update" -- put ssh/key --field f
+check "put: no patch capability is 13" 13 "$rc"
+has "put: 13 points at --replace" "--replace" "$err"
+has "put: 13 names the patch capability" "patch" "$err"
+lacks "put: no kv put when only the patch was denied (nothing replaced)" "kv put" "$(calls)"
+INPUT="x" run STUB_PATCH_RCS=2 STUB_CAPS="create, update" -- put ssh/key --field f --replace
+check "the same token with --replace works" 0 "$rc"
+INPUT="x" run STUB_PATCH_RCS=2 STUB_CAPS="patch, read" -- put ssh/key --field f
+check "put: absent secret and no create capability is 13" 13 "$rc"
+has "put: 13 names the creation" "may not create" "$err"
+lacks "put: nothing written" "kv put" "$(calls)"
+
+# the server and the token, for a merge and for --replace
+for flag in "" "--replace"; do
+  INPUT="x" run STUB_PATCH_RCS=2 STUB_PUT_RC=2 STUB_STATUS_RC=2 -- put ssh/key --field f $flag
+  check "put $flag: sealed is 11" 11 "$rc"
+  INPUT="x" run STUB_PATCH_RCS=2 STUB_PUT_RC=2 STUB_STATUS_RC=1 -- put ssh/key --field f $flag
+  check "put $flag: unreachable is 10" 10 "$rc"
+  INPUT="x" run STUB_PATCH_RCS=2 STUB_PUT_RC=2 STUB_CAPS_RC=2 -- put ssh/key --field f $flag
+  check "put $flag: no token is 12" 12 "$rc"
+  INPUT="x" run STUB_PATCH_RCS=2 STUB_PUT_RC=2 STUB_CAPS=read -- put ssh/key --field f $flag
+  check "put $flag: a read-only token is 13" 13 "$rc"
+  INPUT="x" run STUB_PATCH_RCS=2 STUB_PUT_RC=2 STUB_CAPS=deny -- put ssh/key --field f $flag
+  check "put $flag: 14 does not apply to a put (13)" 13 "$rc"
+done
+INPUT="x" run STUB_PUT_RC=2 STUB_CAPS="create, update" -- put ssh/key --field f --replace
+check "put --replace: allowed but failed is 1" 1 "$rc"
+has "put --replace: 1 carries bao's own message" "stub failure" "$err"
 # a terminal on stdin is refused: run under a pseudo-terminal when script(1) is there
 if command -v script >/dev/null 2>&1; then
   tty_out="$(script -qec "env PATH=$T/bin:/usr/bin:/bin STUB_LOG=$LOG STUB_DIR=$T bash $script put ssh/key --field f" /dev/null 2>&1 </dev/null; echo "rc=$?")"

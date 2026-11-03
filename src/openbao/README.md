@@ -66,7 +66,10 @@ hook reads to `/usr/local/share/openbao-feature/options.env`.
 Owned by the Feature (NFR-1), like `gh` and `az`:
 
 - `containerEnv` sets `OPENBAO_STATE_DIR=/var/lib/devcontainer-features/openbao`.
-- `mounts` declares the named volume `openbao-config-${devcontainerId}` on that path.
+- `mounts` declares the named volume `openbao-config-${devcontainerId}` on that path. The name
+  follows the repository's convention (`<id>-config-${devcontainerId}`, as `gh-config-` and
+  `az-config-`) and supersedes `openbao-${devcontainerId}`, which the proposal
+  `docs/proposals/secrets-master-split.md` (section 3) wrote before it checked the convention.
 - The post-create hook `openbao-setup` (also `task openbao:setup`) runs `dcf-persist`, so the
   folder belongs to the remote user and the log says what backs it, then makes `~/.vault-token`,
   where `bao login` keeps its token, a link to `$OPENBAO_STATE_DIR/token`. **A rebuild keeps the
@@ -100,7 +103,8 @@ get` for people; `dcf-secret` is for callers.
 
 ```text
 dcf-secret get <name> [--field <field>]    the value on stdout, nothing else (field default: value)
-dcf-secret put <name> --field <field>      the value on stdin, never an argument
+dcf-secret put <name> --field <field> [--replace]
+                                           the value on stdin, never an argument
 dcf-secret status [<name>]                 one word on stdout, the fix on stderr
 ```
 
@@ -109,9 +113,14 @@ dcf-secret status [<name>]                 one word on stdout, the fix on stderr
   `dcf`; `DCF_SECRET_MOUNT` names another one (a client of a shared server uses its own).
 - **Who asks**: the token `bao` uses (`BAO_TOKEN`, else the saved login). `DCF_SECRET_AS` (logging
   in as an AppRole) is not in this version: setting it exits 2 rather than asking as someone else.
-- **`put` replaces the whole secret** with the one field (it is `bao kv put`); it refuses a
-  terminal on stdin. **`get` writes the value only to stdout**: it is never put in a file or a
-  variable.
+- **`put` merges by default**: it writes only the given field and keeps the secret's other fields
+  (`bao kv patch`); when the secret does not exist yet it creates it (`bao kv put -cas=0`, which
+  fails if the secret appeared in the meantime, and then one more patch merges into it).
+  `--replace` makes the secret exactly this one field (`bao kv put`) and drops the others. A token
+  that may not patch is refused (exit 13, naming `--replace`), never silently turned into a
+  replace. `put` refuses a terminal on stdin and holds the value in memory only (never a file,
+  never an argument; a merge may offer it to `bao` twice). **`get` writes the value only to
+  stdout**: it is never put in a file or a variable.
 - **No fallback, ever.** On a non-zero exit nothing is read from a file, a volume or the
   environment instead. A second source would be a second master.
 
@@ -132,9 +141,11 @@ The code is worked out from `bao`'s own signals, never from the words of a messa
 call it asks `bao status -format=json` (exit 2 is sealed, the JSON says `initialized`; anything
 else is unreachable), then `bao token capabilities` on `<mount>/data/<name>` (a refused call is no
 valid token; no `read` or `root` for a get, no `create`, `update` or `root` for a put, is denied),
-and a get that gets this far is a missing secret. A token therefore needs the default policy (every
-token has it unless removed) besides `read` on `<mount>/data/<name>` to get and `create` and
-`update` to put. It speaks only `bao`, so it works the same against a Vault server.
+and a get that gets this far is a missing secret. A `put` that fails the same way checks for `patch`
+(a merge needs it), then for `create` (a secret that does not exist yet needs it). A token
+therefore needs the default policy (every token has it unless removed) besides `read` on
+`<mount>/data/<name>` to get, `patch` (and `create` for a new secret) to put, and `create` and
+`update` for `put --replace`. It speaks only `bao`, so it works the same against a Vault server.
 
 A caller without this Feature finds no `dcf-secret` and says so; the Features stay independent at
 build time.
@@ -220,6 +231,8 @@ itself.
   installed unchecked.
 - Logged out after a rebuild: the volume is gone (a container-engine storage reset, or another
   engine) or the hook's first line says `image` instead of `volume`. Log in again.
+- `put` without `--replace` needs the `patch` capability on the secret's path; a policy that has
+  only `create` and `update` must use `--replace`, which drops the secret's other fields.
 - Client mode only: there is no server, backup, onboarding or `DCF_SECRET_AS` in this version.
 - `dcf-secret` asks `bao` up to three questions after a failure, so a failure costs a few round
   trips; a success costs one. It assumes a KV v2 mount (the data lives under `<mount>/data/`).
@@ -264,7 +277,7 @@ Nothing is removed; `mode` stays `client`.
 #### Added
 
 - **Your `bao login` now survives a rebuild.** The Feature owns a named volume (`openbao-config-<devcontainerId>`, at `/var/lib/devcontainer-features/openbao`, named by `OPENBAO_STATE_DIR`) and a post-create hook, `openbao-setup` (also `task openbao:setup`), that links `~/.vault-token` into it, the way `gh` and `az` keep their logins. **You must act once:** rebuild the container and run `bao login` again, because the volume starts empty. Nothing to configure; a repo that wants the state on the host disk bind-mounts the same target. A `BAO_TOKEN` in the environment still takes precedence over the saved login.
-- **`dcf-secret`**, a command for scripts and other Features to read and write a secret without knowing where the server runs: `dcf-secret get <name>`, `dcf-secret put <name> --field <field>` (the value on stdin) and `dcf-secret status`. It fails with fixed exit codes (10 unreachable, 11 sealed, 12 not logged in, 13 denied, 14 no such secret), each with one line saying what to do, and never falls back to a key on disk. Secrets live in a KV v2 mount named `dcf` (`DCF_SECRET_MOUNT` changes it). Nothing to do unless you want it; `task openbao:kv:get` is unchanged.
+- **`dcf-secret`**, a command for scripts and other Features to read and write a secret without knowing where the server runs: `dcf-secret get <name>`, `dcf-secret put <name> --field <field>` (the value on stdin) and `dcf-secret status`. `put` writes only that field and keeps the secret's other fields (it creates the secret when it does not exist); `--replace` makes the secret exactly that one field. A token whose policy lacks the `patch` capability is refused with exit 13 rather than silently replacing the secret. It fails with fixed exit codes (10 unreachable, 11 sealed, 12 not logged in, 13 denied, 14 no such secret), each with one line saying what to do, and never falls back to a key on disk. Secrets live in a KV v2 mount named `dcf` (`DCF_SECRET_MOUNT` changes it). Nothing to do unless you want it; `task openbao:kv:get` is unchanged.
 - **The `mode` option**, with the one value `client` (the default, what the Feature always did: the CLI against a server outside the container). A later version adds `server`. `OPENBAO_SETUP_MODE` in `containerEnv` overrides it per container. Nothing to do.
 - `task openbao:setup`: re-runs the post-create hook.
 

@@ -37,6 +37,16 @@ rc=0; printf '%s' 'abc def' | dcf-secret put ssh/key --field private_key || rc=$
 check "put is exit 0" [ "$rc" = 0 ]
 out="$(dcf-secret get ssh/key --field private_key)"
 check "get returns what put stored, alone" [ "$out" = 'abc def' ]
+# Two fields under one name survive two puts (merge is the default); --replace drops the others.
+printf '%s' 'the-public-part' | dcf-secret put ssh/key --field public_key
+check "a second put keeps the first field" [ "$(dcf-secret get ssh/key --field private_key)" = 'abc def' ]
+check "and stores the second" [ "$(dcf-secret get ssh/key --field public_key)" = the-public-part ]
+printf '%s' 'abc def2' | dcf-secret put ssh/key --field private_key
+check "a put of an existing field replaces only that field" [ "$(dcf-secret get ssh/key --field private_key):$(dcf-secret get ssh/key --field public_key)" = 'abc def2:the-public-part' ]
+printf '%s' 'only' | dcf-secret put ssh/key --field private_key --replace
+check "--replace keeps the one field" [ "$(dcf-secret get ssh/key --field private_key)" = only ]
+rc=0; dcf-secret get ssh/key --field public_key >/dev/null 2>&1 || rc=$?
+check "--replace dropped the other field (exit 14)" [ "$rc" = 14 ]
 rc=0; dcf-secret get ssh/missing >/dev/null 2>&1 || rc=$?
 check "a missing secret is exit 14" [ "$rc" = 14 ]
 rc=0; dcf-secret get ssh/key --field nofield >/dev/null 2>&1 || rc=$?
@@ -51,6 +61,12 @@ check "a token without the policy is exit 13" [ "$rc" = 13 ]
 check "the token may read its own name" [ "$(BAO_TOKEN="$limited" dcf-secret get ok)" = fine ]
 rc=0; printf 'x' | BAO_TOKEN="$limited" dcf-secret put ok --field value >/dev/null 2>&1 || rc=$?
 check "a read-only token may not put (exit 13)" [ "$rc" = 13 ]
+printf 'path "dcf/data/cu" { capabilities = ["create", "update"] }\n' | bao policy write dcf-cu - >/dev/null
+cu="$(bao token create -policy=dcf-cu -field=token)"
+rc=0; printf 'x' | BAO_TOKEN="$cu" dcf-secret put cu --field value >/dev/null 2>&1 || rc=$?
+check "a token without the patch capability may not merge (exit 13, nothing written)" [ "$rc" = 13 ]
+rc=0; printf 'x' | BAO_TOKEN="$cu" dcf-secret put cu --field value --replace >/dev/null 2>&1 || rc=$?
+check "the same token may --replace" [ "$rc" = 0 ]
 check "status denied for a name it may not read" [ "$(BAO_TOKEN="$limited" dcf-secret status ssh/key 2>/dev/null || true)" = denied ]
 
 rc=0; BAO_TOKEN=not-a-token dcf-secret get ok >/dev/null 2>&1 || rc=$?
