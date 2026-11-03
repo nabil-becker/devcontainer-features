@@ -99,6 +99,8 @@ tasks:
       - task: versions:check
       - task: changelog:check
       - task: how-it-fits:check
+      - task: architectures:check
+      - task: test:architectures
       - task: test:common-unit
       - task: test:go-task-unit
       - task: test:devhost
@@ -175,6 +177,16 @@ tasks:
     desc: 'Fail when a src/<id>/NOTES.md has no "## How it fits" section (diagram, data and storage tier, reference architectures) or the section has no "Used in:" line (links, or "Used in: none yet"); Docker-free; part of lint.'
     cmds:
       - python3 -I '{{.ROOT_DIR}}/.github/scripts/check_how_it_fits.py'
+
+  architectures:check:
+    desc: 'Fail, naming file:line, when a devcontainer.json fragment in docs/reference-architectures/*.md (a ```jsonc block) names a Feature id that is not in src/, a major that is not the Feature''s current one, or an option that is not in its devcontainer-feature.json (a Feature in local-features/ is named ./features/<id>); also checks each architecture''s shape (diagram, best practices, anti-patterns with Don''t, Why, Instead, Caught by, a link from the index). Docker-free; part of lint.'
+    cmds:
+      - python3 -I '{{.ROOT_DIR}}/.github/scripts/check_architectures.py'
+
+  test:architectures:
+    desc: 'Docker-free bash test of the architectures check against a scratch tree: a matching fragment passes; an unknown id, a wrong or missing major, an unknown option, a wrong option type, a local Feature named by its published id, a fragment that does not parse, an anti-pattern with no Caught by and a planned fragment that already passes each fail (test/lint/architectures_test.sh); part of lint.'
+    cmds:
+      - bash test/lint/architectures_test.sh
 
   changelog:draft:
     desc: 'Print a draft CHANGELOG entry for src/<FEATURE>: the commits that touched it since origin/main (BASE=<ref> to change), grouped Added/Changed/Fixed, under the version now in its devcontainer-feature.json. Copy it into src/<FEATURE>/CHANGELOG.md and rewrite it for a user of the Feature: what changed for them and whether they must act (an option renamed, a task removed, a rebuild needed). Usage: task changelog:draft FEATURE=<id>'
