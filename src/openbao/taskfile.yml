@@ -22,6 +22,13 @@ tasks:
     cmds:
       - bao login {{.CLI_ARGS}}
 
+  logout:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Log out: revoke the current token on the server (bao token revoke -self; ignored if it is already dead) and erase the saved token in the state dir, so nothing is left behind. bao token revoke alone leaves the dead token stored.'
+    cmds:
+      - bao token revoke -self || true
+      - openbao-token-helper erase
+
   kv:get:
     dir: '{{.USER_WORKING_DIR}}'
     desc: 'Read secret KEY=<mount/path> from a KV engine (KEY, not PATH: Task would read the shell PATH).'

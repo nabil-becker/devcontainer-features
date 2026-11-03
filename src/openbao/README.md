@@ -96,8 +96,11 @@ atomically.
   "/usr/local/bin/openbao-token-helper"` to that config to keep the login in the volume. A repo
   that wants the state on the host disk bind-mounts the volume's target (the README's "How the
   pieces fit"), or points `OPENBAO_STATE_DIR` elsewhere in its own `containerEnv`.
-- **`bao token revoke -self`** and `bao logout` run the helper's `erase`: the token file is
-  removed and the next `dcf-secret` call says to log in.
+- **Log out with `task openbao:logout`**: it runs `bao token revoke -self` (ignored when the token
+  is already dead) and then the helper's `erase`, so no token is left in the volume. `bao token
+  revoke -self` alone only revokes the token on the server (OpenBao's `token_revoke` command calls
+  the API and never the helper; there is no `bao logout`), so the dead token stays stored and
+  `dcf-secret` answers exit 12 until you `task openbao:login` again.
 - **`BAO_TOKEN`** in the environment takes precedence over the saved login (the hook says so). It
   is a way to give a container a token without a login, for a service that cannot run `bao login`:
   set it in `containerEnv` from a host variable (`"BAO_TOKEN": "${localEnv:BAO_TOKEN}"`) or an env
@@ -219,6 +222,7 @@ registry, these appear under `openbao:`:
 - `openbao:version`: show the installed version.
 - `openbao:status`: run `bao status` against `BAO_ADDR` (seal state, HA,
   version); extra flags go after `--`.
+- `openbao:logout`: revoke the current token on the server and erase the saved one.
 - `openbao:login`: run `bao login` interactively; auth method and flags go
   after `--`, e.g. `task openbao:login -- -method=oidc`.
 - `openbao:kv:get`: read the secret `KEY=<mount/path>` from a KV engine
@@ -251,7 +255,7 @@ itself.
 - `dcf-secret` asks `bao` up to three questions after a failure, so a failure costs a few round
   trips; a success costs one. It assumes a KV v2 mount (the data lives under `<mount>/data/`).
 - The login is kept by a token helper `bao` runs as a shell command on every call that needs the
-  token; the container test `dev_server` checks login, use and revoke against a real `bao`.
+  token; the container test `dev_server` checks login, use, revoke and `openbao:logout` against a real `bao`.
 - `bao status` fails with a connection or certificate error: `BAO_ADDR` is
   unset or wrong, or the server's CA is not trusted in the image.
 - A `BAO_TOKEN` in the environment takes precedence over the saved login (see State).
@@ -293,6 +297,7 @@ Nothing is removed; `mode` stays `client`.
 - **Your `bao login` now survives a rebuild.** The Feature owns a named volume (`openbao-config-<devcontainerId>`, at `/var/lib/devcontainer-features/openbao`, named by `OPENBAO_STATE_DIR`) and points `bao` at a token helper (`BAO_CONFIG_PATH`, set in `containerEnv`, so it holds for `devcontainer exec` too) that keeps the token there, as `gh` and `az` keep their logins. The post-create hook, `openbao-setup` (also `task openbao:setup`), makes the folder usable and moves a token left in `~/.vault-token` into it once. **You must act once:** rebuild the container and run `bao login` again, because the volume starts empty. A repo that sets its own `BAO_CONFIG_PATH` replaces the Feature's config (the hook says so); add `token_helper = "/usr/local/bin/openbao-token-helper"` to it. A repo that wants the state on the host disk bind-mounts the same target. A `BAO_TOKEN` in the environment still takes precedence over the saved login.
 - **`dcf-secret`**, a command for scripts and other Features to read and write a secret without knowing where the server runs: `dcf-secret get <name>`, `dcf-secret put <name> --field <field>` (the value on stdin) and `dcf-secret status`. `put` writes only that field and keeps the secret's other fields (it creates the secret when it does not exist); `--replace` makes the secret exactly that one field. A token whose policy lacks the `patch` capability is refused with exit 13 rather than silently replacing the secret. It fails with fixed exit codes (10 unreachable, 11 sealed, 12 not logged in, 13 denied, 14 no such secret), each with one line saying what to do, and never falls back to a key on disk. Secrets live in a KV v2 mount named `dcf` (`DCF_SECRET_MOUNT` changes it). Nothing to do unless you want it; `task openbao:kv:get` is unchanged.
 - **The `mode` option**, with the one value `client` (the default, what the Feature always did: the CLI against a server outside the container). A later version adds `server`. `OPENBAO_SETUP_MODE` in `containerEnv` overrides it per container. Nothing to do.
+- `task openbao:logout`: revokes your token on the server and erases the saved one, so no login is left behind (`bao token revoke -self` alone leaves the dead token stored, and `dcf-secret` then says to log in). Nothing to do unless you log out.
 - `task openbao:setup`: re-runs the post-create hook.
 
 ### [1.0.4] - 2026-11-03

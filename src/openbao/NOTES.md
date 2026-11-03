@@ -75,8 +75,11 @@ atomically.
   "/usr/local/bin/openbao-token-helper"` to that config to keep the login in the volume. A repo
   that wants the state on the host disk bind-mounts the volume's target (the README's "How the
   pieces fit"), or points `OPENBAO_STATE_DIR` elsewhere in its own `containerEnv`.
-- **`bao token revoke -self`** and `bao logout` run the helper's `erase`: the token file is
-  removed and the next `dcf-secret` call says to log in.
+- **Log out with `task openbao:logout`**: it runs `bao token revoke -self` (ignored when the token
+  is already dead) and then the helper's `erase`, so no token is left in the volume. `bao token
+  revoke -self` alone only revokes the token on the server (OpenBao's `token_revoke` command calls
+  the API and never the helper; there is no `bao logout`), so the dead token stays stored and
+  `dcf-secret` answers exit 12 until you `task openbao:login` again.
 - **`BAO_TOKEN`** in the environment takes precedence over the saved login (the hook says so). It
   is a way to give a container a token without a login, for a service that cannot run `bao login`:
   set it in `containerEnv` from a host variable (`"BAO_TOKEN": "${localEnv:BAO_TOKEN}"`) or an env
@@ -198,6 +201,7 @@ registry, these appear under `openbao:`:
 - `openbao:version`: show the installed version.
 - `openbao:status`: run `bao status` against `BAO_ADDR` (seal state, HA,
   version); extra flags go after `--`.
+- `openbao:logout`: revoke the current token on the server and erase the saved one.
 - `openbao:login`: run `bao login` interactively; auth method and flags go
   after `--`, e.g. `task openbao:login -- -method=oidc`.
 - `openbao:kv:get`: read the secret `KEY=<mount/path>` from a KV engine
@@ -230,7 +234,7 @@ itself.
 - `dcf-secret` asks `bao` up to three questions after a failure, so a failure costs a few round
   trips; a success costs one. It assumes a KV v2 mount (the data lives under `<mount>/data/`).
 - The login is kept by a token helper `bao` runs as a shell command on every call that needs the
-  token; the container test `dev_server` checks login, use and revoke against a real `bao`.
+  token; the container test `dev_server` checks login, use, revoke and `openbao:logout` against a real `bao`.
 - `bao status` fails with a connection or certificate error: `BAO_ADDR` is
   unset or wrong, or the server's CA is not trusted in the image.
 - A `BAO_TOKEN` in the environment takes precedence over the saved login (see State).

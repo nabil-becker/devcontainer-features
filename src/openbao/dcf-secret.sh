@@ -49,7 +49,7 @@ EOF
 fix_unreachable() { say "the server at ${BAO_ADDR:-the default address (https://127.0.0.1:8200)} is unreachable: check BAO_ADDR, and that the server is running (bao status shows why)"; }
 fix_sealed() { say "the server is sealed: the Operator unseals it (bao operator unseal)"; }
 fix_uninitialised() { say "the server is not initialised: the Operator initialises it (bao operator init)"; }
-fix_login() { say "no valid token (none, or it expired): log in with task openbao:login"; }
+fix_login() { say "no valid token (none, expired or revoked): log in with task openbao:login (task openbao:logout first clears a dead one)"; }
 fix_denied() { say "the token may not $1 '$2' at $mount: its policy has to allow it (ask the server's owner)"; }
 
 command -v bao >/dev/null 2>&1 || die 10 "bao is not installed: add the openbao Feature to the devcontainer"

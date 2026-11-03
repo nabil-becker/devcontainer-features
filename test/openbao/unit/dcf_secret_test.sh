@@ -124,6 +124,7 @@ has "11: not initialised says so" "not initialised" "$err"
 run STUB_KV_RC=2 STUB_CAPS_RC=2 -- get ssh/key
 check "12: no valid token" 12 "$rc"
 has "12: the fix is the login" "task openbao:login" "$err"
+has "12: and the logout that clears a dead token" "task openbao:logout" "$err"
 check "12: one line" 1 "$(lines "$err")"
 run STUB_KV_RC=2 STUB_CAPS=deny -- get ssh/key
 check "13: the token may not read" 13 "$rc"

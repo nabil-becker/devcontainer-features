@@ -85,10 +85,28 @@ check "nothing was written to the home folder" [ -z "$(ls -A "$home")" ]
 check "the state dir holds the token bao was given" [ "$(cat "$state/token")" = "$limited" ]
 check "dcf-secret uses the saved login" [ "$(as_nobody dcf-secret get ok)" = fine ]
 check "status is ready with the saved login" [ "$(as_nobody dcf-secret status ok)" = ready ]
+# bao token revoke -self revokes on the server and never calls the helper (OpenBao's token_revoke
+# command only calls the API): the dead token stays stored, and dcf-secret says to log in.
 as_nobody bao token revoke -self >/dev/null
-check "bao token revoke -self erases the token through the helper" [ ! -e "$state/token" ]
+check "revoke -self leaves the (now dead) token stored" [ -s "$state/token" ]
+rc=0; err="$(as_nobody dcf-secret get ok 2>&1 >/dev/null)" || rc=$?
+check "after the revoke dcf-secret is exit 12" [ "$rc" = 12 ]
+check "with the no-login line, naming login and logout" [ "$(grep -c 'task openbao:login.*task openbao:logout' <<<"$err")" = 1 ]
+
+# task openbao:logout revokes and erases, leaving nothing, and is no error on a dead token
+again="$(bao token create -policy=dcf-ok -field=token)"
+as_nobody bao login -no-print "$again" >/dev/null
+check "a new login is stored" [ "$(cat "$state/token")" = "$again" ]
+logout() { as_nobody task -t /usr/local/share/go-task/includes.d/openbao.yml logout; }
+rc=0; logout >/dev/null 2>&1 || rc=$?
+check "task openbao:logout is exit 0" [ "$rc" = 0 ]
+check "logout erased the saved token" [ ! -e "$state/token" ]
+rc=0; BAO_TOKEN="$again" bao token lookup >/dev/null 2>&1 || rc=$?
+check "logout revoked the token on the server" [ "$rc" != 0 ]
+rc=0; logout >/dev/null 2>&1 || rc=$?
+check "logout again, with nothing stored, is still exit 0" [ "$rc" = 0 ]
 rc=0; as_nobody dcf-secret get ok >/dev/null 2>&1 || rc=$?
-check "after the revoke there is no login (exit 12)" [ "$rc" = 12 ]
+check "after logout there is no login (exit 12)" [ "$rc" = 12 ]
 
 rc=0; BAO_ADDR=http://127.0.0.1:1 dcf-secret get ok >/dev/null 2>&1 || rc=$?
 check "a closed port is exit 10" [ "$rc" = 10 ]

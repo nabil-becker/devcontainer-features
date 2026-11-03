@@ -30,6 +30,7 @@
     "image": "mcr.microsoft.com/devcontainers/base:debian",
     "remoteUser": "vscode",
     "features": {
+      "go-task": {},
       "openbao": {
         "version": "2.7.1"
       }

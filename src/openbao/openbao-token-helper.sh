@@ -3,7 +3,8 @@
 # found through BAO_CONFIG_PATH, both set by the Feature). bao calls it with one argument:
 #   get    print the stored token (nothing, exit 0, when there is none)
 #   store  keep the token read from stdin
-#   erase  forget the token (bao token revoke -self, bao logout)
+#   erase  forget the token (bao does not call it on `bao token revoke -self`, which only revokes
+#          the token on the server; task openbao:logout calls it after the revoke)
 # The token lives at $OPENBAO_STATE_DIR/token, mode 0600, in the Feature's volume, so a rebuild
 # keeps the login. The internal helper bao uses otherwise writes ~/.vault-token by a rename, which
 # no link can follow; this is the CLI's own way to keep the token elsewhere. It prints no token
