@@ -379,9 +379,3 @@ the CLI) contend for `.claude.json.lock`; run one.
 - **Instead:** the adapter removes the records proven dead (another pid namespace, no such pid, or another start time) before a wake, and a copy that still happens is stopped and reported as an error. Do not wrap the adapter in a retry loop: every repeat wake made another copy.
 - **Caught by:** the unit tests of 1.9.7 in `task test:claude-unit`, against a fake; nothing yet against a real background service (open item `second-copies-real-service`).
 
-### Don't fix or judge Claude Code behaviour on a different CLI version than the one that showed it
-
-- **Don't:** reproduce a consumer's wake or fork report in a container that runs another Claude Code version, and ship the fix as verified.
-- **Why:** 2026-10-30, "Four fixes released: cloud-folder 1.3.1, ssh-agent 1.2.0, claude-code 1.9.4, agents 2.1.1": this container ran 2.1.308 and the consumer 2.1.314, so the fork detection shipped modelled, and seven claude-code patch releases followed within six days.
-- **Instead:** rebuild on the consumer's CLI version first, and record the version in the entry and in the NOTES.
-- **Caught by:** nothing yet (the rebuild is a one-off item, `rebuild-claude-code-2-1-314`).

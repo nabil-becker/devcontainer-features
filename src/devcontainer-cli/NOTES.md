@@ -479,7 +479,7 @@ the host type needs; ADR 0024 decides it, `docs/proposals/host-profile.md` is th
 - **Don't:** set `DEVCONTAINER_BUILD_LOCK=0` to avoid waiting on `wslc`, or on any engine where the launcher says the lock is kept.
 - **Why:** without BuildKit build contexts, `@devcontainers/cli` tags every repository's Feature content image `dev_container_feature_content_temp`, so two builds at once overwrite each other and the first fails with `... not found`. The wait itself was unreadable until issue #154 (2026-11-03, "Build lock names its holder and is skipped with BuildKit build contexts (#154)"): an `up` waited behind unrelated no-cache builds with no clue why.
 - **Instead:** read the waiting line (it names the holder's repository, subcommand and how many wait); where `buildx` is 0.8.0 or later the launcher skips the lock itself.
-- **Caught by:** `task test:build-lock` covers the lock and its skip; the setting `=0` itself is not guarded (the choice is yours, the risk is documented above).
+- **Caught by:** by design: `DEVCONTAINER_BUILD_LOCK=0` is a documented override, so it is not guarded; `task test:build-lock` covers the lock and its skip.
 
 ### Don't run the raw `devcontainer up` right after a rebuild or an engine restart
 

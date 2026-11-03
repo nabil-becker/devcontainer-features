@@ -332,6 +332,13 @@ when the section or the line is missing.
 
 NFR-8 is the authority: if it and this list disagree, fix this list.
 
+### Fixing a Feature that wraps a CLI
+
+Reproduce a consumer's report on the CLI version that showed it, before calling a fix verified,
+and record that version in the CHANGELOG entry and the NOTES. On 2026-10-30 this container ran
+Claude Code 2.1.308 and the consumer 2.1.314, so claude-code's fork detection shipped modelled,
+and seven patch releases followed within six days.
+
 ### Code style
 
 - Shell: bash, `shellcheck`-clean, 2-space indent, `set -euo pipefail`.
