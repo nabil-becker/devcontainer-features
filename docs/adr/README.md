@@ -95,3 +95,4 @@ numbering and a row below.
 | [0044](0044-the-seed-carries-the-devhost-feature-as-files-and-its-starter-references-it-by-local-path.md) | The seed carries the devhost Feature as files, and its starter references it by local path | accepted | 2026-11-02 |
 | [0045](0045-four-storage-tiers-govern-where-data-lives-and-a-machine-loss-must-lose-nothing.md) | Four storage tiers govern where data lives, and losing a machine must lose nothing | accepted | 2026-11-03 |
 | [0046](0046-the-operators-register-key-lives-in-ssh-agents-key-mode-and-is-unlocked-for-a-sitting.md) | The Operator's register key lives in ssh-agent's key mode and is unlocked for a sitting | accepted | 2026-11-03 |
+| [0047](0047-every-feature-keeps-a-hand-written-changelog-checked-by-lint-and-the-version-bump-stays-in-the-pull-request.md) | Every Feature keeps a hand-written changelog checked by lint, and the version bump stays in the pull request | accepted | 2026-11-03 |
