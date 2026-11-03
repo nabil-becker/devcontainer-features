@@ -1,3 +1,20 @@
+## How it fits
+
+```text
+  go-task registry --> openbao:* tasks
+  bao CLI --BAO_ADDR (set in containerEnv)--> OpenBao server
+    |
+    `--> ~/.vault-token  or  BAO_TOKEN from the environment
+```
+
+| Data | Where it lives | Storage tier |
+| --- | --- | --- |
+| Login token | `~/.vault-token` in the container filesystem (not a volume: a rebuild logs you out), or `BAO_TOKEN` in the environment | 4 working set |
+
+Tiers are the four of ADR 0045: 1 git, 2 shared folder, 3 personal folder, 4 working set (rebuildable only).
+
+Used in: [secrets-with-openbao](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/reference-architectures/secrets-with-openbao.md)
+
 ## What it installs
 
 The `bao` release binary from `github.com/openbao/openbao`, at

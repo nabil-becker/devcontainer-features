@@ -1,3 +1,27 @@
+## How it fits
+
+```text
+  host: task devcontainer:agent -- <name>
+          |
+          v                    container
+  task agents -- <name>
+          |  reads .devcontainer/agents.yml (the repository's list)
+          |
+  agents -+-- adapter on PATH: agent-adapter-claude (from claude-code)
+          +-- leases, this container only
+          `-- tasks through go-task (agents: namespace)
+```
+
+| Data | Where it lives | Storage tier |
+| --- | --- | --- |
+| Agent list | `.devcontainer/agents.yml` in the repository | 1 git |
+| Leases and start markers | `/var/lib/devcontainer-features/agents`, not a volume; a lease must not survive a rebuild | 4 working set |
+| Agents' sessions | the CLI's own state (claude-code's volume) | 4 working set |
+
+Tiers are the four of ADR 0045: 1 git, 2 shared folder, 3 personal folder, 4 working set (rebuildable only).
+
+Used in: [agentic-devhost](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/reference-architectures/agentic-devhost.md)
+
 ## What it installs
 
 One standard way to start any agent, whatever its CLI. A repository declares its agents in one

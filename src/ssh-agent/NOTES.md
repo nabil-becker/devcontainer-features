@@ -1,3 +1,21 @@
+## How it fits
+
+```text
+  host SSH agent socket --bind mount (devcontainer-cli launcher)-->
+        /var/lib/devcontainer-features/ssh-agent/agent.sock = SSH_AUTH_SOCK
+  git commit -S, ssh  --> the agent; the private key never enters the container
+  Windows engines: none; opt-in key mode keeps keys in a volume
+  git Feature: signing config
+```
+
+| Data | Where it lives | Storage tier |
+| --- | --- | --- |
+| Private keys | none in the default mode; only in the opt-in key mode, in a named volume at `/var/lib/devcontainer-features/ssh-agent-key` | 4 working set |
+
+Tiers are the four of ADR 0045: 1 git, 2 shared folder, 3 personal folder, 4 working set (rebuildable only).
+
+Used in: [windows-workstation-devhost](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/reference-architectures/windows-workstation-devhost.md), [secrets-with-openbao](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/reference-architectures/secrets-with-openbao.md)
+
 ## What it gives you
 
 Every process in the container, `devcontainer exec` and `claude` sessions included, sees

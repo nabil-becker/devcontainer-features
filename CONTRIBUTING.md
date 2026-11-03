@@ -307,6 +307,13 @@ Requirement NFR-8 (`docs/principles/non-functional-requirements.md`) says
 apply, so that a missing topic always means "forgotten" and
 never "not applicable". Short sections, one per topic:
 
+`NOTES.md` opens with a `## How it fits` section, so it lands near the top of
+the README: a small diagram of what the Feature connects to, a table of its
+data and the storage tier of each (ADR 0045; "none" when it keeps nothing),
+and a `Used in:` line linking the reference architectures that use it (or
+`Used in: none yet`). `task how-it-fits:check` (part of `task lint`) fails
+when the section or the line is missing.
+
 - what the Feature installs and where it lands, and how the download is
   verified (the checksum or signature, or the plain statement that it is
   not);

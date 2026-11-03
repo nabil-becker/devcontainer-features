@@ -1,3 +1,21 @@
+## How it fits
+
+```text
+  files / paths --> phi-check --> findings (never the matched text)
+  wired in by the repository: pre-commit, a hook or CI
+  phi_patterns.py importable by other guards
+  python (os-provided, via dependsOn)
+```
+
+| Data | Where it lives | Storage tier |
+| --- | --- | --- |
+| Exceptions file (synthetic fixtures only) | a file in the repository, named by the `exceptions` option | 1 git |
+| Nothing else | no login, no config, no volume | none |
+
+Tiers are the four of ADR 0045: 1 git, 2 shared folder, 3 personal folder, 4 working set (rebuildable only).
+
+Used in: [agentic-devhost](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/reference-architectures/agentic-devhost.md)
+
 ## What it installs, and what it is
 
 `phi-check` is a linter in the way `yamllint`, `shellcheck` and `ruff` are:

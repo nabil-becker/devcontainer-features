@@ -1,3 +1,24 @@
+## How it fits
+
+```text
+  shared folder (SharePoint / OneDrive)
+     |  host mode: sync client's host folder, bind-mounted by the
+     |             devcontainer-cli launcher at /mnt/cloud-folder-host
+     |  sync/mount mode: rclone, signed in inside the container
+     v
+  /mnt/cloud-folder  (mountPoint)  <-- people and agents read and write
+     rclone token, config, sync state --> volume: cloud-folder-<id>
+```
+
+| Data | Where it lives | Storage tier |
+| --- | --- | --- |
+| The shared documents themselves | the cloud folder; `/mnt/cloud-folder` shows it (in sync mode a copy in the container filesystem, fetched again after a rebuild) | 2 shared folder |
+| rclone token and config, sync state, logs, VFS cache | named volume at `/var/lib/devcontainer-features/cloud-folder` | 4 working set |
+
+Tiers are the four of ADR 0045: 1 git, 2 shared folder, 3 personal folder, 4 working set (rebuildable only).
+
+Used in: [windows-workstation-devhost](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/reference-architectures/windows-workstation-devhost.md)
+
 ## What it gives you
 
 One fixed path in the container, `/mnt/cloud-folder` by default (option `mountPoint`), for a

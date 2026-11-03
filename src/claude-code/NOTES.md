@@ -1,3 +1,23 @@
+## How it fits
+
+```text
+  host: task devcontainer:claude --> container: claude (native binary)
+                                          |        |
+   agents Feature <-- agent-adapter-claude'        |
+   (task agents -- <name>)                         |
+                                                   v
+              volume: CLAUDE_CONFIG_DIR  (login, settings, sessions)
+              (a repo may bind-mount a host folder on the same target)
+```
+
+| Data | Where it lives | Storage tier |
+| --- | --- | --- |
+| Login, settings, session history, adapter's session list | named volume at `CLAUDE_CONFIG_DIR` (`/var/lib/devcontainer-features/claude-code`); a repo may bind-mount a host folder there | 4 working set |
+
+Tiers are the four of ADR 0045: 1 git, 2 shared folder, 3 personal folder, 4 working set (rebuildable only).
+
+Used in: [windows-workstation-devhost](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/reference-architectures/windows-workstation-devhost.md), [agentic-devhost](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/reference-architectures/agentic-devhost.md)
+
 ## Deprecated in 1.7.0: claude-host, claude-fleet, claude-host-pin
 
 The [`agents`](../agents) Feature replaces them: a repository lists its agents in

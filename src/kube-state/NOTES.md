@@ -1,3 +1,20 @@
+## How it fits
+
+```text
+  kubeconfig --task kube-state:import--> volume: KUBECONFIG
+                                              |
+                  kubectl (kubectl-helm-minikube), velero read it
+  (kustomize, kubeconform, argocd do not)
+```
+
+| Data | Where it lives | Storage tier |
+| --- | --- | --- |
+| Kubeconfig (cluster credentials) | named volume at `/var/lib/devcontainer-features/kube-state` (`KUBECONFIG` points into it) | 4 working set |
+
+Tiers are the four of ADR 0045: 1 git, 2 shared folder, 3 personal folder, 4 working set (rebuildable only).
+
+Used in: [kubernetes-toolbox](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/reference-architectures/kubernetes-toolbox.md)
+
 ## State only: no kubectl installed
 
 This Feature owns the kubeconfig the Kubernetes tools in the image share

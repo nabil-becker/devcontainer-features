@@ -1,3 +1,19 @@
+## How it fits
+
+```text
+  go-task registry --> dsc:* tasks
+  dsc (/opt/dsc, on PATH) --adapter resources--> pwsh
+                                   (ghcr.io/devcontainers/features/powershell)
+```
+
+| Data | Where it lives | Storage tier |
+| --- | --- | --- |
+| Nothing | installs a program tree only; no volume, no hook, no credentials | none |
+
+Tiers are the four of ADR 0045: 1 git, 2 shared folder, 3 personal folder, 4 working set (rebuildable only).
+
+Used in: none yet
+
 ## What it installs
 
 The Microsoft DSC v3 release from `github.com/PowerShell/DSC`, installed

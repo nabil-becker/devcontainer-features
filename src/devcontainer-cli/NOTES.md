@@ -1,3 +1,22 @@
+## How it fits
+
+```text
+  host: task devcontainer:* (launcher; bootstrap vendored into the repo)
+     |  adds mounts: ~/.git-dirs, ssh agent socket, cloud folder
+     v
+  devcontainer CLI  --needs--> Docker daemon
+  (private Node in /opt/devcontainer-cli,    (docker-in-docker, or
+   not on PATH)                               docker-outside-of-docker)
+```
+
+| Data | Where it lives | Storage tier |
+| --- | --- | --- |
+| Nothing | installs binaries only; no volume, no `containerEnv`, no hook | none |
+
+Tiers are the four of ADR 0045: 1 git, 2 shared folder, 3 personal folder, 4 working set (rebuildable only).
+
+Used in: [windows-workstation-devhost](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/reference-architectures/windows-workstation-devhost.md)
+
 ## What it installs
 
 The `@devcontainers/cli` npm package, run on a private Node.js build, so

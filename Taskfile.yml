@@ -98,6 +98,7 @@ tasks:
       - task: taskfiles:check
       - task: versions:check
       - task: changelog:check
+      - task: how-it-fits:check
       - task: test:common-unit
       - task: test:go-task-unit
       - task: test:devhost
@@ -169,6 +170,11 @@ tasks:
     desc: 'Fail when a Feature''s `version` in src/<id>/devcontainer-feature.json has no `## [version]` entry in src/<id>/CHANGELOG.md, or when its README''s "Changes" section is stale against the CHANGELOG (run `task docs`); Docker-free; part of lint.'
     cmds:
       - python3 -I '{{.ROOT_DIR}}/.github/scripts/changelog.py' check
+
+  how-it-fits:check:
+    desc: 'Fail when a src/<id>/NOTES.md has no "## How it fits" section (diagram, data and storage tier, reference architectures) or the section has no "Used in:" line (links, or "Used in: none yet"); Docker-free; part of lint.'
+    cmds:
+      - python3 -I '{{.ROOT_DIR}}/.github/scripts/check_how_it_fits.py'
 
   changelog:draft:
     desc: 'Print a draft CHANGELOG entry for src/<FEATURE>: the commits that touched it since origin/main (BASE=<ref> to change), grouped Added/Changed/Fixed, under the version now in its devcontainer-feature.json. Copy it into src/<FEATURE>/CHANGELOG.md and rewrite it for a user of the Feature: what changed for them and whether they must act (an option renamed, a task removed, a rebuild needed). Usage: task changelog:draft FEATURE=<id>'

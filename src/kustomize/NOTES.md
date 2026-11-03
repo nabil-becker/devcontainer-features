@@ -1,3 +1,19 @@
+## How it fits
+
+```text
+  files --> kustomize build --> manifests --> kubeconform (optional pipe)
+  helm on PATH (kubectl-helm-minikube) --> --enable-helm charts
+  (standalone: no kubectl, no KUBECONFIG, no cluster)
+```
+
+| Data | Where it lives | Storage tier |
+| --- | --- | --- |
+| Nothing | installs a binary only; no volume, no hook | none |
+
+Tiers are the four of ADR 0045: 1 git, 2 shared folder, 3 personal folder, 4 working set (rebuildable only).
+
+Used in: [kubernetes-toolbox](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/reference-architectures/kubernetes-toolbox.md)
+
 ## What it installs
 
 The `kustomize` release binary from `github.com/kubernetes-sigs/kustomize`,
