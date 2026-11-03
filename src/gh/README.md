@@ -99,6 +99,27 @@ other mounted path; `gh-setup` follows the variable.
 - `task gh:login` / `task gh:status` from a root Taskfile that includes the
   go-task registry.
 
+## Changes
+
+### [1.0.3] - 2026-11-03
+
+#### Added
+
+- This changelog: every release of this Feature now has an entry here, written for its users, and the Feature's README shows the latest three under "Changes". Nothing to do.
+
+### [1.0.2] - 2026-10-28
+
+#### Fixed
+
+- Build-time downloads retry on transient network errors, so a flaky connection no longer fails the container build outright. Rebuild the container to pick it up. No change to options or tasks; nothing to do. ([#94](https://github.com/nabil-becker/devcontainer-features/pull/94))
+
+### [1.0.1] - 2026-10-21
+
+#### Fixed
+
+- Az installs the Azure CLI; Feature tasks run in the caller's folder ([#48](https://github.com/nabil-becker/devcontainer-features/pull/48))
+
+The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/gh/CHANGELOG.md).
 
 ---
 

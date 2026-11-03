@@ -1,27 +1,3 @@
-## Changes in 1.3.1
-
-- **The post-start hook never fails and never holds the start.** A consumer's rebuild ended with
-  `postStartCommand from Feature 'cloud-folder' failed with exit code 1` after 775 s, while another
-  Feature's hook waited at a prompt and WSL reported a connection timeout. `cloud-folder-setup` with
-  no argument (the hook, and `task cloud-folder:setup`) now always exits 0: a broken pipe or hang-up
-  on the exec channel (SIGPIPE, SIGHUP) is ignored, and the whole run gets a budget of 60 s
-  (`DCF_CLOUD_FOLDER_START_BUDGET`) after which it reports that it did not finish and returns; the
-  mount and the sync timer are detached and go on in the background. A problem is a warning with
-  the command to fix it (`task cloud-folder:status`, `:login`, `:start`). The explicit tasks
-  (`start`, `sync`, `status`, `login`) keep their real exit codes.
-
-## Changes in 1.3.0
-
-- **One sign-in command, wherever it runs.** `task cloud-folder:login` now runs rclone's own browser
-  sign-in (`rclone authorize "onedrive" --auth-no-open-browser`) in the container instead of
-  asking for a token from another machine with the same rclone version. Sign in in any browser and
-  paste back the address it fails to open (`http://localhost:53682/?code=...`), or, from the
-  workstation with `devcontainer-cli` 1.16.0, let the launcher relay the browser into the container.
-  A pasted token is still accepted at the same prompt, and `-- --token` asks for nothing else. See
-  "Signing in". `login` takes `-- --relay` (the launcher's) and `-- --token`;
-  `CLOUD_FOLDER_LOGIN_TIMEOUT` bounds the wait (default 600 s). The token is still written only into
-  the volume's `rclone.conf`.
-
 ## What it gives you
 
 One fixed path in the container, `/mnt/cloud-folder` by default (option `mountPoint`), for a

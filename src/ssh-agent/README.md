@@ -335,6 +335,27 @@ warnings to `devcontainer:ssh-key-import`. Nothing in the key volume changes exc
 `devcontainer:ssh-key-import`). Pin the Feature with `:1`; an upgrade changes nothing in the key
 volume, and a rebuild re-runs the hook.
 
+## Changes
+
+### [1.3.1] - 2026-11-03
+
+#### Added
+
+- This changelog: every release of this Feature now has an entry here, written for its users, and the Feature's README shows the latest three under "Changes". Nothing to do.
+
+### [1.3.0] - 2026-11-03
+
+#### Added
+
+- `task ssh-agent:key:unlock NAME=<key> [MINUTES=15]` loads one key from the key volume into the agent for a sitting (at most 480 minutes), asking for its passphrase on the terminal, and says when it drops out; `task ssh-agent:key:lock NAME=<key>` drops it sooner. Key mode only. Nothing to do for existing setups. ([#152](https://github.com/nabil-becker/devcontainer-features/pull/152))
+
+### [1.2.0] - 2026-10-30
+
+#### Fixed
+
+- The start hook never asks for a passphrase (ssh-agent 1.2.0) ([#135](https://github.com/nabil-becker/devcontainer-features/pull/135))
+
+The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/ssh-agent/CHANGELOG.md).
 
 ---
 

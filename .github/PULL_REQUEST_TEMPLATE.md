@@ -11,10 +11,10 @@
 New Feature? Follow "Adding a Feature" in [CONTRIBUTING.md](../CONTRIBUTING.md#adding-a-feature) first (CI matrices, `test/_global`, README row).
 
 - [ ] Every commit is signed off (`Signed-off-by:`, DCO) - automatic after `task repo:setup`
-- [ ] `version` bumped in `src/<id>/devcontainer-feature.json` (semver)
+- [ ] `version` bumped in `src/<id>/devcontainer-feature.json` (semver) and its `## [x.y.z]` entry added to `src/<id>/CHANGELOG.md`, written for a user of the Feature (what changed, whether they must act)
 - [ ] Downloads remain checksum-verified; nothing unverified is piped into a shell
 - [ ] `install.sh` is idempotent and does not assume a `remoteUser`
 - [ ] Tests updated (`test/<id>/test.sh`, `scenarios.json`) and `task test FEATURE=<id>` passes (in this repo's devcontainer or on Linux/macOS)
 - [ ] `taskfile.yml` present and registered via `installTaskfile` (new Features)
 - [ ] `task lint` passes
-- [ ] `NOTES.md` updated if behaviour or options changed, and `task docs` run so `src/<id>/README.md` is current
+- [ ] `NOTES.md` updated if behaviour or options changed, and `task docs` run (it adds the CHANGELOG's latest entries to the README) so `src/<id>/README.md` is current

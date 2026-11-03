@@ -19,93 +19,6 @@ Installs @devcontainers/cli as /usr/local/bin/devcontainer, backed by a private,
 | version | @devcontainers/cli npm version to install (e.g. '0.89.0'), or 'latest'. | string | latest |
 | nodeVersion | Node.js release used privately by the CLI. Downloaded from nodejs.org and verified against its SHASUMS256.txt. | string | 24.21.0 |
 
-## Changes in 1.18.1
-
-- **The waiting line counts every other waiter** (`N waiting`, was `N ahead`): the build lock is
-  not first-come, so a count of earlier arrivals promised an order that does not exist. The count
-  is every live waiter but this one, whenever it arrived; the holder is not one, and there is no
-  count when there is no other waiter: `waiting for alpha's up --build-no-cache (started 14:02, 2
-  waiting)...`. Both launchers.
-
-## Changes in 1.18.0
-
-- **The build lock says who holds it** (#154). A waiting `up` printed only `waiting for another
-  devcontainer build to finish...` and could sit there behind long rebuilds of other repositories
-  with no way to tell. Now the holder writes a small file beside the lock (its repository's folder
-  name, the subcommand with its flags, its start time) and each waiter registers too, so the line
-  reads `waiting for alpha's up --remove-existing-container --build-no-cache (started 14:02, 2
-  waiting)...` and is printed again when the holder or the count changes. A file whose process is
-  gone is ignored. The count is every other waiter (not the holder, not this one), whenever it
-  arrived: the lock is not first-come, so there is no place in a queue to show.
-- **No build lock with BuildKit build contexts.** The lock is for one collision only: without
-  BuildKit build contexts (wslc), `@devcontainers/cli` tags every repository's Feature content
-  image `dev_container_feature_content_temp`. When `<engine> buildx version` reports 0.8.0 or later
-  (the check the CLI itself makes; Docker Desktop and Docker Engine with buildx), the CLI uses
-  build contexts and makes no such image, so the launcher now skips the lock with one line:
-  `build lock skipped: docker builds with BuildKit build contexts (buildx 0.35.0), so builds of
-  different repositories cannot collide (DEVCONTAINER_BUILD_LOCK=1 keeps it).` wslc always keeps
-  it. `DEVCONTAINER_BUILD_LOCK=1` (new) keeps the lock on every engine; `=0` still turns it off.
-  Both launchers (PowerShell and bash).
-
-## Changes in 1.17.0
-
-- **The launcher waits for the container engine** (new setting `DEVCONTAINER_ENGINE_WAIT`). Right
-  after a rebuild an `up` failed inside with `Command failed: docker ps -q -a --filter label=...`
-  and "An error occurred setting up the container", and a second run went through: the engine had
-  not answered for a moment, and `@devcontainers/cli` hides its error. Now `up`, `build`, `exec`,
-  `set-up` and `run-user-commands` first check that the engine answers (one check when it does);
-  otherwise they print `waiting for the container engine to answer...` once and check every second
-  for `DEVCONTAINER_ENGINE_WAIT` seconds (default 60; `0` = no wait), then fail naming the engine,
-  its own error and how to start it. A failed `up` or `build` asks the engine once more and prints
-  what it says. Both launchers (PowerShell and bash); see "Host-side counterpart".
-- **`task devcontainer:agent` with no name** refuses on the host, before the container is started,
-  when the agent list (`AGENTS_FILE`, else `.devcontainer/agents.yml`) marks no agent
-  `default: true`; before, a whole `up` ran first and `agents start` inside then said so. A list
-  that is missing or cannot be read is let through, as is any line that reads `default: true`.
-
-## Changes in 1.16.3
-
-- **FUSE is not granted on wslc.** `wslc run` (WSL Containers 3.0.3) has no `--device`, `--cap-add`
-  or `--security-opt` option and refused the whole start ("Option name was not recognized for the
-  current command: '--device=/dev/fuse'") when `DCF_HOST_FUSE=1` filled the `runArgs`. On the
-  `windows-wslc` host type, or with `DEVCONTAINER_DOCKER_PATH` naming `wslc`, the launcher now
-  withholds the grant: the three `DCF_HOST_FUSE_*` variables stay unset (the `runArgs` fall back to
-  their labels), `DCF_HOST_FUSE` reaches the container empty, `up` warns once with the reason, and
-  the container starts without FUSE, so the cloud-folder Feature's `auto` mode takes sync.
-  `task devcontainer:host` prints `DCF_HOST_FUSE : 1 asked for, not granted on windows-wslc: ...`.
-  Docker Desktop and the other engines are unchanged. Unset `DCF_HOST_FUSE` in `.devcontainer/.env`
-  on a wslc machine to drop the warning.
-
-## Changes in 1.16.2
-
-- **`DCF_HOST_MACHINE`**: the launcher sets the workstation's machine name for `up` and `rebuild`,
-  like the other `DCF_HOST_*` values, so agents' session names can say which machine they run on.
-  PowerShell reads `$env:COMPUTERNAME` on Windows (else the host name before its first dot); bash
-  reads `hostname -s` (else `uname -n` before its first dot). The name is cut to a safe set: letters,
-  digits, dot, underscore and hyphen; any other character becomes a hyphen, runs collapse, no leading
-  or trailing hyphen or dot, at most 63 characters. It is always the launcher's own value, never one
-  inherited from the environment. The bootstrap's `devcontainer.json` passes it on with
-  `"DCF_HOST_MACHINE": "${localEnv:DCF_HOST_MACHINE}"`. `up` and `host` warn once (never fail) when
-  the repository's `devcontainer.json` lacks that line, as for the FUSE slots; add the line to the
-  `containerEnv` of an existing repository. Empty means the container renders `container`.
-
-## Changes in 1.16.1
-
-- **`task devcontainer:lock` and `task devcontainer:outdated`** (aliases `dc:lock`, `dc:outdated`):
-  update the lock file to the requested Feature versions, or list what is behind, instead of
-  deleting the lock file by hand.
-
-## Changes in 1.16.0
-
-- **`task cloud-folder:login` from the workstation.** A new host command, `run cloud-folder-login`
-  (bash) and `Invoke-CloudFolderLogin` (PowerShell), behind `task devcontainer:cloud-folder-login`
-  and, when the root Taskfile includes the vendored `cloud-folder.yml` (the bootstrap's template
-  does), `task cloud-folder:login`: the cloud-folder Feature's (1.3.0) sign-in through the running
-  devcontainer. See "Cloud-folder sign-in" below. The bootstrap vendors `cloud-folder.yml` and prints
-  the include lines for a Taskfile that lacks them. Nothing changes for the other tasks; the
-  PowerShell module gains `Get-DevcontainerCliInvocation`, the argument list every CLI call already
-  built, now shared with the login.
-
 ## What it installs
 
 The `@devcontainers/cli` npm package, run on a private Node.js build, so
@@ -431,7 +344,7 @@ knows what kind of host it runs on, so a repository writes nothing host-specific
 - Before it runs the CLI (`up`, `build`, `exec` and the other subcommands that take `--docker-path`) the launcher sets
   `DCF_HOST_TYPE` (the resolved id), `DCF_HOST_HOME` (the host user's home), `DCF_HOST_SSH_AGENT`
   (`socket`, `none` or `key`, see "The SSH agent" below), `DCF_HOST_CLOUD_FOLDER` (the user's own value, passed on
-  unchanged, see "The cloud folder" below) and `DCF_HOST_MACHINE` (the machine name, see "Changes in 1.16.2") in its own environment. A repository maps them into the
+  unchanged, see "The cloud folder" below) and `DCF_HOST_MACHINE` (the machine name, see the CHANGELOG, 1.16.2) in its own environment. A repository maps them into the
   container itself with `containerEnv`, `"DCF_HOST_TYPE": "${localEnv:DCF_HOST_TYPE}"` and so on (the bootstrap's
   `devcontainer.json` template does). It declares no host mount: the launcher adds those (next section). Opening the
   folder straight in VS Code skips the launcher: the variables are then empty.
@@ -570,6 +483,47 @@ Container Feature that installs it, so there is none to compare. This Feature
 exists so that a container can run the CLI without a system-wide Node.js, and
 so the same script serves the container and the host-side tasks.
 
+## Changes
+
+### [1.18.2] - 2026-11-03
+
+#### Added
+
+- This changelog: every release of this Feature now has an entry here, written for its users, and the Feature's README shows the latest three under "Changes". Nothing to do.
+
+### [1.18.1] - 2026-11-03
+
+#### Changed
+
+- **The waiting line counts every other waiter** (`N waiting`, was `N ahead`): the build lock is
+  not first-come, so a count of earlier arrivals promised an order that does not exist. The count
+  is every live waiter but this one, whenever it arrived; the holder is not one, and there is no
+  count when there is no other waiter: `waiting for alpha's up --build-no-cache (started 14:02, 2
+  waiting)...`. Both launchers.
+
+### [1.18.0] - 2026-11-03
+
+#### Changed
+
+- **The build lock says who holds it** (#154). A waiting `up` printed only `waiting for another
+  devcontainer build to finish...` and could sit there behind long rebuilds of other repositories
+  with no way to tell. Now the holder writes a small file beside the lock (its repository's folder
+  name, the subcommand with its flags, its start time) and each waiter registers too, so the line
+  reads `waiting for alpha's up --remove-existing-container --build-no-cache (started 14:02, 2
+  waiting)...` and is printed again when the holder or the count changes. A file whose process is
+  gone is ignored. The count is every other waiter (not the holder, not this one), whenever it
+  arrived: the lock is not first-come, so there is no place in a queue to show.
+- **No build lock with BuildKit build contexts.** The lock is for one collision only: without
+  BuildKit build contexts (wslc), `@devcontainers/cli` tags every repository's Feature content
+  image `dev_container_feature_content_temp`. When `<engine> buildx version` reports 0.8.0 or later
+  (the check the CLI itself makes; Docker Desktop and Docker Engine with buildx), the CLI uses
+  build contexts and makes no such image, so the launcher now skips the lock with one line:
+  `build lock skipped: docker builds with BuildKit build contexts (buildx 0.35.0), so builds of
+  different repositories cannot collide (DEVCONTAINER_BUILD_LOCK=1 keeps it).` wslc always keeps
+  it. `DEVCONTAINER_BUILD_LOCK=1` (new) keeps the lock on every engine; `=0` still turns it off.
+  Both launchers (PowerShell and bash).
+
+The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/devcontainer-cli/CHANGELOG.md).
 
 ---
 

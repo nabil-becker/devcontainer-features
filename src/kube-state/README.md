@@ -109,6 +109,27 @@ Linux/macOS), with `KUBECONFIG` left at its default. Alternatively point
 - `task kube-state:import` / `task kube-state:contexts` from a root Taskfile that
   includes the go-task registry.
 
+## Changes
+
+### [1.0.3] - 2026-11-03
+
+#### Added
+
+- This changelog: every release of this Feature now has an entry here, written for its users, and the Feature's README shows the latest three under "Changes". Nothing to do.
+
+### [1.0.2] - 2026-10-21
+
+#### Fixed
+
+- `task kube-state:...` now runs in the folder you call it from, not in the Taskfile include folder, so it finds your repository. Rebuild to pick it up; nothing to change. ([#48](https://github.com/nabil-becker/devcontainer-features/pull/48))
+
+### [1.0.1] - 2026-10-20
+
+#### Changed
+
+- Features docs to the NOTES standard; records of 2026-10-17 to 2026-10-19 ([#14](https://github.com/nabil-becker/devcontainer-features/pull/14))
+
+The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/kube-state/CHANGELOG.md).
 
 ---
 

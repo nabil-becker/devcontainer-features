@@ -215,7 +215,14 @@ test/<id>/
   test` before it is released.
 - `documentationURL` and `licenseURL` point at this repository.
 - Bump `version` per [semver](https://semver.org/) in the same PR as any
-  change to the folder.
+  change to the folder, and add its `## [x.y.z] - YYYY-MM-DD` entry to
+  `src/<id>/CHANGELOG.md` in the same change. The entry is for a user of the
+  Feature (Added, Changed, Fixed, Removed): what changed for them and whether
+  they must act (an option renamed, a task removed, a rebuild needed), not a
+  commit summary. `task changelog:draft FEATURE=<id>` prints a draft from the
+  commits; `task docs` puts the latest three entries into the README under
+  "Changes"; `task lint` fails when the entry is missing or the README stale.
+  A new Feature starts with `1.0.0` and a CHANGELOG with that entry.
 
 ### `install.sh`
 
