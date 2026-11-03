@@ -64,7 +64,9 @@ A command works on one register: `--register <name>`, or `AGENTIC_REGISTER_DEFAU
 first in the list. Who writes is `--as <principal>` or `AGENTIC_REGISTER_AS`. The signing key is
 the volume's `keys/<principal>`, or `--key <file>`. For an operator that is a `.pub` file whose
 private half an SSH agent holds on the operator's own machine, so the private key never enters the
-manor.
+manor. Where no agent reaches the manor (a Windows host), `--key` may name a private key copied in
+for one signing and loaded into an agent started there, with or without its `.pub`: the public
+half is read from the key file itself (ADOPTING-ledger-file.md, step 2).
 
 ## Register types
 
@@ -102,6 +104,18 @@ not check, never touches the store, and the next `mirror` puts back what a switc
 The volume is lost if the container engine's storage is reset; the mirror in git is then the copy
 the next `mirror` restores from. Entries written since the last `mirror` are lost with it, so run
 it before each commit of the records.
+
+**Where a store or a mirror can live.** A put never replaces an entry already there. On a local
+filesystem (ext4, xfs, btrfs, tmpfs, overlayfs, APFS) or a bind mount of one, that is a hard link,
+which never replaces, so any number of writers on one machine are safe. A folder without hard links
+(rclone's FUSE mount, OneDrive, an SMB or other network share) falls back to creating the file
+exclusively (O_EXCL) and removing it if the write fails, so it still never replaces an entry this
+machine can see. O_EXCL there is only as strong as the mount: rclone's VFS checks it against this
+machine's view, so two machines writing one id at the same moment may both succeed. They write the
+same body (an id is the hash of the body), so either copy is a valid entry. A file under an entry's
+name that is not a whole entry (a write cut short by a crash) is replaced by the next put of that
+id. Keep the live store on a local filesystem or the volume; a cloud or network folder is fine for
+a mirror.
 
 A backlog is what its changes add up to, in the register's order. Changes made at the same time
 never block each other. They are flagged for a person only when they disagree: two edits of one
@@ -201,7 +215,7 @@ Every task runs `agentic-register <task>`. Arguments go after `--`, including
 | `agentic-register:mirror` | Copies each way between the register's live store and its mirror (`--all`: every register that has one). Only adds, only valid entries; a pruned line is never copied back. |
 | `agentic-register:sync` | Merges other store folders into the register's store (`--from`, `--to`). Another register's entries never come in. |
 | `agentic-register:show` | The register as Markdown, with what needs a person first. A backlog shows as a `TODO.md`. |
-| `agentic-register:import` | Backfill: a Markdown ledger (`--markdown`) or a run log (`--runs`) into a ledger, a `TODO.md` (`--todo`) into a backlog. Each record is marked `backfill`, and importing twice adds nothing. |
+| `agentic-register:import` | Backfill: a Markdown ledger (`--markdown`) or a run log (`--runs`) into a ledger, a `TODO.md` (`--todo`) into a backlog. Each record is marked `backfill`, and importing twice adds nothing. A Markdown import names a code fence that nothing closes (read as text) and each dated heading a fence hides. |
 | `agentic-register:watch` | The change feed: entries new since a cursor, one JSON line each, then the next cursor. `--follow` keeps going. The cursor is the register's heads, so an entry merged in late is never skipped. |
 | `agentic-register:query` | Read-only SQL on a freshly built index of the register (`entries`, `parents`, `heads`, `flags`, `forks`, `held`, `refused`, and its type's views). |
 
@@ -288,6 +302,20 @@ Oracle records this in the book, and Gordon makes it a default of the seed.
 
 ## Changes
 
+- 0.14.4: `--key` may name a private key without its `.pub` beside it: the public half is read from
+  the OpenSSH key file itself, without its passphrase. A key file that holds none is refused in one
+  line naming the `.pub` it needs, not a traceback; a passphrase-protected one without an SSH agent,
+  in one line naming `ssh-add`. `rekey` and `roster --add-key` say
+  `--role agent` when a role is missing. `rekey --replace` retires a key whose `.pub` is gone, and
+  still takes it off the rosters. ADOPTING-ledger-file.md, step 2: the route where no SSH agent
+  reaches the manor, and what it does not protect against.
+- 0.14.3: `import --markdown` no longer drops every entry after a code fence that nothing closes.
+  A fence still open at the end of the file is read as text, and the dry run and the import say
+  where it is. A dated entry heading inside a fence that does close (a template) is still not an
+  entry, but each one is now named, so a fence that hides real entries shows before the import.
+- 0.14.2: a store or mirror on a folder without hard links (rclone's FUSE mount, OneDrive, SMB)
+  works: a put falls back to an exclusive create, which still never replaces an entry, instead of
+  failing with a traceback. A file cut short under an entry's name is replaced by the next put.
 - 0.14.1: `send` and `ask` refuse a thread that does not exist or that the writer is not in,
   saying so, and write nothing. Before, the entry was signed and kept, but no member ever saw it.
 - 0.14.0: a register's `guard`, the adopter's own check on every entry before it is written

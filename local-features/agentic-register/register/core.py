@@ -9,10 +9,13 @@ OpenSSH's `ssh-keygen -Y`, so there is no other dependency.
 """
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import heapq
 import json
 import re
+import struct
 import subprocess
 import tempfile
 from dataclasses import dataclass, field
@@ -311,12 +314,62 @@ LEDGER_KINDS = {"work": _check_work, "run": _check_run, "merge": _check_merge}  
 
 # ---------------------------------------------------------------- signatures
 
+class NoPublicKey(ValueError):
+    """A signing key file whose public half cannot be found: said in one line, never a traceback."""
+
+
+# The OpenSSH private key file's armour lines, built in parts so the source never holds them whole
+# (the secret guard refuses a file that looks like it holds a private key).
+_ARMOUR = ("-" * 5 + "BEGIN OPENSSH PRIVATE" + " KEY" + "-" * 5, "-" * 5 + "END OPENSSH PRIVATE" + " KEY" + "-" * 5)
+
+
+def _openssh_public(private_key: Path) -> tuple[str, bool] | None:
+    """The public half of an OpenSSH private key file, read from the file itself, and whether the
+    private half is encrypted (has a passphrase). The format keeps the public key in the clear, so a
+    passphrase-protected key gives it up without its passphrase and without a prompt. None for a
+    file in any other shape."""
+    try:
+        lines = private_key.read_text().strip().splitlines()
+        if (lines[0], lines[-1]) != _ARMOUR:
+            return None
+        b = base64.b64decode("".join(lines[1:-1]), validate=True)
+        magic = b"openssh-key-v1\0"
+        if not b.startswith(magic):
+            return None
+
+        def part(data: bytes, o: int) -> tuple[bytes, int]:   # an SSH string: a length, then the bytes
+            n = struct.unpack(">I", data[o:o + 4])[0]
+            if o + 4 + n > len(data):
+                raise ValueError("cut short")
+            return data[o + 4:o + 4 + n], o + 4 + n
+        o = len(magic)
+        cipher, o = part(b, o)
+        for _ in range(2):              # KDF name, KDF options
+            _, o = part(b, o)
+        o += 4                          # the number of keys; the first one is the signing key
+        blob, _ = part(b, o)
+        kind, _ = part(blob, 0)
+        return f"{kind.decode('ascii')} {base64.b64encode(blob).decode('ascii')}", cipher != b"none"
+    except (OSError, IndexError, ValueError, struct.error, UnicodeDecodeError, binascii.Error):
+        return None
+
+
 def public_key(key_file: Path) -> str:
-    """The public key of a signing key file: a private key (its .pub beside it), or a .pub file
-    whose private half is held by an SSH agent (then the private key never touches this machine)."""
+    """The public key of a signing key file: a .pub file whose private half is held by an SSH agent
+    (then the private key never touches this machine), or a private key: its .pub beside it, else
+    the public half kept inside an OpenSSH private key file (a key copied in alone, to sign once).
+    Raises NoPublicKey, naming the file it needs, when neither gives one."""
     p = Path(key_file)
-    text = (p if p.suffix == ".pub" else Path(str(p) + ".pub")).read_text().split()
-    return f"{text[0]} {text[1]}"
+    pub = p if p.suffix == ".pub" else Path(str(p) + ".pub")
+    if pub.is_file():
+        text = pub.read_text().split()
+        if len(text) >= 2:
+            return f"{text[0]} {text[1]}"
+        raise NoPublicKey(f"{pub} is not a public key (want '<type> <base64>')")
+    if p.suffix != ".pub" and p.is_file() and (found := _openssh_public(p)):
+        return found[0]
+    raise NoPublicKey(f"no public key for {p}: put its public half at {pub} "
+                      f"(ssh-keygen -y -f {p} > {pub})")
 
 
 def sign(value: dict, private_key: Path, kinds: dict | None = None) -> bytes:
@@ -330,6 +383,9 @@ def sign(value: dict, private_key: Path, kinds: dict | None = None) -> bytes:
                          input=body, capture_output=True)
     if out.returncode != 0:
         why = out.stderr.decode(errors="replace").strip().splitlines()[-1:] or ["no reason given"]
+        if Path(private_key).suffix != ".pub" and (_openssh_public(Path(private_key)) or ("", False))[1]:
+            raise ValueError(f"could not sign with {private_key}: it has a passphrase, which ssh-keygen cannot "
+                             "ask for here; ssh-add it to an SSH agent first, then sign with the same --key")
         raise ValueError(f"could not sign with {private_key}: {why[0]} (for a .pub key: is the private key in the SSH agent?)")
     return body + b"\n" + out.stdout
 

@@ -7,6 +7,7 @@ adding, merging, mirroring and indexing are all built on it.
 from __future__ import annotations
 
 import datetime as dt
+import errno
 import fcntl
 import hashlib
 import base64
@@ -61,9 +62,30 @@ class MemoryStore:
         return sorted(self._d)
 
 
+# What os.link raises where a filesystem has no hard links (rclone's FUSE mount, OneDrive, SMB).
+NO_LINK = {errno.EPERM, errno.ENOTSUP, errno.EOPNOTSUPP, errno.EXDEV, errno.ENOSYS, errno.EMLINK}
+
+
+def _whole(path: Path, i: str) -> bool:
+    """True when the file at `path` is a whole entry for id `i`: its first line hashes to `i` and
+    its signature's armour is closed. A write cut short fails one or the other."""
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return False
+    body, _, armour = raw.partition(b"\n")
+    return core.entry_id(body) == i and armour.endswith(core.ARMOR_END.encode() + b"\n")
+
+
 class DirStore:
-    """A folder of `<id>.entry` files. Put-if-absent is atomic (a hard link never replaces), so
-    several writers, processes or machines sharing the folder cannot overwrite each other."""
+    """A folder of `<id>.entry` files, where a put never replaces an entry already there.
+
+    Put-if-absent is a hard link, which never replaces, so several writers, processes or machines
+    sharing the folder cannot overwrite each other. Where the filesystem has no hard links (a FUSE,
+    OneDrive or SMB folder), it falls back to creating the file with O_EXCL, which refuses an
+    existing name. An id is the hash of the entry's body, so two writers of one id write one body;
+    a file that is not a whole entry for its name (a write cut short) is not an entry, and the
+    next put of that id replaces it."""
 
     def __init__(self, path: Path):
         self.path = Path(path)
@@ -73,7 +95,7 @@ class DirStore:
             raise ValueError(f"not an id: {i!r}")
         self.path.mkdir(parents=True, exist_ok=True)
         final = self.path / f"{i}.entry"
-        if final.exists():
+        if final.exists() and _whole(final, i):
             return False
         fd, tmp = tempfile.mkstemp(dir=self.path, prefix=".put-")
         try:
@@ -82,13 +104,48 @@ class DirStore:
                 f.flush()
                 os.fsync(f.fileno())
             os.chmod(tmp, 0o444)
+            if final.exists():
+                # Not a whole entry (checked above): a cut-short write. Replace it with this one.
+                os.replace(tmp, final)
+                return True
             try:
                 os.link(tmp, final)
             except FileExistsError:
                 return False
+            except OSError as e:
+                if e.errno not in NO_LINK:
+                    raise
+                return self._put_exclusive(final, raw)
             return True
         finally:
-            os.unlink(tmp)
+            try:
+                os.unlink(tmp)
+            except FileNotFoundError:
+                pass
+
+    @staticmethod
+    def _put_exclusive(final: Path, raw: bytes) -> bool:
+        """Put-if-absent without a hard link: O_CREAT|O_EXCL refuses a name already there, and a
+        failed write removes its own partial file. O_EXCL is only as strong as the filesystem: on a
+        network or cloud folder it is checked against what this machine sees, so two machines may
+        both write one id at once; they write the same body, and the copy that lands is a valid
+        entry either way."""
+        try:
+            fd = os.open(final, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o444)
+        except FileExistsError:
+            return False
+        try:
+            with os.fdopen(fd, "wb") as f:
+                f.write(raw)
+                f.flush()
+                os.fsync(f.fileno())
+        except BaseException:
+            try:
+                os.unlink(final)
+            except OSError:
+                pass
+            raise
+        return True
 
     def get(self, i: str) -> bytes | None:
         try:

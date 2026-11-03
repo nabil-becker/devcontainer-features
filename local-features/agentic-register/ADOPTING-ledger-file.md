@@ -66,6 +66,45 @@ ssh-add -l          # "The agent has no identities." or no aof-ledger line
 
 Never leave the operator key loaded in a Windows agent between signings.
 
+**When no SSH agent reaches the manor** (the Windows OpenSSH agent is a named pipe, which the
+editor cannot always forward into the container), the operator copies the private key in for one
+signing, loads it into an agent started in the manor for that signing alone, and removes both at
+once. This route is weaker than the forwarded agent with `-c`: while the key is loaded, any process
+in the manor running as the same user can sign as the operator, and nothing asks first. A strong
+passphrase protects the copy against a read; nothing protects against a process that runs while
+the key is loaded. So:
+
+- Before: stop every agent session and the staff's chores, so nothing else runs in the manor.
+- Bring the copy in by a path outside the workspace (never through the repository checkout, where
+  agents read), and delete it on the host's side too once you are done. Keep its passphrase.
+- During: load the key with a time limit (`ssh-add -t 120`), so it expires even if the cleanup is
+  missed, and run the cleanup on exit, so a failed signing still runs it.
+- After: list the entries signed as the operator, and check there is none you did not make.
+
+The `.pub` need not come with the key: agentic-register reads the public half from the key file
+itself. `ssh-keygen` cannot ask for a passphrase while it signs for agentic-register, so a
+passphrase-protected key signs through an agent; without one, agentic-register says so.
+
+```
+# in the manor, in the operator's own terminal, with nothing else running:
+(
+  umask 077
+  install -m 600 <a path outside the workspace>/aof-ledger /tmp/aof-ledger
+  eval "$(ssh-agent -s)" >/dev/null                 # an agent for this subshell only
+  trap 'ssh-add -D 2>/dev/null; ssh-agent -k >/dev/null; shred -u /tmp/aof-ledger 2>/dev/null || rm -f /tmp/aof-ledger' EXIT
+  ssh-add -t 120 /tmp/aof-ledger                    # asks for the passphrase; gone after two minutes
+  agentic-register rekey --as operator --key /tmp/aof-ledger --role agent scribe   # or roster, rule
+)
+# then, for each register signed in:
+agentic-register query --register <name> "SELECT n, kind, at FROM entries WHERE principal = 'operator' ORDER BY n DESC LIMIT 5"
+```
+
+`shred` does nothing on an overlay or copy-on-write filesystem; the copy is still encrypted, which
+is why the passphrase matters.
+
+`--role agent` is needed for a principal no roster names yet (an empty roster, the first time);
+`rekey` says so when it skips one.
+
 The anchors file holds the public half, one line per operator, committed:
 
 ```
