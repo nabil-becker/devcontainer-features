@@ -93,3 +93,5 @@ numbering and a row below.
 | [0042](0042-devhost-verify-stays-the-one-commit-check-and-gains-the-aof-checks.md) | devhost-verify stays the one commit check and gains the AOF checks | accepted | 2026-11-01 |
 | [0043](0043-the-aof-planting-keeps-four-local-rules-and-moves-the-ledger-onto-the-register-with-a-mirror-outside-git.md) | The AOF planting keeps four local rules and moves the ledger onto the register with a mirror outside git | accepted | 2026-11-02 |
 | [0044](0044-the-seed-carries-the-devhost-feature-as-files-and-its-starter-references-it-by-local-path.md) | The seed carries the devhost Feature as files, and its starter references it by local path | accepted | 2026-11-02 |
+| [0045](0045-four-storage-tiers-govern-where-data-lives-and-a-machine-loss-must-lose-nothing.md) | Four storage tiers govern where data lives, and losing a machine must lose nothing | accepted | 2026-11-03 |
+| [0046](0046-the-operators-register-key-lives-in-ssh-agents-key-mode-and-is-unlocked-for-a-sitting.md) | The Operator's register key lives in ssh-agent's key mode and is unlocked for a sitting | accepted | 2026-11-03 |

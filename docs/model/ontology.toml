@@ -110,6 +110,11 @@ type = "place"
 term = "Worktree"
 summary = "A separate checkout on its own branch where a con changes shared tooling."
 
+[storage-tier]
+type = "place"
+term = "Storage tier"
+summary = "One of four places data lives: git, shared folder, personal folder, working set."
+
 [night-shift]
 type = "mechanism"
 term = "Night shift"

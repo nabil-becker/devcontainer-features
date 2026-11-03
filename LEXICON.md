@@ -155,6 +155,10 @@ The domain words of the project itself are not here; they live with the project'
 - **Worktree**: a separate checkout of the repository on its own branch, where a con that changes
   shared tooling works; its work comes back as a merge, so a clash is a conflict, not an
   overwrite. Backs do not use worktrees.
+- **Storage tier**: one of four places data may live: tier 1 git (the reviewed record), tier 2 the
+  shared folder (the cloud-folder mount, which holds the register mirror), tier 3 the Operator's
+  personal folder (not mounted unless asked), tier 4 the working set (Feature volumes and scratch,
+  rebuildable only). If losing a machine would lose something, it is in the wrong tier (ADR-0045).
 
 ## Work
 
