@@ -259,6 +259,12 @@ A new pattern is a minor version, since it can refuse files that passed.
 
 ## Changes
 
+### [1.0.2] - 2026-11-03
+
+#### Changed
+
+- The README now has a "How it fits" section with a small diagram of how the Feature sits in a devcontainer, a table of the data it keeps and the storage tier of each, and "Used in" links to the reference architectures that use it. Documentation only: the Feature itself is unchanged. Nothing to do.
+
 ### [1.0.1] - 2026-11-03
 
 #### Added

@@ -119,6 +119,12 @@ other mounted path; `gh-setup` follows the variable.
 
 ## Changes
 
+### [1.0.4] - 2026-11-03
+
+#### Changed
+
+- The README now has a "How it fits" section with a small diagram of how the Feature sits in a devcontainer, a table of the data it keeps and the storage tier of each, and "Used in" links to the reference architectures that use it. Documentation only: the Feature itself is unchanged. Nothing to do.
+
 ### [1.0.3] - 2026-11-03
 
 #### Added
@@ -130,12 +136,6 @@ other mounted path; `gh-setup` follows the variable.
 #### Fixed
 
 - Build-time downloads retry on transient network errors, so a flaky connection no longer fails the container build outright. Rebuild the container to pick it up. No change to options or tasks; nothing to do. ([#94](https://github.com/nabil-becker/devcontainer-features/pull/94))
-
-### [1.0.1] - 2026-10-21
-
-#### Fixed
-
-- Az installs the Azure CLI; Feature tasks run in the caller's folder ([#48](https://github.com/nabil-becker/devcontainer-features/pull/48))
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/gh/CHANGELOG.md).
 

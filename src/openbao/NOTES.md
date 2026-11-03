@@ -2,14 +2,14 @@
 
 ```text
   go-task registry --> openbao:* tasks
-  bao CLI --BAO_ADDR (set in containerEnv)--> OpenBao server
+  bao CLI --BAO_ADDR (set in containerEnv)--> OpenBao server      dcf-secret --> bao
     |
-    `--> ~/.vault-token  or  BAO_TOKEN from the environment
+    `--> token helper --> volume openbao-config-<id>/token  (or BAO_TOKEN from the environment)
 ```
 
 | Data | Where it lives | Storage tier |
 | --- | --- | --- |
-| Login token | `~/.vault-token` in the container filesystem (not a volume: a rebuild logs you out), or `BAO_TOKEN` in the environment | 4 working set |
+| Login token | `token` in the Feature's volume `openbao-config-${devcontainerId}`, kept by a token helper (`BAO_CONFIG_PATH`), so a rebuild keeps the login; or `BAO_TOKEN` in the environment | 4 working set |
 
 Tiers are the four of ADR 0045: 1 git, 2 shared folder, 3 personal folder, 4 working set (rebuildable only).
 

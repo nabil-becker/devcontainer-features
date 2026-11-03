@@ -128,6 +128,12 @@ Linux/macOS), with `KUBECONFIG` left at its default. Alternatively point
 
 ## Changes
 
+### [1.0.4] - 2026-11-03
+
+#### Changed
+
+- The README now has a "How it fits" section with a small diagram of how the Feature sits in a devcontainer, a table of the data it keeps and the storage tier of each, and "Used in" links to the reference architectures that use it. Documentation only: the Feature itself is unchanged. Nothing to do.
+
 ### [1.0.3] - 2026-11-03
 
 #### Added
@@ -139,12 +145,6 @@ Linux/macOS), with `KUBECONFIG` left at its default. Alternatively point
 #### Fixed
 
 - `task kube-state:...` now runs in the folder you call it from, not in the Taskfile include folder, so it finds your repository. Rebuild to pick it up; nothing to change. ([#48](https://github.com/nabil-becker/devcontainer-features/pull/48))
-
-### [1.0.1] - 2026-10-20
-
-#### Changed
-
-- Features docs to the NOTES standard; records of 2026-10-17 to 2026-10-19 ([#14](https://github.com/nabil-becker/devcontainer-features/pull/14))
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/kube-state/CHANGELOG.md).
 

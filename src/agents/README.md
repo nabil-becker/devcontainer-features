@@ -541,6 +541,12 @@ the `SESSIONS` / `HOST_SESSION` settings, which claude-code 2.0 removes; the mig
 
 ## Changes
 
+### [2.1.3] - 2026-11-03
+
+#### Changed
+
+- The README now has a "How it fits" section with a small diagram of how the Feature sits in a devcontainer, a table of the data it keeps and the storage tier of each, and "Used in" links to the reference architectures that use it. Documentation only: the Feature itself is unchanged. Nothing to do.
+
 ### [2.1.2] - 2026-11-03
 
 #### Added
@@ -558,28 +564,6 @@ CLI adapter in claude-code 1.9.4 records that id and says so on stderr). The lin
 `<name>: running under a new session id (<new>, was <old>)`, and the adapter's own line above it
 says which case it is. Nothing else changes; the lease's carrier was already the id the adapter
 prints (2.0.3).
-
-### [2.1.0] - 2026-10-30
-
-#### Changed
-
-Session names: the label a CLI shows for an agent's session is a template (the Feature option
-`sessionName`, `AGENTS_SESSION_NAME`, a per-agent `session-name:`; default `{handle}`, so nothing
-changes until one is set) rendered with `{handle}`, `{repo}` and `{machine}`, at most 60 characters,
-refused when it does not render and never cut. The handle stays the address (lease, record, verbs).
-`AGENT_SESSION_NAME` is set on every call to a CLI adapter: the rendered name on a call about the
-agent, empty on every other call. `list` adds a `NAME` column (the first column becomes `HANDLE`)
-only when some agent's name differs from its handle, and `--json` always carries `sessionName`
-(after `carrier`); `check` shows a differing name and warns when `{machine}` is used without
-`DCF_HOST_MACHINE`.
-
-**Upgrade note.** A 2.0 list and a 2.0 `devcontainer.json` change nothing: with no template every
-name is the handle, `list` prints the same table, and an adapter that ignores `AGENT_SESSION_NAME`
-starts as before. To tell machines apart set `"sessionName": "{machine} {handle}"` and pair it with
-claude-code 1.9.0 (which uses the name) and, for `{machine}`, devcontainer-cli 1.16.2 and a
-`"DCF_HOST_MACHINE": "${localEnv:DCF_HOST_MACHINE}"` line in the `containerEnv` of the
-repository's `devcontainer.json` (until it is there `{machine}` renders `container`). A session
-that exists keeps its name until it is stopped and started again.
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/agents/CHANGELOG.md).
 

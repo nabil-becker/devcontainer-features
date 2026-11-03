@@ -375,6 +375,12 @@ volume, and a rebuild re-runs the hook.
 
 ## Changes
 
+### [1.3.2] - 2026-11-03
+
+#### Changed
+
+- The README now has a "How it fits" section with a small diagram of how the Feature sits in a devcontainer, a table of the data it keeps and the storage tier of each, and "Used in" links to the reference architectures that use it. Where the Feature has them, its best practices and anti-patterns are in the README too. Documentation only: the Feature itself is unchanged. Nothing to do.
+
 ### [1.3.1] - 2026-11-03
 
 #### Added
@@ -386,12 +392,6 @@ volume, and a rebuild re-runs the hook.
 #### Added
 
 - `task ssh-agent:key:unlock NAME=<key> [MINUTES=15]` loads one key from the key volume into the agent for a sitting (at most 480 minutes), asking for its passphrase on the terminal, and says when it drops out; `task ssh-agent:key:lock NAME=<key>` drops it sooner. Key mode only. Nothing to do for existing setups. ([#152](https://github.com/nabil-becker/devcontainer-features/pull/152))
-
-### [1.2.0] - 2026-10-30
-
-#### Fixed
-
-- The start hook never asks for a passphrase (ssh-agent 1.2.0) ([#135](https://github.com/nabil-becker/devcontainer-features/pull/135))
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/ssh-agent/CHANGELOG.md).
 

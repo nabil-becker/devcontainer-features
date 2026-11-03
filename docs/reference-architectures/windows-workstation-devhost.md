@@ -178,8 +178,11 @@ on a more durable disk. Whether session transcripts need a better home is open.
   credentials set" is the case: the push failed until `gh auth setup-git` ran.
 - **Put `task cloud-folder:status` in the start-up check and `cloud-folder-setup shutdown-check` in `shutdown:check`**,
   so a stop waits for a sync and a missing folder is not written into.
-- **Use a dedicated signing key** per purpose and container, registered at GitHub as a signing key only. Never
-  import a login key into key mode.
+- **Use a dedicated signing key** per purpose and container (`task ssh-agent:key:new`), registered at GitHub as a
+  signing key only and rotated with `key:rotate`. Never import a key that also opens GitHub, servers or other
+  repositories into key mode: key mode breaks "the private key never enters the container" for whoever opts in, and
+  ADR 0046 and ADR 0048 both keep the operator's own key off it. `devcontainer:ssh-key-import` warns, never blocks,
+  on a default key name or a public key that also opens the host (`test:ssh-key-import`).
 - **Apply the tiers to every new store**: say which tier it is in, and if it cannot be rebuilt, move it up.
 - **Stop with `task dc:stop`**, which runs the shutdown check (unpushed commits, running syncs) before the container
   stops.
@@ -287,13 +290,3 @@ on a more durable disk. Whether session transcripts need a better home is open.
 - **Instead:** use `key:unlock MINUTES=` for a passphrase-protected key (the start hook skips those); say so in the
   notes.
 - **Caught by:** the NOTES only; the start-hook reload item is open.
-
-### W10. A login key in key mode
-
-- **Don't:** import a key that also opens GitHub, servers or other repositories into the container's key volume.
-- **Why:** key mode breaks "the private key never enters the container" for whoever opts in; ADR 0046 and ADR 0048
-  both keep the operator's own key off it.
-- **Instead:** a dedicated signing key per purpose and container (`task ssh-agent:key:new`), registered as a
-  signing key only, rotated with `key:rotate`.
-- **Caught by:** `devcontainer:ssh-key-import` warns, never blocks, on a default key name or a public key that also
-  opens the host (`test:ssh-key-import`).

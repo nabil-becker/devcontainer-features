@@ -26,11 +26,11 @@ Out of scope here: anything the proposal defers to a later phase.
 
 ## What exists today
 
-Read this before you copy the fragment. The build has not started beyond the published CLI.
+Read this before you copy the fragment. The client is built (1.1.0); server mode and what follows are not.
 
 | Piece | Published today | Planned in phase 1 (proposal section 12) |
 | --- | --- | --- |
-| `openbao` client | `bao` at `/usr/local/bin/bao`, checksum-verified, `openbao:version`, `:status`, `:login`, `:kv:get`; no volume: a rebuild deletes `~/.vault-token`; `version` and `installTaskfile` are its only options | 1.1.0: the state volume, `dcf-secret`, the `mode` option (`client` only) |
+| `openbao` client | `bao` at `/usr/local/bin/bao`, checksum-verified, `openbao:version`, `:status`, `:login`, `:logout`, `:kv:get`, `:setup`; 1.1.0 adds the state volume (the login, kept by a token helper, survives a rebuild), `dcf-secret` (get, put, status) and the `mode` option (`client` only) | 1.2.0: server mode (`mode: server`) |
 | `openbao` server mode, backup, restore, onboarding | not built | 1.2.0 server mode and the gate; 1.3.0 backup and restore; 1.4.0 onboarding |
 | `ssh-agent` | socket mode, and key mode with its own key volume and `key:unlock` / `key:lock` | 1.4.0: `key:load` and `key:lock` of a key fetched from OpenBao, with a lifetime; 2.0.0 removes the key volume |
 | `gh`, `az` | each owns its login in its own volume | last slice: the long-lived credential in OpenBao, fetched with `dcf-secret` at the start of a sitting |
@@ -62,8 +62,8 @@ which `task lint` keeps honest: it must keep failing until the options exist, an
  |                                                              agent, not imported)          |
  |  gh Feature, az Feature   logins today in their own volumes; later fetched with dcf-secret |
  |                                                                                            |
- |  volume openbao-${devcontainerId} (tier 4):                                                |
- |    raft/  audit.log  approle/<role>/secret_id  last-backup  backup-choice  .vault-token    |
+ |  volume openbao-config-${devcontainerId} (tier 4):                                         |
+ |    token (the login, today)  raft/  audit.log  approle/<role>/secret_id  last-backup  ...  |
  +-----------------------------+--------------------------------------------------------------+
                                | task openbao:backup DEST=<path>   (server mode only)
                                v   openbao-<machine>-<UTC time>.snap, written once, never overwritten
@@ -107,9 +107,9 @@ What you can build today: the CLI in client mode, the agent socket, and the two 
 
 `gh` and `az` are the logins that move into OpenBao in the last slice; until then each keeps its own login.
 
-Log in with `task openbao:login` (`-- -method=oidc` where the server offers it). Today a rebuild logs you out; the
-stopgap in the Feature's notes is `BAO_TOKEN` in the container's environment, set from a variable on the host or an
-env file kept out of git, and a stale value there beats a fresh login. The state volume (1.1.0) ends that.
+Log in with `task openbao:login` (`-- -method=oidc` where the server offers it). The login is kept in the Feature's volume by a token
+helper, so a rebuild keeps it; `task openbao:logout` revokes the token and erases it. `BAO_TOKEN` in the environment
+still beats the saved login, so a stale value there makes `permission denied` appear after a fresh login.
 
 The planned server mode adds the options below, from the proposal's section 3. They do not exist yet, so the block is
 fenced `jsonc planned`; `task architectures:check` fails the day it would pass and tells you to move it up.
@@ -138,11 +138,11 @@ hold, which is why ADR 0048 names a bounded-loss exception for server mode and w
 | Data | Where it lives | Tier | If the container is rebuilt | If the machine is lost |
 | --- | --- | --- | --- | --- |
 | Secret values (keys, tokens), client mode | the central server's own storage | the owner's | untouched | untouched: ADR 0045 met as it stands |
-| Secret values, server mode (planned) | raft store in volume `openbao-${devcontainerId}` | 4, under the named exception | kept | lost back to the last backup |
+| Secret values, server mode (planned) | raft store in volume `openbao-config-${devcontainerId}` | 4, under the named exception | kept | lost back to the last backup |
 | Backups: ciphertext snapshots (planned) | the path in `DEST`, one new file per backup, the last `backupKeep` kept | 2 when `DEST` is the shared folder | untouched | restore the newest, unseal with the shares; a snapshot without the shares is useless, with them it is everything |
 | The unseal shares: 3, threshold 2 | the Operator's password manager, paper kept offline, a second person or a hardware key | off the machine, by design; ADR 0045 does not classify it | untouched | untouched; never in git, the container or the shared folder |
 | The recovery register key | offline, outside OpenBao (a named exception to "OpenBao keeps everything") | off the machine | untouched | reopens the register's rosters if the shares are lost |
-| The Operator's login token | `.vault-token` in the volume (planned; today the container's own filesystem) | 4 | kept once the volume exists, else lost | login again |
+| The Operator's login token | `token` in the Feature's volume `openbao-config-${devcontainerId}`, written by the token helper | 4 | kept | login again |
 | The backs' role ids and secret ids (planned) | `approle/<role>/secret_id` in the volume, loopback-bound | 4 | kept | reissued by `openbao:approle:issue ALL=1` |
 | `last-backup`, `backup-choice`, the audit log (planned) | the volume | 4 | kept | rebuilt by the next init and backup |
 | Public keys allowed to sign: `.devcontainer/allowed_signers` | the repository | 1 | untouched | untouched; the host commits it |

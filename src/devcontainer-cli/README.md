@@ -534,6 +534,12 @@ so the same script serves the container and the host-side tasks.
 
 ## Changes
 
+### [1.18.3] - 2026-11-03
+
+#### Changed
+
+- The README now has a "How it fits" section with a small diagram of how the Feature sits in a devcontainer, a table of the data it keeps and the storage tier of each, and "Used in" links to the reference architectures that use it. Documentation only: the Feature itself is unchanged. Nothing to do.
+
 ### [1.18.2] - 2026-11-03
 
 #### Added
@@ -549,28 +555,6 @@ so the same script serves the container and the host-side tasks.
   is every live waiter but this one, whenever it arrived; the holder is not one, and there is no
   count when there is no other waiter: `waiting for alpha's up --build-no-cache (started 14:02, 2
   waiting)...`. Both launchers.
-
-### [1.18.0] - 2026-11-03
-
-#### Changed
-
-- **The build lock says who holds it** (#154). A waiting `up` printed only `waiting for another
-  devcontainer build to finish...` and could sit there behind long rebuilds of other repositories
-  with no way to tell. Now the holder writes a small file beside the lock (its repository's folder
-  name, the subcommand with its flags, its start time) and each waiter registers too, so the line
-  reads `waiting for alpha's up --remove-existing-container --build-no-cache (started 14:02, 2
-  waiting)...` and is printed again when the holder or the count changes. A file whose process is
-  gone is ignored. The count is every other waiter (not the holder, not this one), whenever it
-  arrived: the lock is not first-come, so there is no place in a queue to show.
-- **No build lock with BuildKit build contexts.** The lock is for one collision only: without
-  BuildKit build contexts (wslc), `@devcontainers/cli` tags every repository's Feature content
-  image `dev_container_feature_content_temp`. When `<engine> buildx version` reports 0.8.0 or later
-  (the check the CLI itself makes; Docker Desktop and Docker Engine with buildx), the CLI uses
-  build contexts and makes no such image, so the launcher now skips the lock with one line:
-  `build lock skipped: docker builds with BuildKit build contexts (buildx 0.35.0), so builds of
-  different repositories cannot collide (DEVCONTAINER_BUILD_LOCK=1 keeps it).` wslc always keeps
-  it. `DEVCONTAINER_BUILD_LOCK=1` (new) keeps the lock on every engine; `=0` still turns it off.
-  Both launchers (PowerShell and bash).
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/devcontainer-cli/CHANGELOG.md).
 

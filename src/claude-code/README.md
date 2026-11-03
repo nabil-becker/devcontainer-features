@@ -410,6 +410,12 @@ the CLI) contend for `.claude.json.lock`; run one.
 
 ## Changes
 
+### [1.9.9] - 2026-11-03
+
+#### Changed
+
+- The README now has a "How it fits" section with a small diagram of how the Feature sits in a devcontainer, a table of the data it keeps and the storage tier of each, and "Used in" links to the reference architectures that use it. Where the Feature has them, its best practices and anti-patterns are in the README too. Documentation only: the Feature itself is unchanged. Nothing to do.
+
 ### [1.9.8] - 2026-11-03
 
 #### Added
@@ -452,44 +458,6 @@ the CLI) contend for `.claude.json.lock`; run one.
     woken less than `AGENT_ADAPTER_RECENT` seconds ago (default 60) waits for it to be listed (`AGENT_ADAPTER_WAIT`)
     and attaches it, or says it was woken a moment ago and stops (exit 1), never waking it again.
   - Not changed: `agents` (2.1.1) itself; a session with a live process is still never woken.
-
-### [1.9.6] - 2026-10-31
-
-#### Changed
-
-- **The host returns as itself after a restart** (`host-restart-copy`). Reported by a consumer on claude-code 1.9.4
-  with Claude Code 2.1.314, after one container restart: three residents woke under new ids with the old ones
-  superseded, but the host came back as a copy, a job started as `--fork-session --resume <old id>` whose saved
-  options held only `--model` (its `--name`, `--agent` and `--settings` gone), spawned by Claude Code as `(shell)`
-  rather than claimed like the others, and nothing recorded it or marked the old session superseded. The host's old
-  session was the only one left `blocked`. Which path ran could not be read from that stack; the CLI adapter now
-  closes every path that gives that result:
-  - **A listed pid is checked.** `list` read any session with a pid as running. A pid listed for a session the
-    restart ended (gone, or taken by another program) made it running, so `agents up` never woke it and
-    `agents start`/`task devcontainer:agent` attached to it, which let Claude Code restart it on its own. A pid
-    counts now only when `$AGENT_ADAPTER_CLAUDE_PROC` (default `/proc`) has it and its command line, when
-    readable, names claude; otherwise the session is `stopped` (or `failed`), whatever state it was left in.
-  - **`attach` of an ended session wakes it first.** It ran `claude attach <id>` of the ended session, which lets
-    Claude Code restart it however it does (a copy under a new id that nothing records). It now wakes it as `wake`
-    does (bare, confirmed, a new id recorded with the old one superseded, a gone session started fresh) and attaches
-    to the session that then runs.
-  - **A fork is recognised by its job.** A new session continues the old one also when its job's `state.json` names
-    the old id anywhere (a forked respawn's `--fork-session --resume <old id>`), not only as `resumeSessionId`; it
-    is recorded whatever its name. A new running session by the agent's name that is not known to continue it (the
-    1.9.1 fallback) is recorded too, now with the woken session superseded, and one line says so.
-  - **What a new id lacks is said.** When the session that came back under a new id lacks the agent's options, one
-    line names them (`lack or differ in: --name host; --settings ...; --agent host`); it runs without them until
-    the agent's next fresh start (`task agents -- <name> --new`, a new conversation). A wake is still always bare.
-  - **A quiet trace.** `$CLAUDE_CONFIG_DIR/agent-adapter-claude/trace.log` (beside `agents.tsv`, in the Feature's
-    volume, mode 600, the last 500 to 1000 lines) gets one tab-separated line each time an agent is started, woken
-    or attached: time (UTC), the verb `agents` called (`start-bg`, `wake`, `attach`), agent, folder, old id, new id,
-    and the outcome: `same`, `continues` (a new id continuing it, the old one superseded), `new-id` (a new id not
-    known to continue it, the old one superseded), `fresh: <why>`, `started`, `said-woken`, `unconfirmed` (not
-    recorded) or `attached`, with `; options lack: ...` when the session lacks the agent's options. Nothing is
-    printed. After the next restart, `grep host "$CLAUDE_CONFIG_DIR/agent-adapter-claude/trace.log"` says which verb
-    brought the host back and as what.
-  - Not changed: `agents` (2.1.1) itself; a session with a live Claude Code process is still running, `blocked`
-    too.
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/claude-code/CHANGELOG.md).
 

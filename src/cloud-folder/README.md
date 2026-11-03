@@ -604,6 +604,12 @@ v=1.75.2; curl -fsSL https://downloads.rclone.org/v$v/SHA256SUMS | grep -E "rclo
 
 ## Changes
 
+### [1.3.3] - 2026-11-03
+
+#### Changed
+
+- The README now has a "How it fits" section with a small diagram of how the Feature sits in a devcontainer, a table of the data it keeps and the storage tier of each, and "Used in" links to the reference architectures that use it. Documentation only: the Feature itself is unchanged. Nothing to do.
+
 ### [1.3.2] - 2026-11-03
 
 #### Added
@@ -623,20 +629,6 @@ v=1.75.2; curl -fsSL https://downloads.rclone.org/v$v/SHA256SUMS | grep -E "rclo
   mount and the sync timer are detached and go on in the background. A problem is a warning with
   the command to fix it (`task cloud-folder:status`, `:login`, `:start`). The explicit tasks
   (`start`, `sync`, `status`, `login`) keep their real exit codes.
-
-### [1.3.0] - 2026-10-29
-
-#### Changed
-
-- **One sign-in command, wherever it runs.** `task cloud-folder:login` now runs rclone's own browser
-  sign-in (`rclone authorize "onedrive" --auth-no-open-browser`) in the container instead of
-  asking for a token from another machine with the same rclone version. Sign in in any browser and
-  paste back the address it fails to open (`http://localhost:53682/?code=...`), or, from the
-  workstation with `devcontainer-cli` 1.16.0, let the launcher relay the browser into the container.
-  A pasted token is still accepted at the same prompt, and `-- --token` asks for nothing else. See
-  "Signing in". `login` takes `-- --relay` (the launcher's) and `-- --token`;
-  `CLOUD_FOLDER_LOGIN_TIMEOUT` bounds the wait (default 600 s). The token is still written only into
-  the volume's `rclone.conf`.
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/cloud-folder/CHANGELOG.md).
 

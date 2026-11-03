@@ -310,6 +310,12 @@ it.
 
 ## Changes
 
+### [1.4.6] - 2026-11-03
+
+#### Changed
+
+- The README now has a "How it fits" section with a small diagram of how the Feature sits in a devcontainer, a table of the data it keeps and the storage tier of each, and "Used in" links to the reference architectures that use it. Documentation only: the Feature itself is unchanged. Nothing to do.
+
 ### [1.4.5] - 2026-11-03
 
 #### Added
@@ -321,12 +327,6 @@ it.
 #### Fixed
 
 - The install no longer fails sporadically: every download error is retried, and a check no longer closes its pipe early under `pipefail`. Rebuild to pick it up; no change to options or tasks. ([#89](https://github.com/nabil-becker/devcontainer-features/pull/89))
-
-### [1.4.3] - 2026-10-23
-
-#### Added
-
-- The ssh-agent Feature 1.0.0, the agent mount and key tasks (slice 4; devcontainer-cli 1.8.0, git 1.4.3) ([#68](https://github.com/nabil-becker/devcontainer-features/pull/68))
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/git/CHANGELOG.md).
 
