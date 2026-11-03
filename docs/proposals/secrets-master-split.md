@@ -1068,3 +1068,247 @@ rulings leave uncovered is finding 1.
   OpenBao, and may `key:load` put an OpenBao key into the workstation's agent? Recommendation:
   workstation keys stay the workstation's, and `key:load` into a host agent is allowed with the
   lifetime, said in the output.
+
+## Architecture review (2026-11-03, second: the rulings and phase 1)
+
+**Verdict:** fit with changes
+
+Scope: what is new since the first review (the Rulings section, the phase 1 scope, sections 4, 14
+and 15, the slices) and the deferred paragraphs only as far as phase 1 depending on them. Sources read
+first-hand: `docs/principles/non-functional-requirements.md`, ADRs 0024, 0026, 0029, 0045 and 0046,
+`LEXICON.md`, `src/openbao/` (today's Feature: version 1.0.3, tasks `version`, `status`, `login`,
+`kv:get`). The first review's findings are not repeated.
+
+**Requirements (NFR-1 to NFR-13), the new parts only:**
+
+- NFR-1 owns-its-state: met (section 3, the volume with `raft/`, `approle/`, `last-backup`, the
+  token). The store is tier 4 and unrebuildable: see finding 1.
+- NFR-2 registered-taskfile: met as drawn (all under `openbao:`, each needs a `desc`; `version` stays
+  first). `openbao:status` stays the CLI's own.
+- NFR-3 verified-and-pinned: met. No new download. It stops being met if finding 7 adopts a separate
+  snapshot agent binary: that needs a verified download.
+- NFR-4 augments-not-replaces: does not apply.
+- NFR-5 idempotent-and-user-neutral: met for the start hook and the `backupInterval` timer (section 3:
+  a live one is reused, never fails the start). The throwaway init in `openbao:restore` must be safe to
+  run twice (a half-done restore); say so in the slice.
+- NFR-6 one-way-to-configure: partly met. Four of five options have their `OPENBAO_SETUP_*` twin in
+  the table, `mode` included. Not covered: `OPENBAO_MACHINE` (a new runtime variable in section 4,
+  not in the table), and the wrapping TTL default (finding 5). Also
+  `backupInterval` plus the workstation scheduler are two ways to schedule one action (finding 7).
+- NFR-7 agent-ready: not met as written for the new tasks: finding 6 (`rekey`, `wrap`, `unseal` and
+  `restore` print or take secrets and only `init` refuses in an agent's job).
+- NFR-8 documented-to-the-standard: needs work at build. Item 8 (limits) must carry the finding 2 and
+  finding 5 limits in plain words (what the sender can still open; wrapping needs the issuing server
+  reachable). Item 3 (state) the backup and the volume. Item 6 the Task Scheduler line.
+- NFR-9 says-why-it-exists: not assessed by the proposal. Whether a published OpenBao Feature exists
+  was not checked here; the slice must check and write the paragraph or "none".
+- NFR-10 tested-on-base-images: partly met. Section 12 lists the backup naming, `backupKeep`, exit 11,
+  the init refusal and the start hook. Missing: wrap and unwrap (single use, expiry, TTL cap), rekey's
+  revocations (finding 3), backup exits 12 and 20, restore run twice, and the refusal in an agent's
+  job for every task finding 6 names.
+- NFR-11 linter-cli-contract: does not apply.
+- NFR-12 vendor-neutral-contracts: does not apply (no contract for agent CLIs).
+- NFR-13 manages-the-environment-not-the-cli: mostly met; two questions (finding 7). Restore (throwaway
+  init plus `snapshot restore -force`), wrap and unwrap wrap `bao` thinly, except that one wrapped
+  token for several secrets is not what `-wrap-ttl` does (finding 5).
+
+**ADRs:**
+
+- 0045: not met by the default (finding 1). The ADR's tier 4 line even lists "keys" as rebuildable
+  only, which the openbao volume is not.
+- 0024: no conflict. A workstation scheduler entry is the consumer's own and decision 3 is respected;
+  the in-container `backupInterval` timer is inside the container, which decision 3 allows. Decision 7's
+  value stays accepted for one major, as the proposal says.
+- 0026: no conflict. `dc:exec` as a Task Scheduler one-shot is the ADR's exception. Nothing new runs
+  on the host.
+- 0029: no new conflict from the new parts; section 8 already keeps its four steps.
+- 0046: it is still in force. Slice 3 (ssh-agent 1.4.0, `key:load` from OpenBao) ships before slice 4's
+  ADR that supersedes it (finding 13).
+
+**Facts checked** (OpenBao's own documentation, fetched 2026-11-03):
+
+- Confirmed: `bao operator raft snapshot save <file>` and `restore <file>` exist (CLI page); snapshots are
+  not supported when raft is used only as `ha_storage`; with a Shamir seal a joining node needs the
+  unseal keys.
+- Confirmed, and it changes the design: the `bao operator rekey` page says it "is deprecated, please
+  use rotate-keys instead". Both generate new unseal key shares, need the server unsealed and a quorum
+  of existing shares, and are zero downtime. `bao operator rotate` is a different thing: it installs a
+  new key in the key ring for new data, and older keys stay to decrypt older data.
+- Confirmed: response wrapping. The original response is stored in the cubbyhole of a new single-use
+  token; the client sets the TTL per request (the page gives no default); policies can enforce a minimum
+  and a maximum wrapping TTL; `sys/wrapping/lookup` is unauthenticated and shows creation time, creation
+  path and TTL; unwrapping needs only the token; a token already used or expired is an event to
+  investigate. The page's own recommendation is: look up, check the creation path, unwrap, alert on a
+  failure.
+- Confirmed in part: AppRole's `secret_id_bound_cidrs` limits logins to configured CIDRs; the page
+  recommends response-wrapping the secret id for delivery. `token_bound_cidrs`, the default of
+  `secret_id_ttl` and destroying a secret id by accessor are not on the page.
+- Not confirmed: whether a rekey or `rotate-keys` changes the key that encrypts the data or only the
+  key that protects it (the pages do not say; Vault's documentation, from memory, says the data key is
+  unchanged and `rotate` is what changes it); the capabilities needed for `snapshot` and `snapshot-force`
+  (the fetched pages do not list them); that restore needs the snapshot's own unseal shares and needs a
+  token on a fresh server (the first review took this from Vault's flow); whether any call revokes every
+  token at once; whether OpenBao has built-in automated snapshots (the API page returned 404 and a search
+  found only Vault's, which is Enterprise, and an `openbao/openbao-snapshot-agent` repository that takes
+  snapshots with `bao operator raft snapshot save`); `disable_mlock` with raft (the raft configuration
+  page does not mention it).
+
+### Findings
+1. **ADR 0045: phase 1 server mode does not meet "a machine loss must lose nothing" by default.** The
+   ruled design loses everything after the last backup (section 4 says so), and out of the box there is
+   no backup: `backupDest` is empty, `backupInterval` is off, and after a write only a reminder prints
+   (ruling 2, section 3 options). The store cannot be rebuilt, so by the ADR's own rule it is in the
+   wrong tier ("anything in tier 4 that cannot be rebuilt is a defect to move up"), and tier 4 in the ADR
+   names "keys" as rebuildable only. The shares are the second thing a machine loss must not take; their
+   custody is rightly off the machine (section 9). Recommended change: the new ADR (section 10.4) states
+   this as a named, bounded exception to 0045 (the loss window is the time since the last backup, and
+   the Operator accepts it), and `openbao:init` makes it a choice: it asks for a `backupDest` or an
+   explicit "no backup" that `openbao:server:status` then shows as a standing warning.
+2. **Rekey alone does not protect later backups from the sender (NFR-8 item 8, section 15a).** Section
+   15 says the old snapshot "still opens with the old shares" and treats that as the whole residue. The
+   fetched pages do not say that a rekey changes the data key, and `rotate` is optional (`ROTATE=1`) and,
+   per its page, protects only new data: data written before stays under the old key. If the data key is
+   unchanged by a rekey (Vault's documented behaviour; not confirmed for OpenBao), then a sender holding
+   threshold shares can derive the key from the old snapshot and read the pre-rekey entries of any later
+   snapshot of the receiver's store that reaches them, such as backups in a folder the sender can see.
+   Recommended change: section 15a states the guarantee exactly: the shared keys are known to the sender
+   for good; later backups stay safe from the sender only if they never reach the sender, and `rotate`
+   is not a remedy for old entries. Make `rotate` default on in the task (as `ROTATE=0` to skip), name the
+   keys in the snapshot as the sender's knowledge to be replaced where the receiver wants them to be his
+   own, and use `bao operator rotate-keys`, since `rekey` is deprecated (the task stays named
+   `openbao:rekey`).
+3. **Rekey does not make the sender's access dead, and the revocation step names no mechanism
+   (section 15a step 3, section 7).** A restored store carries the sender's tokens (a root token among
+   them, if one was left), `userpass` users, AppRole roles with live secret ids, policies and audit
+   settings; the secret ids' files in the volume are not in the snapshot, the ids in the store are.
+   Section 15 says "revokes and reissues", but issuing a new secret id does not invalidate the others of
+   the role. The sender cannot reach a loopback-only server, so the exposure is to a central or shared
+   one (finding 8), but the design claims the property. Recommended change: name the calls and test them:
+   revoke by prefix on every auth mount and the token store (an exact call is not confirmed in the pages
+   read), delete and recreate each AppRole role so old secret ids die, remove every `userpass` user but the
+   receiver's, and check by a test that a token and a secret id taken from the snapshot fail after the
+   task.
+4. **The Operator's policy holds `snapshot-force` (section 5).** A 4-hour token may then replace the
+   whole store with any snapshot, including an old one that revives revoked secret ids and retired keys;
+   the root token is otherwise only made from the shares. Recommended change: remove
+   `sys/storage/raft/snapshot-force` from the Operator's policy; `openbao:restore` on a store that is
+   already in use makes a root token from a quorum of shares (`generate-root`) and revokes it at the end,
+   as `rekey` does; the fresh-server throwaway init path stays as drawn. Keep the snapshot read.
+5. **Response wrapping (section 15b) needs the issuing server reachable, and a bundle is not what
+   `-wrap-ttl` does.**
+   - Unwrapping is a call to the server that holds the cubbyhole, so the receiver must reach the
+     sender's server. In server mode that is a loopback-only, TLS-off listener in the sender's container
+     (section 3): unreachable. Route (b) works in phase 1 only against a central server in client mode
+     (section 14). Recommended change: section 15b says so, and `openbao:unwrap` takes the issuing
+     address (`BAO_ADDR` for the unwrap, the receiver's own for the `put`; two addresses, designed in the
+     task).
+   - `bao ... -wrap-ttl` wraps one response. "One wrapped response for several named secrets" would need
+     a composed payload (`sys/wrapping/wrap`, not confirmed in the pages read), which passes the
+     plaintext through the task and removes the creation-path check. Recommended change: one token per
+     secret, printed as a list, or one bundle path in KV the task writes and wraps; pick one in the slice.
+   - TTL and travel. `[TTL=]` has no default, and the token alone opens it. Recommended change: a
+     default of 15 minutes and a cap of 1 hour (the page says policies can enforce both), the token
+     printed only to a terminal (finding 6), the receiver runs `sys/wrapping/lookup` first and checks the
+     creation path and TTL before unwrapping (the page's own advice), and the sender is told the channel
+     matters: a token read by anyone else before the receiver is already spent, and the receiver learns
+     it only afterwards.
+6. **NFR-7: the agent-job refusal covers only `openbao:init`.** Section 3 and slice 2 say `init`
+   refuses under `DEVHOST_JOB_CHILD`. `openbao:rekey` prints new shares, `openbao:wrap` prints a token
+   that opens secrets with no authentication, `openbao:unseal` and `:restore` take shares at a prompt, and
+   `:unwrap` takes a token: each lands in a transcript if an agent runs it, and the scribe reads
+   transcripts. Recommended change: one rule in section 3: every task marked `interactive: true` that
+   handles a share or a wrapping token refuses without a terminal and under an agent's job environment,
+   with `-pgp-keys` offered for `init` and `rekey`; a test per task (section 12 lists one).
+7. **NFR-13 and NFR-6: check what OpenBao already does before building the schedule and retention.**
+   `backupInterval` (a timer) and `backupKeep` (removing the oldest files) are scheduling and retention,
+   the part of a backup `bao` does not claim; but Vault has automated snapshots, an
+   `openbao/openbao-snapshot-agent` repository exists, and neither was confirmed or ruled out here. The
+   timer is also a second way to schedule next to the workstation entry. Recommended change: the slice
+   begins by checking OpenBao's own documentation for automated snapshots and the agent; if either serves,
+   `backupInterval` and `backupKeep` become options that configure it (NFR-13), and a downloaded agent is
+   verified and pinned (NFR-3); if not, the NOTES say why the Feature does it, and `backupInterval` can wait
+   for a later minor.
+8. **Client mode and the `backup` role do not fit together (sections 3, 4, 7, 14, ruling 6).**
+   - Section 3 says `openbao:backup` works in client mode with "any server whose token may read the
+     snapshot path"; the `backup` role is created by `openbao:init` (server mode only) and is bound to
+     loopback, so against a remote server it cannot exist or log in from the container.
+   - A token that may read `sys/storage/raft/snapshot` on a shared server can copy the whole store of
+     every tenant out. That is the server owner's call.
+   - Ruling 6's 4 and 8 hours are set on a server this Feature runs; in client mode they are the server's
+     (section 5 says the login is whatever the server offers). `key:load`'s lifetime ("at most what is
+     left of the token", section 8) still holds if it reads the token's remaining time from `bao`.
+   - ruling 7's "one central server" has no Feature-provided way to run it in phase 1 (loopback, no TLS);
+     it is an owner-run server by definition.
+   Recommended change: section 3 says `backup` in client mode uses a role or token the server owner
+   provides, with `DCF_SECRET_AS` or the sitting token, and `openbao:backup` exits 13 when the snapshot
+   read is denied; section 14 says the central server is always owner-run in phase 1; section 5 says the
+   lifetimes are enforced only in server mode and `key:load` caps itself by the token's remaining time.
+9. **The onboarding instance (section 15a) is not designed.** Both a restore receiver and a sender
+   need a second OpenBao instance holding "only the shared keys". The Feature gives one server per container
+   (the volume is `openbao-${devcontainerId}`, one `node_id`), and no task or note says how the sender
+   makes the second one. Recommended change: section 15 says how: a second devcontainer in server mode
+   with its own volume and `dcf-secret put` of the shared keys, or a task `openbao:onboard:export` that
+   does the copy into a fresh instance; the NOTES carry the procedure. Also, `openbao:restore`'s "newest
+   backup is from another machine" warning will fire on every onboarding; it should say onboarding when
+   the snapshot carries an onboarding marker, or be skippable with a flag.
+10. **Placement: rekey calls the devhost, and restore leaves a manual step (sections 4, 7, 15).** Section
+    15 says the backs' secret ids are reissued "through the devhost's task", and section 4 says the
+    Operator runs `openbao:approle:issue` for each role after a restore. The openbao Feature must not
+    know the devhost's roles. Recommended change: `openbao:approle:issue ALL=1` (generic: every role in
+    the store, new secret id into `approle/<role>/secret_id`, old ones destroyed per finding 3), which
+    `rekey` and `restore` call at the end; the devhost needs nothing extra because the roles and policies
+    come back inside the snapshot.
+11. **Internal consistency: exit codes and small gaps.**
+    - `openbao:backup` exit 12 means "the backup role cannot log in", while in `dcf-secret` 12 means
+      "no token, or it expired" and 13 "may not read this name". Recommended change: keep 12 for "cannot
+      authenticate" in both and add 13 for "snapshot read denied", and list the codes for `backup`
+      beside the `dcf-secret` table so the numbers visibly match; 14 (no such secret) does not apply to
+      `backup`, and the table says so.
+    - The backup writes the snapshot to a file in the volume before the copy (section 4 step 1) and
+      never says it is removed; a full snapshot (ciphertext) would stay at rest. Recommended change:
+      remove it after the copy and after a failed copy.
+    - "After a write ... runs the backup itself only when `backupDest` is set" does not say what the write
+      task exits when that backup fails (a missing folder, sealed). Recommended change: the write stands,
+      the task exits 0, and the failure prints the backup's own line.
+    - Section 16 says "None for phase 1", while this review's open questions are phase 1 decisions.
+      Recommended change: update section 16 with the Operator's rulings on them.
+12. **Lexicon.** Terms used in the new parts and not defined in `LEXICON.md`: onboarding instance,
+    rekey (and the OpenBao name `rotate-keys`), wrapping token and response wrapping, recovery key (the
+    register's offline anchor), central server, throwaway init, snapshot against backup (a snapshot is the
+    raft file; a backup is the Feature's named copy in a destination), and "register", "principal" and
+    "anchor" which the register's README defines but the lexicon does not (the first review's list). The
+    wording "host scheduler" (sections 3, 4) collides with Host (the main session) in the lexicon; the
+    lexicon has Host type. Recommended change: the librarian adds the terms on acceptance as the first
+    review says, and the proposal says "the workstation's scheduler" instead of "host scheduler".
+13. **ADR order and size of slice 2.** Slice 4 writes the ADR that supersedes 0046 and records the 0045
+    route; slice 3 has already changed what 0046 decided. Recommended change: the ADR lands with the
+    acceptance of the proposal, before slice 1 (the proposal's section 10.4 already says "written when
+    this proposal is accepted"; the slice list contradicts it). Slice 2 carries the server, init, unseal,
+    seal, userpass, AppRole, backup, restore, rekey, wrap, unwrap and the status in one 1.2.0 pull request
+    and is the largest risk. Recommended change: split it (2a: server, init, unseal, seal, userpass,
+    AppRole and the `backup` role, backup, status; 2b: restore and rekey; 2c: wrap and unwrap), each with
+    its own version bump and tests.
+14. **Phase boundary (deferred paragraphs).** Nothing in phase 1 needs a deferred item: `dcf-secret` has
+    no fallback, the start hook knows no copy, and section 14's phase 1 shapes name no copy. Two soft
+    leaks: ruling 7's bullets state phase 2 details as rulings (max age default 24 hours, transit
+    auto-unseal, writes exit 10 and nothing queued) while the deferred paragraph says "named and not
+    designed"; and ruling 7 says "changes flow one way only, so there is nothing to merge" while the
+    deferred list's shared open question is who the writer is and how conflicts resolve. Recommended
+    change: mark ruling 7's copy bullets "phase 2 intent, not a phase 1 requirement; the amendment may
+    change them" so no slice builds from them, and keep exit 10 for a down server in phase 1 (it already
+    is in the `dcf-secret` table).
+
+### Open questions for the Operator
+- **ADR 0045** (finding 1): accept a named, bounded-loss exception, and require `openbao:init` to ask for
+  a backup destination or an explicit "no backup"? Recommendation: yes, both.
+- **How far to trust the sender in onboarding** (findings 2, 3): is the sender inside the receiver's trust
+  circle (so a rekey plus `rotate` is enough and later backups may sit in a shared folder), or must the
+  receiver's later data stay unreadable to the sender? Recommendation: treat the sender as trusted for
+  what was in the snapshot only, make `rotate` the default, and for anything stricter use route (b) or a
+  fresh instance with the values put in again.
+- **Restore authority** (finding 4): drop `snapshot-force` from the Operator's policy and restore only with
+  a root token made from shares? Recommendation: yes.
+- **`backupInterval` in phase 1** (finding 7): keep, or wait until OpenBao's own snapshot support is
+  checked? Recommendation: check first; defer it to a later minor if the Feature would only be rebuilding
+  scheduling.
+- **Splitting slice 2** (finding 13): three pull requests instead of one? Recommendation: yes.
