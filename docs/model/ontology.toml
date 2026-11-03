@@ -420,6 +420,106 @@ type = "concept"
 term = "Non-functional requirement"
 summary = "One of ten requirements every work item touching a Feature must meet or record an exception for."
 
+[master-of-secrets]
+type = "concept"
+term = "Master of secrets"
+summary = "OpenBao as ADR-0048 gives it: keeps every private key and token and their lifecycle; ssh-agent only uses keys."
+
+[client-mode]
+type = "concept"
+term = "Client mode"
+summary = "The openbao Feature's default: the bao CLI against a server outside the container."
+
+[server-mode]
+type = "concept"
+term = "Server mode"
+summary = "The openbao Feature's other mode: a server in the container on its own volume, sealed until unsealed."
+
+[seal-and-unseal]
+type = "mechanism"
+term = "Seal and unseal"
+summary = "A sealed server cannot read its store; unsealing needs a quorum of the unseal shares."
+
+[unseal-share]
+type = "concept"
+term = "Unseal share"
+summary = "One of the 3 Shamir shares (threshold 2) the Operator keeps off the machine."
+
+[gate]
+type = "mechanism"
+term = "The gate"
+summary = "The unseal once per server start, then the Operator's login once per sitting."
+
+[sitting]
+type = "concept"
+term = "Sitting"
+summary = "The span between the Operator's OpenBao login and the end of that token."
+
+[secret-name]
+type = "concept"
+term = "Secret name"
+summary = "The path a secret is kept under in OpenBao, as dcf-secret takes it."
+
+[back-identity]
+type = "concept"
+term = "Back identity"
+summary = "The AppRole a back logs in with, loopback only, on its own path, working only while unsealed."
+
+[register-operator-key]
+type = "concept"
+term = "Register operator key"
+summary = "The Operator's key that signs the register's operator acts, kept in OpenBao."
+
+[recovery-key]
+type = "concept"
+term = "Recovery key"
+summary = "The register's second operator key, kept offline outside OpenBao."
+
+[key-mode]
+type = "mechanism"
+term = "Key mode"
+summary = "The ssh-agent Feature's opt-in key volume and key tasks; deprecated, becomes localAgent in 2.0."
+
+[central-server]
+type = "place"
+term = "Central server"
+summary = "An owner-run OpenBao server that devcontainers reach in client mode."
+
+[snapshot]
+type = "record"
+term = "Snapshot"
+summary = "The raft file of the whole store, as ciphertext."
+
+[backup]
+type = "record"
+term = "Backup"
+summary = "The Feature's named, never-overwritten copy of a snapshot in a destination."
+
+[workstation-scheduler]
+type = "mechanism"
+term = "Workstation scheduler"
+summary = "The consumer's own scheduler on the workstation running a one-shot task; the launcher never registers it."
+
+[throwaway-init]
+type = "mechanism"
+term = "Throwaway init"
+summary = "The first step of a restore into a fresh server, with shares and a root token that are discarded."
+
+[onboarding-instance]
+type = "concept"
+term = "Onboarding instance"
+summary = "A short-lived second server holding only the shared keys, from which the handover snapshot is taken."
+
+[claim]
+type = "mechanism"
+term = "Claim"
+summary = "openbao:onboard:claim: makes a restored store the receiver's own, with new shares and the sender's access revoked."
+
+[response-wrapping]
+type = "mechanism"
+term = "Response wrapping"
+summary = "A one-use wrapping token holding one secret in a central server's cubbyhole."
+
 # Relations
 
 [[relation]]
