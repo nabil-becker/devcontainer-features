@@ -44,11 +44,15 @@ EOF
   exit 2
 }
 
-# What to do about each failure, one line each. The Operator-side tasks that do not exist in every
-# version of the Feature are not named: the line must be true for the version that prints it.
-fix_unreachable() { say "the server at ${BAO_ADDR:-the default address (https://127.0.0.1:8200)} is unreachable: check BAO_ADDR, and that the server is running (bao status shows why)"; }
-fix_sealed() { say "the server is sealed: the Operator unseals it (bao operator unseal)"; }
-fix_uninitialised() { say "the server is not initialised: the Operator initialises it (bao operator init)"; }
+# What to do about each failure, one line each. They name this Feature's tasks, which work in both
+# modes: in server mode the Operator runs them; in client mode the server is somebody else's and
+# the same tasks say so. env.sh (shared with the tasks) gives the BAO_ADDR default of server mode.
+ob_dir="${OPENBAO_FEATURE_DIR:-/usr/local/share/openbao-feature}"
+# shellcheck disable=SC1091  # installed by install.sh
+[ -f "$ob_dir/env.sh" ] && . "$ob_dir/env.sh"
+fix_unreachable() { say "the server at ${BAO_ADDR:-the default address (https://127.0.0.1:8200)} is unreachable: task openbao:server:status says whether it runs and how to start it (against a server elsewhere, check BAO_ADDR)"; }
+fix_sealed() { say "the server is sealed: the Operator unseals it with task openbao:unseal (against a server elsewhere, its owner does, with bao operator unseal)"; }
+fix_uninitialised() { say "the server is not initialised: the Operator initialises it with task openbao:init (against a server elsewhere, its owner does, with bao operator init)"; }
 fix_login() { say "no valid token (none, expired or revoked): log in with task openbao:login (task openbao:logout first clears a dead one)"; }
 fix_denied() { say "the token may not $1 '$2' at $mount: its policy has to allow it (ask the server's owner)"; }
 

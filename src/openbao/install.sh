@@ -20,8 +20,8 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
-if [ "$MODE" != "client" ]; then
-  echo "openbao: mode '$MODE' is not available in this version (only 'client')." >&2
+if [ "$MODE" != "client" ] && [ "$MODE" != "server" ]; then
+  echo "openbao: mode '$MODE' is not known (client or server)." >&2
   exit 1
 fi
 
@@ -59,6 +59,13 @@ if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]]; then
   exit 1
 fi
 
+# Server mode declares its audit device in the server config (the audit stanza, OpenBao 2.4.0 and
+# later); an older server would refuse the config, so the build says so instead.
+if [ "$MODE" = "server" ] && [ "$(printf '%s\n%s\n' 2.4.0 "${VERSION%%[-+]*}" | sort -V | head -n 1)" != "2.4.0" ]; then
+  echo "openbao: mode server needs OpenBao 2.4.0 or newer (its config declares the audit device); got ${VERSION}. Pin version 2.4.0 or later." >&2
+  exit 1
+fi
+
 base_url="https://github.com/$repo/releases/download/v${VERSION}"
 asset="openbao_${VERSION}_linux_${arch}.tar.gz"
 tmp="$(mktemp -d)"
@@ -78,8 +85,11 @@ install -m 0755 "$tmp/x/bao" /usr/local/bin/bao
 # ------------------------------------------------------- ecosystem pieces ----
 # dcf-secret is the interface every caller uses to ask for a secret; dcf-persist (verbatim copy of
 # src/common/dcf-persist.sh) makes the state directory usable; openbao-setup is this Feature's
-# postCreateCommand (see devcontainer-feature.json) and reads its option defaults from
-# options.env, so the hook and `task openbao:setup` behave the same. Nothing is written into
+# postCreateCommand and, as `openbao-setup start`, its postStartCommand (see
+# devcontainer-feature.json) and reads its option defaults from options.env, so the hooks and
+# `task openbao:setup` behave the same; openbao-server is what the server-mode tasks run,
+# openbao-run what the others run so that server mode's BAO_ADDR default applies, and env.sh is the
+# snippet they all source (the mode, that default). Nothing is written into
 # OPENBAO_STATE_DIR here: the volume is not mounted at image build.
 feature_dir="$(cd "$(dirname "$0")" && pwd)"
 share=/usr/local/share/openbao-feature
@@ -91,6 +101,9 @@ mkdir -p "$share"
 chmod 0644 "$share/options.env"
 install -m 0755 "$feature_dir/dcf-secret.sh" /usr/local/bin/dcf-secret
 install -m 0755 "$feature_dir/openbao-setup.sh" /usr/local/bin/openbao-setup
+install -m 0755 "$feature_dir/openbao-server.sh" /usr/local/bin/openbao-server
+install -m 0755 "$feature_dir/openbao-run.sh" /usr/local/bin/openbao-run
+install -m 0644 "$feature_dir/env.sh" "$share/env.sh"
 install -m 0755 "$feature_dir/dcf-persist.sh" /usr/local/bin/dcf-persist
 # bao's token helper: the CLI's own way to keep its token elsewhere than ~/.vault-token. bao finds
 # the config through BAO_CONFIG_PATH (containerEnv of this Feature, so it holds for every process,

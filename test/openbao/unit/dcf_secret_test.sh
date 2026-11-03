@@ -23,6 +23,7 @@ cat > "$T/bin/bao" <<'STUB'
 #!/usr/bin/env bash
 # Stub bao: STUB_* variables choose the answers; every call is logged (arguments only).
 echo "$*" >> "$STUB_LOG"
+echo "${BAO_ADDR-unset}" >> "$STUB_DIR/addr.log"
 case "$1 $2" in
   "status -format=json")
     printf '%s\n' "${STUB_STATUS_JSON:-{\"initialized\": true, \"sealed\": false\}}"
@@ -112,15 +113,17 @@ run STUB_KV_RC=2 STUB_STATUS_RC=1 STUB_STATUS_JSON= -- get ssh/key
 check "10: unreachable" 10 "$rc"
 check "10: stdout empty" "" "$out"
 has "10: the fix names BAO_ADDR" "BAO_ADDR" "$err"
+has "10: and the task that says whether the server runs" "task openbao:server:status" "$err"
 check "10: one line" 1 "$(lines "$err")"
 run STUB_KV_RC=2 STUB_STATUS_RC=2 STUB_STATUS_JSON='{"initialized": true, "sealed": true}' -- get ssh/key
 check "11: sealed" 11 "$rc"
 check "11: stdout empty" "" "$out"
-has "11: the fix says who unseals" "unseal" "$err"
+has "11: the fix says who unseals, and the task" "task openbao:unseal" "$err"
 check "11: one line" 1 "$(lines "$err")"
 run STUB_KV_RC=2 STUB_STATUS_RC=2 STUB_STATUS_JSON='{"initialized": false, "sealed": true}' -- get ssh/key
 check "11: not initialised is 11 too" 11 "$rc"
 has "11: not initialised says so" "not initialised" "$err"
+has "11: not initialised names the init task" "task openbao:init" "$err"
 run STUB_KV_RC=2 STUB_CAPS_RC=2 -- get ssh/key
 check "12: no valid token" 12 "$rc"
 has "12: the fix is the login" "task openbao:login" "$err"
@@ -141,6 +144,31 @@ check "14: root may read" 14 "$rc"
 run STUB_KV_RC=2 STUB_CAPS="create, update" -- get ssh/key
 check "13: create and update alone do not read" 13 "$rc"
 has "13: the capabilities asked on the KV v2 data path" "token capabilities dcf/data/ssh/key" "$(cat "$LOG")"
+
+# --- server mode: the same lines, and BAO_ADDR defaults to the local server (env.sh, options.env)
+mkdir -p "$T/feat-server" "$T/feat-client"
+cp "$here/../../../src/openbao/env.sh" "$T/feat-server/env.sh"
+cp "$here/../../../src/openbao/env.sh" "$T/feat-client/env.sh"
+printf 'MODE=server\n' > "$T/feat-server/options.env"
+printf 'MODE=client\n' > "$T/feat-client/options.env"
+: > "$T/addr.log"
+run OPENBAO_FEATURE_DIR="$T/feat-server" -- get ssh/key
+check "server mode: get works" 0 "$rc"
+check "server mode: BAO_ADDR defaults to the local listener" "http://127.0.0.1:8200" "$(sort -u "$T/addr.log")"
+: > "$T/addr.log"
+run OPENBAO_FEATURE_DIR="$T/feat-server" BAO_ADDR=https://bao.example.test -- get ssh/key
+check "server mode: a BAO_ADDR that is set is kept" "https://bao.example.test" "$(sort -u "$T/addr.log")"
+: > "$T/addr.log"
+run OPENBAO_FEATURE_DIR="$T/feat-client" -- get ssh/key
+check "client mode: BAO_ADDR is left unset (bao's own default)" "unset" "$(sort -u "$T/addr.log")"
+: > "$T/addr.log"
+run OPENBAO_FEATURE_DIR="$T/feat-client" OPENBAO_SETUP_MODE=server -- get ssh/key
+check "OPENBAO_SETUP_MODE=server overrides the baked mode" "http://127.0.0.1:8200" "$(sort -u "$T/addr.log")"
+run OPENBAO_FEATURE_DIR="$T/feat-server" STUB_KV_RC=2 STUB_STATUS_RC=1 STUB_STATUS_JSON= -- get ssh/key
+check "server mode: unreachable is still 10" 10 "$rc"
+has "server mode: unreachable names the default address" "http://127.0.0.1:8200" "$err"
+run OPENBAO_FEATURE_DIR="$T/feat-server" STUB_KV_RC=2 STUB_STATUS_RC=2 STUB_STATUS_JSON='{"initialized": true}' -- get ssh/key
+has "server mode: sealed names the unseal task" "task openbao:unseal" "$err"
 
 # --- the order of the questions, and that nothing is read in place of the server
 run STUB_KV_RC=2 STUB_STATUS_RC=2 -- get ssh/key
