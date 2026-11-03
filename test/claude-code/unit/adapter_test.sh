@@ -138,6 +138,17 @@ elif [ "$1" = --bg ] && [ "$2" = --resume ] && [ -n "${FAKE_RESUME_CRASH:-}${FAK
     echo "note: woke session $old with its saved options (--name)." >&2
   fi
   echo "backgrounded · $short · woken (idle — send a prompt to start)"
+elif [ "$1" = --bg ] && [ "$2" = --resume ] && { [ -n "${FAKE_DUP_STUCK:-}" ] || { [ -n "${FAKE_DUP_ONCE:-}" ] && [ ! -e "$FAKE_TABLE.dup" ]; } || grep -lF "\"sessionId\":\"$3\"" "$CLAUDE_CONFIG_DIR"/sessions/*.json >/dev/null 2>&1; }; then
+  # (1.9.7, #155) Claude Code took the session for one that runs because a record in
+  # $CLAUDE_CONFIG_DIR/sessions names it (FAKE_DUP_STUCK: whatever the records say; FAKE_DUP_ONCE:
+  # the first wake only): it starts a copy and says so, as reported
+  : > "$FAKE_TABLE.dup"
+  old="$(awk -F'\t' -v s="$3" '$2 == s { print $1 }' "$FAKE_TABLE")"
+  printf 'c%07d\tsess-c%s-0000-0000-0000-000000000000\t%s\t%s\tbackground\t%s\trunning\t%s\n' "$n" "$n" "copy" "$(pwd -P)" "$((100 + n))" "$((2000 + n))" >> "$FAKE_TABLE"
+  [ -z "${FAKE_DUP_UNLISTED:-}" ] || sed -i '$d' "$FAKE_TABLE"  # the copy is never listed (as reported)
+  saved "$(printf 'c%07d' "$n")"
+  printf 'Starting background service…\nnote: session %s is already running in the background, so this started a copy as c%07d. `claude attach %s` opens the original.\n' "$old" "$n" "$old" >&2
+  printf 'backgrounded · c%07d (idle — send a prompt to start)\n' "$n"
 elif [ "$1" = --bg ] && [ "$2" = --resume ] && awk -F'\t' -v s="$3" -v dead=" ${FAKE_DEAD_PIDS:-} " '$2 == s && $6 != 0 && !index(dead, " " $6 " ") { f = 1 } END { exit !f }' "$FAKE_TABLE"; then
   # the session still has a live process (state done, not stopped): Claude Code starts a copy
   # with empty saved options and says "already running"
@@ -174,7 +185,7 @@ unset AGENT_ADAPTER_CLAUDE_STATE AGENT_SESSION_NAME  # the session a test runs i
 export AGENTS_SHARE_DIR="$T/agents-share"
 records="$T/config/agent-adapter-claude/agents.tsv"
 table() { # rows: id sid name cwd kind pid state started
-  : > "$FAKE_TABLE"; : > "$FAKE_CALLS"
+  : > "$FAKE_TABLE"; : > "$FAKE_CALLS"; rm -f "$T"/config/agent-adapter-claude/woken-*
   local r; for r in "$@"; do printf '%s\n' "$r" | tr '|' '\t' >> "$FAKE_TABLE"; done
 }
 saved_opts() { # saved_opts <short id> <flags...>: what the fake claude keeps for a session (SAVED_STATE: its state, default stopped)
@@ -391,6 +402,121 @@ check 'wake: another resume failure fails (exit 1), no fresh start' "1:$repo|--b
 table
 out="$(ad wake host "$repo")"; rc=$?
 check 'wake with nothing to wake: exit 1' 1 "$rc"
+
+# ----------------- a stale background-session record (agents-stale-bg-record, #155) ----
+# After `up --remove-existing-container` the claude-code volume still holds Claude Code's record of
+# the session (sessions/<pid>.json, with a .key and a socket) of the old container; a bare wake then
+# "is already running in the background, so this started a copy". The adapter clears the records of
+# the session it wakes whose process is proven dead, never a live one, and when the CLI still
+# starts a copy it stops it, tries once more, and a second copy is an error (exit 1).
+sdir="$CLAUDE_CONFIG_DIR/sessions"
+export AGENT_ADAPTER_CLAUDE_PIDDOMAIN='pid:[4026533025]'
+rec_file() { # rec_file <pid> <session id> <pid domain> [procStart]: a record as Claude Code writes it, its .key and its socket
+  mkdir -p "$sdir" "$T/socks"
+  printf '{"pid":%s,"sessionId":"%s","cwd":"%s","startedAt":1793709409345,%s"kind":"background","pidDomain":"%s","messagingSocketPath":"%s/socks/%s.sock","status":"idle"}\n' \
+    "$1" "$2" "$repo" "${4:+\"procStart\":\"$4\",}" "$3" "$T" "$1" > "$sdir/$1.json"
+  printf '{"peerToken":"x","pidDomain":"%s"}\n' "$3" > "$sdir/$1.0123abcd.key"
+  python3 -I -c 'import socket, sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "$T/socks/$1.sock"  # a socket left behind
+}
+live_proc() { mkdir -p "$T/proc/$1"; printf 'claude\0--bg\0' > "$T/proc/$1/cmdline"; }
+stale_setup() { rm -rf "$sdir" "$T/proc" "$T/socks" "$records" "$FAKE_TABLE.dup"; mkdir -p "$T/proc"; table "z1|sess-z1|host|$repo|background|0|failed|1500"; rm -rf "$CLAUDE_CONFIG_DIR/jobs"; SAVED_STATE=working saved_opts z1 --name host; }
+
+# the record of the old container (another pid namespace, no such pid here): cleared, one copy
+stale_setup
+rec_file 7001 sess-z1 'linux::pid:[4026532955]' 111
+out="$(cd "$T" && PATH="$bin:$PATH" agent-adapter-claude wake host "$repo" 2>"$T/err")"; rc=$?
+check 'stale record (old container): wake succeeds (exit 0)' 0 "$rc"
+check 'stale record (old container): one bare wake, no stop' "$repo|--bg|--resume|sess-z1;" "$(calls)"
+check 'stale record (old container): no copy started' 0 "$(grep -c '^c' "$FAKE_TABLE")"
+check 'stale record (old container): stdout is its own session id' sess-z1 "$out"
+check 'stale record (old container): the record, its key and its socket are gone' '' "$(find "$sdir" "$T/socks" \( -type f -o -type s \) 2>/dev/null)"
+contains 'stale record (old container): one line says it cleared the record' "$(cat "$T/err")" 'cleared the stale record of session sess-z1'
+check 'stale record (old container): recorded as the agent'"'"'s own session' "host	$repo	z1	sess-z1" "$(grep '^host	' "$records" | cut -f1-4)"
+
+# a pid that is not here, the same pid namespace: dead as well
+stale_setup
+rec_file 7002 sess-z1 'linux::pid:[4026533025]' 111
+out="$(cd "$T" && PATH="$bin:$PATH" agent-adapter-claude wake host "$repo" 2>/dev/null)"; rc=$?
+check 'stale record (no such pid here): cleared, one copy' "0:0:" "$rc:$(grep -c '^c' "$FAKE_TABLE"):$(ls "$sdir")"
+
+# the pid is here but another program's (started at another time): dead
+stale_setup
+live_proc 7003
+printf '7003 (claude) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 999 0 0\n' > "$T/proc/7003/stat"
+rec_file 7003 sess-z1 'linux::pid:[4026533025]' 111
+out="$(cd "$T" && PATH="$bin:$PATH" agent-adapter-claude wake host "$repo" 2>/dev/null)"; rc=$?
+check 'stale record (pid reused, procStart differs): cleared, one copy' "0:0:" "$rc:$(grep -c '^c' "$FAKE_TABLE"):$(ls "$sdir")"
+
+# a record of another session is never touched, dead or not
+stale_setup
+rec_file 7004 sess-other 'linux::pid:[4026532955]' 111
+out="$(cd "$T" && PATH="$bin:$PATH" agent-adapter-claude wake host "$repo" 2>/dev/null)"; rc=$?
+check 'stale record of another session: left (exit 0, no copy)' "0:0:7004.0123abcd.key 7004.json" "$rc:$(grep -c '^c' "$FAKE_TABLE"):$(find "$sdir" -type f | sed 's|.*/||' | sort | tr '\n' ' ' | sed 's/ $//')"
+check 'stale record of another session: its socket left' 1 "$(find "$T/socks" -name '7004*' | grep -c .)"
+
+# a live record (same pid namespace, the process runs, same start time) is never touched: the CLI
+# starts a copy anyway, which is stopped by the id its note names; the wake is an error (exit 1),
+# nothing recorded, and it is not repeated in the run
+stale_setup
+live_proc 7005
+printf '7005 (claude) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 111 0 0\n' > "$T/proc/7005/stat"
+rec_file 7005 sess-z1 'linux::pid:[4026533025]' 111
+out="$(cd "$T" && PATH="$bin:$PATH" agent-adapter-claude wake host "$repo" 2>&1)"; rc=$?
+check 'live record: never removed (record, key and socket)' "7005.0123abcd.key 7005.json 7005.sock" "$(find "$sdir" "$T/socks" \( -type f -o -type s \) | sed 's|.*/||' | sort | tr '\n' ' ' | sed 's/ $//')"
+check 'live record: the copy is an error (exit 1)' 1 "$rc"
+contains 'live record: an "error:" line says what happened' "$out" 'agent-adapter-claude: error: host: Claude Code took session sess-z1 for one that runs'
+contains 'live record: the line names the copy' "$out" 'started a copy as c0000002'
+check 'live record: woken once, then the copy stopped by its id, never woken again' "$repo|--bg|--resume|sess-z1;$T|stop|c0000002;" "$(calls)"
+check 'live record: no copy left running' 0 "$(awk -F'\t' '$1 ~ /^c/ && $6 != 0' "$FAKE_TABLE" | grep -c .)"
+check 'live record: nothing recorded' 0 "$(cat "$records" 2>/dev/null | grep -c '^host	')"
+
+# a record this adapter cannot see (nothing in sessions/): the CLI's note is the signal; the copy
+# (which `claude agents` need not list) is stopped by the id in the note, an error, no second wake
+stale_setup
+out="$(cd "$T" && FAKE_DUP_STUCK=1 PATH="$bin:$PATH" agent-adapter-claude wake host "$repo" 2>"$T/err")"; rc=$?
+check 'unknown record: exit 1' 1 "$rc"
+contains 'unknown record: a clear error: line' "$(cat "$T/err")" 'agent-adapter-claude: error: host: Claude Code took session sess-z1 for one that runs'
+check 'unknown record: nothing on stdout (no id to record)' '' "$out"
+check 'unknown record: not recorded' 0 "$(cat "$records" 2>/dev/null | grep -c '^host	')"
+check 'unknown record: woken once, the copy stopped, no fresh start' "$repo|--bg|--resume|sess-z1;$T|stop|c0000002;" "$(calls)"
+# the copy is not listed (as reported): stopped by the id the note names all the same
+stale_setup
+out="$(cd "$T" && FAKE_DUP_STUCK=1 FAKE_DUP_UNLISTED=1 PATH="$bin:$PATH" agent-adapter-claude wake host "$repo" 2>"$T/err")"; rc=$?
+check 'unlisted copy: exit 1, the copy stopped by the id in the note' "1:$repo|--bg|--resume|sess-z1;$T|stop|c0000002;" "$rc:$(calls)"
+
+# the roster of the background service names the session: said in the error, never edited
+stale_setup
+mkdir -p "$CLAUDE_CONFIG_DIR/daemon"; printf '{"workers":{"z1":{"pid":4242,"procStart":"1"}}}\n' > "$CLAUDE_CONFIG_DIR/daemon/roster.json"
+out="$(cd "$T" && FAKE_DUP_STUCK=1 PATH="$bin:$PATH" agent-adapter-claude wake host "$repo" 2>&1)"
+contains 'roster names it: the error says so' "$out" "roster ($CLAUDE_CONFIG_DIR/daemon/roster.json) names it"
+check 'roster names it: not edited' '{"workers":{"z1":{"pid":4242,"procStart":"1"}}}' "$(cat "$CLAUDE_CONFIG_DIR/daemon/roster.json")"
+rm -rf "$CLAUDE_CONFIG_DIR/daemon"
+
+# the next run, once the copy is stopped, wakes it as one copy
+stale_setup
+out="$(cd "$T" && FAKE_DUP_ONCE=1 PATH="$bin:$PATH" agent-adapter-claude wake host "$repo" 2>/dev/null)"; rc=$?
+check 'a copy once: the first run is an error' 1 "$rc"
+rm -f "$T"/config/agent-adapter-claude/woken-*
+: > "$FAKE_CALLS"
+out="$(cd "$T" && FAKE_DUP_ONCE=1 PATH="$bin:$PATH" agent-adapter-claude wake host "$repo" 2>/dev/null)"; rc=$?
+check 'a copy once: the next run is one bare wake, its id printed' "0:sess-z1:$repo|--bg|--resume|sess-z1;" "$rc:$out:$(calls)"
+check 'a copy once: the next run records it' "host	$repo	z1	sess-z1" "$(grep '^host	' "$records" | cut -f1-4)"
+
+# `agents start` wakes, then attaches (the reported double wake): a wake made a moment ago that left
+# the session unlisted is never repeated by attach, which waits for it and then attaches
+stale_setup
+rm -rf "$sdir"
+out="$(cd "$T" && FAKE_RESUME_UNLISTED=1 PATH="$bin:$PATH" agent-adapter-claude wake host "$repo" 2>/dev/null)"; rc=$?
+check 'wake whose session is not listed yet: exit 0' 0 "$rc"
+: > "$FAKE_CALLS"
+out="$(cd "$T" && AGENT_ADAPTER_WAIT=0 PATH="$bin:$PATH" agent-adapter-claude attach host "$repo" 2>&1)"; rc=$?
+check 'attach right after it: not woken again (exit 1, no claude call)' "1:" "$rc:$(calls)"
+contains 'attach right after it: says why' "$out" 'was woken a moment ago but is not listed running yet; not woken again'
+table "z1|sess-z1|host|$repo|background|999|working|1500"
+out="$(cd "$T" && PATH="$bin:$PATH" agent-adapter-claude attach host "$repo" 2>&1)"
+check 'attach right after it, once it is listed: attached, not woken' "$T|attach|z1;" "$(calls)"
+unset AGENT_ADAPTER_CLAUDE_PIDDOMAIN
+rm -f "$FAKE_TABLE.dup"
 
 # --------------------------------------- wakes that crash or fork (1.9.4) ----
 # The report (claude-code 1.9.2, Claude Code 2.1.314): a resident never prompted has no transcript,

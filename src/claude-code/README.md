@@ -27,6 +27,41 @@ Claude Code (https://code.claude.com/docs) as a member of this collection's ecos
 
 - `anthropic.claude-code`
 
+## Changes in 1.9.7
+
+- **A stale background-session record no longer starts a copy of a resident agent** (`agents-stale-bg-record`).
+  Reported by a consumer after `up --remove-existing-container` (agents 2.1.1, claude-code 1.9.6): `agents up`
+  woke a stopped resident with `claude --bg --resume <id>`, and Claude Code answered *"session 43428c82 is already
+  running in the background, so this started a copy as cf20ad8b"*, two copies of an agent that may have only one
+  (the lease). A new container has no process of any session, but Claude Code's records of sessions live in the
+  Feature's volume and survive it.
+  - **Stale records are cleared before a wake.** Claude Code keeps one record per session with a process in
+    `$CLAUDE_CONFIG_DIR/sessions/<pid>.json` (`pid`, `sessionId`, `procStart`, `pidDomain`,
+    `messagingSocketPath`, with a `<pid>.<hash>.key` beside it; read on 2.1.311, where it leaves the records of
+    containers that are gone). Before every wake, `wake` and the wake that `attach` does, the adapter looks at
+    the records that name the session it is about to wake and removes (with their `.key` files and a socket left
+    behind) those whose process is proven not to exist in this container: it ran in another pid namespace
+    (`pidDomain` differs from `/proc/self/ns/pid`), or no such pid is here, or the pid is here but started at
+    another time (`procStart` differs from field 22 of `/proc/<pid>/stat`). One line says so. A record whose
+    process is alive, that cannot be read, or that names another session is never touched.
+  - **A copy that is started anyway is stopped by the id in the CLI's note, and the wake is an error.** When the CLI
+    still prints "is already running in the background, so this started a copy as <id>", the adapter stops that copy
+    (`claude stop <id>`; the id comes from the note, since the copies were never in `claude agents`, only in Claude
+    Code's own view), never wakes again in the same run (every repeat made another copy), records nothing and exits 1
+    with `agent-adapter-claude: error: <name>: Claude Code took session <id> for one that runs ... started a copy as
+    <id2>, which was stopped; the agent is not running`. When `$CLAUDE_CONFIG_DIR/daemon/roster.json` (the background
+    service's roster, with each worker's pid and procStart; read by the CLI to decide whether a session runs) names the
+    session, the line says so; this Feature does not edit that file, which the service rewrites. `agents` treats the
+    failed wake as `agents: <name>: waking failed.`, and at post-start goes on with the container start after saying
+    `agents: some agents did not start (above)` (it never fails the start); the lease is released. The next run starts
+    from the cleared records.
+  - **`attach` never wakes a session a second time.** Reported with it: `agents start` woke the session, which the
+    list did not show yet ("not recorded"), then called `attach`, which found no running session and woke it again, a
+    second copy per run. A wake leaves a marker (`woken-<session id>` beside `agents.tsv`); `attach` of a session
+    woken less than `AGENT_ADAPTER_RECENT` seconds ago (default 60) waits for it to be listed (`AGENT_ADAPTER_WAIT`)
+    and attaches it, or says it was woken a moment ago and stops (exit 1), never waking it again.
+  - Not changed: `agents` (2.1.1) itself; a session with a live process is still never woken.
+
 ## Changes in 1.9.6
 
 - **The host returns as itself after a restart** (`host-restart-copy`). Reported by a consumer on claude-code 1.9.4
