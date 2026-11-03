@@ -65,7 +65,7 @@
     Image builds are serialised host-wide: `up` and `build` hold the named
     mutex Global\devcontainer-features-build while they run (see
     Enter-DevcontainerBuildLock), and a waiter's line names the holder's repository,
-    subcommand and start time and how many arrived before it. An engine with BuildKit
+    subcommand and start time and how many others wait. An engine with BuildKit
     build contexts (buildx 0.8.0 or later, never wslc) skips the lock with one line.
     DEVCONTAINER_BUILD_LOCK=0 turns it off, =1 keeps it on every engine.
 
@@ -1050,8 +1050,9 @@ function Write-BuildLockFile {
 function Get-BuildLockWaitMessage {
     <#
     .SYNOPSIS
-        The waiting line: who holds the lock and how many waiters arrived before this one, e.g.
-        "waiting for alpha's up --build-no-cache (started 14:02, 2 ahead)...". Without a live
+        The waiting line: who holds the lock and how many other waiters there are (every live
+        waiter but this one, whenever it arrived; the holder is not one), e.g.
+        "waiting for alpha's up --build-no-cache (started 14:02, 2 waiting)...". Without a live
         holder file (the holder is an older launcher, or it died) it is
         "waiting for another devcontainer build to finish...".
     #>
@@ -1059,23 +1060,20 @@ function Get-BuildLockWaitMessage {
     [OutputType([string])]
     param(
         [Parameter(Mandatory)][string]$StateDir,
-        [int]$Self = $PID,
-        [datetime]$SelfStarted = [datetime]::UtcNow
+        [int]$Self = $PID
     )
-    $ahead = 0
+    $waiting = 0
     foreach ($f in @(Get-ChildItem -LiteralPath $StateDir -Filter 'waiter-*.json' -File -ErrorAction SilentlyContinue)) {
         $w = Read-BuildLockFile -Path $f.FullName
-        if (-not $w -or [int]$w.pid -eq $Self) { continue }
-        $started = ([datetimeoffset]::Parse([string]$w.started, [cultureinfo]::InvariantCulture)).UtcDateTime
-        if ($started -lt $SelfStarted -or ($started -eq $SelfStarted -and [int]$w.pid -lt $Self)) { $ahead++ }
+        if ($w -and [int]$w.pid -ne $Self) { $waiting++ }
     }
     $holder = Read-BuildLockFile -Path (Join-Path $StateDir 'holder.json')
     if ($holder -and [int]$holder.pid -ne $Self) {
         $at = ([datetimeoffset]::Parse([string]$holder.started, [cultureinfo]::InvariantCulture)).LocalDateTime.ToString('HH:mm')
-        $tail = if ($ahead -gt 0) { ", $ahead ahead" } else { '' }
+        $tail = if ($waiting -gt 0) { ", $waiting waiting" } else { '' }
         return "waiting for $($holder.repo)'s $($holder.subcommand) (started $at$tail)..."
     }
-    if ($ahead -gt 0) { return "waiting for another devcontainer build to finish ($ahead ahead)..." }
+    if ($waiting -gt 0) { return "waiting for another devcontainer build to finish ($waiting waiting)..." }
     return 'waiting for another devcontainer build to finish...'
 }
 
@@ -1144,9 +1142,9 @@ function Enter-DevcontainerBuildLock {
         repository's folder name, the subcommand and its flags, the start
         time) and each waiter a waiter-<pid>.json, removed when it stops
         waiting; a file whose process is gone is ignored. A waiter's line
-        names the holder and how many waiters arrived before it, and is
-        printed again when that changes. The mutex is not first-come, so
-        "ahead" counts arrivals, not a promised order.
+        names the holder and how many other waiters there are, and is
+        printed again when that changes. The mutex is not first-come, so the
+        count is of every other waiter, not a place in a queue.
 
     .PARAMETER Name
         Mutex name; the default is shared by every repository on the host.
@@ -1191,7 +1189,7 @@ function Enter-DevcontainerBuildLock {
                 Write-BuildLockFile -Path $waiterFile -Content @{ pid = $PID; started = $since.ToString('o') }
                 $registered = $true
             }
-            $line = Get-BuildLockWaitMessage -StateDir $StateDir -Self $PID -SelfStarted $since
+            $line = Get-BuildLockWaitMessage -StateDir $StateDir -Self $PID
             if ($line -ne $shown) {
                 Write-Host $line
                 $shown = $line

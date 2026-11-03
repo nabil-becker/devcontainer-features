@@ -4,7 +4,7 @@
 # skipped with BuildKit build contexts' in DevcontainerCli.Tests.ps1: the holder of the flock
 # writes who it is (repository folder, subcommand and flags, start) beside the lock and removes it
 # when it ends; a waiter registers, prints "waiting for <repo>'s <subcommand> (started HH:MM, N
-# ahead)..." and again when that changes, and leaves no file behind (also when it is stopped); a
+# waiting)..." and again when that changes, and leaves no file behind (also when it is stopped); a
 # holder file of a dead process is ignored; an engine whose `buildx version` is 0.8.0 or later skips
 # the lock with one line, never wslc, and DEVCONTAINER_BUILD_LOCK=1 keeps it, =0 drops it. A stub
 # engine answers `info` and, with STUB_BUILDX, `buildx version`; a stub `devcontainer` sleeps
@@ -86,23 +86,23 @@ check 'holder: no waiting line of its own' 0 "$(grep -c 'waiting for' "$T/a.out"
 check 'after both: no holder file' no "$([ -e "$state/holder" ] && echo yes || echo no)"
 check 'after both: no waiter file' 0 "$(waiters)"
 
-# --- a waiter that arrived earlier is counted, and the line changes when the holder does
+# --- every other waiter is counted, earlier or later, and the line changes when the holder does
 (launch STUB_SLEEP=3 -- alpha up --build-no-cache > /dev/null) &
 a=$!
 wait_for test -e "$state/holder"
 (launch STUB_SLEEP=1 -- gamma build > "$T/c.out") &
 c=$!
 wait_for waiters_are 1
-sleep 1.1
 run -- beta up
 wait "$a" "$c"
-contains 'second waiter: one ahead' "$out" "waiting for alpha's up --build-no-cache (started "
-contains 'second waiter: the count' "$out" ', 1 ahead)...'
+contains 'second waiter: names the holder' "$out" "waiting for alpha's up --build-no-cache (started "
+contains 'second waiter: the other waiter counted' "$out" ', 1 waiting)...'
 case "$out" in
   *"waiting for gamma's build (started "*) check 'second waiter: a new line when the holder changes' 2 "$(grep -c '^waiting for' <<<"$out")" ;;
   *) check 'second waiter: overtook the first (not first-come), one line' 1 "$(grep -c '^waiting for' <<<"$out")" ;;
 esac
-check 'first waiter: nobody ahead of it' 0 "$(grep -c 'ahead' "$T/c.out")"
+check 'first waiter: no count while alone' 1 "$(grep -cE "^waiting for alpha's up --build-no-cache \(started [0-9]{2}:[0-9]{2}\)\.\.\.$" "$T/c.out")"
+contains 'first waiter: counts the later one too' "$(cat "$T/c.out")" ', 1 waiting)...'
 check 'after all three: no waiter file' 0 "$(waiters)"
 
 # --- a stale holder file (its process is gone) is ignored

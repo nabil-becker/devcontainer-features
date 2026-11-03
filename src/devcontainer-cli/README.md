@@ -19,6 +19,14 @@ Installs @devcontainers/cli as /usr/local/bin/devcontainer, backed by a private,
 | version | @devcontainers/cli npm version to install (e.g. '0.89.0'), or 'latest'. | string | latest |
 | nodeVersion | Node.js release used privately by the CLI. Downloaded from nodejs.org and verified against its SHASUMS256.txt. | string | 24.21.0 |
 
+## Changes in 1.18.1
+
+- **The waiting line counts every other waiter** (`N waiting`, was `N ahead`): the build lock is
+  not first-come, so a count of earlier arrivals promised an order that does not exist. The count
+  is every live waiter but this one, whenever it arrived; the holder is not one, and there is no
+  count when there is no other waiter: `waiting for alpha's up --build-no-cache (started 14:02, 2
+  waiting)...`. Both launchers.
+
 ## Changes in 1.18.0
 
 - **The build lock says who holds it** (#154). A waiting `up` printed only `waiting for another
@@ -26,8 +34,9 @@ Installs @devcontainers/cli as /usr/local/bin/devcontainer, backed by a private,
   with no way to tell. Now the holder writes a small file beside the lock (its repository's folder
   name, the subcommand with its flags, its start time) and each waiter registers too, so the line
   reads `waiting for alpha's up --remove-existing-container --build-no-cache (started 14:02, 2
-  ahead)...` and is printed again when the holder or the count changes. A file whose process is
-  gone is ignored. "Ahead" counts waiters that arrived earlier; the lock is not first-come.
+  waiting)...` and is printed again when the holder or the count changes. A file whose process is
+  gone is ignored. The count is every other waiter (not the holder, not this one), whenever it
+  arrived: the lock is not first-come, so there is no place in a queue to show.
 - **No build lock with BuildKit build contexts.** The lock is for one collision only: without
   BuildKit build contexts (wslc), `@devcontainers/cli` tags every repository's Feature content
   image `dev_container_feature_content_temp`. When `<engine> buildx version` reports 0.8.0 or later
@@ -289,11 +298,12 @@ A waiter says whom it waits for. The holder writes `holder.json` (Windows) or
 its pid, its repository's folder name, the subcommand with its flags (not their
 values) and its start time; each waiter writes a `waiter-<pid>` file while it
 waits. The line reads `waiting for alpha's up --build-no-cache (started 14:02, 2
-ahead)...` and is printed again when the holder or the count changes; without a
+waiting)...` and is printed again when the holder or the count changes; without a
 live holder file (an older launcher holds the lock, or its holder died) it is
 `waiting for another devcontainer build to finish...`. A file whose process is
-gone is ignored. The lock is not first-come: "ahead" counts the waiters that
-arrived earlier, and a later one may still go first. The lock is released when
+gone is ignored. The count is every other waiter, not the holder and not
+this one, whenever it arrived (none, no count): the lock is not first-come, so
+any of them may go next. The lock is released when
 the build ends or its process dies (an abandoned lock counts as free).
 `exec`, `run-user-commands`, `set-up` and the other subcommands take no lock,
 and `devcontainer features test` takes it only with

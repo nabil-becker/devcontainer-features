@@ -348,7 +348,7 @@ Builds are serialised host-wide where they can collide: `up` (and so `rebuild`)
 and `build` hold the named mutex `Global\devcontainer-features-build` (Windows)
 or an `flock` on `~/.cache/devcontainer-features/build.lock` (Linux/macOS), and a
 second one prints whom it waits for (`waiting for alpha's up --build-no-cache
-(started 14:02, 2 ahead)...`) before it runs. Without BuildKit build contexts
+(started 14:02, 2 waiting)...`) before it runs. Without BuildKit build contexts
 (`wslc`) the devcontainer CLI tags the Feature content image
 `dev_container_feature_content_temp` for every repository, so two builds at once
 overwrite each other's image and the first fails with

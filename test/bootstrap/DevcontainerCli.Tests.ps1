@@ -156,7 +156,7 @@ Describe 'The build lock holder and waiter files' {
         Test-Path -LiteralPath $file | Should -BeFalse
     }
 
-    It 'the waiting line names the holder, its start and how many waiters arrived earlier' {
+    It 'the waiting line names the holder, its start and every other waiter, earlier or later' {
         $holder = Get-Sleeper
         $earlier = Get-Sleeper
         $later = Get-Sleeper
@@ -165,15 +165,15 @@ Describe 'The build lock holder and waiter files' {
         Add-TestLockFile "waiter-$($earlier.Id).json" @{ pid = $earlier.Id; started = [datetime]::UtcNow.AddMinutes(-2).ToString('o') }
         Add-TestLockFile "waiter-$($later.Id).json" @{ pid = $later.Id; started = [datetime]::UtcNow.AddMinutes(2).ToString('o') }
         $at = $start.ToLocalTime().ToString('HH:mm')
-        Get-BuildLockWaitMessage -StateDir $script:state -Self $PID -SelfStarted ([datetime]::UtcNow) |
-            Should -Be "waiting for alpha's up --build-no-cache (started $at, 1 ahead)..."
+        Get-BuildLockWaitMessage -StateDir $script:state -Self $PID |
+            Should -Be "waiting for alpha's up --build-no-cache (started $at, 2 waiting)..."
     }
 
-    It 'no "ahead" when no waiter arrived earlier' {
+    It 'no count when no other waiter' {
         $holder = Get-Sleeper
         $start = [datetime]::UtcNow
         Add-TestLockFile 'holder.json' @{ pid = $holder.Id; repo = 'alpha'; subcommand = 'build'; started = $start.ToString('o') }
-        Get-BuildLockWaitMessage -StateDir $script:state -Self $PID -SelfStarted ([datetime]::UtcNow) |
+        Get-BuildLockWaitMessage -StateDir $script:state -Self $PID |
             Should -Be "waiting for alpha's build (started $($start.ToLocalTime().ToString('HH:mm')))..."
     }
 
@@ -181,15 +181,15 @@ Describe 'The build lock holder and waiter files' {
         $dead = Get-DeadPid
         Add-TestLockFile 'holder.json' @{ pid = $dead; repo = 'gone'; subcommand = 'up'; started = [datetime]::UtcNow.ToString('o') }
         Add-TestLockFile "waiter-$dead.json" @{ pid = $dead; started = [datetime]::UtcNow.AddMinutes(-2).ToString('o') }
-        Get-BuildLockWaitMessage -StateDir $script:state -Self $PID -SelfStarted ([datetime]::UtcNow) |
+        Get-BuildLockWaitMessage -StateDir $script:state -Self $PID |
             Should -Be 'waiting for another devcontainer build to finish...'
     }
 
     It 'falls back to the plain line with a count when there is no holder file' {
         $earlier = Get-Sleeper
         Add-TestLockFile "waiter-$($earlier.Id).json" @{ pid = $earlier.Id; started = [datetime]::UtcNow.AddMinutes(-2).ToString('o') }
-        Get-BuildLockWaitMessage -StateDir $script:state -Self $PID -SelfStarted ([datetime]::UtcNow) |
-            Should -Be 'waiting for another devcontainer build to finish (1 ahead)...'
+        Get-BuildLockWaitMessage -StateDir $script:state -Self $PID |
+            Should -Be 'waiting for another devcontainer build to finish (1 waiting)...'
     }
 
     It 'a waiter registers while it waits, says the line again when the holder changes, and leaves no waiter file' {
