@@ -86,6 +86,12 @@ below.
   key; the private key is never printed; NAME defaults to `<repo>-<container>-sign`). `task ssh-agent:key:load` (re)loads every key of the
   volume, which is also what the start hook does; a key readable by group or others is refused
   with a message.
+  For a protected key you want in the agent only for a sitting, `task ssh-agent:key:unlock
+  NAME=<file> [MINUTES=15]` loads that one key with a lifetime (`ssh-add -t`), asks for its
+  passphrase on the terminal (same prompt and `passphraseTimeout` as above), and says the clock
+  time it drops out; MINUTES is a positive whole number, at most 480 (8 hours). `task
+  ssh-agent:key:lock NAME=<file>` takes it out sooner and leaves it in the volume (it is the same
+  unload `key:remove` does without `DELETE=1`). Both are key mode only.
 
 ## The opt-in key mode, temporary
 
@@ -269,6 +275,10 @@ orders it behind `go-task` and `common-utils`.
   passphrase is asked again (ssh-add's own three tries). When the time runs out, the passphrase is
   skipped or there is no terminal, it prints the same single warning and goes on with exit 0. The passphrase
   is typed at ssh-add's prompt and never read, logged or passed by this script.
+- **Start hook and `key:unlock`.** A protected key is skipped at start, so `task ssh-agent:key:unlock`
+  is the way to use it: it is not reloaded by the hook, and a key loaded with a lifetime is gone from
+  the agent when the lifetime ends (or at the next container start) and stays gone until unlocked again.
+  A key without a passphrase unlocked this way is reloaded, without a limit, by the next start hook.
 - The key volume is a named volume: a container-engine storage reset deletes it (the key is on your
   host anyway; re-import it).
 

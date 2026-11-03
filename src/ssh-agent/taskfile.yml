@@ -54,6 +54,25 @@ tasks:
     cmds:
       - ssh-agent-setup key-new '{{.NAME}}' '{{.COMMENT}}' '{{.EMPTY_PASSPHRASE}}'
 
+  key:unlock:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Key mode only: load the one key NAME=<file name in the key volume> into the agent for MINUTES (default 15, at most 480) only (ssh-add -t), asking for its passphrase on the terminal (waits up to SSH_AGENT_SETUP_PASSPHRASE_TIMEOUT seconds), and say the clock time it drops out. For a protected key the start hook skips and key:load would load without a limit. Refuses, plainly, when key mode is off, NAME is missing or not in the volume, or MINUTES is not a positive whole number within the limit. key:lock ends it sooner.'
+    interactive: true
+    requires:
+      vars: [NAME]
+    vars:
+      MINUTES: '{{.MINUTES | default "15"}}'
+    cmds:
+      - ssh-agent-setup key-unlock '{{.NAME}}' '{{.MINUTES}}'
+
+  key:lock:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Key mode only: take the key NAME=<file name in the key volume> out of the agent now (what ends a key:unlock sitting), leaving it in the volume; says so when it was not loaded. Never asks for a passphrase. key:remove does the same unload and, with DELETE=1, deletes the file too.'
+    requires:
+      vars: [NAME]
+    cmds:
+      - ssh-agent-setup key-lock '{{.NAME}}'
+
   key:remove:
     dir: '{{.USER_WORKING_DIR}}'
     desc: 'Remove the key NAME=<file name in the key volume> from the agent and, with DELETE=1, from the volume too (otherwise it returns at the next start).'

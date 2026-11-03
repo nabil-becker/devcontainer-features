@@ -153,6 +153,43 @@ check 'unprotected: exits 0' 0 "$rc"
 check 'unprotected: loaded without a terminal' 1 "$(held)"
 lacks 'unprotected: no warning' 'is not loaded' "$out"
 
+# --- key-unlock: one protected key for a sitting. A wrapper ahead of ssh-add on PATH records its
+# arguments, so the test can see the lifetime (-t seconds) that was passed; ssh-add -l does not show it.
+mkdir -p "$T/bin"
+cat >"$T/bin/ssh-add" <<EOF2
+#!/bin/sh
+echo "\$*" >>"$T/sshadd.args"
+exec $(command -v ssh-add) "\$@"
+EOF2
+chmod +x "$T/bin/ssh-add"
+ssh-keygen -q -t ed25519 -N "$PASS" -C protected -f "$KEYS/protected"
+rm -f "$KEYS/plain" "$KEYS/plain.pub"
+ARGS=(key-unlock protected 20)
+fresh
+: >"$T/sshadd.args"
+onterm "$PASS" "PATH=$T/bin:$PATH" SSH_AGENT_SETUP_PASSPHRASE_TIMEOUT=20
+check 'key-unlock: exits 0' 0 "$rc"
+check 'key-unlock: the agent holds the protected key' 1 "$(held)"
+has 'key-unlock: ssh-add was given the lifetime in seconds (20 minutes)' '-t 1200 ' "$(cat "$T/sshadd.args")"
+has 'key-unlock: says how long and until when' 'protected is in the agent for 20 minute(s), until about' "$out"
+lacks 'key-unlock: the passphrase is never printed' "$PASS" "$out"
+# key-lock drops it without any prompt (the .pub is enough), and says so when it was not loaded
+ARGS=(key-lock protected)
+onterm - SSH_AGENT_SETUP_PASSPHRASE_TIMEOUT=20
+check 'key-lock: exits 0' 0 "$rc"
+check 'key-lock: the agent no longer holds it' 0 "$(held)"
+lacks 'key-lock: never prompts' 'Enter passphrase for' "$out"
+onterm - SSH_AGENT_SETUP_PASSPHRASE_TIMEOUT=20
+check 'key-lock of an unloaded key: exits 0' 0 "$rc"
+has 'key-lock of an unloaded key: says so' 'protected was not in the agent' "$out"
+# nobody types: one warning naming the unlock command, nothing loaded
+ARGS=(key-unlock protected 5)
+fresh
+onterm - SSH_AGENT_SETUP_PASSPHRASE_TIMEOUT=2
+has 'key-unlock timeout: warns with the wait' 'no passphrase for protected within 2s' "$out"
+has 'key-unlock timeout: names the unlock command' 'task ssh-agent:key:unlock NAME=protected' "$out"
+check 'key-unlock timeout: nothing loaded' 0 "$(held)"
+
 echo
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

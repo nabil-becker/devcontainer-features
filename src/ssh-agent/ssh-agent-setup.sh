@@ -16,6 +16,9 @@
 #   ssh-agent-setup key-stdin NAME   the key bytes on stdin into the volume (the host task
 #                                    devcontainer:ssh-key-import feeds this; never on a command line)
 #   ssh-agent-setup key-remove NAME [DELETE]  drop a key from the agent (and the volume with DELETE=1)
+#   ssh-agent-setup key-unlock NAME [MINUTES]  load that one key for MINUTES (default 15, at most 480), asking
+#                                    for its passphrase on the terminal; the agent drops it then (ssh-add -t)
+#   ssh-agent-setup key-lock NAME    drop that one key from the agent now, leaving it in the volume
 #   ssh-agent-setup key-rotate [--name OLD] [--new NEW] [--revoke 1] [--scope S] [--empty 1] [--plan]
 #                                    new key, registered as a signing key, git pointed at it and
 #                                    verified, and only then the old one retired (steps below)
@@ -115,15 +118,18 @@ start_agent() { # sets AGENT_STATE: reused | started | failed
 # up to passphrase_wait seconds, and ssh-add re-asks after a wrong one as it always does. With no
 # terminal, wait 0, a timeout or a skipped passphrase it prints ONE warning (the key is not loaded
 # and the command to load it) and returns 1; nothing here ever fails the start.
+# add_key <file> [seconds]: with seconds, the key is added with a lifetime (ssh-add -t) and the agent drops it then.
 ask_ok=0
 key_protected() { ! ssh-keygen -y -P '' -f "$1" </dev/null >/dev/null 2>&1; }
 have_tty() { ( exec </dev/tty ) 2>/dev/null; }
 add_key() {
-  local f="$1" name="${1##*/}" rc err later wait="$passphrase_wait"
+  local f="$1" name="${1##*/}" life="${2:-}" rc err later wait="$passphrase_wait"
+  local -a lifeopt=()
   later="run task ssh-agent:setup from a terminal in the container"
+  if [ -n "$life" ]; then lifeopt=(-t "$life"); later="run task ssh-agent:key:unlock NAME=$name from a terminal in the container"; fi
   case "$wait" in '' | *[!0-9]*) wait=120 ;; esac
   if ! key_protected "$f"; then
-    SSH_ASKPASS_REQUIRE=never SSH_AUTH_SOCK="$SSH_SOCK" ssh-add "$f" </dev/null >/dev/null 2>&1 && return 0
+    SSH_ASKPASS_REQUIRE=never SSH_AUTH_SOCK="$SSH_SOCK" ssh-add "${lifeopt[@]}" "$f" </dev/null >/dev/null 2>&1 && return 0
     warn "could not add $name to the agent; the start continues. Try again: $later"
     return 1
   fi
@@ -141,9 +147,9 @@ add_key() {
   fi
   say "$name has a passphrase: ssh-add asks for it below; waiting up to ${wait}s (SSH_AGENT_SETUP_PASSPHRASE_TIMEOUT), then it is skipped."
   if command -v timeout >/dev/null 2>&1; then
-    err="$(SSH_ASKPASS_REQUIRE=never SSH_AUTH_SOCK="$SSH_SOCK" timeout --foreground "$wait" ssh-add "$f" </dev/null 2>&1 >/dev/null)"; rc=$?
+    err="$(SSH_ASKPASS_REQUIRE=never SSH_AUTH_SOCK="$SSH_SOCK" timeout --foreground "$wait" ssh-add "${lifeopt[@]}" "$f" </dev/null 2>&1 >/dev/null)"; rc=$?
   else
-    err="$(SSH_ASKPASS_REQUIRE=never SSH_AUTH_SOCK="$SSH_SOCK" ssh-add "$f" </dev/null 2>&1 >/dev/null)"; rc=$?
+    err="$(SSH_ASKPASS_REQUIRE=never SSH_AUTH_SOCK="$SSH_SOCK" ssh-add "${lifeopt[@]}" "$f" </dev/null 2>&1 >/dev/null)"; rc=$?
   fi
   [ "$rc" -eq 0 ] && return 0
   [ -t 2 ] && echo >&2
@@ -424,16 +430,49 @@ cmd_key_new() { # [name] [comment] [empty passphrase]
   say "register as a SIGNING key, not an authentication key: a signing-only key cannot log in to anything if it leaks. Replace it later with task ssh-agent:key:rotate."
 }
 
+unload_key() { # <name>: drop the key from the agent at SSH_SOCK (the .pub when there is one, so a protected key is never asked for); says which; 0 when it was loaded
+  local name="$1" ref="$KEY_DIR/$1"
+  [ -f "$ref.pub" ] && ref="$ref.pub"
+  if SSH_AUTH_SOCK="$SSH_SOCK" ssh-add -d "$ref" >/dev/null 2>&1; then say "removed $name from the agent"; return 0; fi
+  say "$name was not in the agent (or no agent answers on $SSH_SOCK)"
+  return 1
+}
+
 cmd_key_remove() { # <name> [delete]
   local name="${1:-}" del="${2:-}"
   safe_name "$name" || exit 1
   [ -f "$KEY_DIR/$name" ] || { warn "no key $name in $KEY_DIR"; exit 1; }
-  if SSH_AUTH_SOCK="$SSH_SOCK" ssh-add -d "$KEY_DIR/$name" >/dev/null 2>&1; then say "removed $name from the agent"
-  else say "$name was not in the agent (or no agent answers on $SSH_SOCK)"; fi
+  unload_key "$name"
   case "$del" in
     1 | true | yes) drop_key_files "$name"; say "deleted $name from $KEY_DIR" ;;
     *) say "$name is still in $KEY_DIR and returns at the next start; DELETE=1 removes it from the volume" ;;
   esac
+}
+
+max_unlock_minutes=480
+cmd_key_unlock() { # <name> [minutes]: one key into the agent for a sitting
+  local name="${1:-}" minutes="${2:-15}" f
+  safe_name "$name" || exit 1
+  require_key_mode
+  case "$minutes" in '' | *[!0-9]* | 0 | 0[0-9]*) warn "MINUTES must be a positive whole number (got '$minutes'); nothing was loaded"; exit 1 ;; esac
+  [ "${#minutes}" -le 4 ] && [ "$minutes" -le "$max_unlock_minutes" ] || { warn "MINUTES $minutes is over the limit of $max_unlock_minutes (8 hours); a longer-lived key is a key:load; nothing was loaded"; exit 1; }
+  f="$KEY_DIR/$name"
+  is_private_key "$f" || { warn "no private key $name in $KEY_DIR (task ssh-agent:keys lists what is loaded; the file names are the ones in the volume); nothing was loaded"; exit 1; }
+  prepare_key_mode
+  if add_key "$f" $((minutes * 60)); then
+    say "$name is in the agent for $minutes minute(s), until about $(date -d "+$minutes minutes" +%H:%M 2>/dev/null || echo "$minutes minutes from now"); lock it sooner with task ssh-agent:key:lock NAME=$name"
+  else
+    exit 1
+  fi
+}
+
+cmd_key_lock() { # <name>: unload one key, keep the file
+  local name="${1:-}"
+  safe_name "$name" || exit 1
+  require_key_mode
+  [ -f "$KEY_DIR/$name" ] || { warn "no key $name in $KEY_DIR"; exit 1; }
+  unload_key "$name"
+  say "$name is still in $KEY_DIR; task ssh-agent:key:unlock NAME=$name loads it again"
 }
 
 # --- git signing ----------------------------------------------------------------
@@ -785,7 +824,7 @@ cmd_key_rotate() {
 cmd="${1:-setup}"
 # Only an explicit command may ask for a passphrase; the start hook (no arguments) never does.
 case "$cmd" in
-  key-load | key-add | key-new | key-rotate) ask_ok=1 ;;
+  key-load | key-add | key-new | key-rotate | key-unlock) ask_ok=1 ;;
   setup) [ "${2:-}" = --ask ] && ask_ok=1 ;;
 esac
 case "$cmd" in
@@ -795,6 +834,8 @@ case "$cmd" in
   key-add) cmd_key_add "${2:-}"; exit 0 ;;
   key-stdin) cmd_key_stdin "${2:-}"; exit 0 ;;
   key-new) cmd_key_new "${2:-}" "${3:-}" "${4:-}"; exit 0 ;;
+  key-unlock) cmd_key_unlock "${2:-}" "${3:-}"; exit 0 ;;
+  key-lock) cmd_key_lock "${2:-}"; exit 0 ;;
   key-remove) cmd_key_remove "${2:-}" "${3:-}"; exit 0 ;;
   key-rotate) cmd_key_rotate "${@:2}"; exit 0 ;;
   key-retire) cmd_key_retire "${@:2}"; exit 0 ;;
