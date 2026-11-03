@@ -62,7 +62,7 @@
     // (task devcontainer:ssh-key-import FILE=...); the start hook skips a protected key, so it is
     // loaded only for an operator act (task ssh-agent:key:load) and removed after (ssh-add -d).
     "./features/ssh-agent": {},
-    // The AOF seed's agentic-register (0.14.1), vendored in local-features/agentic-register
+    // The AOF seed's agentic-register (0.14.4), vendored in local-features/agentic-register
     // (VENDORED.md: replace with the GHCR package once access exists). One register, ledger,
     // with its live store in the Feature's volume and no mirror yet (the import and the mirror
     // to the OneDrive folder come later). Every entry passes the devhost's register guard first:
