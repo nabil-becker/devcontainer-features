@@ -23,6 +23,9 @@ Not for: a repository that only wants a coding agent in a container (add `claude
 [Windows workstation devhost](windows-workstation-devhost.md) and stop there), or one that needs the secrets of
 [secrets with OpenBao](secrets-with-openbao.md): the operator key of the register is the first of those.
 
+`gh` is part of it too: the branch and pull-request tools read pull-request state through it, and its login is one of
+the things a rebuild loses (see the [Windows workstation devhost](windows-workstation-devhost.md)).
+
 In this page "host" is the workstation, as in the other architectures; the devhost's own word for the main Claude
 session is "Host" (see the lexicon), so it is called the host session here.
 
@@ -88,7 +91,8 @@ find them under `.devcontainer/`.
       "commitEmail": "devhost-agent@noreply.invalid",
       "commitWhenEnv": "CLAUDECODE"
     },
-    // The devhost lists gh for pull-request state and the branch tools: add gh as in the Windows architecture.
+    // gh: pull-request state and the branch tools; the login is restored after a rebuild (see the Windows page).
+    "ghcr.io/nabil-becker/devcontainer-features/gh:1": {},
     "ghcr.io/nabil-becker/devcontainer-features/claude-code:1": {},
     // Major 2: the agent list, leases and session names. The list is .devcontainer/agents.yml.
     "ghcr.io/nabil-becker/devcontainer-features/agents:2": {

@@ -10,7 +10,7 @@ the [ADRs](../adr/README.md).
 | --- | --- | --- |
 | [Windows workstation devhost](windows-workstation-devhost.md) | a Windows machine, the checkout in a synced folder, sessions and builds in a container started from PowerShell | `devcontainer-cli`, `git`, `ssh-agent`, `gh`, `go-task`, `common`, `cloud-folder`, `claude-code` |
 | [Secrets with OpenBao](secrets-with-openbao.md) | keys and tokens in one place behind one gate (unseal once per server start, log in once per sitting); phase 1 of ADR 0048 | `openbao`, `ssh-agent`, `gh`, `az` |
-| [Agentic devhost](agentic-devhost.md) | agents do the work and keep the records, with guards and a bot identity | `agents`, `claude-code`, `git`, `phi-check`, `go-task`, and the local `devhost` and `agentic-register` |
+| [Agentic devhost](agentic-devhost.md) | agents do the work and keep the records, with guards and a bot identity | `agents`, `claude-code`, `git`, `gh`, `phi-check`, `go-task`, and the local `devhost` and `agentic-register` |
 | [Kubernetes toolbox](kubernetes-toolbox.md) | rendering and validating manifests, operating Argo CD and Velero, one kubeconfig | `kustomize`, `kubeconform`, `argocd`, `velero`, `kube-state` |
 
 They combine. This repository's own devhost is the Windows workstation devhost with the agentic devhost on top, and
@@ -29,7 +29,7 @@ of its Features depends on another, and it needs only the launcher from the Wind
   volumes, rebuildable only). The test: if losing a machine would lose it, it is in the wrong tier;
 - what runs on the workstation and what runs in the container;
 - **Best practices** and **Anti-patterns** for the combination. An anti-pattern has Don't, Why (a real case: an issue
-  or a dated ledger entry, or "no incident" said plainly), Instead and Caught by (a check, test, guard or ADR, or
+  or a dated ledger entry; a rule with no case is a best practice instead), Instead and Caught by (a check, test, guard or ADR, or
   "nothing yet").
 
 ## The fragments cannot drift

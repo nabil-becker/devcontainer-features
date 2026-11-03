@@ -20,6 +20,24 @@ GitHub CLI (https://cli.github.com) as a member of this collection's ecosystem: 
 | version | GitHub CLI release to install (e.g. '2.80.0', with or without a leading 'v'), or 'latest'. Ignored when an existing gh is kept (install=auto) or install=none. | string | latest |
 | gitCredentialHelper | At post-create, configure git (global config) to take credentials for https://github.com from gh (`!gh auth git-credential`), so git push/pull use the gh login. Override per container with GH_SETUP_GIT_CREDENTIAL_HELPER in containerEnv. | boolean | true |
 
+## How it fits
+
+```text
+  go-task registry --> gh:login, gh:status
+  gh CLI --login--> GitHub
+    |   `--credential helper--> git (shared global config with the git Feature)
+    v
+  volume: GH_CONFIG_DIR  (token, settings)
+```
+
+| Data | Where it lives | Storage tier |
+| --- | --- | --- |
+| Login (token and settings) | named volume at `GH_CONFIG_DIR` (`/var/lib/devcontainer-features/gh`) | 4 working set |
+
+Tiers are the four of ADR 0045: 1 git, 2 shared folder, 3 personal folder, 4 working set (rebuildable only).
+
+Used in: [agentic-devhost](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/reference-architectures/agentic-devhost.md), [windows-workstation-devhost](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/reference-architectures/windows-workstation-devhost.md), [secrets-with-openbao](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/reference-architectures/secrets-with-openbao.md)
+
 ## Augment, don't duplicate
 
 With the default `install: auto` this Feature keeps a `gh` that is already

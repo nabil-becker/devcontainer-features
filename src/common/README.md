@@ -17,6 +17,23 @@ Shared helpers used by this collection's Features: dcf-persist (installed, also 
 |-----|-----|-----|-----|
 | installTaskfile | Also install this Feature's Taskfile into /usr/local/share/go-task/includes.d so its tasks appear under the <id>: namespace of a root Taskfile that includes /usr/local/share/go-task/features.yml (see the go-task Feature). | boolean | true |
 
+## How it fits
+
+```text
+  Features' post-create hooks  --call-->  dcf-persist <dir>
+  a repo's own post-create scripts ----->   (hands a volume or bind mount
+  every installer  --source-->  dcf-curl.sh   to the remote user, reports
+                                              volume | bind | image)
+```
+
+| Data | Where it lives | Storage tier |
+| --- | --- | --- |
+| Nothing of its own | helpers only; the directories it prepares belong to the calling Feature | none |
+
+Tiers are the four of ADR 0045: 1 git, 2 shared folder, 3 personal folder, 4 working set (rebuildable only).
+
+Used in: [windows-workstation-devhost](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/reference-architectures/windows-workstation-devhost.md)
+
 ## What `dcf-persist` does
 
 `dcf-persist [--label <name>] <dir>...` is the one helper behind every

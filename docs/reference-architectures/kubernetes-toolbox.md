@@ -57,7 +57,8 @@ the servers'. The two official Features are not part of this collection and are 
   "image": "mcr.microsoft.com/devcontainers/base:debian",
   "features": {
     "ghcr.io/devcontainers/features/common-utils:2": {},
-    // kubectl only: kube-state orders itself after this Feature, velero reads its kubeconfig, and
+    // kubectl comes from this third-party Feature, which `task architectures:check` skips (it checks only this
+    // collection's Features). kubectl only: kube-state orders itself after this Feature, velero reads its kubeconfig, and
     // kustomize --enable-helm needs helm on PATH if a chart is inflated (then drop "helm": "none").
     "ghcr.io/devcontainers/features/kubectl-helm-minikube:1": {
       "helm": "none",
@@ -86,6 +87,10 @@ the servers'. The two official Features are not part of this collection and are 
   "remoteUser": "vscode"
 }
 ```
+
+`kubectl` comes from the third-party `kubectl-helm-minikube` Feature above, which the check skips, not from this
+collection. `kube-state` serves `kubectl` and `velero` only; `kustomize`, `kubeconform` and `argocd` do not read its
+kubeconfig.
 
 The version numbers are examples: set each to the version of what it talks to, and bump it when that is upgraded
 (`velero version` shows client and server). In the repository, a root `Taskfile.yml` includes the go-task registry
@@ -123,9 +128,11 @@ The kubeconfig and the Argo CD config hold credentials: neither belongs in a syn
 
 - **Pin every CLI to its counterpart.** `kustomize` and `kubeconform` to the versions your pipeline runs, `argocd` to
   the Argo CD server's version and `velero` to the Velero server's. `latest` is resolved once at image build, so two
-  builds a month apart can differ. Commit the lock file (`task devcontainer:lock`).
+  builds a month apart can differ, and the Features do not check that a client matches its server (`velero version`
+  shows both). Commit the lock file (`task devcontainer:lock`).
 - **Validate what Argo CD will sync, then diff, then sync.** `task kubeconform:validate:kustomize DIR=<overlay>` before
-  the push, `task argocd:diff APP=<name>` before `task argocd:sync APP=<name>`: the sync changes the cluster.
+  the push, `task argocd:diff APP=<name>` before `task argocd:sync APP=<name>`: the sync changes the cluster (read the
+  diff first, and check the context with `task kube-state:contexts`; never sync with `--prune` unseen).
 - **Import the kubeconfig once and keep it out of the checkout.** The volume survives a rebuild; for an engine reset,
   bind a host folder on the same target. `kube-state-setup` sets mode 0600 and reports what backs the folder.
 - **Know which tool reads what.** `kubectl` and `velero` read `KUBECONFIG`; `argocd` keeps its own session; `kustomize`
@@ -133,7 +140,8 @@ The kubeconfig and the Argo CD config hold credentials: neither belongs in a syn
 - **Read the lines, not only the exit code, of `task kustomize:build:all`.** It builds every directory and reports at the
   end, and it also builds bases and components that are not meant to render alone, which can show `FAIL`.
 - **Run the schema check online, with a catalog you control.** Point `CRD_CATALOG` at a mirror where the network is
-  restricted; `-strict` rejects unknown fields, so drop it through `KUBECONFORM_FLAGS` only for extension fields you
+  restricted; with the default `-ignore-missing-schemas` an unreachable CRD schema is skipped silently, so a green run offline checks
+  less than it seems to; `-strict` rejects unknown fields, so drop it through `KUBECONFORM_FLAGS` only for extension fields you
   mean.
 - **Add `helm` only if charts are inflated.** `kustomize --enable-helm` and remote bases fetch at build time and need
   the network.
@@ -163,31 +171,7 @@ The kubeconfig and the Argo CD config hold credentials: neither belongs in a syn
   devhost's secrets guard matches known token and PEM private-key patterns, which a kubeconfig's base64
   `client-key-data` or a bearer token does not match.
 
-### K3. A client that drifts from its server
-
-- **Don't:** leave `version` at `latest`, or let `argocd` and `velero` fall behind the servers they talk to.
-- **Why:** no incident in the ledger; the NOTES of `velero` and `argocd` say the Feature does not check the match, and
-  `latest` is resolved at image build, so two builds differ.
-- **Instead:** pin to the server's version, and bump with the server (`velero version` shows both).
-- **Caught by:** nothing yet.
-
-### K4. Trusting an offline `kubeconform` pass
-
-- **Don't:** read a green `kubeconform` run with no network as a full check.
-- **Why:** no incident in the ledger; the NOTES explain that with the default `-ignore-missing-schemas` an unreachable
-  CRD schema is skipped silently, so a green run offline checks less than it seems to.
-- **Instead:** run it where the schema locations answer, point `CRD_CATALOG` at a mirror, or drop the flag through
-  `KUBECONFORM_FLAGS` and accept the failures.
-- **Caught by:** nothing yet.
-
-### K5. Syncing without a diff
-
-- **Don't:** run `task argocd:sync` before `task argocd:diff`, or sync with `--prune` unseen.
-- **Why:** no incident in the ledger; the task changes the cluster, and its description says to diff first.
-- **Instead:** diff, read it, then sync, from a context you have checked with `task kube-state:contexts`.
-- **Caught by:** nothing yet (the task's description is the only guard).
-
-### K6. A hand-written download step for a tool
+### K3. A hand-written download step for a tool
 
 - **Don't:** add your own `curl | tar` step to a post-create script or a Dockerfile for one of these CLIs.
 - **Why:** 2026-10-28 "Diagnosis of the failing kubeconform check on PR #87": a release download was cut off after 90

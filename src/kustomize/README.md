@@ -18,6 +18,22 @@ Installs kustomize (https://kustomize.io), the Kubernetes manifest customization
 | installTaskfile | Also install this Feature's Taskfile into /usr/local/share/go-task/includes.d so its tasks appear under the <id>: namespace of a root Taskfile that includes /usr/local/share/go-task/features.yml (see the go-task Feature). | boolean | true |
 | version | kustomize release to install (e.g. '5.8.3', with or without a leading 'v'), or 'latest'. Pin it to what your CI uses so `kustomize build` output matches. | string | latest |
 
+## How it fits
+
+```text
+  files --> kustomize build --> manifests --> kubeconform (optional pipe)
+  helm on PATH (kubectl-helm-minikube) --> --enable-helm charts
+  (standalone: no kubectl, no KUBECONFIG, no cluster)
+```
+
+| Data | Where it lives | Storage tier |
+| --- | --- | --- |
+| Nothing | installs a binary only; no volume, no hook | none |
+
+Tiers are the four of ADR 0045: 1 git, 2 shared folder, 3 personal folder, 4 working set (rebuildable only).
+
+Used in: [kubernetes-toolbox](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/reference-architectures/kubernetes-toolbox.md)
+
 ## What it installs
 
 The `kustomize` release binary from `github.com/kubernetes-sigs/kustomize`,

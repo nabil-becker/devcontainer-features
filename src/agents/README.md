@@ -18,6 +18,30 @@ One list of a repository's agents (.devcontainer/agents.yml, or the repo-relativ
 | sessionName | The template of the session name the CLI shows for each agent (what Claude Code's remote view lists), for every agent without a session-name key of its own in the agent list. {handle} (the agent's name), {repo} (the repository folder's name) and {machine} (the workstation's name, DCF_HOST_MACHINE; the word container when it is unset) with free text around them, for example "{machine} {handle}". Letters, digits, space and . _ : @ / ( ) - only; at most 60 characters rendered; refused, never cut. The default shows the handle, as before 2.1. AGENTS_SESSION_NAME in .env or the environment overrides it. | string | {handle} |
 | installTaskfile | Also install this Feature's Taskfile into /usr/local/share/go-task/includes.d so its tasks appear under the <id>: namespace of a root Taskfile that includes /usr/local/share/go-task/features.yml (see the go-task Feature). | boolean | true |
 
+## How it fits
+
+```text
+  host: task devcontainer:agent -- <name>
+          |
+          v                    container
+  task agents -- <name>
+          |  reads .devcontainer/agents.yml (the repository's list)
+          |
+  agents -+-- adapter on PATH: agent-adapter-claude (from claude-code)
+          +-- leases, this container only
+          `-- tasks through go-task (agents: namespace)
+```
+
+| Data | Where it lives | Storage tier |
+| --- | --- | --- |
+| Agent list | `.devcontainer/agents.yml` in the repository | 1 git |
+| Leases and start markers | `/var/lib/devcontainer-features/agents`, not a volume; a lease must not survive a rebuild | 4 working set |
+| Agents' sessions | the CLI's own state (claude-code's volume) | 4 working set |
+
+Tiers are the four of ADR 0045: 1 git, 2 shared folder, 3 personal folder, 4 working set (rebuildable only).
+
+Used in: [agentic-devhost](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/reference-architectures/agentic-devhost.md)
+
 ## What it installs
 
 One standard way to start any agent, whatever its CLI. A repository declares its agents in one
@@ -471,6 +495,22 @@ the background (...)`).
   with several residents waits at most that per agent held `starting`.
 - Tested with fake adapters and a fake `claude` (`task test:agents-unit`, `task
   test:claude-unit`); no live CLI in CI.
+
+## Anti-patterns
+
+### Don't start a stateful agent outside `agents`
+
+- **Don't:** start a resident or on-demand agent by hand (`claude --bg --name <agent>`) or add your own locking around the start.
+- **Why:** the lease guards starts through `agents` only (see "Limits"), and it exists because the published 2.0.0 had three races in its own lock: 2026-10-30, "Lease takeover fix agents 2.0.2 merged (PR #122)", found through a flaky concurrency test.
+- **Instead:** start through `agents` (`task agents`, `agents:up`), and free a lease with `task agents:release -- <name>` (`--force` only for a live holder you mean to take over).
+- **Caught by:** `task test:agents-lease` covers the lease itself; a session started by hand is not prevented, only shown afterwards by the duplicate report (`+N`, `agents stop --extras`). Nothing stops it yet.
+
+### Don't name a CLI in the vendor-neutral Feature
+
+- **Don't:** special-case one CLI by name in `agents` (or in an adapter's callers), or put a vendor feature such as Remote Control into the `agents` spec.
+- **Why:** 2026-10-29, "Design split agreed: Remote Control in the Claude adapter, session names in the agents spec", and 2026-10-29, "Contract test suite for agents adapters, two fake CLIs": a contract that works on one vendor only is not a contract.
+- **Instead:** each adapter chooses its own route; `agents` asks `supports` ("can it") and relies on the verb's exit code (3: not supported) at run time, with the documented fallback.
+- **Caught by:** `task test:agents-contract` (it fails when a list using only the second fake CLI runs anything named `claude`, and greps that `src/agents` names `claude` only in its documented places); ADR 0037.
 
 ## Why it exists
 

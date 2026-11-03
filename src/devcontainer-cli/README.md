@@ -19,6 +19,25 @@ Installs @devcontainers/cli as /usr/local/bin/devcontainer, backed by a private,
 | version | @devcontainers/cli npm version to install (e.g. '0.89.0'), or 'latest'. | string | latest |
 | nodeVersion | Node.js release used privately by the CLI. Downloaded from nodejs.org and verified against its SHASUMS256.txt. | string | 24.21.0 |
 
+## How it fits
+
+```text
+  host: task devcontainer:* (launcher; bootstrap vendored into the repo)
+     |  adds mounts: ~/.git-dirs, ssh agent socket, cloud folder
+     v
+  devcontainer CLI  --needs--> Docker daemon
+  (private Node in /opt/devcontainer-cli,    (docker-in-docker, or
+   not on PATH)                               docker-outside-of-docker)
+```
+
+| Data | Where it lives | Storage tier |
+| --- | --- | --- |
+| Nothing | installs binaries only; no volume, no `containerEnv`, no hook | none |
+
+Tiers are the four of ADR 0045: 1 git, 2 shared folder, 3 personal folder, 4 working set (rebuildable only).
+
+Used in: [windows-workstation-devhost](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/reference-architectures/windows-workstation-devhost.md)
+
 ## What it installs
 
 The `@devcontainers/cli` npm package, run on a private Node.js build, so
@@ -473,6 +492,36 @@ the host type needs; ADR 0024 decides it, `docs/proposals/host-profile.md` is th
 - **Not covered.** A container started by VS Code's Reopen in Container never passes through the launcher, so it gets the
   repository's own line only; there `${localEnv:DCF_HOST_HOME}` is empty and the line must use `${localEnv:USERPROFILE}`
   (Windows host) or `${localEnv:HOME}`.
+
+## Anti-patterns
+
+### Don't switch off the build lock on an engine without BuildKit build contexts
+
+- **Don't:** set `DEVCONTAINER_BUILD_LOCK=0` to avoid waiting on `wslc`, or on any engine where the launcher says the lock is kept.
+- **Why:** without BuildKit build contexts, `@devcontainers/cli` tags every repository's Feature content image `dev_container_feature_content_temp`, so two builds at once overwrite each other and the first fails with `... not found`. The wait itself was unreadable until issue #154 (2026-11-03, "Build lock names its holder and is skipped with BuildKit build contexts (#154)"): an `up` waited behind unrelated no-cache builds with no clue why.
+- **Instead:** read the waiting line (it names the holder's repository, subcommand and how many wait); where `buildx` is 0.8.0 or later the launcher skips the lock itself.
+- **Caught by:** by design: `DEVCONTAINER_BUILD_LOCK=0` is a documented override, so it is not guarded; `task test:build-lock` covers the lock and its skip.
+
+### Don't run the raw `devcontainer up` right after a rebuild or an engine restart
+
+- **Don't:** call `devcontainer up` directly, or re-run it blindly, while the engine may not answer yet.
+- **Why:** 2026-11-02, "Docker ps failures in two stacks traced to the engine, not a race": `devcontainer up` failed with `Command failed: docker ps -q -a ...` and hid the engine's own error.
+- **Instead:** go through the launcher (`task dc:up`): it checks the engine first, waits up to `DEVCONTAINER_ENGINE_WAIT` seconds, validates arguments (a nameless `dc:agent` is refused, 2026-11-02, "Engine wait before up and nameless dc:agent refusal") and prints the engine's own error.
+- **Caught by:** `task test:engine-wait` (it is wall-clock based and has flaked: entries of 2026-11-02 and 2026-11-03).
+
+### Don't retry a Docker Desktop backend failure as if it were a race
+
+- **Don't:** re-run `task dc:up` when container creation fails with "mount path must be absolute" on a Windows path, or "failed to connect to the backend".
+- **Why:** 2026-11-03, "Docker Desktop build error explained: mount path fault, not the repository": the backend was down, not the repository, and the launcher's text said "run the task again".
+- **Instead:** restart Docker Desktop (or `wsl --shutdown`), then `task dc:up`.
+- **Caught by:** nothing yet (open item `launcher-docker-backend-message`).
+
+### Don't leave the `DCF_HOST_MACHINE` line out of `devcontainer.json`
+
+- **Don't:** upgrade the launcher and keep a `devcontainer.json` whose `containerEnv` has no `"DCF_HOST_MACHINE": "${localEnv:DCF_HOST_MACHINE}"`.
+- **Why:** 2026-10-30, "devcontainer-cli 1.16.2 launcher passes DCF_HOST_MACHINE ...": the container never sees the variable, so the `agents` session names show `container` for `{machine}`. (The same kind of gap: the root Taskfile include for `cloud-folder:login`, 2026-10-29, "cloud-folder:login built as one command ...".)
+- **Instead:** copy the line from the bootstrap's `devcontainer.json`; the launcher warns and prints the exact line when it is missing, and the Feature's CHANGELOG names a consumer action when a release needs one.
+- **Caught by:** the launcher's warning, tested in `task test:bootstrap` and its PowerShell twin.
 
 ## Why this one exists
 

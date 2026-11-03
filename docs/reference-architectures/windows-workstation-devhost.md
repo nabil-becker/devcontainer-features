@@ -71,6 +71,7 @@ The Features of this architecture, with the lines the launcher needs. `task devc
     // `devcontainer features test` or a nested `devcontainer up`.
     "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {},
     "ghcr.io/nabil-becker/devcontainer-features/go-task:1": {},
+    // Optional: every other Feature carries its own copy of the helpers, so nothing here needs it.
     "ghcr.io/nabil-becker/devcontainer-features/common:1": {},
     "ghcr.io/nabil-becker/devcontainer-features/devcontainer-cli:1": {},
     "ghcr.io/nabil-becker/devcontainer-features/git:1": {
@@ -114,8 +115,10 @@ Also in the repository: a root `Taskfile.yml` that includes the vendored `devcon
 `optional: true`) and the go-task registry (`/usr/local/share/go-task/features.yml`, `flatten: true`), and a
 git-ignored `.devcontainer/.env` for the settings of this machine. The bootstrap one-liner writes all of it.
 
-`common` is listed because a repository's own post-create scripts may call `dcf-persist` and `dcf-curl`; every
-other Feature carries its own copy, so none of them needs it. `claude-code` alone starts a session with the
+`common` is optional: it is listed only because a repository's own post-create scripts may call `dcf-persist` and
+`dcf-curl`; every other Feature carries its own copy of those helpers, so none of them needs it, and you can leave it
+out. The agent tooling (`agents`) is not part of this architecture; it comes from the
+[agentic devhost](agentic-devhost.md) page. `claude-code` alone starts a session with the
 deprecated `task devcontainer:claude` (removed in claude-code 2.0); the one verb that replaces it,
 `task devcontainer:agent`, needs the `agents` Feature, which the [agentic devhost](agentic-devhost.md) adds.
 

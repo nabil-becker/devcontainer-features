@@ -105,6 +105,8 @@ What you can build today: the CLI in client mode, the agent socket, and the two 
 }
 ```
 
+`gh` and `az` are the logins that move into OpenBao in the last slice; until then each keeps its own login.
+
 Log in with `task openbao:login` (`-- -method=oidc` where the server offers it). Today a rebuild logs you out; the
 stopgap in the Feature's notes is `BAO_TOKEN` in the container's environment, set from a variable on the host or an
 env file kept out of git, and a stale value there beats a fresh login. The state volume (1.1.0) ends that.
@@ -162,7 +164,8 @@ hold, which is why ADR 0048 names a bounded-loss exception for server mode and w
 ## Best practices
 
 - **Pin `openbao`'s `version` to the server's.** The CLI and the server should agree, and `latest` is resolved at
-  image build, so two builds a month apart differ.
+  image build, so two builds a month apart differ, and a release can drop a storage backend (2.7.0 removed `file`).
+  After a login unset or update `BAO_TOKEN`: a stale value makes `permission denied` appear right after a fresh login.
 - **Prefer a central server when you have one.** Client mode meets ADR 0045 outright. Server mode is for one machine
   with no server, and then the backup choice is made at `openbao:init`, never defaulted.
 - **Keep the backups where a lost machine cannot take them, and the shares somewhere else.** A snapshot is
@@ -171,6 +174,12 @@ hold, which is why ADR 0048 names a bounded-loss exception for server mode and w
   fetches the key with `dcf-secret`, pipes it to `ssh-add -t <seconds> -` and says when it drops out; the key is
   never written to a file. Ledger entry 2026-11-03 "ssh-agent 1.3.0 adds timed key unlock and key lock" records the
   mechanism, tested on OpenSSH 10.0.
+- **Never fall back to another source for a secret.** When `dcf-secret` fails, fail with its exit code and one-line
+  fix and let the Operator unseal or log in: a second source would be a second master, and a sealed server is meant
+  to stop signing (ADR 0048, proposal section 6).
+- **Keep shares and tokens out of a transcript.** Run `openbao:init`, `unseal`, `login`, `restore` and any wrap in a
+  plain terminal, never in an agent's job or a chat: the scribe reads the session's transcript, so a share printed
+  there is a secret in the ledger's input (ADR 0048, decision 4). The tasks refuse when `DEVHOST_JOB_CHILD` is set.
 - **Sign with only the public key present.** `git:signing` and `git:verify` need the public half; the private half
   arrives and leaves with the sitting.
 - **Ask for a secret through `dcf-secret` and nothing else.** Its exit codes (10 unreachable, 11 sealed, 12 no or
@@ -212,35 +221,7 @@ hold, which is why ADR 0048 names a bounded-loss exception for server mode and w
   OpenBao; until 1.4.0, timed unlock is for protected keys.
 - **Caught by:** the NOTES only; the backlog item for the start-hook reload is open.
 
-### S4. A fallback source for a secret
-
-- **Don't:** read a key from a volume, a file or an environment variable when `dcf-secret` fails.
-- **Why:** no incident yet; ADR 0048 and proposal section 6 give the reason: a second source would be a second master,
-  and a sealed server is meant to stop signing, since an agent that cannot reach the master must not find a key
-  elsewhere.
-- **Instead:** fail with the exit code and its one-line fix, and let the Operator unseal or log in.
-- **Caught by:** nothing yet (the `dcf-secret` tests in slice 1 include "no fallback when sealed").
-
-### S5. Shares or tokens in a transcript
-
-- **Don't:** run `openbao:init`, `unseal`, `login`, `restore` or a wrap in an agent's job, or paste a share into a chat.
-- **Why:** no incident yet; the scribe reads the session's transcript, and a share or a token printed in it is a
-  secret in the ledger's input. ADR 0048 decision 4 makes the refusal a rule.
-- **Instead:** a plain terminal; the tasks are interactive and refuse when a job environment (`DEVHOST_JOB_CHILD`) is
-  set; `-pgp-keys` where new shares are printed.
-- **Caught by:** nothing yet (built and tested per task in slice 2a).
-
-### S6. A moving version against a pinned server
-
-- **Don't:** leave `version` at `latest` when the server is pinned, or assume the storage backends of one release exist
-  in the next.
-- **Why:** no incident yet; proposal section 13 found that `latest` installs a release without the `file` backend
-  (removed in 2.7.0) and the NOTES warn that a stale `BAO_TOKEN` makes `permission denied` appear right after a fresh
-  login.
-- **Instead:** pin `version` to the server's; unset or update `BAO_TOKEN` after a login.
-- **Caught by:** nothing yet.
-
-### S7. A certificate for GitHub signing
+### S4. A certificate for GitHub signing
 
 - **Don't:** rely on OpenBao's SSH certificates to make GitHub show a commit as verified.
 - **Why:** 2026-11-03 "Secrets master split proposal written": GitHub's documentation describes verification against
