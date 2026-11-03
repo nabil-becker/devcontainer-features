@@ -32,6 +32,6 @@ tasks:
 
   setup:
     dir: '{{.USER_WORKING_DIR}}'
-    desc: 'Re-run the post-create setup: make OPENBAO_STATE_DIR usable by the current user, link ~/.vault-token into it, report the address and whether a login is saved (idempotent; OPENBAO_SETUP_MODE overrides the Feature option).'
+    desc: 'Re-run the post-create setup: make OPENBAO_STATE_DIR usable by the current user, move a token left in ~/.vault-token into it, report the token helper, the address and whether a login is saved (idempotent; OPENBAO_SETUP_MODE overrides the Feature option).'
     cmds:
       - openbao-setup

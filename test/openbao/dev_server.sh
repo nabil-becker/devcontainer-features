@@ -2,8 +2,8 @@
 # Scenario 'dev_server' (see scenarios.json): dcf-secret against a real `bao server -dev` (in
 # memory, unsealed, KV v2 at `secret/`), remoteUser=vscode. This is what shows the real bao gives
 # the signals the Docker-free tests (test/openbao/unit) only stub: `bao status` exit codes, the
-# capabilities words, kv get and put through stdin, and a login written through the link into
-# the volume. A dev server is not the server mode of a later version; it exists for this test.
+# capabilities words, kv get and put through stdin, and a login kept by the token helper in the
+# volume. A dev server is not the server mode of a later version; it exists for this test.
 set -e
 # shellcheck disable=SC1091  # provided by the devcontainer CLI at test time
 source dev-container-features-test-lib
@@ -23,7 +23,7 @@ done
 # checks do not depend on the order of the volume's own state.
 home="$(mktemp -d)"
 state="$(mktemp -d)"
-as_nobody() { env -u BAO_TOKEN HOME="$home" OPENBAO_STATE_DIR="$state" "$@"; }
+as_nobody() { env -u BAO_TOKEN HOME="$home" OPENBAO_STATE_DIR="$state" BAO_CONFIG_PATH=/usr/local/share/openbao-feature/bao-config.hcl "$@"; }
 
 rc=0; as_nobody dcf-secret get ssh/x >/dev/null 2>&1 || rc=$?
 check "no token is exit 12" [ "$rc" = 12 ]
@@ -72,13 +72,23 @@ check "status denied for a name it may not read" [ "$(BAO_TOKEN="$limited" dcf-s
 rc=0; BAO_TOKEN=not-a-token dcf-secret get ok >/dev/null 2>&1 || rc=$?
 check "a bad token is exit 12" [ "$rc" = 12 ]
 
-# bao login writes through the link into the volume, and the saved login is then used
+# bao login goes through the token helper into the state dir (the helper is the CLI's own way to
+# keep the token elsewhere: its internal one writes ~/.vault-token by a rename), and the saved
+# login is then used; revoking it erases it.
 unset BAO_TOKEN
+check "BAO_CONFIG_PATH is the Feature's, from containerEnv" [ "$BAO_CONFIG_PATH" = /usr/local/share/openbao-feature/bao-config.hcl ]
 as_nobody openbao-setup >/dev/null
-as_nobody bao login -no-print "$root" >/dev/null
-check "the home token file is still the link" [ "$(readlink "$home/.vault-token")" = "$state/token" ]
+as_nobody bao login -no-print "$limited" >/dev/null
 check "the login landed in the state dir" [ -s "$state/token" ]
+check "the token file is mode 600" [ "$(stat -c %a "$state/token")" = 600 ]
+check "nothing was written to the home folder" [ -z "$(ls -A "$home")" ]
+check "the state dir holds the token bao was given" [ "$(cat "$state/token")" = "$limited" ]
 check "dcf-secret uses the saved login" [ "$(as_nobody dcf-secret get ok)" = fine ]
+check "status is ready with the saved login" [ "$(as_nobody dcf-secret status ok)" = ready ]
+as_nobody bao token revoke -self >/dev/null
+check "bao token revoke -self erases the token through the helper" [ ! -e "$state/token" ]
+rc=0; as_nobody dcf-secret get ok >/dev/null 2>&1 || rc=$?
+check "after the revoke there is no login (exit 12)" [ "$rc" = 12 ]
 
 rc=0; BAO_ADDR=http://127.0.0.1:1 dcf-secret get ok >/dev/null 2>&1 || rc=$?
 check "a closed port is exit 10" [ "$rc" = 10 ]

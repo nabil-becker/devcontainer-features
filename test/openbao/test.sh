@@ -21,8 +21,12 @@ check "openbao-setup on PATH" command -v openbao-setup
 check "dcf-secret on PATH" command -v dcf-secret
 check "mode baked for openbao-setup" grep -q '^MODE=client$' /usr/local/share/openbao-feature/options.env
 check "openbao-setup reports the state dir" bash -c "openbao-setup | grep -E '^openbao: /var/lib/devcontainer-features/openbao \((volume|bind|image), writable\)$'"
-check "openbao-setup links the login token into it" bash -c "openbao-setup >/dev/null; [ \"\$(readlink ~/.vault-token)\" = /var/lib/devcontainer-features/openbao/token ]"
-check "second run keeps it" bash -c "openbao-setup | grep -F 'kept)'"
+# shellcheck disable=SC2016  # expansion is meant to happen inside the inner bash
+check "BAO_CONFIG_PATH names the Feature's token-helper config" bash -c '[ "$BAO_CONFIG_PATH" = /usr/local/share/openbao-feature/bao-config.hcl ]'
+check "the config names the token helper" grep -qx 'token_helper = "/usr/local/bin/openbao-token-helper"' /usr/local/share/openbao-feature/bao-config.hcl
+check "the token helper is on PATH and executable" test -x /usr/local/bin/openbao-token-helper
+check "openbao-setup says the token helper is in effect" bash -c "openbao-setup | grep -F 'token helper in effect'"
+check "the helper round-trips a token in the state dir (mode 600)" bash -c "d=\$(mktemp -d) && printf tok | OPENBAO_STATE_DIR=\$d openbao-token-helper store && [ \"\$(OPENBAO_STATE_DIR=\$d openbao-token-helper get)\" = tok ] && [ \"\$(stat -c %a \$d/token)\" = 600 ] && OPENBAO_STATE_DIR=\$d openbao-token-helper erase && [ ! -e \$d/token ]"
 check "task openbao:setup is in the Taskfile" grep -q '^  setup:' /usr/local/share/go-task/includes.d/openbao.yml
 
 # dcf-secret with no server: unreachable, exit 10, one line (a closed port, no waiting on a host)

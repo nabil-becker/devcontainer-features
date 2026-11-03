@@ -1,7 +1,7 @@
 
 # OpenBao CLI (openbao)
 
-Installs the OpenBao CLI (https://openbao.org), the open-source Vault fork, as a release binary at /usr/local/bin/bao, verified against the release's checksums.txt. Owns the login state as a named volume at OPENBAO_STATE_DIR=/var/lib/devcontainer-features/openbao (~/.vault-token is linked into it by the post-create hook openbao-setup) so `bao login` survives rebuilds, and installs dcf-secret, the one command the collection's Features use to read and write secrets (get, put, status, with fixed exit codes). Set BAO_ADDR in containerEnv to point it at your server.
+Installs the OpenBao CLI (https://openbao.org), the open-source Vault fork, as a release binary at /usr/local/bin/bao, verified against the release's checksums.txt. Owns the login state as a named volume at OPENBAO_STATE_DIR=/var/lib/devcontainer-features/openbao (bao's token helper, set through BAO_CONFIG_PATH, keeps the token in it) so `bao login` survives rebuilds, with the post-create hook openbao-setup, and installs dcf-secret, the one command the collection's Features use to read and write secrets (get, put, status, with fixed exit codes). Set BAO_ADDR in containerEnv to point it at your server.
 
 ## Example Usage
 
@@ -28,7 +28,7 @@ checks the tarball with `sha256sum -c`, and installs the binary only if the
 check passes. It runs `bao version` at the end, so the version is in the
 build log. It installs no OpenBao server and no `vault` command.
 
-Besides the binary, `install.sh` puts three scripts on PATH (nothing is downloaded for them):
+Besides the binary, `install.sh` puts four scripts on PATH (nothing is downloaded for them):
 `dcf-secret` (the interface callers use to read and write secrets, see below), `openbao-setup`
 (the post-create hook, see State) and `dcf-persist` (a verbatim copy of `src/common/dcf-persist.sh`,
 which makes the state directory usable and says what backs it). It writes the option defaults the
@@ -70,30 +70,44 @@ Owned by the Feature (NFR-1), like `gh` and `az`:
   follows the repository's convention (`<id>-config-${devcontainerId}`, as `gh-config-` and
   `az-config-`) and supersedes `openbao-${devcontainerId}`, which the proposal
   `docs/proposals/secrets-master-split.md` (section 3) wrote before it checked the convention.
+- `containerEnv` also sets `BAO_CONFIG_PATH=/usr/local/share/openbao-feature/bao-config.hcl`, a
+  config whose one line, `token_helper = "/usr/local/bin/openbao-token-helper"`, makes `bao` keep
+  its login token in the volume, at `$OPENBAO_STATE_DIR/token` (mode 600). Because it is
+  `containerEnv`, it holds for every process, `devcontainer exec` and agents' shells included.
+  **A rebuild keeps the login.**
 - The post-create hook `openbao-setup` (also `task openbao:setup`) runs `dcf-persist`, so the
-  folder belongs to the remote user and the log says what backs it, then makes `~/.vault-token`,
-  where `bao login` keeps its token, a link to `$OPENBAO_STATE_DIR/token`. **A rebuild keeps the
-  login.** The hook never contacts the server and never fails the rest of post-create.
+  folder belongs to the remote user and the log says what backs it, and says whether the token
+  helper is in effect. A token already in `~/.vault-token` (a login from before this Feature) is
+  moved into the volume once, when the volume has none. The hook never contacts the server and
+  never fails the rest of post-create.
 
-`bao` has no variable for the token's folder (`gh` has `GH_CONFIG_DIR`), which is why the link
-exists and `OPENBAO_STATE_DIR` is this Feature's own name. A repo that wants the state on the host
-disk bind-mounts the same target and its mount wins (the README's "How the pieces fit"); a repo can
-point `OPENBAO_STATE_DIR` elsewhere in its own `containerEnv`.
+How `bao` finds the helper, confirmed in OpenBao's source (`internal/command/config` and
+`internal/command/token`, v2.1.1 and v2.7.1): the CLI reads an HCL config at `~/.bao`, or at the
+path in `BAO_CONFIG_PATH`, and a `token_helper` in it names an absolute path to an executable
+that `bao` runs as `<helper> get`, `store` (token on stdin) or `erase`. Without one, `bao` uses
+its internal helper, which writes `~/.vault-token` through a temporary file and a rename: a link
+to the volume at that path is replaced by the first `bao login`, which is why the Feature does
+not use one. The helper is a few lines of `sh` (`openbao-token-helper`) and the token is written
+atomically.
 
 - **The server address** is `BAO_ADDR`, which the Feature does not set. Put it in `containerEnv`.
-- **`bao token revoke -self`** removes the link (the CLI deletes `~/.vault-token`, not what it
-  points at). The next `bao login` writes a real file; the next run of the hook moves it into the
-  volume and links it again, so the newer login wins over the revoked one left in the volume.
+- **A repo that sets its own `BAO_CONFIG_PATH`** (or whose `containerEnv` leaves this one out)
+  replaces the Feature's config; the hook says so. Add `token_helper =
+  "/usr/local/bin/openbao-token-helper"` to that config to keep the login in the volume. A repo
+  that wants the state on the host disk bind-mounts the volume's target (the README's "How the
+  pieces fit"), or points `OPENBAO_STATE_DIR` elsewhere in its own `containerEnv`.
+- **`bao token revoke -self`** and `bao logout` run the helper's `erase`: the token file is
+  removed and the next `dcf-secret` call says to log in.
 - **`BAO_TOKEN`** in the environment takes precedence over the saved login (the hook says so). It
   is a way to give a container a token without a login, for a service that cannot run `bao login`:
   set it in `containerEnv` from a host variable (`"BAO_TOKEN": "${localEnv:BAO_TOKEN}"`) or an env
   file the repo keeps out of git. A stale value there makes `permission denied` appear even right
   after a fresh `bao login`; unset it or update it. Never commit it.
-- Not offered: a bind mount of the single file `~/.vault-token` from the host (a single-file mount
-  breaks when `bao login` replaces the file rather than writing into it).
+- OpenBao 2.6.0 and later also read `BAO_TOKEN_PATH` (the internal helper's file, still written by
+  a rename); the Feature uses the token helper because it works for every version `version` can pin.
 
 Upgrading from 1.0.x: the volume starts empty, so log in once after the rebuild; a login made
-before it was in `~/.vault-token` of the old container is gone with that container.
+before it, in `~/.vault-token` of the old container, is gone with that container.
 
 ## `dcf-secret`
 
@@ -181,7 +195,7 @@ The build log carries the first line (`openbao: downloading OpenBao
 v<version> (openbao_<version>_linux_<arch>.tar.gz)...`, then the `bao
 version` output). A failed checksum stops the build with `sha256sum`'s
 `FAILED` line. The post-create log has the hook's lines: `openbao: /var/lib/devcontainer-features/openbao
-(volume, writable)`, `openbao: mode client ...`, `openbao: login token linked into the state dir`,
+(volume, writable)`, `openbao: mode client ...`, `openbao: token helper in effect`,
 the version, `BAO_ADDR`, and whether a login is saved. `volume` in the first line is what keeps the
 login across rebuilds; `image` means the mount is missing.
 
@@ -213,7 +227,7 @@ registry, these appear under `openbao:`:
   `task openbao:kv:get KEY=secret/app -- -format=json`.
 
 - `openbao:setup`: re-run the post-create hook (`openbao-setup`): make the state directory usable,
-  link `~/.vault-token` into it, report the address and the saved login.
+  move a token left in `~/.vault-token` into it, report the token helper, the address and the saved login.
 
 No task reads a variable besides `KEY`; the address and token come from
 `BAO_ADDR` and `BAO_TOKEN` in the container's environment, as for `bao`
@@ -236,8 +250,8 @@ itself.
 - Client mode only: there is no server, backup, onboarding or `DCF_SECRET_AS` in this version.
 - `dcf-secret` asks `bao` up to three questions after a failure, so a failure costs a few round
   trips; a success costs one. It assumes a KV v2 mount (the data lives under `<mount>/data/`).
-- The link relies on `bao login` writing through the link to the volume; the container test
-  `dev_server` checks it against a real `bao`.
+- The login is kept by a token helper `bao` runs as a shell command on every call that needs the
+  token; the container test `dev_server` checks login, use and revoke against a real `bao`.
 - `bao status` fails with a connection or certificate error: `BAO_ADDR` is
   unset or wrong, or the server's CA is not trusted in the image.
 - A `BAO_TOKEN` in the environment takes precedence over the saved login (see State).
@@ -276,7 +290,7 @@ Nothing is removed; `mode` stays `client`.
 
 #### Added
 
-- **Your `bao login` now survives a rebuild.** The Feature owns a named volume (`openbao-config-<devcontainerId>`, at `/var/lib/devcontainer-features/openbao`, named by `OPENBAO_STATE_DIR`) and a post-create hook, `openbao-setup` (also `task openbao:setup`), that links `~/.vault-token` into it, the way `gh` and `az` keep their logins. **You must act once:** rebuild the container and run `bao login` again, because the volume starts empty. Nothing to configure; a repo that wants the state on the host disk bind-mounts the same target. A `BAO_TOKEN` in the environment still takes precedence over the saved login.
+- **Your `bao login` now survives a rebuild.** The Feature owns a named volume (`openbao-config-<devcontainerId>`, at `/var/lib/devcontainer-features/openbao`, named by `OPENBAO_STATE_DIR`) and points `bao` at a token helper (`BAO_CONFIG_PATH`, set in `containerEnv`, so it holds for `devcontainer exec` too) that keeps the token there, as `gh` and `az` keep their logins. The post-create hook, `openbao-setup` (also `task openbao:setup`), makes the folder usable and moves a token left in `~/.vault-token` into it once. **You must act once:** rebuild the container and run `bao login` again, because the volume starts empty. A repo that sets its own `BAO_CONFIG_PATH` replaces the Feature's config (the hook says so); add `token_helper = "/usr/local/bin/openbao-token-helper"` to it. A repo that wants the state on the host disk bind-mounts the same target. A `BAO_TOKEN` in the environment still takes precedence over the saved login.
 - **`dcf-secret`**, a command for scripts and other Features to read and write a secret without knowing where the server runs: `dcf-secret get <name>`, `dcf-secret put <name> --field <field>` (the value on stdin) and `dcf-secret status`. `put` writes only that field and keeps the secret's other fields (it creates the secret when it does not exist); `--replace` makes the secret exactly that one field. A token whose policy lacks the `patch` capability is refused with exit 13 rather than silently replacing the secret. It fails with fixed exit codes (10 unreachable, 11 sealed, 12 not logged in, 13 denied, 14 no such secret), each with one line saying what to do, and never falls back to a key on disk. Secrets live in a KV v2 mount named `dcf` (`DCF_SECRET_MOUNT` changes it). Nothing to do unless you want it; `task openbao:kv:get` is unchanged.
 - **The `mode` option**, with the one value `client` (the default, what the Feature always did: the CLI against a server outside the container). A later version adds `server`. `OPENBAO_SETUP_MODE` in `containerEnv` overrides it per container. Nothing to do.
 - `task openbao:setup`: re-runs the post-create hook.

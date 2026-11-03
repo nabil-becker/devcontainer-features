@@ -92,6 +92,13 @@ chmod 0644 "$share/options.env"
 install -m 0755 "$feature_dir/dcf-secret.sh" /usr/local/bin/dcf-secret
 install -m 0755 "$feature_dir/openbao-setup.sh" /usr/local/bin/openbao-setup
 install -m 0755 "$feature_dir/dcf-persist.sh" /usr/local/bin/dcf-persist
+# bao's token helper: the CLI's own way to keep its token elsewhere than ~/.vault-token. bao finds
+# the config through BAO_CONFIG_PATH (containerEnv of this Feature, so it holds for every process,
+# `devcontainer exec` included); the helper keeps the token in OPENBAO_STATE_DIR.
+install -m 0755 "$feature_dir/openbao-token-helper.sh" /usr/local/bin/openbao-token-helper
+printf '%s\n' '# Written by the openbao Feature: bao keeps its login token in the Feature'"'"'s volume.' \
+  'token_helper = "/usr/local/bin/openbao-token-helper"' > "$share/bao-config.hcl"
+chmod 0644 "$share/bao-config.hcl"
 
 # ---------------------------------------------------- Feature Taskfile ----
 # Drop this Feature's taskfile.yml where the go-task Feature's registry picks

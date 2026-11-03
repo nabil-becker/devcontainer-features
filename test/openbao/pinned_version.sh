@@ -12,6 +12,6 @@ check "dcf-secret and openbao-setup installed" bash -c "command -v dcf-secret &&
 # shellcheck disable=SC2016  # expansion is meant to happen inside the inner bash
 check "the volume's folder is writable by the remote user" bash -c '[ "$(id -u)" -ne 0 ] && openbao-setup | grep -E "writable\)$"'
 # shellcheck disable=SC2016  # expansion is meant to happen inside the inner bash
-check "the login is linked into the state dir" bash -c '[ "$(readlink ~/.vault-token)" = "$OPENBAO_STATE_DIR/token" ]'
+check "bao is pointed at the token helper's config" bash -c '[ "$BAO_CONFIG_PATH" = /usr/local/share/openbao-feature/bao-config.hcl ]'
 
 reportResults
