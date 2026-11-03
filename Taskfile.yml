@@ -190,7 +190,7 @@ tasks:
       - bash test/bootstrap/engine_wait_test.sh
 
   test:build-lock:
-    desc: 'Docker-free bash tests of the build lock in the bash twin (src/devcontainer-cli/devcontainer-cli.sh): the holder''s file beside the lock (repository folder, subcommand and flags, start) written and removed, a waiter''s line naming the holder and how many arrived earlier and printed again when the holder changes, a stale holder file ignored, a stopped waiter leaving no file; the lock skipped with one line when `buildx version` reports 0.8.0 or later, kept for an older or missing buildx, for wslc and with DEVCONTAINER_BUILD_LOCK=1, dropped with =0; a stub engine and CLI; part of lint. The PowerShell twin is in test:bootstrap.'
+    desc: 'Docker-free bash tests of the build lock in the bash twin (src/devcontainer-cli/devcontainer-cli.sh): the holder''s file beside the lock (repository folder, subcommand and flags, start) written and removed, a waiter''s line naming the holder and how many others wait and printed again when the holder changes, a stale holder file ignored, a stopped waiter leaving no file; the lock skipped with one line when `buildx version` reports 0.8.0 or later, kept for an older or missing buildx, for wslc and with DEVCONTAINER_BUILD_LOCK=1, dropped with =0; a stub engine and CLI; part of lint. The PowerShell twin is in test:bootstrap.'
     cmds:
       - bash test/bootstrap/build_lock_test.sh
 

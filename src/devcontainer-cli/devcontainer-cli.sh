@@ -73,7 +73,7 @@
 #
 # Builds are serialised: `up` and `build` hold an flock on
 # $cache_root/build.lock while they run, and a second one prints who holds it
-# ("waiting for alpha's up --build-no-cache (started 14:02, 1 ahead)...", from
+# ("waiting for alpha's up --build-no-cache (started 14:02, 1 waiting)...", from
 # the holder and waiter files in $cache_root/build-lock/) and then proceeds. Why:
 # when the engine has no BuildKit build context (wslc), the CLI tags the Feature
 # content image `dev_container_feature_content_temp` for every repository, so two
@@ -855,26 +855,23 @@ build_lock_write() {
 # build_lock_clock <epoch seconds>: HH:MM, local time (GNU date, else BSD date).
 build_lock_clock() { date -d "@$1" +%H:%M 2> /dev/null || date -r "$1" +%H:%M 2> /dev/null || echo '?'; }
 
-# build_lock_wait_message <own start, epoch seconds>: who holds the lock and how many waiters
-# arrived before this one. The lock is not first-come, so "ahead" counts arrivals.
+# build_lock_wait_message: who holds the lock and how many other waiters there are (every live
+# waiter but this one, whenever it arrived; the holder is not one). The lock is not first-come,
+# so the count is no place in a queue.
 build_lock_wait_message() {
-  local dir self_started="$1" ahead=0 f
+  local dir waiting=0 f
   dir="$(build_lock_dir)"
   for f in "$dir"/waiter-*; do
     [ -e "$f" ] || continue
     build_lock_read "$f" || continue
-    [ "$BL_PID" != $$ ] || continue
-    case "$BL_STARTED" in '' | *[!0-9]*) continue ;; esac
-    if [ "$BL_STARTED" -lt "$self_started" ] || { [ "$BL_STARTED" -eq "$self_started" ] && [ "$BL_PID" -lt $$ ]; }; then
-      ahead=$((ahead + 1))
-    fi
+    [ "$BL_PID" = $$ ] || waiting=$((waiting + 1))
   done
   if build_lock_read "$dir/holder" && [ "$BL_PID" != $$ ]; then
     local tail=''
-    [ "$ahead" -eq 0 ] || tail=", $ahead ahead"
+    [ "$waiting" -eq 0 ] || tail=", $waiting waiting"
     echo "waiting for ${BL_REPO}'s ${BL_SUB} (started $(build_lock_clock "$BL_STARTED")$tail)..."
-  elif [ "$ahead" -gt 0 ]; then
-    echo "waiting for another devcontainer build to finish ($ahead ahead)..."
+  elif [ "$waiting" -gt 0 ]; then
+    echo "waiting for another devcontainer build to finish ($waiting waiting)..."
   else
     echo 'waiting for another devcontainer build to finish...'
   fi
@@ -928,7 +925,7 @@ take_build_lock() { # <workspace> <subcommand> [args...]
     trap 'exit 130' INT
     trap 'exit 143' TERM
     while :; do
-      line="$(build_lock_wait_message "$since")"
+      line="$(build_lock_wait_message)"
       if [ "$line" != "$shown" ]; then echo "$line" >&2; shown="$line"; fi
       ! flock -w 1 9 || break
     done
