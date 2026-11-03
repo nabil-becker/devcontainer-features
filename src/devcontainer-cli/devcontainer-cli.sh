@@ -66,18 +66,22 @@
 #   DEVCONTAINER_ENGINE_WAIT   seconds to wait for the container engine to answer before
 #                              up, build, exec, set-up and run-user-commands (default 60;
 #                              0 = no wait, no check). See "engine wait" below.
-#   DEVCONTAINER_BUILD_LOCK    0 = do not serialise image builds (below).
+#   DEVCONTAINER_BUILD_LOCK    0 = do not serialise image builds (below); 1 = serialise
+#                              them on every engine, BuildKit build contexts or not.
 #   DEVCONTAINER_BUILD_LOCK_FEATURES_TEST  true = `features test` takes the
 #                              lock too (default false).
 #
 # Builds are serialised: `up` and `build` hold an flock on
-# $cache_root/build.lock while they run, and a second one prints "waiting for
-# another devcontainer build to finish..." and then proceeds. Why: when the
-# engine has no BuildKit build context (wslc), the CLI tags the Feature content
-# image `dev_container_feature_content_temp` for every repository, so two builds
-# at once overwrite each other's image ("/tmp/build-features/<feature>_N": not
-# found). The kernel drops the lock when the holder dies, so a crash leaves
-# nothing stale. Without flock (stock macOS) no lock is taken.
+# $cache_root/build.lock while they run, and a second one prints who holds it
+# ("waiting for alpha's up --build-no-cache (started 14:02, 1 ahead)...", from
+# the holder and waiter files in $cache_root/build-lock/) and then proceeds. Why:
+# when the engine has no BuildKit build context (wslc), the CLI tags the Feature
+# content image `dev_container_feature_content_temp` for every repository, so two
+# builds at once overwrite each other's image ("/tmp/build-features/<feature>_N":
+# not found). An engine whose `buildx version` is 0.8.0 or later (never wslc) builds
+# with BuildKit build contexts, so the lock is skipped there with one line. The
+# kernel drops the lock when the holder dies, so a crash leaves nothing stale (a
+# file of a dead process is ignored). Without flock (stock macOS) no lock is taken.
 #
 # Verification: the Node.js download is checked against nodejs.org's
 # SHASUMS256.txt. The CLI itself is NOT: it comes through `npm install` and
@@ -811,17 +815,132 @@ builds_image() { # <subcommand> [first argument]
   return 1
 }
 
-# take_build_lock: flock on descriptor 9 for the rest of this process (released
-# when it exits, crashed or not). No-op when DEVCONTAINER_BUILD_LOCK=0 or there is no flock.
-take_build_lock() {
+# take_build_lock <workspace> <subcommand> [args...]: flock on descriptor 9 for the rest of this
+# process (released when it exits, crashed or not). No-op when DEVCONTAINER_BUILD_LOCK=0 or there
+# is no flock; skipped, with one line, when the engine builds with BuildKit build contexts (see
+# build_lock_skip_reason) unless DEVCONTAINER_BUILD_LOCK=1. Beside the lock, in
+# $cache_root/build-lock/, the holder writes `holder` (pid, repository folder name, subcommand
+# and its flags, start) and each waiter `waiter-<pid>`, removed when it stops waiting; a file
+# whose process is gone is ignored. The PowerShell twin is Enter-DevcontainerBuildLock.
+build_lock_dir() { printf '%s/build-lock' "$cache_root"; }
+
+# build_lock_alive <pid>: the process runs.
+build_lock_alive() {
+  case "$1" in '' | *[!0-9]*) return 1 ;; esac
+  kill -0 "$1" 2> /dev/null || [ -d "/proc/$1" ]
+}
+
+# build_lock_read <file>: sets BL_PID, BL_REPO, BL_SUB, BL_STARTED; fails when the file is missing or stale.
+build_lock_read() {
+  BL_PID='' BL_REPO='' BL_SUB='' BL_STARTED=''
+  [ -r "$1" ] || return 1
+  local k v
+  while IFS='=' read -r k v; do
+    case "$k" in
+      pid) BL_PID="$v" ;;
+      repo) BL_REPO="$v" ;;
+      subcommand) BL_SUB="$v" ;;
+      started) BL_STARTED="$v" ;;
+    esac
+  done < "$1"
+  build_lock_alive "$BL_PID"
+}
+
+# build_lock_write <file> <lines...>: through a temp file, so a reader never sees half of one. Best effort.
+build_lock_write() {
+  local file="$1"; shift
+  { mkdir -p "${file%/*}" && printf '%s\n' "$@" > "$file.$$.tmp" && mv -f "$file.$$.tmp" "$file"; } 2> /dev/null || true
+}
+
+# build_lock_clock <epoch seconds>: HH:MM, local time (GNU date, else BSD date).
+build_lock_clock() { date -d "@$1" +%H:%M 2> /dev/null || date -r "$1" +%H:%M 2> /dev/null || echo '?'; }
+
+# build_lock_wait_message <own start, epoch seconds>: who holds the lock and how many waiters
+# arrived before this one. The lock is not first-come, so "ahead" counts arrivals.
+build_lock_wait_message() {
+  local dir self_started="$1" ahead=0 f
+  dir="$(build_lock_dir)"
+  for f in "$dir"/waiter-*; do
+    [ -e "$f" ] || continue
+    build_lock_read "$f" || continue
+    [ "$BL_PID" != $$ ] || continue
+    case "$BL_STARTED" in '' | *[!0-9]*) continue ;; esac
+    if [ "$BL_STARTED" -lt "$self_started" ] || { [ "$BL_STARTED" -eq "$self_started" ] && [ "$BL_PID" -lt $$ ]; }; then
+      ahead=$((ahead + 1))
+    fi
+  done
+  if build_lock_read "$dir/holder" && [ "$BL_PID" != $$ ]; then
+    local tail=''
+    [ "$ahead" -eq 0 ] || tail=", $ahead ahead"
+    echo "waiting for ${BL_REPO}'s ${BL_SUB} (started $(build_lock_clock "$BL_STARTED")$tail)..."
+  elif [ "$ahead" -gt 0 ]; then
+    echo "waiting for another devcontainer build to finish ($ahead ahead)..."
+  else
+    echo 'waiting for another devcontainer build to finish...'
+  fi
+}
+
+# build_lock_skip_reason: why this engine needs no lock, nothing when it does. @devcontainers/cli
+# builds the Feature content with BuildKit build contexts when `<engine> buildx version` reports
+# 0.8.0 or later; then there is no shared dev_container_feature_content_temp image and builds
+# cannot collide. wslc always keeps the lock, as does an engine that cannot be found or asked.
+build_lock_skip_reason() {
+  local e leaf v major minor
+  e="$(engine_name 2> /dev/null)" || return 0
+  leaf="${e##*/}"; leaf="${leaf##*\\}"; leaf="${leaf%.exe}"
+  [ "$leaf" != wslc ] || return 0
+  v="$("$e" buildx version 2> /dev/null)" || return 0
+  [[ "$v" =~ ([0-9]+)\.([0-9]+)\.([0-9]+) ]] || return 0
+  v="${BASH_REMATCH[0]}"; major="${BASH_REMATCH[1]}"; minor="${BASH_REMATCH[2]}"
+  if [ "$((10#$major))" -eq 0 ] && [ "$((10#$minor))" -lt 8 ]; then return 0; fi
+  echo "$leaf builds with BuildKit build contexts (buildx $v), so builds of different repositories cannot collide"
+}
+
+# Removes this process's holder file (the EXIT trap of a holder).
+build_lock_drop_holder() {
+  local file
+  file="$(build_lock_dir)/holder"
+  if build_lock_read "$file" && [ "$BL_PID" = $$ ]; then rm -f "$file"; fi
+}
+
+take_build_lock() { # <workspace> <subcommand> [args...]
+  local workspace="${1:-.}" subcommand="${2:-}"; shift 2 || true
   [ "${DEVCONTAINER_BUILD_LOCK:-}" != 0 ] || return 0
   command -v flock > /dev/null 2>&1 || return 0
+  if [ "${DEVCONTAINER_BUILD_LOCK:-}" != 1 ]; then
+    local why
+    why="$(build_lock_skip_reason)"
+    if [ -n "$why" ]; then
+      echo "build lock skipped: $why (DEVCONTAINER_BUILD_LOCK=1 keeps it)." >&2
+      return 0
+    fi
+  fi
+  local dir
+  dir="$(build_lock_dir)"
   mkdir -p "$cache_root"
   exec 9> "$cache_root/build.lock"
   if ! flock -n 9; then
-    echo 'waiting for another devcontainer build to finish...' >&2
-    flock 9
+    local since shown='' line
+    since="$(date +%s)"
+    build_lock_waiter="$dir/waiter-$$"
+    build_lock_write "$build_lock_waiter" "pid=$$" "started=$since"
+    trap 'rm -f "$build_lock_waiter"' EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    while :; do
+      line="$(build_lock_wait_message "$since")"
+      if [ "$line" != "$shown" ]; then echo "$line" >&2; shown="$line"; fi
+      ! flock -w 1 9 || break
+    done
+    rm -f "$build_lock_waiter"
+    trap - INT TERM
   fi
+  local label="$subcommand" a repo
+  for a in "$@"; do case "$a" in -*) label+=" $a" ;; esac; done
+  repo="$(resolve_workspace "$workspace" 2> /dev/null)" || repo="$workspace"
+  repo="${repo%/}"; repo="${repo%\\}"; repo="${repo##*/}"; repo="${repo##*\\}"
+  build_lock_write "$dir/holder" "pid=$$" "repo=$repo" "subcommand=$label" "started=$(date +%s)"
+  trap build_lock_drop_holder EXIT
 }
 
 # ---------------------------------------------------------- engine wait ----
@@ -1284,7 +1403,7 @@ mode_run() {
       return ;;
   esac
 
-  if builds_image "$subcommand" "${1:-}"; then take_build_lock; fi
+  if builds_image "$subcommand" "${1:-}"; then take_build_lock "${workspace:-.}" "$subcommand" "$@"; fi
   # Inside the lock, right before the CLI: the build that held it may have left the engine busy.
   if engine_subcommand "$subcommand"; then wait_for_engine; fi
   local rc=0

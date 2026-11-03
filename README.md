@@ -344,17 +344,19 @@ Taskfile). Each task dispatches per platform (Task's per-command
   under `~/.cache/devcontainer-features`. Needs bash and curl. `homes` runs
   `devcontainer-homes.sh`.
 
-Builds are serialised host-wide: `up` (and so `rebuild`) and `build` hold the
-named mutex `Global\devcontainer-features-build` (Windows) or an `flock` on
-`~/.cache/devcontainer-features/build.lock` (Linux/macOS), and a second one
-prints `waiting for another devcontainer build to finish...` before it runs.
-Without BuildKit build contexts (`wslc`) the devcontainer CLI tags the Feature
-content image `dev_container_feature_content_temp` for every repository, so two
-builds at once overwrite each other's image and the first fails with
-`"/tmp/build-features/<feature>_N": not found`. `exec` and the other
-subcommands take no lock; `devcontainer features test` takes it only with
-`DEVCONTAINER_BUILD_LOCK_FEATURES_TEST=true` (default false);
-`DEVCONTAINER_BUILD_LOCK=0` turns it off.
+Builds are serialised host-wide where they can collide: `up` (and so `rebuild`)
+and `build` hold the named mutex `Global\devcontainer-features-build` (Windows)
+or an `flock` on `~/.cache/devcontainer-features/build.lock` (Linux/macOS), and a
+second one prints whom it waits for (`waiting for alpha's up --build-no-cache
+(started 14:02, 2 ahead)...`) before it runs. Without BuildKit build contexts
+(`wslc`) the devcontainer CLI tags the Feature content image
+`dev_container_feature_content_temp` for every repository, so two builds at once
+overwrite each other's image and the first fails with
+`"/tmp/build-features/<feature>_N": not found`; an engine whose `buildx version`
+is 0.8.0 or later never makes that image, so there the lock is skipped with one
+line. `exec` and the other subcommands take no lock; `devcontainer features
+test` takes it only with `DEVCONTAINER_BUILD_LOCK_FEATURES_TEST=true` (default
+false); `DEVCONTAINER_BUILD_LOCK=0` turns it off, `=1` keeps it on every engine.
 
 Before `up`, `build`, `exec`, `set-up` and `run-user-commands` the launcher
 checks that the container engine answers (one `docker info`, or `ps -q` for

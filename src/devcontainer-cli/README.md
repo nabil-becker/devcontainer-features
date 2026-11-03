@@ -19,6 +19,25 @@ Installs @devcontainers/cli as /usr/local/bin/devcontainer, backed by a private,
 | version | @devcontainers/cli npm version to install (e.g. '0.89.0'), or 'latest'. | string | latest |
 | nodeVersion | Node.js release used privately by the CLI. Downloaded from nodejs.org and verified against its SHASUMS256.txt. | string | 24.21.0 |
 
+## Changes in 1.18.0
+
+- **The build lock says who holds it** (#154). A waiting `up` printed only `waiting for another
+  devcontainer build to finish...` and could sit there behind long rebuilds of other repositories
+  with no way to tell. Now the holder writes a small file beside the lock (its repository's folder
+  name, the subcommand with its flags, its start time) and each waiter registers too, so the line
+  reads `waiting for alpha's up --remove-existing-container --build-no-cache (started 14:02, 2
+  ahead)...` and is printed again when the holder or the count changes. A file whose process is
+  gone is ignored. "Ahead" counts waiters that arrived earlier; the lock is not first-come.
+- **No build lock with BuildKit build contexts.** The lock is for one collision only: without
+  BuildKit build contexts (wslc), `@devcontainers/cli` tags every repository's Feature content
+  image `dev_container_feature_content_temp`. When `<engine> buildx version` reports 0.8.0 or later
+  (the check the CLI itself makes; Docker Desktop and Docker Engine with buildx), the CLI uses
+  build contexts and makes no such image, so the launcher now skips the lock with one line:
+  `build lock skipped: docker builds with BuildKit build contexts (buildx 0.35.0), so builds of
+  different repositories cannot collide (DEVCONTAINER_BUILD_LOCK=1 keeps it).` wslc always keeps
+  it. `DEVCONTAINER_BUILD_LOCK=1` (new) keeps the lock on every engine; `=0` still turns it off.
+  Both launchers (PowerShell and bash).
+
 ## Changes in 1.17.0
 
 - **The launcher waits for the container engine** (new setting `DEVCONTAINER_ENGINE_WAIT`). Right
@@ -249,21 +268,37 @@ one way to rebuild past a refusing check, as for `stop`.
 `task devcontainer:outdated` lists what is behind. Features referenced by a local path are never
 locked.
 
-One build at a time. `up` (so `rebuild` too) and `build` hold a host-wide lock
-while they run: the named mutex `Global\devcontainer-features-build` on Windows,
-an `flock` on `~/.cache/devcontainer-features/build.lock` on Linux/macOS (none
-on a host without `flock`, such as stock macOS). Why: when the engine has no
-BuildKit build context (`wslc`), `@devcontainers/cli` tags the Feature content
-image with the fixed name `dev_container_feature_content_temp` for every
-repository, so two builds at once overwrite each other's image and the first
-fails with `"/tmp/build-features/<feature>_N": not found`. A second build
-prints `waiting for another devcontainer build to finish...` and then runs;
-the lock is released when the build ends or its process dies (an abandoned lock
-counts as free). It applies on every engine, harmless with Docker Desktop;
+One build at a time, where builds can collide. `up` (so `rebuild` too) and
+`build` hold a host-wide lock while they run: the named mutex
+`Global\devcontainer-features-build` on Windows, an `flock` on
+`~/.cache/devcontainer-features/build.lock` on Linux/macOS (none on a host
+without `flock`, such as stock macOS). Why: when the engine has no BuildKit
+build context (`wslc`), `@devcontainers/cli` tags the Feature content image
+with the fixed name `dev_container_feature_content_temp` for every repository,
+so two builds at once overwrite each other's image and the first fails with
+`"/tmp/build-features/<feature>_N": not found`. When `<engine> buildx version`
+reports 0.8.0 or later (Docker with buildx; the same check the CLI makes) the
+CLI builds with BuildKit build contexts and makes no such image, so the
+launcher skips the lock and says so in one line (`build lock skipped: ...`);
+`wslc` always takes it. `DEVCONTAINER_BUILD_LOCK=1` takes it on every engine,
+`DEVCONTAINER_BUILD_LOCK=0` never.
+
+A waiter says whom it waits for. The holder writes `holder.json` (Windows) or
+`holder` (bash) in `build-lock/` under the launcher cache
+(`%LOCALAPPDATA%\devcontainer-features`, `~/.cache/devcontainer-features`):
+its pid, its repository's folder name, the subcommand with its flags (not their
+values) and its start time; each waiter writes a `waiter-<pid>` file while it
+waits. The line reads `waiting for alpha's up --build-no-cache (started 14:02, 2
+ahead)...` and is printed again when the holder or the count changes; without a
+live holder file (an older launcher holds the lock, or its holder died) it is
+`waiting for another devcontainer build to finish...`. A file whose process is
+gone is ignored. The lock is not first-come: "ahead" counts the waiters that
+arrived earlier, and a later one may still go first. The lock is released when
+the build ends or its process dies (an abandoned lock counts as free).
 `exec`, `run-user-commands`, `set-up` and the other subcommands take no lock,
 and `devcontainer features test` takes it only with
 `DEVCONTAINER_BUILD_LOCK_FEATURES_TEST=true` (default false, so a long test run
-does not hold up every rebuild). `DEVCONTAINER_BUILD_LOCK=0` turns the lock off.
+does not hold up every rebuild).
 
 The engine answers first. Right after a rebuild or an engine restart the engine
 may not answer for a moment, and `devcontainer up` then fails inside with

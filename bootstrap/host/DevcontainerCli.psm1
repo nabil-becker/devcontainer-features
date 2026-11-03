@@ -64,7 +64,10 @@
 
     Image builds are serialised host-wide: `up` and `build` hold the named
     mutex Global\devcontainer-features-build while they run (see
-    Enter-DevcontainerBuildLock). DEVCONTAINER_BUILD_LOCK=0 turns that off.
+    Enter-DevcontainerBuildLock), and a waiter's line names the holder's repository,
+    subcommand and start time and how many arrived before it. An engine with BuildKit
+    build contexts (buildx 0.8.0 or later, never wslc) skips the lock with one line.
+    DEVCONTAINER_BUILD_LOCK=0 turns it off, =1 keeps it on every engine.
 
     Engine wait: up, build, exec, set-up and run-user-commands first check that the
     engine answers (one check when it does) and otherwise wait for it, printing
@@ -77,6 +80,8 @@
 $script:CacheRoot = if ($IsWindows) { Join-Path $env:LOCALAPPDATA 'devcontainer-features\devcontainer-node' } else { $null }
 $script:DefaultNodeVersion = '24.21.0'
 $script:BuildLockName = 'Global\devcontainer-features-build'
+# The holder file Enter-DevcontainerBuildLock wrote, for Exit-DevcontainerBuildLock to remove.
+$script:BuildLockHolderFile = $null
 # The subcommands that build an image. `up` also covers `rebuild` (up
 # --remove-existing-container). `run-user-commands`, `set-up` and `exec` work on a
 # container that exists, so they take no lock.
@@ -992,19 +997,142 @@ function Test-BuildSubcommand {
     return $false
 }
 
+function Get-BuildLockStateDir {
+    <# .SYNOPSIS Where the build lock's holder and waiter files live: build-lock\ under the launcher cache (Get-LauncherCacheRoot). #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param()
+    return (Join-Path (Get-LauncherCacheRoot) 'build-lock')
+}
+
+function Get-BuildLockLabel {
+    <# .SYNOPSIS What a build is, for the waiting line: the subcommand and its flags (values left out), e.g. "up --remove-existing-container --build-no-cache". #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param([Parameter(Mandatory)][string]$Subcommand, [string[]]$Arguments = @())
+    $flags = @($Arguments | Where-Object { $_ -like '-*' })
+    return (@($Subcommand) + $flags) -join ' '
+}
+
+function Test-BuildLockProcessAlive {
+    <# .SYNOPSIS $true when a process with this id runs (a holder or waiter file whose process is gone is stale and ignored). #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param([int]$Id)
+    if ($Id -le 0) { return $false }
+    return [bool](Get-Process -Id $Id -ErrorAction SilentlyContinue)
+}
+
+function Read-BuildLockFile {
+    <# .SYNOPSIS A holder or waiter file as an object, or $null when it is missing, unreadable or stale (its process is gone). #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Path)
+    try { $o = Get-Content -LiteralPath $Path -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop }
+    catch { return $null }
+    if (-not $o -or -not (Test-BuildLockProcessAlive -Id ([int]$o.pid))) { return $null }
+    return $o
+}
+
+function Write-BuildLockFile {
+    <# .SYNOPSIS Writes a holder or waiter file (through a temp file, so a reader never sees half of one). Best effort: a failure never stops a build. #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][hashtable]$Content)
+    if (-not $PSCmdlet.ShouldProcess($Path, 'Write build lock file')) { return }
+    try {
+        $null = New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Path) -ErrorAction Stop
+        $tmp = "$Path.$PID.tmp"
+        Set-Content -LiteralPath $tmp -Value ($Content | ConvertTo-Json -Compress) -Encoding utf8 -ErrorAction Stop
+        Move-Item -LiteralPath $tmp -Destination $Path -Force -ErrorAction Stop
+    }
+    catch { Write-Verbose "build lock file $Path not written: $($_.Exception.Message)" }
+}
+
+function Get-BuildLockWaitMessage {
+    <#
+    .SYNOPSIS
+        The waiting line: who holds the lock and how many waiters arrived before this one, e.g.
+        "waiting for alpha's up --build-no-cache (started 14:02, 2 ahead)...". Without a live
+        holder file (the holder is an older launcher, or it died) it is
+        "waiting for another devcontainer build to finish...".
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)][string]$StateDir,
+        [int]$Self = $PID,
+        [datetime]$SelfStarted = [datetime]::UtcNow
+    )
+    $ahead = 0
+    foreach ($f in @(Get-ChildItem -LiteralPath $StateDir -Filter 'waiter-*.json' -File -ErrorAction SilentlyContinue)) {
+        $w = Read-BuildLockFile -Path $f.FullName
+        if (-not $w -or [int]$w.pid -eq $Self) { continue }
+        $started = ([datetimeoffset]::Parse([string]$w.started, [cultureinfo]::InvariantCulture)).UtcDateTime
+        if ($started -lt $SelfStarted -or ($started -eq $SelfStarted -and [int]$w.pid -lt $Self)) { $ahead++ }
+    }
+    $holder = Read-BuildLockFile -Path (Join-Path $StateDir 'holder.json')
+    if ($holder -and [int]$holder.pid -ne $Self) {
+        $at = ([datetimeoffset]::Parse([string]$holder.started, [cultureinfo]::InvariantCulture)).LocalDateTime.ToString('HH:mm')
+        $tail = if ($ahead -gt 0) { ", $ahead ahead" } else { '' }
+        return "waiting for $($holder.repo)'s $($holder.subcommand) (started $at$tail)..."
+    }
+    if ($ahead -gt 0) { return "waiting for another devcontainer build to finish ($ahead ahead)..." }
+    return 'waiting for another devcontainer build to finish...'
+}
+
+function Get-EngineBuildxVersion {
+    <# .SYNOPSIS The first x.y.z that `<engine> buildx version` prints, or $null when it fails or prints none (the same probe @devcontainers/cli makes). #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param([Parameter(Mandatory)][string]$Exe)
+    try { $out = (& $Exe buildx version 2> $null) -join "`n" }
+    catch { return $null }
+    if ($LASTEXITCODE -ne 0) { return $null }
+    $m = [regex]::Match("$out", '([0-9]+)\.([0-9]+)\.([0-9]+)')
+    if ($m.Success) { return $m.Value }
+    return $null
+}
+
+function Get-BuildLockSkipReason {
+    <#
+    .SYNOPSIS
+        Why this engine needs no build lock, or $null when it does. @devcontainers/cli builds the
+        Feature content with BuildKit build contexts when `<engine> buildx version` reports 0.8.0
+        or later; then there is no shared `dev_container_feature_content_temp` image and builds of
+        different repositories cannot collide. wslc always keeps the lock, as does an engine that
+        cannot be resolved or asked.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param([string]$DockerPath)
+    try { $engine = Resolve-DockerPath -DockerPath $DockerPath }
+    catch { return $null }
+    $exe = if ($engine) { $engine } else { 'docker' }
+    # Split on both separators: [IO.Path] on Linux or macOS leaves a Windows path whole.
+    $leaf = [IO.Path]::GetFileNameWithoutExtension(($exe -split '[\\/]')[-1]).ToLowerInvariant()
+    if ($leaf -eq 'wslc') { return $null }
+    $v = Get-EngineBuildxVersion -Exe $exe
+    if (-not $v) { return $null }
+    if ([version]$v -lt [version]'0.8.0') { return $null }
+    return "$leaf builds with BuildKit build contexts (buildx $v), so builds of different repositories cannot collide"
+}
+
 function Enter-DevcontainerBuildLock {
     <#
     .SYNOPSIS
         Takes the host-wide build lock, waiting for another devcontainer
         build to finish first. Returns the held mutex for
-        Exit-DevcontainerBuildLock, or $null when DEVCONTAINER_BUILD_LOCK=0.
+        Exit-DevcontainerBuildLock, or $null when no lock is taken
+        (DEVCONTAINER_BUILD_LOCK=0, or an engine with BuildKit build contexts).
 
     .DESCRIPTION
         Why: when the engine has no BuildKit build context (wslc), the
         @devcontainers/cli tags the Feature content image with the fixed name
         `dev_container_feature_content_temp` for every repository, so two
         builds at once overwrite each other's image and the first fails with
-        `"/tmp/build-features/<feature>_N": not found`.
+        `"/tmp/build-features/<feature>_N": not found`. With BuildKit build
+        contexts (Docker with buildx 0.8.0 or later) that image is never made,
+        so the lock is skipped there with one line saying why;
+        DEVCONTAINER_BUILD_LOCK=1 keeps it on every engine, =0 turns it off.
 
         A named mutex rather than a lock file: the operating system releases
         it when the holder dies, so a crash can leave no stale lock behind,
@@ -1012,38 +1140,94 @@ function Enter-DevcontainerBuildLock {
         as acquired. The mutex belongs to the thread that took it, so enter
         and exit in the same script, as Invoke-DevcontainerCli does.
 
+        Beside it, in StateDir, the holder writes holder.json (its pid, the
+        repository's folder name, the subcommand and its flags, the start
+        time) and each waiter a waiter-<pid>.json, removed when it stops
+        waiting; a file whose process is gone is ignored. A waiter's line
+        names the holder and how many waiters arrived before it, and is
+        printed again when that changes. The mutex is not first-come, so
+        "ahead" counts arrivals, not a promised order.
+
     .PARAMETER Name
         Mutex name; the default is shared by every repository on the host.
     #>
     [CmdletBinding()]
-    param([string]$Name = $script:BuildLockName)
+    param(
+        [string]$Name = $script:BuildLockName,
+        [string]$WorkspaceFolder = '.',
+        [string]$Subcommand = 'up',
+        [string[]]$Arguments = @(),
+        [string]$DockerPath,
+        [string]$StateDir = (Get-BuildLockStateDir)
+    )
 
-    if ((Get-SettingOrEnv '' 'DEVCONTAINER_BUILD_LOCK') -eq '0') { return $null }
-
-    $mutex = [System.Threading.Mutex]::new($false, $Name)
-    $announced = $false
-    while ($true) {
-        try {
-            # 500 ms slices, not an endless wait, so Ctrl+C is honoured while waiting.
-            if ($mutex.WaitOne(500)) { return $mutex }
-        }
-        catch [System.Threading.AbandonedMutexException] {
-            # The holder died without releasing; the mutex is now ours.
-            return $mutex
-        }
-        if (-not $announced) {
-            Write-Host 'waiting for another devcontainer build to finish...'
-            $announced = $true
+    $setting = Get-SettingOrEnv '' 'DEVCONTAINER_BUILD_LOCK'
+    if ($setting -eq '0') { return $null }
+    if ($setting -ne '1') {
+        $why = Get-BuildLockSkipReason -DockerPath $DockerPath
+        if ($why) {
+            Write-Host "build lock skipped: $why (DEVCONTAINER_BUILD_LOCK=1 keeps it)."
+            return $null
         }
     }
+
+    $mutex = [System.Threading.Mutex]::new($false, $Name)
+    $waiterFile = Join-Path $StateDir "waiter-$PID.json"
+    $registered = $false
+    $shown = ''
+    try {
+        while ($true) {
+            try {
+                # 500 ms slices, not an endless wait, so Ctrl+C is honoured while waiting.
+                $acquired = $mutex.WaitOne($(if ($registered) { 500 } else { 0 }))
+            }
+            catch [System.Threading.AbandonedMutexException] {
+                # The holder died without releasing; the mutex is now ours.
+                $acquired = $true
+            }
+            if ($acquired) { break }
+            if (-not $registered) {
+                $since = [datetime]::UtcNow
+                Write-BuildLockFile -Path $waiterFile -Content @{ pid = $PID; started = $since.ToString('o') }
+                $registered = $true
+            }
+            $line = Get-BuildLockWaitMessage -StateDir $StateDir -Self $PID -SelfStarted $since
+            if ($line -ne $shown) {
+                Write-Host $line
+                $shown = $line
+            }
+        }
+    }
+    finally {
+        if ($registered) { Remove-Item -LiteralPath $waiterFile -Force -ErrorAction SilentlyContinue }
+    }
+
+    $folder = "$WorkspaceFolder".TrimEnd('\', '/')
+    try { $folder = (Resolve-Path -LiteralPath $folder -ErrorAction Stop).Path } catch { Write-Verbose "workspace folder kept as given: $folder" }
+    $repo = ($folder -split '[\\/]')[-1]
+    $script:BuildLockHolderFile = Join-Path $StateDir 'holder.json'
+    Write-BuildLockFile -Path $script:BuildLockHolderFile -Content @{
+        pid = $PID; repo = $repo; subcommand = (Get-BuildLockLabel -Subcommand $Subcommand -Arguments $Arguments)
+        started = [datetime]::UtcNow.ToString('o')
+    }
+    return $mutex
 }
 
 function Exit-DevcontainerBuildLock {
-    <# .SYNOPSIS Releases the lock Enter-DevcontainerBuildLock returned (a $null is ignored). #>
+    <# .SYNOPSIS Releases the lock Enter-DevcontainerBuildLock returned (a $null is ignored), removing its holder file first. #>
     [CmdletBinding()]
     param($Lock)
     if (-not $Lock) { return }
-    try { $Lock.ReleaseMutex() } finally { $Lock.Dispose() }
+    try {
+        $file = $script:BuildLockHolderFile
+        if ($file) {
+            $script:BuildLockHolderFile = $null
+            $h = Read-BuildLockFile -Path $file
+            if ($h -and [int]$h.pid -eq $PID) { Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue }
+        }
+        $Lock.ReleaseMutex()
+    }
+    finally { $Lock.Dispose() }
 }
 
 # --------------------------------------------------------- engine wait ----
@@ -1748,7 +1932,9 @@ function Invoke-DevcontainerCli {
 
     # An image build takes the host-wide lock (see Enter-DevcontainerBuildLock);
     # the CLI's own temp image name is shared by every repository.
-    $lock = if (Test-BuildSubcommand -Subcommand $Subcommand -Arguments $Arguments) { Enter-DevcontainerBuildLock }
+    $lock = if (Test-BuildSubcommand -Subcommand $Subcommand -Arguments $Arguments) {
+        Enter-DevcontainerBuildLock -WorkspaceFolder $WorkspaceFolder -Subcommand $Subcommand -Arguments $Arguments -DockerPath $DockerPath
+    }
     try {
         # Inside the lock, right before the CLI: the build that held it may have left the engine busy.
         if (Test-EngineSubcommand -Subcommand $Subcommand) { Wait-ContainerEngine -DockerPath $DockerPath }
@@ -1783,4 +1969,4 @@ function Invoke-DevcontainerCli {
     exit $rc
 }
 
-Export-ModuleMember -Function Get-HostTypeId, Get-DefaultHostTypePriority, Resolve-HostType, Resolve-SshAgent, Resolve-HostProfile, Initialize-HostEnvironment, Test-FuseRequested, Get-FuseRefusal, Get-FuseRunArgument, Get-FuseSlotMissing, Write-FuseSlotWarning, Write-FuseRefusedWarning, ConvertTo-MachineName, Get-HostMachineName, Test-MachineSlotMissing, Write-MachineSlotWarning, Get-DevcontainerConfigFile, Get-HostMount, Test-CloudFolderMount, ConvertTo-MountArgument, ConvertTo-JsonWithoutComment, Get-ConfiguredMountTarget, Test-HostMountsEnabled, Resolve-HostMount, Initialize-HostMountSource, Get-HostMountArgument, Show-HostProfile, Import-SshKey, Clear-HostProfileCache, Get-SettingOrEnv, ConvertFrom-TaskCliArgString, Get-PortableNodeDir, Invoke-DcfDownload, Get-DevcontainersCliEntrypoint, Remove-DevcontainersCli, Resolve-DockerPath, Get-WorkspaceFolderVariant, Get-RunningDevcontainerId, Stop-Devcontainer, Test-BuildSubcommand, Enter-DevcontainerBuildLock, Exit-DevcontainerBuildLock, Test-EngineSubcommand, Get-ContainerEngineCheck, Test-ContainerEngineResponding, Get-ContainerEngineError, Get-ContainerEngineStartHint, Wait-ContainerEngine, Write-ContainerEngineDiagnosis, Get-DevcontainerCliInvocation, Invoke-DevcontainerCliProcess, Get-LauncherCacheRoot, Get-CloudFolderRcloneVersion, Get-WorkstationRclone, Open-Browser, Invoke-CloudFolderRelayRequest, Invoke-CloudFolderLoginRelay, Invoke-CloudFolderLogin, Invoke-DevcontainerCli
+Export-ModuleMember -Function Get-HostTypeId, Get-DefaultHostTypePriority, Resolve-HostType, Resolve-SshAgent, Resolve-HostProfile, Initialize-HostEnvironment, Test-FuseRequested, Get-FuseRefusal, Get-FuseRunArgument, Get-FuseSlotMissing, Write-FuseSlotWarning, Write-FuseRefusedWarning, ConvertTo-MachineName, Get-HostMachineName, Test-MachineSlotMissing, Write-MachineSlotWarning, Get-DevcontainerConfigFile, Get-HostMount, Test-CloudFolderMount, ConvertTo-MountArgument, ConvertTo-JsonWithoutComment, Get-ConfiguredMountTarget, Test-HostMountsEnabled, Resolve-HostMount, Initialize-HostMountSource, Get-HostMountArgument, Show-HostProfile, Import-SshKey, Clear-HostProfileCache, Get-SettingOrEnv, ConvertFrom-TaskCliArgString, Get-PortableNodeDir, Invoke-DcfDownload, Get-DevcontainersCliEntrypoint, Remove-DevcontainersCli, Resolve-DockerPath, Get-WorkspaceFolderVariant, Get-RunningDevcontainerId, Stop-Devcontainer, Test-BuildSubcommand, Get-BuildLockStateDir, Get-BuildLockLabel, Get-BuildLockWaitMessage, Get-EngineBuildxVersion, Get-BuildLockSkipReason, Enter-DevcontainerBuildLock, Exit-DevcontainerBuildLock, Test-EngineSubcommand, Get-ContainerEngineCheck, Test-ContainerEngineResponding, Get-ContainerEngineError, Get-ContainerEngineStartHint, Wait-ContainerEngine, Write-ContainerEngineDiagnosis, Get-DevcontainerCliInvocation, Invoke-DevcontainerCliProcess, Get-LauncherCacheRoot, Get-CloudFolderRcloneVersion, Get-WorkstationRclone, Open-Browser, Invoke-CloudFolderRelayRequest, Invoke-CloudFolderLoginRelay, Invoke-CloudFolderLogin, Invoke-DevcontainerCli
