@@ -30,8 +30,17 @@ Describe 'Enter-DevcontainerBuildLock' {
     BeforeEach {
         $script:name = "Global\devcontainer-features-test-$([guid]::NewGuid().ToString('N'))"
         $script:flag = Join-Path ([IO.Path]::GetTempPath()) "dcf-lock-$([guid]::NewGuid().ToString('N'))"
+        # The lock on whatever engine runs the tests (=1 skips the BuildKit probe), its files in a temp folder.
+        $script:oldLockSetting = $env:DEVCONTAINER_BUILD_LOCK
+        $env:DEVCONTAINER_BUILD_LOCK = '1'
+        $script:state = Join-Path $TestDrive "state-$([guid]::NewGuid().ToString('N'))"
+        $PSDefaultParameterValues['Enter-DevcontainerBuildLock:StateDir'] = $script:state
     }
-    AfterEach { Remove-Item $script:flag -ErrorAction SilentlyContinue }
+    AfterEach {
+        Remove-Item $script:flag -ErrorAction SilentlyContinue
+        $env:DEVCONTAINER_BUILD_LOCK = $script:oldLockSetting
+        $PSDefaultParameterValues.Remove('Enter-DevcontainerBuildLock:StateDir')
+    }
 
     It 'serialises two holders: the second waits until the first releases' {
         # The holder takes the lock, signals, sleeps, then releases.
@@ -92,6 +101,216 @@ Describe 'Enter-DevcontainerBuildLock' {
     }
 }
 
+Describe 'The build lock holder and waiter files' {
+    BeforeEach {
+        $script:name = "Global\devcontainer-features-test-$([guid]::NewGuid().ToString('N'))"
+        $script:flag = Join-Path ([IO.Path]::GetTempPath()) "dcf-lock-$([guid]::NewGuid().ToString('N'))"
+        $script:oldLockSetting = $env:DEVCONTAINER_BUILD_LOCK
+        $env:DEVCONTAINER_BUILD_LOCK = '1'
+        $script:state = Join-Path $TestDrive "state-$([guid]::NewGuid().ToString('N'))"
+        New-Item -ItemType Directory -Path $script:state | Out-Null
+        $script:children = [System.Collections.Generic.List[object]]::new()
+        # Starts a process that just sleeps and returns it: a live pid for a holder or waiter file.
+        function Get-Sleeper {
+            $psi = [System.Diagnostics.ProcessStartInfo]::new($script:PwshExe)
+            foreach ($a in @('-NoLogo', '-NoProfile', '-Command', 'Start-Sleep -Seconds 60')) { $psi.ArgumentList.Add($a) }
+            $psi.CreateNoWindow = $true
+            $p = [System.Diagnostics.Process]::Start($psi)
+            $script:children.Add($p)
+            $p
+        }
+        # The pid of a process that has ended: a stale file.
+        function Get-DeadPid {
+            $psi = [System.Diagnostics.ProcessStartInfo]::new($script:PwshExe)
+            foreach ($a in @('-NoLogo', '-NoProfile', '-Command', 'exit 0')) { $psi.ArgumentList.Add($a) }
+            $psi.CreateNoWindow = $true
+            $p = [System.Diagnostics.Process]::Start($psi)
+            $p.WaitForExit(30000) | Out-Null
+            $p.Id
+        }
+        function Add-TestLockFile {
+            param([string]$Leaf, [hashtable]$Content)
+            Set-Content -LiteralPath (Join-Path $script:state $Leaf) -Value ($Content | ConvertTo-Json -Compress)
+        }
+    }
+    AfterEach {
+        foreach ($c in $script:children) { if (-not $c.HasExited) { $c.Kill() } }
+        Remove-Item $script:flag -ErrorAction SilentlyContinue
+        $env:DEVCONTAINER_BUILD_LOCK = $script:oldLockSetting
+    }
+
+    It 'the holder writes its repository, subcommand with flags, pid and start, and removes the file on exit' {
+        $ws = Join-Path $TestDrive 'alpha'
+        New-Item -ItemType Directory -Path $ws -Force | Out-Null
+        $lock = Enter-DevcontainerBuildLock -Name $script:name -StateDir $script:state -WorkspaceFolder $ws `
+            -Subcommand up -Arguments @('--remove-existing-container', '--build-no-cache', '--config', 'x.json')
+        $file = Join-Path $script:state 'holder.json'
+        try {
+            $h = Get-Content -LiteralPath $file -Raw | ConvertFrom-Json
+            $h.repo | Should -Be 'alpha'
+            $h.subcommand | Should -Be 'up --remove-existing-container --build-no-cache --config'
+            $h.pid | Should -Be $PID
+            ([datetimeoffset]::Parse($h.started)).UtcDateTime | Should -BeGreaterThan ([datetime]::UtcNow.AddMinutes(-1))
+        }
+        finally { Exit-DevcontainerBuildLock -Lock $lock }
+        Test-Path -LiteralPath $file | Should -BeFalse
+    }
+
+    It 'the waiting line names the holder, its start and how many waiters arrived earlier' {
+        $holder = Get-Sleeper
+        $earlier = Get-Sleeper
+        $later = Get-Sleeper
+        $start = [datetime]::UtcNow.AddMinutes(-5)
+        Add-TestLockFile 'holder.json' @{ pid = $holder.Id; repo = 'alpha'; subcommand = 'up --build-no-cache'; started = $start.ToString('o') }
+        Add-TestLockFile "waiter-$($earlier.Id).json" @{ pid = $earlier.Id; started = [datetime]::UtcNow.AddMinutes(-2).ToString('o') }
+        Add-TestLockFile "waiter-$($later.Id).json" @{ pid = $later.Id; started = [datetime]::UtcNow.AddMinutes(2).ToString('o') }
+        $at = $start.ToLocalTime().ToString('HH:mm')
+        Get-BuildLockWaitMessage -StateDir $script:state -Self $PID -SelfStarted ([datetime]::UtcNow) |
+            Should -Be "waiting for alpha's up --build-no-cache (started $at, 1 ahead)..."
+    }
+
+    It 'no "ahead" when no waiter arrived earlier' {
+        $holder = Get-Sleeper
+        $start = [datetime]::UtcNow
+        Add-TestLockFile 'holder.json' @{ pid = $holder.Id; repo = 'alpha'; subcommand = 'build'; started = $start.ToString('o') }
+        Get-BuildLockWaitMessage -StateDir $script:state -Self $PID -SelfStarted ([datetime]::UtcNow) |
+            Should -Be "waiting for alpha's build (started $($start.ToLocalTime().ToString('HH:mm')))..."
+    }
+
+    It 'ignores a stale holder file and stale waiter files (their process is gone)' {
+        $dead = Get-DeadPid
+        Add-TestLockFile 'holder.json' @{ pid = $dead; repo = 'gone'; subcommand = 'up'; started = [datetime]::UtcNow.ToString('o') }
+        Add-TestLockFile "waiter-$dead.json" @{ pid = $dead; started = [datetime]::UtcNow.AddMinutes(-2).ToString('o') }
+        Get-BuildLockWaitMessage -StateDir $script:state -Self $PID -SelfStarted ([datetime]::UtcNow) |
+            Should -Be 'waiting for another devcontainer build to finish...'
+    }
+
+    It 'falls back to the plain line with a count when there is no holder file' {
+        $earlier = Get-Sleeper
+        Add-TestLockFile "waiter-$($earlier.Id).json" @{ pid = $earlier.Id; started = [datetime]::UtcNow.AddMinutes(-2).ToString('o') }
+        Get-BuildLockWaitMessage -StateDir $script:state -Self $PID -SelfStarted ([datetime]::UtcNow) |
+            Should -Be 'waiting for another devcontainer build to finish (1 ahead)...'
+    }
+
+    It 'a waiter registers while it waits, says the line again when the holder changes, and leaves no waiter file' {
+        $holderFile = Join-Path $script:state 'holder.json'
+        $now = [datetime]::UtcNow.ToString('o')
+        # The child holds the mutex as alpha, hands the holder file to beta (a sleeper) after 2 s, releases after 4 s.
+        $beta = Get-Sleeper
+        $json1 = (@{ pid = 0; repo = 'alpha'; subcommand = 'up --build-no-cache'; started = $now } | ConvertTo-Json -Compress)
+        $json2 = (@{ pid = $beta.Id; repo = 'beta'; subcommand = 'build'; started = $now } | ConvertTo-Json -Compress)
+        $body = "`$j = '$json1' -replace '`"pid`":0', ('`"pid`":' + `$PID); Set-Content -LiteralPath '$holderFile' -Value `$j; " +
+            "New-Item '$($script:flag)' | Out-Null; Start-Sleep -Seconds 2; Set-Content -LiteralPath '$holderFile' -Value '$json2'; " +
+            "Start-Sleep -Seconds 2; `$mutex.ReleaseMutex()"
+        $holder = Invoke-LockHolder -Name $script:name -Body $body
+        $script:children.Add($holder)
+        Wait-ForFile $script:flag | Should -BeTrue
+        $waiterFile = Join-Path $script:state "waiter-$PID.json"
+        $job = Start-ThreadJob -ScriptBlock {
+            $deadline = [datetime]::UtcNow.AddSeconds(10)
+            while ([datetime]::UtcNow -lt $deadline) { if (Test-Path -LiteralPath $using:waiterFile) { return $true }; Start-Sleep -Milliseconds 50 }
+            $false
+        }
+        $out = Enter-DevcontainerBuildLock -Name $script:name -StateDir $script:state -WorkspaceFolder $TestDrive -Subcommand up 6>&1
+        $seen = Receive-Job $job -Wait -AutoRemoveJob
+        $lock = $out | Where-Object { $_ -is [System.Threading.Mutex] }
+        try {
+            $lock | Should -Not -BeNullOrEmpty
+            $lines = @($out | Where-Object { $_ -is [System.Management.Automation.InformationRecord] } | ForEach-Object { $_.MessageData.Message })
+            $lines.Count | Should -Be 2
+            $lines[0] | Should -Match "^waiting for alpha's up --build-no-cache \(started \d\d:\d\d\)\.\.\.$"
+            $lines[1] | Should -Match "^waiting for beta's build \(started \d\d:\d\d\)\.\.\.$"
+            $seen | Should -BeTrue
+            Test-Path -LiteralPath (Join-Path $script:state "waiter-$PID.json") | Should -BeFalse
+            (Get-Content -LiteralPath $holderFile -Raw | ConvertFrom-Json).pid | Should -Be $PID
+        }
+        finally { Exit-DevcontainerBuildLock -Lock $lock }
+    }
+}
+
+Describe 'The build lock skipped with BuildKit build contexts' {
+    BeforeEach {
+        $script:oldLockSetting = $env:DEVCONTAINER_BUILD_LOCK
+        $env:DEVCONTAINER_BUILD_LOCK = $null
+        $script:name = "Global\devcontainer-features-test-$([guid]::NewGuid().ToString('N'))"
+        $script:state = Join-Path $TestDrive "state-$([guid]::NewGuid().ToString('N'))"
+        Mock -ModuleName DevcontainerCli Resolve-DockerPath { $null }
+    }
+    AfterEach { $env:DEVCONTAINER_BUILD_LOCK = $script:oldLockSetting }
+
+    It 'docker with buildx <v> skips the lock' -ForEach @(
+        @{ v = '0.35.0' }
+        @{ v = '0.8.0' }
+        @{ v = '1.0.0' }
+    ) {
+        Mock -ModuleName DevcontainerCli Get-EngineBuildxVersion { $v }.GetNewClosure()
+        Get-BuildLockSkipReason | Should -Be "docker builds with BuildKit build contexts (buildx $v), so builds of different repositories cannot collide"
+    }
+
+    It 'keeps the lock when buildx is older than 0.8.0 or cannot be asked (<v>)' -ForEach @(
+        @{ v = '0.7.1' }
+        @{ v = $null }
+    ) {
+        Mock -ModuleName DevcontainerCli Get-EngineBuildxVersion { $v }.GetNewClosure()
+        Get-BuildLockSkipReason | Should -BeNullOrEmpty
+    }
+
+    It 'keeps the lock for wslc (<path>) without asking it' -ForEach @(
+        @{ path = 'C:\Program Files\WSL\wslc.exe' }
+        @{ path = '/usr/bin/wslc' }
+    ) {
+        Mock -ModuleName DevcontainerCli Resolve-DockerPath { $path }.GetNewClosure()
+        Mock -ModuleName DevcontainerCli Get-EngineBuildxVersion { '0.35.0' }
+        Get-BuildLockSkipReason | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName DevcontainerCli Get-EngineBuildxVersion -Times 0 -Exactly
+    }
+
+    It 'keeps the lock when the engine cannot be resolved' {
+        Mock -ModuleName DevcontainerCli Resolve-DockerPath { throw 'no engine' }
+        Get-BuildLockSkipReason | Should -BeNullOrEmpty
+    }
+
+    It 'Enter-DevcontainerBuildLock skips a held lock at once with one line' {
+        Mock -ModuleName DevcontainerCli Get-EngineBuildxVersion { '0.35.0' }
+        $held = [System.Threading.Mutex]::new($true, $script:name)
+        try {
+            $out = @(Enter-DevcontainerBuildLock -Name $script:name -StateDir $script:state 6>&1)
+            @($out | Where-Object { $_ -is [System.Threading.Mutex] }).Count | Should -Be 0
+            $out = @($out | Where-Object { $_ -is [System.Management.Automation.InformationRecord] })
+            $out.Count | Should -Be 1
+            $out[0].MessageData.Message | Should -Be 'build lock skipped: docker builds with BuildKit build contexts (buildx 0.35.0), so builds of different repositories cannot collide (DEVCONTAINER_BUILD_LOCK=1 keeps it).'
+        }
+        finally { $held.ReleaseMutex(); $held.Dispose() }
+    }
+
+    It 'DEVCONTAINER_BUILD_LOCK=1 keeps the lock without asking the engine' {
+        Mock -ModuleName DevcontainerCli Get-EngineBuildxVersion { '0.35.0' }
+        $env:DEVCONTAINER_BUILD_LOCK = '1'
+        $lock = Enter-DevcontainerBuildLock -Name $script:name -StateDir $script:state
+        try { $lock | Should -BeOfType ([System.Threading.Mutex]) }
+        finally { Exit-DevcontainerBuildLock -Lock $lock }
+        Should -Invoke -ModuleName DevcontainerCli Get-EngineBuildxVersion -Times 0 -Exactly
+    }
+
+    It 'DEVCONTAINER_BUILD_LOCK=0 takes no lock and says nothing' {
+        Mock -ModuleName DevcontainerCli Get-EngineBuildxVersion { '0.35.0' }
+        $env:DEVCONTAINER_BUILD_LOCK = '0'
+        @(Enter-DevcontainerBuildLock -Name $script:name -StateDir $script:state 6>&1 | Where-Object { $_ }).Count | Should -Be 0
+        Should -Invoke -ModuleName DevcontainerCli Get-EngineBuildxVersion -Times 0 -Exactly
+    }
+
+    It 'Get-EngineBuildxVersion reads the version a buildx prints, $null when it fails' -Skip:$IsWindows {
+        $ok = Join-Path $TestDrive 'engine-ok'
+        Set-Content -LiteralPath $ok -Value "#!/bin/sh`necho 'github.com/docker/buildx v0.35.0 0123abc'"
+        $bad = Join-Path $TestDrive 'engine-bad'
+        Set-Content -LiteralPath $bad -Value "#!/bin/sh`necho 'unknown command: buildx' >&2`nexit 1"
+        chmod +x $ok $bad
+        Get-EngineBuildxVersion -Exe $ok | Should -Be '0.35.0'
+        Get-EngineBuildxVersion -Exe $bad | Should -BeNullOrEmpty
+        Get-EngineBuildxVersion -Exe (Join-Path $TestDrive 'no-such-engine') | Should -BeNullOrEmpty
+    }
+}
+
 Describe 'Invoke-DevcontainerCli and the build lock' {
     BeforeEach {
         InModuleScope DevcontainerCli {
@@ -113,6 +332,13 @@ Describe 'Invoke-DevcontainerCli and the build lock' {
         Should -Invoke -ModuleName DevcontainerCli Enter-DevcontainerBuildLock -Times 1 -Exactly
         Should -Invoke -ModuleName DevcontainerCli Exit-DevcontainerBuildLock -Times 1 -Exactly
         Should -Invoke -ModuleName DevcontainerCli Invoke-DevcontainerCliProcess -Times 1 -Exactly
+    }
+
+    It 'hands the lock the workspace, the subcommand, its arguments and the engine' {
+        Invoke-DevcontainerCli -Subcommand up -WorkspaceFolder $TestDrive -Arguments @('--build-no-cache') -DockerPath 'docker'
+        Should -Invoke -ModuleName DevcontainerCli Enter-DevcontainerBuildLock -Times 1 -Exactly -ParameterFilter {
+            $WorkspaceFolder -eq $TestDrive -and $Subcommand -eq 'up' -and $Arguments -contains '--build-no-cache' -and $DockerPath -eq 'docker'
+        }
     }
 
     It 'releases the lock when the build fails' {

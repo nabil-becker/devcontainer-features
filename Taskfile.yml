@@ -105,6 +105,7 @@ tasks:
       - task: test:psscriptanalyzer-files
       - task: test:host-type
       - task: test:engine-wait
+      - task: test:build-lock
       - task: test:bootstrap-dir
       - task: test:host-mounts
       - task: test:ssh-key-import
@@ -188,6 +189,11 @@ tasks:
     cmds:
       - bash test/bootstrap/engine_wait_test.sh
 
+  test:build-lock:
+    desc: 'Docker-free bash tests of the build lock in the bash twin (src/devcontainer-cli/devcontainer-cli.sh): the holder''s file beside the lock (repository folder, subcommand and flags, start) written and removed, a waiter''s line naming the holder and how many arrived earlier and printed again when the holder changes, a stale holder file ignored, a stopped waiter leaving no file; the lock skipped with one line when `buildx version` reports 0.8.0 or later, kept for an older or missing buildx, for wslc and with DEVCONTAINER_BUILD_LOCK=1, dropped with =0; a stub engine and CLI; part of lint. The PowerShell twin is in test:bootstrap.'
+    cmds:
+      - bash test/bootstrap/build_lock_test.sh
+
   test:host-type:
     desc: 'Docker-free bash tests of HOST_TYPE resolution in the bash twin (src/devcontainer-cli/devcontainer-cli.sh): explicit id, unknown id, auto and HOST_TYPE_PRIORITY (default and an organisation list), the DCF_HOST_* variables handed to the CLI, DEVCONTAINER_DOCKER_PATH still naming the engine; evidence faked with DCF_HOST_UNAME, DCF_HOST_PROC_VERSION and fake docker and devcontainer commands; part of lint. The PowerShell twin is covered by test:bootstrap.'
     cmds:
@@ -230,7 +236,7 @@ tasks:
       - bash test/bootstrap/bootstrap_dir_test.sh
 
   test:bootstrap:
-    desc: 'Pester tests of the Windows host launcher (bootstrap/host/DevcontainerCli.psm1) and of bootstrap/bootstrap.ps1 (vendoring folder, BOOTSTRAP_DIR, git-ignore, Taskfile template, old form): the build lock that serialises devcontainer up/build across repositories, the engine wait before the subcommands that need the engine (DEVCONTAINER_ENGINE_WAIT) and the engine''s own error after a failed up, the stop check, HOST_TYPE resolution and the DCF_HOST_* variables (evidence mocked), and the cloud-folder login (relay, busy port, timeout, --workstation-rclone; stub devcontainer and docker, so those run where bash runs). Needs pwsh with Pester 5 or later (Install-Module Pester -Scope CurrentUser); runs on any host, so it is part of lint.'
+    desc: 'Pester tests of the Windows host launcher (bootstrap/host/DevcontainerCli.psm1) and of bootstrap/bootstrap.ps1 (vendoring folder, BOOTSTRAP_DIR, git-ignore, Taskfile template, old form): the build lock that serialises devcontainer up/build across repositories (its holder and waiter files, skipped with BuildKit build contexts), the engine wait before the subcommands that need the engine (DEVCONTAINER_ENGINE_WAIT) and the engine''s own error after a failed up, the stop check, HOST_TYPE resolution and the DCF_HOST_* variables (evidence mocked), and the cloud-folder login (relay, busy port, timeout, --workstation-rclone; stub devcontainer and docker, so those run where bash runs). Needs pwsh with Pester 5 or later (Install-Module Pester -Scope CurrentUser); runs on any host, so it is part of lint.'
     cmds:
       - pwsh -NoLogo -NoProfile -Command "Import-Module Pester -MinimumVersion 5.0; Invoke-Pester -Path '{{.ROOT_DIR}}/test/bootstrap' -Output Detailed -CI"
 

@@ -125,8 +125,10 @@
 #                              the container engine to answer..." once, a check every second,
 #                              and then a failure naming the engine and how to start it. A
 #                              failed up or build prints the engine's own error.
-#   DEVCONTAINER_BUILD_LOCK    0 = do not serialise `up`/`build` host-wide (default:
-#                              one image build at a time, see README).
+#   DEVCONTAINER_BUILD_LOCK    0 = do not serialise `up`/`build` host-wide; 1 = serialise
+#                              them on every engine (default: one image build at a time,
+#                              skipped when the engine builds with BuildKit build contexts,
+#                              never on wslc; see README).
 #   DEVCONTAINER_BUILD_LOCK_FEATURES_TEST  true = `features test` takes that
 #                              lock too (default false).
 #   WORKSPACE_FOLDER           folder containing .devcontainer/ (default: the
