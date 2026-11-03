@@ -115,6 +115,11 @@ type = "place"
 term = "Storage tier"
 summary = "One of four places data lives: git, shared folder, personal folder, working set."
 
+[custody]
+type = "concept"
+term = "Custody"
+summary = "What people hold outside every storage tier, such as unseal shares and the recovery key."
+
 [night-shift]
 type = "mechanism"
 term = "Night shift"

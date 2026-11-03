@@ -159,6 +159,8 @@ The domain words of the project itself are not here; they live with the project'
   shared folder (the cloud-folder mount, which holds the register mirror), tier 3 the Operator's
   personal folder (not mounted unless asked), tier 4 the working set (Feature volumes and scratch,
   rebuildable only). If losing a machine would lose something, it is in the wrong tier (ADR-0045).
+- **Custody**: what people hold outside every storage tier, such as the OpenBao unseal shares and
+  recovery key, because they are the gate to the tiers and cannot sit inside one (ADR-0049).
 
 ## Work
 

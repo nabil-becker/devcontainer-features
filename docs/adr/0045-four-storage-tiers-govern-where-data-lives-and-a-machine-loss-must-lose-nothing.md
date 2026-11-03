@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | accepted |
+| **Status** | accepted (amended by ADR-0049, 2026-11-03) |
 | **Date** | 2026-11-03 |
 | **Deciders** | the Operator; proposed by the host session |
 
