@@ -21,6 +21,12 @@
 #                "not found" is never recorded, the agent starts fresh. A wake that comes back
 #                under a new id continuing the same conversation records that id, keeps the old
 #                one as superseded, and stops the old one if it still has a process (1.9.4)
+#                Before it wakes, the records Claude Code keeps of that session (sessions/<pid>.json
+#                in its config dir) whose process does not exist in this container are cleared
+#                (1.9.7: one left by a removed container made it start a copy); when it still says
+#                the session "is already running in the background, so this started a copy", the
+#                copy is stopped and the wake tried once more, and a second copy is an error
+#                (an "error:" line, exit 1, nothing recorded)
 #     attach     claude attach <id> of its newest running session (a terminal is needed); an
 #                ended one is woken bare as wake does (recorded, the old id superseded when it
 #                comes back under a new one), then the session that runs is attached (1.9.6)
@@ -658,6 +664,108 @@ start_fresh() {
   trace "fresh: $why" "${1:-}" "$WR_SID"
 }
 
+# ------------------------------------------------- stale session records ----
+# (1.9.7) Claude Code keeps a record of each session with a process in
+# $CLAUDE_CONFIG_DIR/sessions/<pid>.json ({"pid", "sessionId", "procStart" (field 22 of the
+# process's /proc stat), "pidDomain" (the pid namespace it ran in), "messagingSocketPath", ...}, with
+# a <pid>.<hash>.key beside it; seen on 2.1.311 for interactive sessions, and Claude Code leaves
+# those of containers that are gone). That folder is in the claude-code Feature's volume, so it
+# survives `up --remove-existing-container`, where no process of any session can be alive. The
+# report (#155): a record of a session of the old container made `claude --bg --resume <id>` say
+# "session <id> is already running in the background, so this started a copy as <id2>", a second
+# copy of a resident agent. So before every wake the records of the session that is about to be
+# woken, whose process is proven not to exist in this container, are removed. Only those: a record
+# that cannot be read, or whose process is alive, or of another session, is never touched.
+sessions_dir() { printf '%s/sessions' "$(config_dir)"; }
+
+# domain_of <text>: the pid namespace's inode as "[number]" (from "pid:[n]" or "linux::pid:[n]"), else empty.
+domain_of() { printf '%s' "$1" | sed -n 's/.*\(\[[0-9][0-9]*\]\).*/\1/p'; }
+
+# record_dead <record file>: 0 when the process it names is proven not to exist in this container:
+# it ran in another pid namespace (pidDomain differs from this process's: a container that is
+# gone; AGENT_ADAPTER_CLAUDE_PIDDOMAIN stands in for /proc/self/ns/pid), or no such pid is here, or
+# the pid is here but started at another time (procStart differs from /proc/<pid>/stat: the number
+# was taken by another program). 1 when it is alive or cannot be told.
+record_dead() {
+  local f="$1" e pid dom here ps now r="${AGENT_ADAPTER_CLAUDE_PROC:-/proc}"
+  e="$(tr -d '\n\r' < "$f" 2>/dev/null)" || return 1
+  pid="$(number "$e" pid)"
+  [ "${pid:-0}" -gt 0 ] 2>/dev/null || return 1
+  dom="$(domain_of "$(field "$e" pidDomain)")"
+  here="$(domain_of "${AGENT_ADAPTER_CLAUDE_PIDDOMAIN:-$(readlink /proc/self/ns/pid 2>/dev/null)}")"
+  if [ -n "$dom" ] && [ -n "$here" ] && [ "$dom" != "$here" ]; then return 0; fi
+  [ -d "$r/$pid" ] || return 0
+  ps="$(field "$e" procStart)"
+  if [ -n "$ps" ] && [ -r "$r/$pid/stat" ]; then
+    now="$(sed 's/^.*) //' "$r/$pid/stat" 2>/dev/null | awk '{ print $20 }')"
+    [ -z "$now" ] || [ "$now" = "$ps" ] || return 0
+  fi
+  return 1
+}
+
+# clear_stale_records <session id>: remove the records of that session whose process is proven
+# dead (record_dead): the record, its .key files and its socket, when one is left; one line says so.
+# CLEARED is how many. Never fails.
+CLEARED=0
+clear_stale_records() {
+  local d f e pid sock
+  CLEARED=0
+  d="$(sessions_dir)"
+  [ -n "$1" ] && [ -d "$d" ] || return 0
+  for f in "$d"/*.json; do
+    [ -f "$f" ] || continue
+    e="$(tr -d '\n\r' < "$f" 2>/dev/null)" || continue
+    [ "$(field "$e" sessionId)" = "$1" ] || continue
+    record_dead "$f" || continue
+    pid="$(number "$e" pid)" sock="$(field "$e" messagingSocketPath)"
+    rm -f "$f" "$d/$pid".*.key
+    [ -z "$sock" ] || [ ! -S "$sock" ] || rm -f "$sock"
+    CLEARED=$((CLEARED + 1))
+    note "$NAME: cleared the stale record of session $1 (its process $pid does not exist in this container: ${f##*/}), so Claude Code does not take it for one that runs."
+  done
+  return 0
+}
+
+# started_copy <claude output>: prints the id of the copy when Claude Code said it took the session
+# for one that runs and started a copy of it ("session <id> is already running in the background,
+# so this started a copy as <id2>"); returns 1 when it did not say so.
+started_copy() {
+  local c
+  c="$(printf '%s\n' "$1" | sed -n 's/.*is already running in the background, so this started a copy as \([A-Za-z0-9-]*\).*/\1/p' | head -n 1)"
+  [ -n "$c" ] && printf '%s' "$c"
+}
+
+# stop_copy <id>: stop a copy Claude Code started (by the id its note names); one line when that fails.
+stop_copy() {
+  claude stop "$1" </dev/null >/dev/null 2>&1 || note "$NAME: 'claude stop $1' of the copy failed: stop it by hand."
+}
+
+# roster_hint <short id> <session id>: when the background service's roster
+# ($CLAUDE_CONFIG_DIR/daemon/roster.json, the workers it keeps with their pid and procStart) names the
+# session, a sentence saying so (Claude Code's own record, which this Feature does not edit while
+# its service may rewrite it); else nothing.
+roster_hint() {
+  local f; f="$(config_dir)/daemon/roster.json"
+  [ -r "$f" ] || return 0
+  if grep -qF -e "\"$1\"" -e "\"$2\"" "$f" 2>/dev/null; then
+    printf '%s' "The background service's roster ($f) names it: that may be the record. "
+  fi
+}
+
+# mark_woken <session id> / woken_recently <session id>: a wake leaves a marker beside the records;
+# `attach` does not wake a session it finds ended when a wake of it was made less than
+# AGENT_ADAPTER_RECENT seconds ago (default 60), since a copy is what a second wake of a session
+# Claude Code has just started makes (reported: `agents start` woke it, then attached, which woke
+# it again, a second copy each time).
+mark_woken() { local d; d="$(state_dir)"; (umask 077 && mkdir -p "$d" && : > "$d/woken-$1") 2>/dev/null || true; }
+woken_recently() {
+  local f t now m; f="$(state_dir)/woken-$1"
+  t="${AGENT_ADAPTER_RECENT:-60}"; case "$t" in '' | *[!0-9]*) t=60 ;; esac
+  [ -e "$f" ] || return 1
+  now="$(date +%s)" m="$(stat -c %Y "$f" 2>/dev/null || echo 0)"
+  [ $((now - m)) -lt "$t" ]
+}
+
 # wake_session <session line> <args...>: wake that ended session (stopped or failed, so without a
 # process: one with a process is listed running and never reaches here, so a resume never starts
 # a copy of it, 1.9.2) in the background, always bare (1.9.3: a flag makes Claude Code start a copy
@@ -669,7 +777,7 @@ start_fresh() {
 # wake that comes back under a new id continuing the conversation records the new id, keeps the
 # old one as superseded and stops it if it still has a process (1.9.4). Any other failure fails.
 wake_session() {
-  local s="$1" sid short before WHY='' out rc=0 off k cand csid cshort chosen st kind; shift
+  local s="$1" sid short before WHY='' out rc=0 off k cand csid cshort chosen st kind dup; shift
   WARGS=("$@")
   sid="$(col "$s" 2)" short="$(col "$s" 5)"
   before="$(printf '%s\n' "$ALL" | cut -f2 | tr '\n' ' ')"
@@ -684,12 +792,26 @@ wake_session() {
   bare_check "$short" "$@"
   [ -z "$WHY" ] || note "$NAME: $WHY; woken as it is (the same conversation), so what differs applies at the agent's next fresh start (agents reset, or the session gone)."
   STARTED_AS="$BARE_NAME"  # the name it keeps (and the record then holds)
+  clear_stale_records "$sid"
+  mark_woken "$sid"
   off="$(log_size)"
   out="$(cd "$FOLDER" && claude --bg --resume "$sid" </dev/null 2>&1)" || rc=$?
   [ -z "$out" ] || printf '%s\n' "$out" >&2
   if [ "$rc" -ne 0 ]; then
     if crashed "$sid" "$off" "$out"; then start_fresh "session $sid is gone" "$before" "$sid"; return 0; fi
     die 1 "$NAME: 'claude --bg --resume' failed."
+  fi
+  # (1.9.7) Claude Code took the session for one that runs (a record the sweep above did not know
+  # of) and started a copy, which `claude agents` may never list (reported: "not in 'claude agents'
+  # yet; not recorded", the copies only in Claude Code's own view), so its id is the one the CLI's
+  # note names. No process of the session exists here (it was listed ended), so the copy is
+  # stopped, and the wake is an error of the Feature: an "error:" line, exit 1, nothing recorded,
+  # and no second wake in this run (each repeat made another copy; the caller, on this exit, does
+  # not go on to attach, which would wake it again). The next run starts from cleared records.
+  if dup="$(started_copy "$out")"; then
+    stop_copy "$dup"
+    clear_stale_records "$sid"
+    die 1 "error: $NAME: Claude Code took session $sid for one that runs (a stale background-session record) and started a copy as $dup, which was stopped; the agent is not running, and the wake is not repeated in this run. $(roster_hint "$short" "$sid")Look for other copies ('claude agents' may not list them: 'claude' shows them) and stop each by its id ('claude stop <id>'); then run it again."
   fi
   # what came back: within AGENT_ADAPTER_WAIT seconds, its own session running, a new one that
   # continues it, or a new running one by the agent's name
@@ -1029,6 +1151,20 @@ case "$verb" in
       # with the old one superseded), and the session that then runs is attached: `claude attach`
       # of an ended session lets Claude Code restart it on its own, which may be a copy under a new
       # id that nothing records (the report: the host came back as a copy with only --model)
+      if woken_recently "$(col "$s" 2)"; then
+        # (1.9.7) a wake of it was made a moment ago (the same `agents start`): not again, a second
+        # wake of a session Claude Code has just started makes a copy; wait for it to be listed
+        k="${AGENT_ADAPTER_WAIT:-10}"; case "$k" in '' | *[!0-9]*) k=10 ;; esac
+        while :; do
+          ALL="$(sessions 2>/dev/null | apply_records)"; resolve_record; run="$(mine running)"
+          [ -z "$run" ] || break
+          [ "$k" -le 0 ] && break
+          sleep 1; k=$((k - 1))
+        done
+        [ -n "$run" ] || die 1 "$NAME: its session $(col "$s" 2) was woken a moment ago but is not listed running yet; not woken again (a second wake starts a copy). Try again in a moment, or see 'claude agents'."
+        trace attached "" "$(col "$run" 2)"
+        exec claude attach "$(col "$run" 5)"
+      fi
       woke="$(wake_session "$s" "$@")" || exit $?
       woke="$(printf '%s\n' "$woke" | awk 'NF { l = $0 } END { print l }')"
       [ -n "$woke" ] || die 1 "$NAME: woken, but its session is not listed yet, so there is nothing to attach to; try again in a moment."
