@@ -11,6 +11,7 @@ backlog, the ledger directory's contents and the ADRs stay as they are. Special 
 - `.githooks/pre-commit`: written only when `.githooks/` is absent (`exec devhost-verify --quiet`).
 - `.githooks/pre-push`: written when the file is absent (the branch rule, `devhost-branches --check-push`).
 - `.gitignore`: the line `.devhost/redact-names.txt` is appended when missing.
+- `TODO.md` goes where the backlog setting says (`DEVHOST_BACKLOG`, else `<DEVHOST_RECORDS_DIR>/TODO.md`).
 - `.devhost/CLAUDE.devhost.md` is a section for the repository's CLAUDE.md to include with a
   line `@.devhost/CLAUDE.devhost.md`; CLAUDE.md itself is never written.
 
@@ -24,7 +25,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from devhost_common import read_text, repo_root, today, write_text  # noqa: E402
+from devhost_common import backlog_path, read_text, repo_root, today, write_text  # noqa: E402
 
 TEMPLATES = Path(__file__).resolve().parent / "templates"
 
@@ -68,7 +69,8 @@ def fill(text: str, root: Path) -> str:
 
 def put(root: Path, template: str, target: str, force: bool, out: list[str]) -> bool:
     """Write the file unless it exists (or force); returns True when written."""
-    dest = root / target
+    # The backlog follows its setting: with DEVHOST_RECORDS_DIR it is scaffolded in the shared folder.
+    dest = backlog_path(root) if target == "TODO.md" else root / target
     if dest.exists() and not (force and target not in RECORDS):
         out.append(f"  kept      {target} (exists)")
         return False

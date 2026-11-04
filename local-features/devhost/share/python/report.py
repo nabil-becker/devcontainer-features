@@ -9,12 +9,13 @@ cons, from Claude Code's transcripts (session_cost.py), and the backs, from the 
 each job run appends to `$DEVHOST_STATE/runs.jsonl` (one JSON object per line: `ts`, `job`,
 `model`, `status` changed|nothing|pending|error, `undone`, `stakes`, `duration_s`,
 `stretch_chars`, `cost_usd`, `output_tokens`; a missing field counts as zero). Writes
-`<ledger dir>/costs-YYYY-MM-<engineer>.md`, committed with the ledger: numbers, models, session
+`<costs dir>/costs-YYYY-MM-<engineer>.md` (`DEVHOST_COSTS_DIR`, else `<DEVHOST_RECORDS_DIR>/costs`, else the
+ledger directory), kept with the ledger: numbers, models, session
 and agent ids only, never content. With --summary it prints one line for the briefing instead.
 Every figure is a list-price estimate, not a charge. The ledger review reads this report first.
 
 Transcripts and run records live in volumes a rebuild can empty, so the report is built from a
-store committed beside it, `costs-YYYY-MM-<engineer>.jsonl`: one line per priced reply or back
+store kept beside it (committed, or in the shared records folder), `costs-YYYY-MM-<engineer>.jsonl`: one line per priced reply or back
 run (ids and numbers), merged with what this machine has, so regenerating never loses a month's
 history. A `baseline` line carries figures whose records were lost before the store existed:
 its tables add to the report's, and local records up to its `until` are already in it.
@@ -28,8 +29,9 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import ledger  # noqa: E402
 import session_cost as sc  # noqa: E402
-from devhost_common import (engineer, ledger_dir, money_target, monthly_target, month as this_month, rel, repo_root,  # noqa: E402
+from devhost_common import (costs_dir, engineer, money_target, monthly_target, month as this_month, rel, repo_root,  # noqa: E402
                             review_every, state_dir, write_text)
 
 RUN_FIELDS = ("ts", "job", "model", "status", "undone", "stakes", "duration_s", "stretch_chars", "cost_usd", "output_tokens")
@@ -55,11 +57,16 @@ def back_runs(month: str) -> list[dict]:
 NO_CORRECTION = re.compile(r"^\s*none[\s.,;:!]*$", re.I)  # `Corrects: none` says the entry corrects nothing
 
 
+def _month_text(root: Path, month: str) -> str:
+    """The month's ledger as Markdown, from the files or the register (ledger.py); empty when unreadable."""
+    try:
+        return ledger.month_text(root, month)
+    except ledger.RegisterError:
+        return ""
+
+
 def corrections(root: Path, month: str) -> int:
-    path = ledger_dir(root) / f"{month}.md"
-    if not path.exists():
-        return 0
-    text = path.read_text(encoding="utf-8", errors="replace")
+    text = _month_text(root, month)
     return sum(1 for v in re.findall(r"^- \*\*Corrects:\*\*(.*)$", text, re.M) if not NO_CORRECTION.match(v))
 
 
@@ -69,8 +76,7 @@ ENTRY_DAY = re.compile(r"^### (\d{4}-\d{2}-\d{2})", re.M)
 def entry_rate(root: Path, month: str) -> str:
     """The ledger's entry rate for the month, so the review setting can be judged: entries per day
     and per week over the days (weeks) that have entries, and the days one review takes at that rate."""
-    path = ledger_dir(root) / f"{month}.md"
-    text = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
+    text = _month_text(root, month)
     days: dict[str, int] = {}
     for d in ENTRY_DAY.findall(text):
         days[d] = days.get(d, 0) + 1
@@ -111,7 +117,7 @@ def run_key(r: dict) -> tuple:
 
 
 def store_path(root: Path, month: str) -> Path:
-    return ledger_dir(root) / f"costs-{month}-{engineer(root)}.jsonl"
+    return costs_dir(root) / f"costs-{month}-{engineer(root)}.jsonl"
 
 
 def read_store(root: Path, month: str) -> tuple[dict | None, list[sc.Reply], list[dict]]:
@@ -258,7 +264,7 @@ def summary(root: Path, month: str) -> str:
 
 
 def report_path(root: Path, month: str) -> Path:
-    return ledger_dir(root) / f"costs-{month}-{engineer(root)}.md"
+    return costs_dir(root) / f"costs-{month}-{engineer(root)}.md"
 
 
 def render_tables(root: Path, month: str, agg: dict) -> str:

@@ -6,7 +6,8 @@ Usage: verify.py [--quiet]      --quiet prints only the failures; exit 1 on any 
 Each guard is a function returning `file:line: message` strings (never a secret or a forbidden
 word itself), and needs only git and python3:
 
-- `ledger_append_only`: a line of a monthly ledger file (`YYYY-MM.md` in the ledger directory)
+- `ledger_append_only`: with `DEVHOST_LEDGER_REGISTER` set, the register's own check (`agentic-register
+  verify`: signatures, forks, held or refused entries; a warning, not a pass, when it cannot run). Else: a line of a monthly ledger file (`YYYY-MM.md` in the ledger directory)
   that exists on the base ref (`DEVHOST_BASE_REF`, else origin/main, main, origin/develop,
   develop) cannot change or go; a note, not a failure, when there is no base ref.
 - `ledger_shape`: a monthly file starts `# Ledger, YYYY-MM` and its headings are only
@@ -34,7 +35,7 @@ word itself), and needs only git and python3:
   100755; a 100644 hook never runs on Linux (`core.fileMode=false` on Windows hides the change).
 - `conflict_markers`: no tracked text file has a line starting with a merge-conflict marker
   (`<<<<<<< ` or `>>>>>>> `), which a stash pop or a merge can leave behind unnoticed.
-- `backlog_ids`: no backlog item id (`- [ ] **<id> Title**` in `TODO.md`) appears on more lines than
+- `backlog_ids` (only for a backlog inside the repository): no backlog item id (`- [ ] **<id> Title**` in `TODO.md`) appears on more lines than
   it did at the merge base with the base ref; a `merge=union` merge keeps both versions of a line both
   sides changed (a tick), so a repeated id is how that shows. Ids already repeated on the base are
   not reported; with no base ref every repeated id is.
@@ -45,7 +46,9 @@ word itself), and needs only git and python3:
 from __future__ import annotations
 
 import hashlib
+import os
 import re
+import subprocess
 import sys
 try:
     import tomllib
@@ -55,7 +58,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from devhost_common import (COST_REPORT, MONTHLY, adr_dir, backlog_path, base_ref, forbidden_words as _forbidden,  # noqa: E402
-                            git, ledger_dir, lexicon_path, model_dir, read_text, redact_file, redact_names, rel, repo_root,
+                            git, in_repo, ledger_dir, ledger_register, lexicon_path, model_dir, read_text, redact_file, redact_names, rel, repo_root,
                             tracked_files)
 
 TEXT_SUFFIXES = {
@@ -91,11 +94,33 @@ def text_files(root: Path) -> list[Path]:
 
 # The ledger
 
+REGISTER_SKIPPED_NOTE = ("ledger register check NOT RUN: agentic-register could not verify the register {name} ({why}); "
+                         "this is not a full pass")
 SKIPPED_NOTE = ("ledger append-only guard NOT RUN: no base ref resolved (DEVHOST_BASE_REF, origin/main, main, "
                 "origin/develop, develop); this is not a full pass")
 
 
+def ledger_register_verify(name: str, notes: list[str] | None) -> list[str]:
+    """Register mode: the register's own check (`agentic-register verify`: every signature, no fork, no held
+    or refused entry) stands for the append-only rule, which the register keeps by construction."""
+    exe = os.environ.get("DEVHOST_AGENTIC_REGISTER", "").strip() or "agentic-register"
+    try:
+        done = subprocess.run([exe, "verify", "--register", name], capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=300)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        if notes is not None:
+            notes.append(REGISTER_SKIPPED_NOTE.format(name=name, why=type(exc).__name__))
+        return []
+    if done.returncode == 0:
+        return []
+    last = (done.stdout.strip().splitlines() or done.stderr.strip().splitlines() or ["verify failed"])[-1]
+    return [f"register {name}: {last}; an operator settles a fork or a refusal (agentic-register forks, rule)"]
+
+
 def ledger_append_only(root: Path, notes: list[str] | None = None) -> list[str]:
+    name = ledger_register()
+    if name:
+        return ledger_register_verify(name, notes)
     base = base_ref(root)
     if base is None:
         if notes is not None:
@@ -132,7 +157,7 @@ def ledger_append_only(root: Path, notes: list[str] | None = None) -> list[str]:
 
 def ledger_shape(root: Path) -> list[str]:
     folder = ledger_dir(root)
-    if not folder.is_dir():
+    if ledger_register() or not folder.is_dir():   # register mode: the register's own checks hold the shape
         return []
     findings = []
     for path in sorted(folder.glob("*.md")):
@@ -302,7 +327,7 @@ BACKLOG_ITEM = re.compile(r"^- \[[ xX]\] \*\*([a-z0-9][\w-]*)[ *]")
 
 def backlog_ids(root: Path) -> list[str]:
     path = backlog_path(root)
-    if not path.is_file():
+    if not path.is_file() or not in_repo(root, path):   # outside git no merge can double a line
         return []
 
     def count(text: str) -> dict[str, list[int]]:
@@ -565,12 +590,12 @@ def main(argv: list[str]) -> int:
             print(f"FAIL {name}")
             for finding in findings:
                 print(f"  {finding}")
-        elif SKIPPED_NOTE in notes and name == "ledger_append_only":
+        elif name == "ledger_append_only" and any(n == SKIPPED_NOTE or n.startswith("ledger register check NOT RUN") for n in notes):
             print(f"SKIP {name}", file=sys.stderr)
         elif not quiet:
             print(f"ok   {name}")
     for note in notes:
-        if note == SKIPPED_NOTE:  # --quiet hides passes, never a guard that did not run
+        if note == SKIPPED_NOTE or note.startswith("ledger register check NOT RUN"):  # --quiet never hides a guard that did not run
             print(f"WARNING {note}", file=sys.stderr)
         elif not quiet:
             print(f"note {note}")
@@ -578,7 +603,8 @@ def main(argv: list[str]) -> int:
         print(f"devhost-verify: {failed} finding(s)")
         return 1
     if not quiet:
-        print("devhost-verify: all guards passed" + (" (except the skipped guard above)" if SKIPPED_NOTE in notes else ""))
+        print("devhost-verify: all guards passed" + (" (except the skipped guard above)" if any(
+            n == SKIPPED_NOTE or n.startswith("ledger register check NOT RUN") for n in notes) else ""))
     return 0
 
 

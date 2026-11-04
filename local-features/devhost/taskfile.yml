@@ -57,6 +57,12 @@ tasks:
         done
         echo "runs.jsonl: $(wc -l < "$state/runs.jsonl" 2>/dev/null || echo 0) lines"
 
+  ledger:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'The ledger as Markdown, whether it is kept in docs/ledger or in the register DEVHOST_LEDGER_REGISTER names (devhost-ledger); arguments after --: show [--month YYYY-MM] (the default), tail, where, mirror (bring the register level with its mirror in the shared folder), review <file> (keep a ledger review), carry-reviews <monthly files> (the cut-over).'
+    cmds:
+      - devhost-ledger {{if .CLI_ARGS}}{{.CLI_ARGS}}{{else}}show{{end}}
+
   briefing:
     dir: '{{.USER_WORKING_DIR}}'
     desc: 'Print the briefing an inter gets at session start: where the records stand (ledger entries since the last review, open backlog items, pending decisions). No model.'
@@ -66,7 +72,7 @@ tasks:
 
   branch:
     dir: '{{.USER_WORKING_DIR}}'
-    desc: 'Start work on a backlog item: create <type>/<id>/<n> (type feature, fix, docs or chore; n the next free workstream number) from origin/main and switch to it; arguments after --, e.g. task devhost:branch -- branch-work-ids [type]. Refuses an id that is not in TODO.md.'
+    desc: 'Start work on a backlog item: create <type>/<id>/<n> (type feature, fix, docs or chore; n the next free workstream number) from origin/main and switch to it; arguments after --, e.g. task devhost:branch -- branch-work-ids [type]. Refuses an id that is not in the backlog (TODO.md, at the root or in DEVHOST_RECORDS_DIR).'
     cmds:
       - devhost-branches new {{.CLI_ARGS}}
 

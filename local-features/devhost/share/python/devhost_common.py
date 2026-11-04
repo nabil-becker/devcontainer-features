@@ -8,6 +8,17 @@ job runner uses, so a repository can keep its records elsewhere without changing
 - `DEVHOST_STATE`: where the jobs keep their state (`/var/lib/devcontainer-features/devhost`).
 - `DEVHOST_LEDGER_DIR`, `DEVHOST_BACKLOG`, `DEVHOST_LEXICON`, `DEVHOST_ADR_DIR`,
   `DEVHOST_NIGHT_SHIFT_DIR`: the records, relative to the root unless absolute.
+- `DEVHOST_RECORDS_DIR`: where the records that live outside git are kept (a shared folder such as
+  `/mnt/cloud-folder`); unset, they are in the repository as before. Set, the backlog defaults to
+  `<it>/TODO.md`, the Markdown ledger to `<it>/ledger` and the cost reports to `<it>/costs`; an explicit
+  `DEVHOST_BACKLOG`, `DEVHOST_LEDGER_DIR` or `DEVHOST_COSTS_DIR` still wins.
+- `DEVHOST_COSTS_DIR`: where the monthly cost reports (`costs-YYYY-MM-<engineer>.md` and `.jsonl`) go;
+  else `<DEVHOST_RECORDS_DIR>/costs`, else the ledger directory.
+- `DEVHOST_REVIEWS_DIR`: in register mode, where the ledger reviews are kept as files (ledger.py); else
+  `<DEVHOST_RECORDS_DIR>/reviews`, else `<ledger dir>/reviews`.
+- `DEVHOST_LEDGER_REGISTER`: the name of an agentic-register register that holds the ledger; unset, the
+  ledger is the Markdown files of the ledger directory. Set, the scribe signs each entry into the
+  register and every reader (briefing, report, site, verify, `devhost-ledger show`) reads it (ledger.py).
 - `DEVHOST_ENGINEER`: whose machine this is, as a slug; else `operator`. Never the git identity: the handle
   is committed (entries, the cost report's file name) and a git name may be a person's name.
 - `DEVHOST_REVIEW_EVERY`: ledger entries between reviews (25); the briefing says a review is due then.
@@ -57,12 +68,53 @@ def state_dir() -> Path:
     return Path(os.environ.get("DEVHOST_STATE", "").strip() or DEFAULT_STATE)
 
 
+def records_dir(root: Path) -> Path | None:
+    """The folder of the records kept outside git (`DEVHOST_RECORDS_DIR`), or None: in the repository."""
+    value = os.environ.get("DEVHOST_RECORDS_DIR", "").strip()
+    if not value:
+        return None
+    return Path(value) if Path(value).is_absolute() else Path(root) / value
+
+
 def ledger_dir(root: Path) -> Path:
-    return _path(root, "DEVHOST_LEDGER_DIR", "docs/ledger")
+    records = records_dir(root)
+    return _path(root, "DEVHOST_LEDGER_DIR", str(records / "ledger") if records else "docs/ledger")
 
 
 def backlog_path(root: Path) -> Path:
-    return _path(root, "DEVHOST_BACKLOG", "TODO.md")
+    records = records_dir(root)
+    return _path(root, "DEVHOST_BACKLOG", str(records / "TODO.md") if records else "TODO.md")
+
+
+def costs_dir(root: Path) -> Path:
+    """Where the cost reports go: `DEVHOST_COSTS_DIR`, else `<records>/costs`, else the ledger directory."""
+    if os.environ.get("DEVHOST_COSTS_DIR", "").strip():
+        return _path(root, "DEVHOST_COSTS_DIR", "")
+    records = records_dir(root)
+    return records / "costs" if records else ledger_dir(root)
+
+
+def reviews_dir(root: Path) -> Path:
+    """Where the reviews are kept in register mode: `DEVHOST_REVIEWS_DIR`, else `<records>/reviews`, else
+    `<ledger dir>/reviews`."""
+    if os.environ.get("DEVHOST_REVIEWS_DIR", "").strip():
+        return _path(root, "DEVHOST_REVIEWS_DIR", "")
+    records = records_dir(root)
+    return records / "reviews" if records else ledger_dir(root) / "reviews"
+
+
+def ledger_register() -> str | None:
+    """The agentic-register register holding the ledger (`DEVHOST_LEDGER_REGISTER`), or None: Markdown files."""
+    return os.environ.get("DEVHOST_LEDGER_REGISTER", "").strip() or None
+
+
+def in_repo(root: Path, path: Path) -> bool:
+    """True when `path` is inside the repository (git sees it)."""
+    try:
+        Path(path).resolve().relative_to(Path(root).resolve())
+        return True
+    except ValueError:
+        return False
 
 
 def lexicon_path(root: Path) -> Path:

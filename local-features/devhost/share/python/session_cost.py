@@ -7,6 +7,9 @@ Usage:
   session_cost.py --measures FILE... [--since ISO] [--main N]
                                                       one line for a ledger entry's Measures
                                                       (the scribe job calls this)
+  session_cost.py --runs FILE... [--since ISO] [--main N] [--member WHO]
+                                                      the worker's own replies as `run` entries
+                                                      (JSON lines), for a ledger kept in a register
 
 Transcripts live under `$CLAUDE_CONFIG_DIR/projects/` (default `~/.claude/projects/`), in the
 folder named after the repository's path with every character that is not a letter or digit
@@ -202,13 +205,36 @@ def measures_line(files: list[str], since: str = "", main: int = 1) -> str:
     return "; ".join(parts) + "; list-price estimate"
 
 
+def run_records(files: list[str], since: str = "", main: int = 1, member: str = "host") -> list[dict]:
+    """The worker's own replies in this stretch (the first `main` files; its cons' are their own runs, recorded
+    by their own scribe run) as `run` entries for the ledger register, one per model: member, model, outcome
+    `stretch`, the list-price cost in micro-dollars and the tokens."""
+    own = []
+    for name in files[:main]:
+        own += [r for r in read_replies(Path(name), "", "inter") if not since or r.ts >= since]
+    out = []
+    for model, t in sorted(tally(own, lambda r: r.model).items()):
+        out.append({"member": member, "model": model, "outcome": "stretch", "cost": {
+            "usd_micro": round(t.cost * 1_000_000),
+            "tokens": [{"model": model, "input": t.input, "output": t.output, "cache_read": t.cache_read,
+                        "cache_write": t.cache_write}]}, "replies": t.replies, "first": t.first, "last": t.last})
+    return out
+
+
 def main(argv: list[str]) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--since", default="", help="only replies at or after this ISO timestamp (UTC)")
     p.add_argument("--session", help="a session id; default the newest session of this repository")
     p.add_argument("--measures", nargs="+", metavar="FILE", help="one Measures line for these transcripts")
     p.add_argument("--main", type=int, default=1, help="with --measures: how many of the files are the worker's own")
+    p.add_argument("--runs", nargs="+", metavar="FILE", help="the worker's own replies in these transcripts as run "
+                   "entries for the ledger register, one JSON object a line")
+    p.add_argument("--member", default="host", help="with --runs: who ran (host, con <type>)")
     a = p.parse_args(argv)
+    if a.runs:
+        for rec in run_records(a.runs, a.since, a.main, a.member):
+            print(json.dumps(rec))
+        return 0
     if a.measures:
         print(measures_line(a.measures, a.since, a.main))
         return 0

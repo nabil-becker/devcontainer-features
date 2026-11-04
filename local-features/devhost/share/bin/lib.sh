@@ -57,9 +57,23 @@ hk_state() { printf '%s\n' "${DEVHOST_STATE:-/var/lib/devcontainer-features/devh
 # hk_abs <root> <path>: <path> as given when absolute, else under <root>.
 hk_abs() { case "$2" in /*) printf '%s\n' "$2" ;; *) printf '%s\n' "${1%/}/$2" ;; esac; }
 
-# The records a repository keeps, relative to the root unless absolute.
-hk_ledger_dir() { hk_abs "$1" "${DEVHOST_LEDGER_DIR:-docs/ledger}"; }
-hk_backlog() { hk_abs "$1" "${DEVHOST_BACKLOG:-TODO.md}"; }
+# The records a repository keeps, relative to the root unless absolute. DEVHOST_RECORDS_DIR (a shared
+# folder) moves the records that left git: the backlog to <it>/TODO.md, the Markdown ledger to
+# <it>/ledger; an explicit DEVHOST_BACKLOG or DEVHOST_LEDGER_DIR still wins (devhost_common.py).
+hk_records_dir() { [ -n "${DEVHOST_RECORDS_DIR:-}" ] && hk_abs "$1" "$DEVHOST_RECORDS_DIR"; }
+hk_ledger_dir() {
+  if [ -n "${DEVHOST_LEDGER_DIR:-}" ]; then hk_abs "$1" "$DEVHOST_LEDGER_DIR"
+  elif [ -n "${DEVHOST_RECORDS_DIR:-}" ]; then printf '%s/ledger\n' "$(hk_records_dir "$1")"
+  else hk_abs "$1" docs/ledger; fi
+}
+hk_backlog() {
+  if [ -n "${DEVHOST_BACKLOG:-}" ]; then hk_abs "$1" "$DEVHOST_BACKLOG"
+  elif [ -n "${DEVHOST_RECORDS_DIR:-}" ]; then printf '%s/TODO.md\n' "$(hk_records_dir "$1")"
+  else hk_abs "$1" TODO.md; fi
+}
+# hk_ledger_register: the agentic-register register holding the ledger (DEVHOST_LEDGER_REGISTER), empty
+# when the ledger is the Markdown files of hk_ledger_dir.
+hk_ledger_register() { printf '%s\n' "${DEVHOST_LEDGER_REGISTER:-}"; }
 hk_lexicon() { hk_abs "$1" "${DEVHOST_LEXICON:-LEXICON.md}"; }
 hk_adr_dir() { hk_abs "$1" "${DEVHOST_ADR_DIR:-docs/adr}"; }
 hk_model_dir() { hk_abs "$1" "${DEVHOST_MODEL_DIR:-docs/model}"; }
