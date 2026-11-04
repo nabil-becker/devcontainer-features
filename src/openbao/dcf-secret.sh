@@ -7,6 +7,8 @@
 #                                               secret's other fields, --replace drops them
 #   dcf-secret status [<name>]                  one word: ready | sealed | unreachable |
 #                                               logged-out | denied | not-initialised
+#   dcf-secret ttl                              the seconds the token has left (0: it does not
+#                                               expire), so a caller can live no longer than it
 #
 # A name is logical (ssh/<key>, register/<principal>, token/<name>) and lives at
 # <DCF_SECRET_MOUNT>/<name> (mount default: dcf, a KV v2 mount). A thin wrapper over the `bao`
@@ -40,6 +42,7 @@ usage: dcf-secret get <name> [--field <field>]    print the value (field default
                                                   fields are kept unless --replace
        dcf-secret status [<name>]                 print ready, sealed, unreachable, logged-out,
                                                   denied or not-initialised
+       dcf-secret ttl                             print the seconds the token has left (0: none)
 EOF
   exit 2
 }
@@ -231,6 +234,19 @@ cmd_status() {
   exit 0
 }
 
+# The token's remaining lifetime, from `bao token lookup`'s JSON (the "ttl" field, in seconds;
+# 0 for a token that does not expire, such as a root token). ssh-agent's key:load lives no longer.
+cmd_ttl() {
+  local json ttl
+  [ $# -eq 0 ] || usage
+  server_state
+  state_exit
+  json="$(bao token lookup -format=json 2>/dev/null)" || { fix_login; exit 12; }
+  ttl="$(sed -n 's/.*"ttl"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' <<<"$json" | head -n 1)"
+  [ -n "$ttl" ] || die 1 "bao token lookup gave no ttl for this token"
+  echo "$ttl"
+}
+
 [ $# -ge 1 ] || usage
 cmd="$1"
 shift
@@ -238,6 +254,7 @@ case "$cmd" in
   get) cmd_get "$@" ;;
   put) cmd_put "$@" ;;
   status) cmd_status "$@" ;;
+  ttl) cmd_ttl "$@" ;;
   -h | --help | help) usage ;;
   *) usage ;;
 esac

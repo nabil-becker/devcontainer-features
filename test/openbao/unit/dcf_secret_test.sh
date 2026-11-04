@@ -52,7 +52,11 @@ case "$1 $2" in
     echo "${STUB_CAPS-read}"
     exit 0 ;;
   "token lookup")
-    echo "token  s.never-printed"
+    if [ "${3:-}" = -format=json ]; then
+      printf '{\n  "data": {\n    "creation_ttl": 14400,\n    "ttl": %s\n  }\n}\n' "${STUB_TTL:-14400}"
+    else
+      echo "token  s.never-printed"
+    fi
     exit "${STUB_LOOKUP_RC:-0}" ;;
 esac
 echo "stub bao: unexpected call: $*" >&2
@@ -317,6 +321,23 @@ run STUB_CAPS=deny -- status
 check "status without a name asks no capabilities" "ready" "$out"
 run -- status a b
 check "status with two names is usage" 2 "$rc"
+
+# --- ttl: the token's seconds left, for a caller that must not outlive it (ssh-agent's key:load)
+run STUB_TTL=3599 -- ttl
+check "ttl: exit 0" 0 "$rc"
+check "ttl: the seconds alone on stdout" "3599" "$out"
+has "ttl: from bao token lookup's JSON" "token lookup -format=json" "$(cat "$LOG")"
+run STUB_TTL=0 -- ttl
+check "ttl: 0 for a token that does not expire" "0" "$out"
+run STUB_LOOKUP_RC=2 -- ttl
+check "ttl: no token is 12" 12 "$rc"
+has "ttl: with the login line" "task openbao:login" "$err"
+run STUB_STATUS_RC=2 STUB_STATUS_JSON='{"initialized": true, "sealed": true}' -- ttl
+check "ttl: sealed is 11" 11 "$rc"
+run STUB_STATUS_RC=1 STUB_STATUS_JSON= -- ttl
+check "ttl: unreachable is 10" 10 "$rc"
+run -- ttl extra
+check "ttl with an argument is usage" 2 "$rc"
 
 # --- not supported yet, and a missing bao
 run DCF_SECRET_AS=scribe -- get ssh/key

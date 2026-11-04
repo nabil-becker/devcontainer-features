@@ -25,7 +25,7 @@ PERSON = "Guinevere Pendragon"
 ENV_VARS = ("DEVHOST_ROOT", "DEVHOST_STATE", "DEVHOST_LEDGER_DIR", "DEVHOST_BACKLOG", "DEVHOST_LEXICON",
             "DEVHOST_ADR_DIR", "DEVHOST_MODEL_DIR", "DEVHOST_NIGHT_SHIFT_DIR", "DEVHOST_ENGINEER", "DEVHOST_REDACT_FILE",
             "DEVHOST_REDACT_WITH", "DEVHOST_FORBIDDEN_WORDS", "DEVHOST_BASE_REF", "CLAUDE_CONFIG_DIR",
-            "CLAUDE_PROJECT_DIR", "DEVHOST_SHARE", "DEVHOST_GH", "DEVHOST_REVIEW_EVERY", "DEVHOST_MONTHLY_TARGET")
+            "CLAUDE_PROJECT_DIR", "DEVHOST_SHARE", "DEVHOST_GH", "DEVHOST_REVIEW_EVERY", "DEVHOST_MONTHLY_TARGET", "DEVHOST_BAO", "OPENBAO_STATE_DIR", "BAO_ADDR")
 
 
 def load(name: str):
@@ -125,6 +125,8 @@ def devhost_env(root: Path, **extra: str):
     os.environ["DEVHOST_STATE"] = str(root.parent / "state")
     os.environ["CLAUDE_CONFIG_DIR"] = str(root.parent / "claude")
     os.environ["DEVHOST_ENGINEER"] = "tester"
+    os.environ["DEVHOST_BAO"] = "devhost-test-no-bao"  # never the real bao; tests that need one set it
+    os.environ["OPENBAO_STATE_DIR"] = str(root.parent / "openbao-state")
     os.environ["DEVHOST_GH"] = "devhost-test-no-gh"  # never the real gh (network); tests that need one set it
     for k, v in extra.items():
         os.environ[k] = v

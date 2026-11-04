@@ -131,6 +131,9 @@ mkdir -p "$share"
 } > "$share/options.env"
 chmod 0644 "$share/options.env"
 install -m 0755 "$feature_dir/gh-setup.sh" /usr/local/bin/gh-setup
+# gh-ssh-key-add registers a public key as a signing key (task gh:ssh-key:add; ssh-agent's
+# key:rotate calls it).
+install -m 0755 "$feature_dir/gh-ssh-key-add.sh" /usr/local/bin/gh-ssh-key-add
 install -m 0755 "$feature_dir/dcf-persist.sh" /usr/local/bin/dcf-persist
 
 # ---------------------------------------------------- Feature Taskfile ----

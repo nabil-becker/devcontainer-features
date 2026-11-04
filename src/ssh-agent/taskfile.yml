@@ -30,14 +30,17 @@ tasks:
 
   key:load:
     dir: '{{.USER_WORKING_DIR}}'
-    desc: 'Key mode only: (re)load every private key of the key volume into the in-container agent, what the post-start hook does but asking for the passphrase of a protected key on the terminal (waits up to SSH_AGENT_SETUP_PASSPHRASE_TIMEOUT seconds, then warns and goes on); use it after copying keys in by hand. Refuses, with the way to turn it on, when key mode is off.'
+    desc: 'NAME=<OpenBao name> (ssh/<key>, register/<principal>) [MINUTES=]: fetch the key from OpenBao (the openbao Feature''s dcf-secret, after task openbao:login) and pipe it into the agent with ssh-add -t <life> -, so it is in agent memory only and never in a file; it lives as long as the OpenBao login has left (at most 480 minutes), MINUTES shortens it; says the clock time it drops out and whose agent holds it (the container''s, or in socket mode the workstation''s). Key mode starts the in-container agent if none runs. Exits with dcf-secret''s code when OpenBao says no (10 unreachable, 11 sealed, 12 log in, 13 denied, 14 no such key). With no NAME (deprecated, gone in 2.0): reload every key of the key volume, key mode only, asking for a protected key''s passphrase on the terminal.'
     interactive: true
+    vars:
+      NAME: '{{.NAME | default ""}}'
+      MINUTES: '{{.MINUTES | default ""}}'
     cmds:
-      - ssh-agent-setup key-load
+      - ssh-agent-setup key-load '{{.NAME}}' '{{.MINUTES}}'
 
   key:add:
     dir: '{{.USER_WORKING_DIR}}'
-    desc: 'Key mode only, opt-in (puts a private key in the container''s key volume): copy the private key file FILE=<path inside the container> (and its .pub beside it) into the volume with mode 0600, then load it. Refuses, with the way to turn it on, when key mode is off.'
+    desc: 'Deprecated (gone in 2.0; use task openbao:ssh:import FROM=file FILE=<path>). Key mode only, opt-in (puts a private key in the container''s key volume): copy the private key file FILE=<path inside the container> (and its .pub beside it) into the volume with mode 0600, then load it. Refuses, with the way to turn it on, when key mode is off.'
     requires:
       vars: [FILE]
     cmds:
@@ -45,7 +48,7 @@ tasks:
 
   key:new:
     dir: '{{.USER_WORKING_DIR}}'
-    desc: 'Key mode only, opt-in: generate a dedicated ed25519 signing key NAME (default <repo>-<container>-sign) in the key volume, load it and print the public key to register at GitHub as a SIGNING key (not an authentication key). Asks for a passphrase unless EMPTY_PASSPHRASE=1. COMMENT sets the key comment. The private key is never printed.'
+    desc: 'Deprecated (gone in 2.0; use task openbao:ssh:new). Key mode only, opt-in: generate a dedicated ed25519 signing key NAME (default <repo>-<container>-sign) in the key volume, load it and print the public key to register at GitHub as a SIGNING key (not an authentication key). Asks for a passphrase unless EMPTY_PASSPHRASE=1. COMMENT sets the key comment. The private key is never printed.'
     interactive: true
     vars:
       NAME: '{{.NAME | default ""}}'
@@ -56,7 +59,7 @@ tasks:
 
   key:unlock:
     dir: '{{.USER_WORKING_DIR}}'
-    desc: 'Key mode only: load the one key NAME=<file name in the key volume> into the agent for MINUTES (default 15, at most 480) only (ssh-add -t), asking for its passphrase on the terminal (waits up to SSH_AGENT_SETUP_PASSPHRASE_TIMEOUT seconds), and say the clock time it drops out. For a protected key the start hook skips and key:load would load without a limit. Refuses, plainly, when key mode is off, NAME is missing or not in the volume, or MINUTES is not a positive whole number within the limit. key:lock ends it sooner.'
+    desc: 'Deprecated (gone in 2.0; use task ssh-agent:key:load NAME=ssh/<key> [MINUTES=], which an OpenBao name here also runs). Key mode only: load the one key NAME=<file name in the key volume> into the agent for MINUTES (default 15, at most 480) only (ssh-add -t), asking for its passphrase on the terminal (waits up to SSH_AGENT_SETUP_PASSPHRASE_TIMEOUT seconds), and say the clock time it drops out. For a protected key the start hook skips and key:load would load without a limit. Refuses, plainly, when key mode is off, NAME is missing or not in the volume, or MINUTES is not a positive whole number within the limit. key:lock ends it sooner.'
     interactive: true
     requires:
       vars: [NAME]
@@ -67,7 +70,7 @@ tasks:
 
   key:lock:
     dir: '{{.USER_WORKING_DIR}}'
-    desc: 'Key mode only: take the key NAME=<file name in the key volume> out of the agent now (what ends a key:unlock sitting), leaving it in the volume; says so when it was not loaded. Never asks for a passphrase. key:remove does the same unload and, with DELETE=1, deletes the file too.'
+    desc: 'Take the key NAME=<OpenBao name> (ssh/<key>) out of the agent now (ssh-add -d - with its public key, noted at key:load, so it works while OpenBao is sealed); says so when it was not loaded. Deprecated (gone in 2.0): NAME=<file name in the key volume>, key mode only, leaves the file in the volume.'
     requires:
       vars: [NAME]
     cmds:
@@ -75,7 +78,7 @@ tasks:
 
   key:remove:
     dir: '{{.USER_WORKING_DIR}}'
-    desc: 'Remove the key NAME=<file name in the key volume> from the agent and, with DELETE=1, from the volume too (otherwise it returns at the next start).'
+    desc: 'Remove the key NAME=<file name in the key volume> from the agent and, with DELETE=1 (deprecated: retire a key in OpenBao with task openbao:ssh:retire), from the volume too (otherwise it returns at the next start).'
     requires:
       vars: [NAME]
     vars:
@@ -85,7 +88,7 @@ tasks:
 
   key:rotate:
     dir: '{{.USER_WORKING_DIR}}'
-    desc: 'Key mode only: rotate a signing key in four steps, stopping at the first failure and removing nothing old until the new key is proven. (1) make NEW (default <NAME without a date suffix>-YYYYMMDD) in the key volume and load it, the old stays loaded; (2) register it at GitHub as a SIGNING key through gh (gh installed and logged in), else print the public key and STOP with exit 1: register it by hand, then run again with NEW=<name> to resume; (3) point git at it (SCOPE=global or repo, as git:signing) and run git:verify, putting git back on a failure; (4) retire the old key: unload it, append it dated to the allowed_signers.history file in the key volume (point gpg.ssh.allowedSignersFile at it so old signatures verify), delete its private key; it stays registered at GitHub unless REVOKE=1 removes it. NAME is optional with exactly one key. EMPTY_PASSPHRASE=1 skips the passphrase prompt. `task ssh-agent:key:rotate -- --plan` prints the steps and keys and changes nothing.'
+    desc: 'Rotate a signing key in four steps, stopping at the first failure and removing nothing old until the new key is proven. On OpenBao records (NAME=ssh/<key>, optional when OpenBao holds exactly one active key and key mode is off): (1) make NEW (default <NAME without a date suffix>-YYYYMMDD) with openbao:ssh:new and load it from OpenBao, the old stays loaded; (2) register it at GitHub as a SIGNING key through the gh Feature''s gh:ssh-key:add (else gh, else print the public key and STOP with exit 1: register it by hand, then run again with NEW=ssh/<name>); (3) point git at it (SCOPE=global or repo, as git:signing), add it to .devcontainer/allowed_signers (made if missing; ALLOWED_SIGNERS=<file> names another) valid after now, and run git:verify, putting git back on a failure; (4) retire the old record with openbao:ssh:retire (its private key destroyed), mark it valid-before now in allowed_signers so its signatures still verify, unload it; it stays registered at GitHub unless REVOKE=1 removes it. The host commits allowed_signers. Deprecated (gone in 2.0): NAME=<file name in the key volume> in key mode rotates the volume''s key as before. `task ssh-agent:key:rotate -- --plan` prints the steps and keys and changes nothing.'
     interactive: true
     vars:
       NAME: '{{.NAME | default ""}}'
@@ -93,12 +96,13 @@ tasks:
       REVOKE: '{{.REVOKE | default ""}}'
       SCOPE: '{{.SCOPE | default ""}}'
       EMPTY_PASSPHRASE: '{{.EMPTY_PASSPHRASE | default ""}}'
+      ALLOWED_SIGNERS: '{{.ALLOWED_SIGNERS | default ""}}'
     cmds:
-      - ssh-agent-setup key-rotate --name '{{.NAME}}' --new '{{.NEW}}' --revoke '{{.REVOKE}}' --scope '{{.SCOPE}}' --empty '{{.EMPTY_PASSPHRASE}}' {{.CLI_ARGS}}
+      - ssh-agent-setup key-rotate --name '{{.NAME}}' --new '{{.NEW}}' --revoke '{{.REVOKE}}' --scope '{{.SCOPE}}' --empty '{{.EMPTY_PASSPHRASE}}' --allowed-signers '{{.ALLOWED_SIGNERS}}' {{.CLI_ARGS}}
 
   key:retire:
     dir: '{{.USER_WORKING_DIR}}'
-    desc: 'Key mode only: retire the key NAME=<file name in the key volume> (the last step of key:rotate on its own): unload it from the agent, append its public key dated to the allowed_signers.history file in the key volume, delete its private key; it stays registered at GitHub unless REVOKE=1 also removes it (gh ssh-key delete, the id found by matching the public key). `-- --plan` prints the steps and changes nothing.'
+    desc: 'Deprecated (gone in 2.0; use task openbao:ssh:retire NAME=ssh/<key>, or key:rotate NAME=ssh/<key>). Key mode only: retire the key NAME=<file name in the key volume> (the last step of key:rotate on its own): unload it from the agent, append its public key dated to the allowed_signers.history file in the key volume, delete its private key; it stays registered at GitHub unless REVOKE=1 also removes it (gh ssh-key delete, the id found by matching the public key). `-- --plan` prints the steps and changes nothing.'
     requires:
       vars: [NAME]
     vars:
@@ -108,18 +112,19 @@ tasks:
 
   key:age:
     dir: '{{.USER_WORKING_DIR}}'
-    desc: 'List each private key of the key volume with its creation date (recorded at creation or import; the file date for older ones), its age in days and its fingerprint. task ssh-agent:check warns about keys older than SSH_KEY_MAX_AGE_DAYS (default 365).'
+    desc: 'Deprecated (gone in 2.0; use task openbao:ssh:age). List each private key of the key volume with its creation date (recorded at creation or import; the file date for older ones), its age in days and its fingerprint. task ssh-agent:check warns about keys older than SSH_KEY_MAX_AGE_DAYS (default 365).'
     cmds:
       - ssh-agent-setup key-age
 
   git:signing:
     dir: '{{.USER_WORKING_DIR}}'
-    desc: 'Configure git to sign commits and tags with a key of the agent (gpg.format ssh, user.signingkey key::<public key>, commit.gpgsign and tag.gpgsign true); works with a host agent too, it needs only the public key from ssh-add -L. KEY=<fingerprint or .pub path> picks the key (optional with exactly one). SCOPE=global writes the container''s own config (the git Feature''s volume); SCOPE=repo writes the current repository''s config, which can be SHARED with the Windows host through .git-dirs. Default: global when the git Feature''s volume is present or the host is Windows (DCF_HOST_TYPE windows-*), else repo; use global wherever the git dir is shared with Windows.'
+    desc: 'Configure git to sign commits and tags with a key of the agent (gpg.format ssh, user.signingkey key::<public key>, commit.gpgsign and tag.gpgsign true); works with a host agent too, it needs only the public key from ssh-add -L. KEY=<fingerprint or .pub path> picks the key (optional with exactly one). SCOPE=global writes the container''s own config (the git Feature''s volume); SCOPE=repo writes the current repository''s config, which can be SHARED with the Windows host through .git-dirs. Default: global when the git Feature''s volume is present or the host is Windows (DCF_HOST_TYPE windows-*), else repo; use global wherever the git dir is shared with Windows. Where the repository has .devcontainer/allowed_signers (or ALLOWED_SIGNERS=<file> names one), also adds the key to it if missing and sets gpg.ssh.allowedSignersFile in the repository''s config to the work-tree-relative path, which git (also Windows git on the same config) reads from the top of the work tree, so git log --show-signature verifies; the host commits the file.'
     vars:
       KEY: '{{.KEY | default ""}}'
       SCOPE: '{{.SCOPE | default ""}}'
+      ALLOWED_SIGNERS: '{{.ALLOWED_SIGNERS | default ""}}'
     cmds:
-      - ssh-agent-setup git-signing '{{.KEY}}' '{{.SCOPE}}'
+      - ssh-agent-setup git-signing '{{.KEY}}' '{{.SCOPE}}' '{{.ALLOWED_SIGNERS}}'
 
   git:verify:
     dir: '{{.USER_WORKING_DIR}}'

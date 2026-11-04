@@ -13,7 +13,7 @@
 # 3. Says which mode it runs in and what is known without asking the server: the address, whether
 #    the token helper is in effect, whether a login is saved. It never contacts the server (an
 #    unreachable one must not hold post-create).
-# 4. `start`, server mode only: write the server's config into the state dir (raft storage on the
+# 4. `start`, server mode only (and, with the backupInterval option, the backup timer, below): write the server's config into the state dir (raft storage on the
 #    Feature's volume, one loopback listener, the file audit device), start `bao server` in the
 #    background and say whether it is not initialised, sealed or unsealed. It never waits for an
 #    unseal and never prompts: a start hook that waits holds every Feature's start. The server
@@ -134,8 +134,21 @@ start_server() {
   return 0
 }
 
+# The optional backup timer (the backupInterval option): openbao-server decides whether there is one
+# to start and says so; it never fails the start.
+start_backup_timer() {
+  [ "$mode" = server ] || return 0
+  command -v openbao-server >/dev/null 2>&1 || return 0
+  [ -n "$(opt_backup_interval)" ] || return 0
+  openbao-server backup-timer-start || true
+}
+opt_backup_interval() {
+  if [ -n "${OPENBAO_SETUP_BACKUP_INTERVAL+set}" ]; then printf '%s' "$OPENBAO_SETUP_BACKUP_INTERVAL"; else printf '%s' "${BACKUPINTERVAL:-}"; fi
+}
+
 if [ "${1:-}" = start ]; then
   start_server
+  start_backup_timer
   exit 0
 fi
 

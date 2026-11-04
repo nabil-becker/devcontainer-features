@@ -53,6 +53,7 @@ esac
 JOB_DIR="$(cd "$(dirname "$job_file")" && pwd)"
 JOB_MIN_CHARS=1500
 JOB_QUIET_SECS=120
+JOB_NEEDS_KEY=0   # 1: the job signs with its OpenBao key and cannot run without it (see hk_fetch_key)
 # shellcheck source=/dev/null
 source "$job_file"
 QUIET_SECS="${DEVHOST_JOB_QUIET_SECS:-$JOB_QUIET_SECS}"
@@ -90,7 +91,8 @@ else
 fi
 
 offset="$(cat "$state/offsets/$SID" 2>/dev/null || echo 0)"
-TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+HK_KEY_DIR=""; HK_KEY_ERR=""
+TMP="$(mktemp -d)"; trap 'rm -rf "$TMP" ${HK_KEY_DIR:+"$HK_KEY_DIR"}' EXIT
 python3 "$BIN/condense.py" "$transcript" "$offset" "$MODE" >"$TMP/stretch" 2>"$TMP/offset" || { log "condense failed"; exit 0; }
 new_offset="$(tail -n1 "$TMP/offset")"
 size="$(wc -c <"$TMP/stretch")"
@@ -123,7 +125,23 @@ redact() { DEVHOST_ROOT="$ROOT" python3 "$BIN/redact.py" "$@"; }
 
 JOB_STATUS=error; JOB_NOTICE=""; JOB_PENDING=""; JOB_UNDONE=0; JOB_ADVANCE=0
 started="$(date +%s.%N)"
-job_run "$TMP/stretch" "$TMP"
+# The back's own OpenBao key, when it has a role (a back that signs): fetched here, in the runner,
+# into tmpfs, and the folder removed on exit. JOB_KEY_FILE is a shell variable, never exported, so
+# the claude run and what it starts do not even learn the path. No role, no bao, client mode: the
+# back runs as before. A job with JOB_NEEDS_KEY=1 that cannot get its key does not run, is not
+# marked read (its next run after the fix does the work), and exits 1 with the plain line.
+JOB_KEY_FILE=""; KEY_FAILED=""
+hk_fetch_key "$JOB_NAME"; key_rc=$?
+case "$key_rc" in
+  0) JOB_KEY_FILE="$HK_KEY_FILE" ;;
+  *) if [ "$JOB_NEEDS_KEY" = 1 ]; then
+       KEY_FAILED=1; log "key not fetched: $HK_KEY_ERR"
+       echo "devhost-run-job: the $JOB_NAME back needs its OpenBao key and could not get it: $HK_KEY_ERR" >&2
+     elif [ "$key_rc" = 2 ]; then
+       log "key not fetched, the back runs without it: $HK_KEY_ERR"
+     fi ;;
+esac
+if [ -z "$KEY_FAILED" ]; then job_run "$TMP/stretch" "$TMP"; fi
 log "status=$JOB_STATUS model=$MODEL size=$size notice=$JOB_NOTICE${JOB_PENDING:+ pending=$JOB_PENDING}"
 python3 - "$TMP/claude.json" "$STATE_ROOT/runs.jsonl" "$JOB_NAME" "$MODE" "$SID" "$MODEL" "$size" \
   "$(grep -ci "^STAKE for $JOB_NAME" "$TMP/stretch" || true)" "$JOB_STATUS" "$JOB_UNDONE" "$started" \
@@ -172,5 +190,6 @@ case "$JOB_STATUS" in
       "additionalContext": "Back " + sys.argv[1] + " (quiet notice): " + sys.argv[2]}}))' \
       "$JOB_NAME" "$( [ "$JOB_ADVANCE" = 1 ] && echo "$JOB_NOTICE (the stretch is marked read, the request is not retried)" || echo "still pending, not yet done: ${JOB_PENDING:-$JOB_NOTICE}" )" "$event"
     exit 0 ;;
-  *) exit 0 ;;
+  *) [ -n "$KEY_FAILED" ] && exit 1
+     exit 0 ;;
 esac
