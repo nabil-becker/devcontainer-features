@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # openbao-server: what the openbao Feature's server-mode tasks run (task openbao:init, :unseal,
-# :seal, :server:status, :approle:issue and :approle:revoke). It is a thin layer over the `bao`
+# :seal, :server:status, :password, :approle:issue and :approle:revoke). It is a thin layer over the `bao`
 # CLI (NFR-13): the state of the server comes from `bao status`'s exit code and JSON, never from
 # parsed English; the only text read back is the init output's "Unseal Key N:" and "Initial Root
 # Token:" lines, which the CLI documents.
@@ -11,6 +11,8 @@
 #   openbao-server unseal                 ask for shares at bao's own prompt until it is unsealed
 #   openbao-server seal                   seal the server (the Operator's token)
 #   openbao-server status                 mode, state, storage, backup choice, login (both modes)
+#   openbao-server password               a new password for the Operator, with a root token from
+#                                         two unseal shares (no current password or login needed)
 #   openbao-server approle-issue          ROLE=<name> [POLICY_PATH=<mount/path>] or ALL=1 (the
 #                                         OPENBAO_TASK_ROLE, OPENBAO_TASK_POLICY_PATH and
 #                                         OPENBAO_TASK_ALL variables the Taskfile sets)
@@ -26,7 +28,7 @@
 #   openbao-server after-write            what a task that writes a secret ends with: the backup (when
 #                                         a destination is set) or the reminder; always exit 0
 #
-# Every command that handles a share or a token (init, unseal, seal, restore, and approle-issue with
+# Every command that handles a share or a token (init, unseal, seal, restore, password, and approle-issue with
 # POLICY_PATH, approle-revoke and backup-role, which make a root token from the shares for their one
 # step and revoke it after) refuses inside an agent's job and, for all but seal, without a terminal: the shares and the token must never reach a
 # transcript, which the scribe reads. Exit codes: dcf-secret's numbers where they mean the same
@@ -47,7 +49,7 @@ st_rc=0
 st_json=""
 
 usage() {
-  say "usage: openbao-server init|unseal|seal|status|approle-issue|approle-revoke|backup|backup-role|restore|after-write (the tasks of the openbao Feature run it)"
+  say "usage: openbao-server init|unseal|seal|status|password|approle-issue|approle-revoke|backup|backup-role|restore|after-write (the tasks of the openbao Feature run it)"
   exit 2
 }
 
@@ -375,6 +377,47 @@ cmd_configure() {
   state_exit
   configure_store || die 1 "a configuration step failed (bao's message is above)"
   op_pw=""
+}
+
+# --------------------------------------------------------------------------------- password ----
+# A new password for the Operator, for one who forgot it: no current password and no login are
+# needed, the unseal shares are the authority (as for a role). The password is asked first, twice,
+# then the shares make a root token that writes it (on bao's stdin, never an argument) and is revoked.
+set_operator_password() { # the password is in $op_pw; runs with the root token
+  bao read sys/auth/userpass >/dev/null 2>&1 || { say "the userpass login is not enabled in this store (an onboarding claim not done yet? task openbao:onboard:claim); nothing was changed"; return 1; }
+  bao read auth/userpass/users/operator >/dev/null 2>&1 || { say "there is no user 'operator' in this store (an onboarding claim not done yet? task openbao:onboard:claim); nothing was changed"; return 1; }
+  printf '%s' "$op_pw" | bao write auth/userpass/users/operator/password password=- >/dev/null || { say "bao did not take the new password; the old one still holds"; return 1; }
+}
+
+cmd_password() {
+  need_server_mode password
+  guard password "it asks for a new password and a root token made from the unseal shares, which must never land in a transcript"
+  need_tty password
+  server_state
+  state_exit
+  local tries=0 pw1="" pw2=""
+  op_pw=""
+  while [ -z "$op_pw" ]; do
+    tries=$((tries + 1))
+    [ "$tries" -le 5 ] || die 3 "no password chosen: nothing was changed"
+    ask_secret "Choose the Operator's new password (at least 12 characters; you log in with it each sitting):"
+    pw1="$REPLY"
+    ask_secret "Again:"
+    pw2="$REPLY"
+    if [ "${#pw1}" -lt 12 ]; then
+      echo "openbao: too short (12 characters at least)" >&2
+    elif [ "$pw1" != "$pw2" ]; then
+      echo "openbao: the two did not match" >&2
+    else
+      op_pw="$pw1"
+    fi
+  done
+  pw1="" pw2="" REPLY=""
+  local rc=0
+  as_root password "changing the Operator's password" set_operator_password || rc=$?
+  op_pw=""
+  [ "$rc" -eq 0 ] || die 1 "the Operator's password was not changed (the messages above say why); the root token is revoked"
+  echo "openbao: the Operator's password is changed. Tokens the Operator already holds stay valid until they expire (at most 8 hours). Log in with the new one: task openbao:login -- -method=userpass username=operator" >&2
 }
 
 # --------------------------------------------------------------------------------- approle ----
@@ -987,6 +1030,7 @@ case "$cmd" in
   seal) cmd_seal ;;
   status) cmd_status ;;
   configure) cmd_configure ;;
+  password) cmd_password ;;
   approle-issue) cmd_approle_issue ;;
   approle-revoke) cmd_approle_revoke ;;
   backup) cmd_backup ;;

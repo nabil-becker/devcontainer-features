@@ -8,6 +8,12 @@ here; `task lint` fails when the entry is missing.
 
 Entries from 1.0.0 to 1.0.3 were generated from the commit history (`.github/scripts/changelog.py backfill`) and the "Changes in x.y.z" sections that NOTES.md used to hold; most list commit subjects as written then; the newest of them is in wording for users.
 
+## [1.4.0] - 2026-11-04
+
+### Added
+
+- **`task openbao:password`** (server mode): sets a new password for the Operator, for when you forgot it or want another. It needs no current password and no login: it asks for the new password twice (12 characters at least), then for two unseal shares at a hidden prompt, which make a root token used for this step alone and revoked straight after. The password never appears in an argument, file or output. Tokens you already hold stay valid until they expire (at most 8 hours); log in again with `task openbao:login -- -method=userpass username=operator`. Plain terminal only; refused inside an agent's job. No action needed.
+
 ## [1.3.1] - 2026-11-04
 
 ### Fixed

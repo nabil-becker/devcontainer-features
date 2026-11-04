@@ -52,6 +52,13 @@ tasks:
     cmds:
       - openbao-server approle-issue
 
+  password:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Server mode: sets a new password for the Operator (the userpass user operator), for one who forgot it or wants another: no current password and no login are needed, two unseal shares are the authority. Asks for the new password twice (at least 12 characters), then for two unseal shares at a hidden prompt (a root token for this step alone, revoked after): the Operator only, in a plain terminal, refused inside an agent''s job. The password never appears in an argument, file or output. Tokens the Operator already holds stay valid until they expire (at most 8 hours); log in again with task openbao:login -- -method=userpass username=operator.'
+    interactive: true
+    cmds:
+      - openbao-server password
+
   approle:revoke:
     dir: '{{.USER_WORKING_DIR}}'
     desc: 'Server mode: ROLE=<name> deletes the role, which destroys its secret ids, with its policy and its files under the state dir. Asks for two unseal shares at a hidden prompt (a root token for this step alone, revoked after): the Operator only, in a plain terminal, refused inside an agent''s job. A token it already made lives at most 15 minutes.'

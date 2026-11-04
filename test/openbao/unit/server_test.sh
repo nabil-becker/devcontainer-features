@@ -20,7 +20,11 @@
 #    making and deleting a role go through the root token the shares make (generate-root, two shares
 #    typed under a pseudo-terminal, the token used for that step only and revoked after, also after a
 #    failing step, a wrong share cancelling the attempt), refused inside an agent's job and without a
-#    terminal.
+#    terminal;
+#  - password: refused like the others before any prompt or call; the new password asked twice
+#    (mismatch and too short asked again), then two shares for a root token that writes it on bao's
+#    stdin only and is revoked, also when the step fails; a missing userpass mount or user fails
+#    with nothing changed.
 # Part of `task lint` (`task test:openbao-unit`). SCRIPT points the test at another copy of the
 # script (used to show a test fails when the code it covers is broken). Needs task, and script(1)
 # for the terminal tests (skipped without it).
@@ -130,6 +134,7 @@ case "$1" in
         n=$(( $(cat "$STUB_DIR/sid.n" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$STUB_DIR/sid.n"
         echo "ACC-$n" >> "$STUB_DIR/acc.$r"
         printf 'SECRETID-%s' "$n"; exit 0 ;;
+      "auth/userpass/users/operator/password "*) [ -z "${STUB_PW_FAIL:-}" ] || { echo "Error writing password: stub" >&2; exit 2; }; cat > "$STUB_DIR/newpw.stdin"; exit 0 ;;
       "auth/userpass/users/operator "*) cat > "$STUB_DIR/userpass.stdin"; exit 0 ;;
       "auth/approle/role/"*) deny_operator; [ -z "${STUB_ROLE_FAIL:-}" ] || { echo "Error writing role: stub" >&2; exit 2; }; add "$2"; exit 0 ;;
     esac ;;
@@ -155,7 +160,7 @@ lacks() { # <name> <text> <output>
 }
 
 reset() { # <state>: a fresh stub state and state dir
-  rm -rf "${T:?}/state" "${T:?}"/acc.* "${T:?}"/sid.n "${T:?}"/unseal.n "${T:?}"/policy.* "${T:?}"/userpass.stdin "${T:?}"/have "${T:?}"/tokens.log
+  rm -rf "${T:?}/state" "${T:?}"/acc.* "${T:?}"/sid.n "${T:?}"/unseal.n "${T:?}"/policy.* "${T:?}"/userpass.stdin "${T:?}"/newpw.stdin "${T:?}"/have "${T:?}"/tokens.log
   mkdir -p "$T/state" "$T/backups"
   echo "${1:-unsealed}" > "$T/stubstate"
   : > "$LOG"
@@ -249,7 +254,7 @@ for t in init unseal; do
 done
 # client mode: this container runs no server
 MODE_FEAT=client
-for t in init unseal seal approle-issue approle-revoke; do
+for t in init unseal seal password approle-issue approle-revoke; do
   reset sealed
   run OPENBAO_TASK_ROLE=x -- "$t"
   check "$t in client mode: exit 3" 3 "$rc"
@@ -489,6 +494,22 @@ check "approle:issue without a terminal: bao is never called" "" "$(calls)"
 run OPENBAO_TASK_ROLE=scribe -- approle-revoke
 check "approle:revoke without a terminal: exit 3" 3 "$rc"
 check "approle:revoke without a terminal: bao is never called" "" "$(calls)"
+# password: refused inside an agent's job and without a terminal, before any call or prompt
+for v in DEVHOST_JOB_CHILD CLAUDECODE; do
+  reset unsealed
+  run "$v=1" -- password
+  check "password refuses inside an agent's job ($v): exit 3" 3 "$rc"
+  has "password ($v): the line names the variable" "refuses to run inside an agent's job ($v is set)" "$out"
+  check "password ($v): bao is never called" "" "$(calls)"
+done
+reset unsealed
+run OPENBAO_AGENT_JOB_VARS="MYCLI" MYCLI=1 -- password
+check "password refuses for a variable named in OPENBAO_AGENT_JOB_VARS: exit 3" 3 "$rc"
+reset unsealed
+run -- password
+check "password without a terminal: exit 3" 3 "$rc"
+has "password without a terminal says so" "needs a terminal" "$out"
+check "password without a terminal: bao is never called" "" "$(calls)"
 # a plain reissue of a role that exists needs no terminal and no agent-job refusal
 reset unsealed
 run CLAUDECODE=1 OPENBAO_TASK_ROLE=ghost -- approle-issue
@@ -609,6 +630,73 @@ if [ "$have_script" -eq 1 ]; then
   term "$SH" OPENBAO_TASK_ROLE=scribe -- approle-revoke
   check "approle:revoke of an unknown role: exit 14" 14 "$rc"
   check "and asks for no share" 0 "$(grep -c 'generate-root' "$LOG")"
+  # password
+  if [ "$have_script" -eq 1 ]; then
+    for v in DEVHOST_JOB_CHILD CLAUDECODE; do
+      reset unsealed
+      term "new-password-123;new-password-123;$SH" "$v=1" -- password
+      has "password under a terminal in an agent's job is still refused ($v)" "refuses to run inside an agent's job" "$out"
+      lacks "password in an agent's job asks nothing ($v)" "Choose the Operator" "$out"
+      check "password in an agent's job under a terminal: bao is never called ($v)" "" "$(calls)"
+    done
+    pwok() { printf '%s\n%s\n' sys/auth/userpass auth/userpass/users/operator > "$T/have"; }
+    reset unsealed
+    pwok
+    : > "$T/tokens.log"
+    term "correct horse battery;correct horse battery;$SH" -- password
+    check "password: exit 0" 0 "$rc"
+    check "password is written on bao's stdin" "correct horse battery" "$(cat "$T/newpw.stdin" 2>/dev/null)"
+    check "password is in no argument" 0 "$(grep -c 'correct horse' "$LOG")"
+    check "password is not on the screen" 0 "$(grep -c 'correct horse' <<<"$out")"
+    check "password is not in the state dir" "" "$(grep -rl 'correct horse' "$T/state" 2>/dev/null)"
+    check "password was written with the generated root token" 1 "$(grep -c '^write auth/userpass/users/operator/password token=s.GENROOT' "$T/tokens.log")"
+    check "password revoked the root token after" "yes" "$(grep -q '^token revoke token=s.GENROOT' "$T/tokens.log" && echo yes)"
+    has "password says old tokens stay valid until they expire" "stay valid until they expire" "$out"
+    has "password says how to log in again" "task openbao:login -- -method=userpass username=operator" "$out"
+    lacks "password: no share on the screen" "SHARE-" "$out"
+    check "password asks for the password before the shares" "yes" "$(awk '/new password/{a=NR} /Unseal share 1/{b=NR} END{print (a && b && a<b) ? "yes" : "no"}' <<<"$out")"
+    # mismatch and too short are asked again
+    reset unsealed
+    pwok
+    term "short;short;aaaaaaaaaaaa;bbbbbbbbbbbb;correct horse battery;correct horse battery;$SH" -- password
+    check "password after a short one and a mismatch: exit 0" 0 "$rc"
+    has "password: too short is said" "too short" "$out"
+    has "password: a mismatch is said" "the two did not match" "$out"
+    check "password: the one that matched is written" "correct horse battery" "$(cat "$T/newpw.stdin" 2>/dev/null)"
+    # five bad tries change nothing
+    reset unsealed
+    pwok
+    term "a;a;a;a;a;a;a;a;a;a;a;a" -- password
+    check "password: five bad tries: exit 3" 3 "$rc"
+    check "password: five bad tries ask for no share" 0 "$(grep -c 'generate-root' "$LOG")"
+    # a failing write still revokes the root token
+    reset unsealed
+    pwok
+    : > "$T/tokens.log"
+    term "correct horse battery;correct horse battery;$SH" STUB_PW_FAIL=1 -- password
+    check "password with a failing write: exit 1" 1 "$rc"
+    check "password with a failing write still revokes the root token" "yes" "$(grep -q '^token revoke token=s.GENROOT' "$T/tokens.log" && echo yes)"
+    lacks "password with a failing write does not say it changed" "is changed" "$out"
+    # a missing user or mount: a clear message, nothing written
+    reset unsealed
+    printf '%s\n' sys/auth/userpass > "$T/have"
+    : > "$T/tokens.log"
+    term "correct horse battery;correct horse battery;$SH" -- password
+    check "password with no user operator: exit 1" 1 "$rc"
+    has "password with no user operator says so" "no user 'operator'" "$out"
+    check "password with no user operator writes nothing" 0 "$(grep -c 'userpass/users/operator/password' "$LOG")"
+    check "and revokes the root token" "yes" "$(grep -q '^token revoke token=s.GENROOT' "$T/tokens.log" && echo yes)"
+    reset unsealed
+    : > "$T/have"
+    term "correct horse battery;correct horse battery;$SH" -- password
+    has "password with no userpass mount says so" "userpass login is not enabled" "$out"
+    check "password with no userpass mount writes nothing" 0 "$(grep -c 'userpass/users/operator/password' "$LOG")"
+    # a sealed server: before any prompt
+    reset sealed
+    term "correct horse battery;correct horse battery;$SH" -- password
+    check "password on a sealed server: exit 11" 11 "$rc"
+    check "password on a sealed server asks for no share" 0 "$(grep -c 'generate-root' "$LOG")"
+  fi
 else
   echo "skip - the AppRole role tasks (no script(1) for a terminal)"
 fi

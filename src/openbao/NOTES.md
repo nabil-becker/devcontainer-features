@@ -187,6 +187,15 @@ of every request, with secrets hashed, names each identity that read a key.
   (needed after every server start, so after a container restart). `task openbao:seal` seals it
   with the saved login (`bao operator seal`; the Operator's policy has `update` and `sudo` on
   `sys/seal`).
+- **`task openbao:password`**: a new password for the Operator, for one who forgot it (or wants
+  another). It needs no current password and no login: two unseal shares are the authority. It
+  asks for the new password twice (12 characters at least, as `init` does), then for two shares at
+  a hidden prompt, makes a root token from them for this step alone, writes the password with
+  `bao write auth/userpass/users/operator/password password=-` (on stdin, never an argument) and
+  revokes the token, also when the step fails. It checks first, with that token, that the userpass
+  login and the user `operator` exist (an onboarding claim not done yet has neither) and changes
+  nothing when they do not. Tokens the Operator already holds stay valid until they expire (at most
+  8 hours); log in again with the new password. Plain terminal only; refused inside an agent's job.
 - **The login**: `userpass`, user `operator`, token `ttl` **4 hours**, `max_ttl` **8 hours**; a
   renewal past 8 hours is capped (`bao token renew` says so). `task openbao:logout` ends it early. A
   night shift that must sign overnight starts with a login made for it. These lifetimes are set on
@@ -202,11 +211,11 @@ of every request, with secrets hashed, names each identity that read a key.
   sidestep the rule that restore needs the shares. Making and deleting a role therefore take a root
   token made from the shares, for that step only (below).
 
-**Agents.** `init`, `unseal`, `seal`, `restore` and the steps that ask for the shares (making a role, deleting a role, `backup:role`) **refuse inside an agent's job**: when `DEVHOST_JOB_CHILD`
+**Agents.** `init`, `unseal`, `seal`, `restore`, `password` and the steps that ask for the shares (making a role, deleting a role, `backup:role`) **refuse inside an agent's job**: when `DEVHOST_JOB_CHILD`
 (the devhost's backs and its test run) or `CLAUDECODE` (set by Claude Code on every process it
 starts) is set, or a variable named in `OPENBAO_AGENT_JOB_VARS` (space separated, for another agent
 CLI), each saying why and exiting 3: the shares and the token must never land in a transcript, which
-the scribe reads. `init`, `unseal` and those two steps also refuse without a terminal on stdin and stdout (they ask
+the scribe reads. `init`, `unseal`, `password` and those two steps also refuse without a terminal on stdin and stdout (they ask
 for secrets and print them only to a terminal), and all server-mode tasks refuse in client mode.
 Run them yourself in a plain terminal in the devcontainer (a terminal opened from inside a Claude
 Code session inherits `CLAUDECODE` and is refused too: open a fresh one). A refusal is no call to `bao`.
@@ -701,6 +710,9 @@ registry, these appear under `openbao:`:
 - `openbao:unseal`: server mode: shares at the hidden prompt until unsealed. Refuses inside an
   agent's job.
 - `openbao:seal`: server mode: seal the server with the saved login. Refuses inside an agent's job.
+- `openbao:password`: server mode: a new password for the Operator, asked twice, then two unseal
+  shares (a root token for this step alone, revoked after); no current password needed. Refuses
+  inside an agent's job.
 - `openbao:approle:issue`: server mode: `ROLE=<name> POLICY_PATH=<mount/path>` makes a loopback-bound
   role that reads one secret (asks for two unseal shares; refuses inside an agent's job);
   `ROLE=<name>` or `ALL=1` reissues with your login, no shares; one valid secret id each.
@@ -746,10 +758,9 @@ itself.
   engine) or the hook's first line says `image` instead of `volume`. Log in again.
 - `put` without `--replace` needs the `patch` capability on the secret's path; a policy that has
   only `create` and `update` must use `--replace`, which drops the secret's other fields.
-- Not there yet: `DCF_SECRET_AS` (a secret read as another identity). No task changes the Operator's
-  password or a policy: both need a root token made from the shares (`bao operator generate-root`,
-  used once and revoked); then `bao write auth/userpass/users/operator/password password=-` changes
-  the password. Making or deleting an AppRole role asks for two shares for the same reason.
+- Not there yet: `DCF_SECRET_AS` (a secret read as another identity). No task changes a policy:
+  it needs a root token made from the shares (`bao operator generate-root`, used once and
+  revoked), as making or deleting an AppRole role and `openbao:password` do.
 - Server mode: the shares are the keys to everything; losing two of three loses every secret. The
   loopback listener has no TLS: any process of the container can reach it and read the Operator's
   saved token (mode 600, the remote user's), as with any login kept in a volume; the token's 4 hour

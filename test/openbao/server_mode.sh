@@ -225,6 +225,17 @@ check "no share was echoed on the screen by revoke" excludes "$(cat "$work/scree
 rc=0; bao write auth/approle/login role_id=x secret_id=y > /dev/null 2>&1 || rc=$?
 check "and the role no longer logs in" [ "$rc" != 0 ]
 
+# --- a forgotten password: openbao:password through two shares -----------------------------------------
+newpw='a different horse battery'
+term "task -t $tf password" "$newpw" "$newpw" "$(sed -n 1p "$work/shares")" "$(sed -n 2p "$work/shares")"
+check "password through the shares exits 0" [ "$term_rc" = 0 ]
+check "no share or password was echoed on the screen by password" excludes "$(cat "$work/screen.txt")" "$newpw"
+t logout > /dev/null 2>&1 || true
+term "task -t $tf login -- -method=userpass username=operator" "$pw"
+check "the old password no longer logs in" [ "$(dcf-secret status 2>/dev/null)" != ready ]
+term "task -t $tf login -- -method=userpass username=operator" "$newpw"
+check "the new password logs in" [ "$(dcf-secret status)" = ready ]
+
 # --- seal, restart, unseal ----------------------------------------------------------------------------
 t seal > /dev/null 2>&1
 rc=0; out="$(dcf-secret status 2>/dev/null)" || rc=$?
