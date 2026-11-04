@@ -19,6 +19,22 @@ Installs Microsoft Desired State Configuration v3 (https://github.com/PowerShell
 | version | DSC release to install (e.g. '3.3.0', with or without a leading 'v'), or 'latest'. | string | latest |
 | sha256 | Expected sha256 of the release tarball for this platform. When empty, the digest comes from the Feature's pinned list (digests.txt) or, for other versions, from the release page on github.com. | string | - |
 
+## How it fits
+
+```text
+  go-task registry --> dsc:* tasks
+  dsc (/opt/dsc, on PATH) --adapter resources--> pwsh
+                                   (ghcr.io/devcontainers/features/powershell)
+```
+
+| Data | Where it lives | Storage tier |
+| --- | --- | --- |
+| Nothing | installs a program tree only; no volume, no hook, no credentials | none |
+
+Tiers are the four of ADR 0045: 1 git, 2 shared folder, 3 personal folder, 4 working set (rebuildable only).
+
+Used in: none yet
+
 ## What it installs
 
 The Microsoft DSC v3 release from `github.com/PowerShell/DSC`, installed
@@ -187,6 +203,12 @@ so there is no alternative to compare.
 
 ## Changes
 
+### [1.1.5] - 2026-11-03
+
+#### Changed
+
+- The README now has a "How it fits" section with a small diagram of how the Feature sits in a devcontainer, a table of the data it keeps and the storage tier of each, and "Used in" links to the reference architectures that use it. Documentation only: the Feature itself is unchanged. Nothing to do.
+
 ### [1.1.4] - 2026-11-03
 
 #### Added
@@ -198,12 +220,6 @@ so there is no alternative to compare.
 #### Fixed
 
 - Build-time downloads retry on transient network errors, so a flaky connection no longer fails the container build outright. Rebuild the container to pick it up. No change to options or tasks; nothing to do. ([#94](https://github.com/nabil-becker/devcontainer-features/pull/94))
-
-### [1.1.2] - 2026-10-21
-
-#### Fixed
-
-- Az installs the Azure CLI; Feature tasks run in the caller's folder ([#48](https://github.com/nabil-becker/devcontainer-features/pull/48))
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/dsc/CHANGELOG.md).
 

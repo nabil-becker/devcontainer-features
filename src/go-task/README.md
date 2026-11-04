@@ -21,6 +21,22 @@ Installs Task (https://taskfile.dev), the Taskfile task runner, as a sha256-veri
 | version | Task release to install (e.g. '3.54.0', with or without a leading 'v'), or 'latest'. | string | latest |
 | yqVersion | yq release the aliases generator uses (e.g. '4.54.1', with or without a leading 'v'), or 'latest' (resolves to the newest release at build time). Only installed when taskAliases is true. | string | 4.54.1 |
 
+## How it fits
+
+```text
+  every Feature drops a Taskfile --> /usr/local/share/go-task/includes.d/
+  task-features-registry --> features.yml  <-- one include in the root Taskfile
+  host side: bootstrap/devcontainer.yml gives task devcontainer:up|exec|...
+```
+
+| Data | Where it lives | Storage tier |
+| --- | --- | --- |
+| Nothing | the registry files are in the image and rebuilt with it; no volume | none |
+
+Tiers are the four of ADR 0045: 1 git, 2 shared folder, 3 personal folder, 4 working set (rebuildable only).
+
+Used in: [windows-workstation-devhost](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/reference-architectures/windows-workstation-devhost.md), [agentic-devhost](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/reference-architectures/agentic-devhost.md)
+
 ## Why not `ghcr.io/devcontainers-extra/features/go-task`?
 
 That community Feature works, but it resolves the binary through `nanolayer`
@@ -118,6 +134,12 @@ generator always exits 0, so a bad alias never blocks startup; the valid ones ar
 
 ## Changes
 
+### [1.2.2] - 2026-11-03
+
+#### Changed
+
+- The README now has a "How it fits" section with a small diagram of how the Feature sits in a devcontainer, a table of the data it keeps and the storage tier of each, and "Used in" links to the reference architectures that use it. Documentation only: the Feature itself is unchanged. Nothing to do.
+
 ### [1.2.1] - 2026-11-03
 
 #### Added
@@ -129,12 +151,6 @@ generator always exits 0, so a bad alias never blocks startup; the valid ones ar
 #### Added
 
 - Opt-in `taskAliases` option: give your team's words their own short task names without wiring includes by hand in each repository. Off by default; with it off the generated `features.yml` is byte-identical, so nothing changes unless you set `"taskAliases": true`. Turned on, it installs a private, sha256-verified `yq` at `/usr/local/share/go-task/yq` (never on PATH). `task go-task:aliases` regenerates the aliases and exits non-zero on a bad one; an alias that shadows a task, task alias or include alias is refused. ([#98](https://github.com/nabil-becker/devcontainer-features/pull/98))
-
-### [1.1.3] - 2026-10-28
-
-#### Fixed
-
-- Every build-time download retries through dcf_curl (13 Features) ([#94](https://github.com/nabil-becker/devcontainer-features/pull/94))
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/go-task/CHANGELOG.md).
 

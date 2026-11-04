@@ -1,3 +1,21 @@
+## How it fits
+
+```text
+  host SSH agent socket --bind mount (devcontainer-cli launcher)-->
+        /var/lib/devcontainer-features/ssh-agent/agent.sock = SSH_AUTH_SOCK
+  git commit -S, ssh  --> the agent; the private key never enters the container
+  Windows engines: none; opt-in key mode keeps keys in a volume
+  git Feature: signing config
+```
+
+| Data | Where it lives | Storage tier |
+| --- | --- | --- |
+| Private keys | none in the default mode; only in the opt-in key mode, in a named volume at `/var/lib/devcontainer-features/ssh-agent-key` | 4 working set |
+
+Tiers are the four of ADR 0045: 1 git, 2 shared folder, 3 personal folder, 4 working set (rebuildable only).
+
+Used in: [windows-workstation-devhost](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/reference-architectures/windows-workstation-devhost.md), [secrets-with-openbao](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/reference-architectures/secrets-with-openbao.md)
+
 ## What it gives you
 
 Every process in the container, `devcontainer exec` and `claude` sessions included, sees
@@ -281,6 +299,26 @@ orders it behind `go-task` and `common-utils`.
   A key without a passphrase unlocked this way is reloaded, without a limit, by the next start hook.
 - The key volume is a named volume: a container-engine storage reset deletes it (the key is on your
   host anyway; re-import it).
+
+## Best practices
+
+- **Prefer socket mode; use key mode only where the host has no agent to forward, with a dedicated signing key.** In socket mode the private key never enters the container; key mode puts it in the key volume, readable by every process in the container (see "The opt-in key mode, temporary").
+
+## Anti-patterns
+
+### Don't prompt for a passphrase in the start hook
+
+- **Don't:** run `ssh-add`, or anything that reads the terminal, in a start hook, and don't put a passphrase-protected key where the hook loads it expecting a prompt.
+- **Why:** 2026-10-30, "Start hook no longer waits on ssh-add; passphrase prompt gets a bounded wait and a warning". The hook prompted on `/dev/tty`, the devcontainer CLI waits for every Feature's start hook, and one start hung about 775 s until WSL's exec connection dropped; the error named another Feature's hook (2026-10-30, "Consumer diagnostics read; copy cause and start hang settled").
+- **Instead:** let the hook load only keys without a passphrase (it skips protected ones with one warning and exits 0), and load a protected key from a terminal with `task ssh-agent:setup` or `task ssh-agent:key:unlock` (which waits up to `passphraseTimeout`).
+- **Caught by:** the pty cases in `passphrase_test.sh`, run by `task test:ssh-agent-unit` (the hook never asks, skips a protected key, exits 0).
+
+### Don't use `key:unlock` for a key that has no passphrase
+
+- **Don't:** unlock an unprotected key with `task ssh-agent:key:unlock MINUTES=<n>` and expect it to drop out after the lifetime.
+- **Why:** 2026-11-03, "ssh-agent 1.3.0 adds timed key unlock and key lock": the start hook loads every key without a passphrase, with no lifetime, so the next container start puts it back for good.
+- **Instead:** use timed unlock for protected keys only (they are skipped at start and so stay out until unlocked again); to take an unprotected key out, `task ssh-agent:key:remove NAME=<file>`.
+- **Caught by:** nothing yet (the "Limits" section says so; a guard in `key:unlock` for an unprotected key is not on the backlog).
 
 ## Why it exists
 

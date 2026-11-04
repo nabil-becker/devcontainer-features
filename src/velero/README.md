@@ -18,6 +18,23 @@ Installs the Velero CLI (https://velero.io), for Kubernetes backup and restore, 
 | installTaskfile | Also install this Feature's Taskfile into /usr/local/share/go-task/includes.d so its tasks appear under the <id>: namespace of a root Taskfile that includes /usr/local/share/go-task/features.yml (see the go-task Feature). | boolean | true |
 | version | Velero release to install (e.g. '1.18.4', with or without a leading 'v'), or 'latest'. Match the Velero server deployed in your cluster. | string | latest |
 
+## How it fits
+
+```text
+  go-task registry --> velero:* tasks
+  velero CLI --KUBECONFIG--> cluster (backup / restore)
+                ^
+  kube-state owns the kubeconfig volume (kubectl from kubectl-helm-minikube)
+```
+
+| Data | Where it lives | Storage tier |
+| --- | --- | --- |
+| Nothing of its own | installs a binary only; the kubeconfig comes from `kube-state` or elsewhere | none |
+
+Tiers are the four of ADR 0045: 1 git, 2 shared folder, 3 personal folder, 4 working set (rebuildable only).
+
+Used in: [kubernetes-toolbox](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/reference-architectures/kubernetes-toolbox.md)
+
 ## What it installs
 
 The `velero` release binary from `github.com/vmware-tanzu/velero`, at
@@ -148,6 +165,12 @@ so there is no alternative to compare.
 
 ## Changes
 
+### [1.0.6] - 2026-11-03
+
+#### Changed
+
+- The README now has a "How it fits" section with a small diagram of how the Feature sits in a devcontainer, a table of the data it keeps and the storage tier of each, and "Used in" links to the reference architectures that use it. Documentation only: the Feature itself is unchanged. Nothing to do.
+
 ### [1.0.5] - 2026-11-03
 
 #### Added
@@ -159,12 +182,6 @@ so there is no alternative to compare.
 #### Fixed
 
 - Build-time downloads retry on transient network errors, so a flaky connection no longer fails the container build outright. Rebuild the container to pick it up. No change to options or tasks; nothing to do. ([#94](https://github.com/nabil-becker/devcontainer-features/pull/94))
-
-### [1.0.3] - 2026-10-21
-
-#### Fixed
-
-- Az installs the Azure CLI; Feature tasks run in the caller's folder ([#48](https://github.com/nabil-becker/devcontainer-features/pull/48))
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/velero/CHANGELOG.md).
 

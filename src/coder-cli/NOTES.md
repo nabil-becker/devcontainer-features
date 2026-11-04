@@ -1,3 +1,20 @@
+## How it fits
+
+```text
+  go-task registry --> coder-cli:* tasks
+  coder CLI --login--> Coder server (coderd)
+       |
+       `--> volume: CODER_CONFIG_DIR  (session token, server url)
+```
+
+| Data | Where it lives | Storage tier |
+| --- | --- | --- |
+| Login session (`session`, `url`) | named volume at `CODER_CONFIG_DIR` (`/var/lib/devcontainer-features/coder-cli`) | 4 working set |
+
+Tiers are the four of ADR 0045: 1 git, 2 shared folder, 3 personal folder, 4 working set (rebuildable only).
+
+Used in: none yet
+
 ## What it installs
 
 The `coder` release binary from `github.com/coder/coder`, at

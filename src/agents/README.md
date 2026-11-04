@@ -18,6 +18,30 @@ One list of a repository's agents (.devcontainer/agents.yml, or the repo-relativ
 | sessionName | The template of the session name the CLI shows for each agent (what Claude Code's remote view lists), for every agent without a session-name key of its own in the agent list. {handle} (the agent's name), {repo} (the repository folder's name) and {machine} (the workstation's name, DCF_HOST_MACHINE; the word container when it is unset) with free text around them, for example "{machine} {handle}". Letters, digits, space and . _ : @ / ( ) - only; at most 60 characters rendered; refused, never cut. The default shows the handle, as before 2.1. AGENTS_SESSION_NAME in .env or the environment overrides it. | string | {handle} |
 | installTaskfile | Also install this Feature's Taskfile into /usr/local/share/go-task/includes.d so its tasks appear under the <id>: namespace of a root Taskfile that includes /usr/local/share/go-task/features.yml (see the go-task Feature). | boolean | true |
 
+## How it fits
+
+```text
+  host: task devcontainer:agent -- <name>
+          |
+          v                    container
+  task agents -- <name>
+          |  reads .devcontainer/agents.yml (the repository's list)
+          |
+  agents -+-- adapter on PATH: agent-adapter-claude (from claude-code)
+          +-- leases, this container only
+          `-- tasks through go-task (agents: namespace)
+```
+
+| Data | Where it lives | Storage tier |
+| --- | --- | --- |
+| Agent list | `.devcontainer/agents.yml` in the repository | 1 git |
+| Leases and start markers | `/var/lib/devcontainer-features/agents`, not a volume; a lease must not survive a rebuild | 4 working set |
+| Agents' sessions | the CLI's own state (claude-code's volume) | 4 working set |
+
+Tiers are the four of ADR 0045: 1 git, 2 shared folder, 3 personal folder, 4 working set (rebuildable only).
+
+Used in: [agentic-devhost](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/reference-architectures/agentic-devhost.md)
+
 ## What it installs
 
 One standard way to start any agent, whatever its CLI. A repository declares its agents in one
@@ -472,6 +496,22 @@ the background (...)`).
 - Tested with fake adapters and a fake `claude` (`task test:agents-unit`, `task
   test:claude-unit`); no live CLI in CI.
 
+## Anti-patterns
+
+### Don't start a stateful agent outside `agents`
+
+- **Don't:** start a resident or on-demand agent by hand (`claude --bg --name <agent>`) or add your own locking around the start.
+- **Why:** the lease guards starts through `agents` only (see "Limits"), and it exists because the published 2.0.0 had three races in its own lock: 2026-10-30, "Lease takeover fix agents 2.0.2 merged (PR #122)", found through a flaky concurrency test.
+- **Instead:** start through `agents` (`task agents`, `agents:up`), and free a lease with `task agents:release -- <name>` (`--force` only for a live holder you mean to take over).
+- **Caught by:** `task test:agents-lease` covers the lease itself; a session started by hand is not prevented, only shown afterwards by the duplicate report (`+N`, `agents stop --extras`). Nothing stops it yet.
+
+### Don't name a CLI in the vendor-neutral Feature
+
+- **Don't:** special-case one CLI by name in `agents` (or in an adapter's callers), or put a vendor feature such as Remote Control into the `agents` spec.
+- **Why:** 2026-10-29, "Design split agreed: Remote Control in the Claude adapter, session names in the agents spec", and 2026-10-29, "Contract test suite for agents adapters, two fake CLIs": a contract that works on one vendor only is not a contract.
+- **Instead:** each adapter chooses its own route; `agents` asks `supports` ("can it") and relies on the verb's exit code (3: not supported) at run time, with the documented fallback.
+- **Caught by:** `task test:agents-contract` (it fails when a list using only the second fake CLI runs anything named `claude`, and greps that `src/agents` names `claude` only in its documented places); ADR 0037.
+
 ## Why it exists
 
 Claude Code's own agent view (`claude agents`) lists sessions, but it has no per-repository list,
@@ -501,6 +541,12 @@ the `SESSIONS` / `HOST_SESSION` settings, which claude-code 2.0 removes; the mig
 
 ## Changes
 
+### [2.1.3] - 2026-11-03
+
+#### Changed
+
+- The README now has a "How it fits" section with a small diagram of how the Feature sits in a devcontainer, a table of the data it keeps and the storage tier of each, and "Used in" links to the reference architectures that use it. Documentation only: the Feature itself is unchanged. Nothing to do.
+
 ### [2.1.2] - 2026-11-03
 
 #### Added
@@ -518,28 +564,6 @@ CLI adapter in claude-code 1.9.4 records that id and says so on stderr). The lin
 `<name>: running under a new session id (<new>, was <old>)`, and the adapter's own line above it
 says which case it is. Nothing else changes; the lease's carrier was already the id the adapter
 prints (2.0.3).
-
-### [2.1.0] - 2026-10-30
-
-#### Changed
-
-Session names: the label a CLI shows for an agent's session is a template (the Feature option
-`sessionName`, `AGENTS_SESSION_NAME`, a per-agent `session-name:`; default `{handle}`, so nothing
-changes until one is set) rendered with `{handle}`, `{repo}` and `{machine}`, at most 60 characters,
-refused when it does not render and never cut. The handle stays the address (lease, record, verbs).
-`AGENT_SESSION_NAME` is set on every call to a CLI adapter: the rendered name on a call about the
-agent, empty on every other call. `list` adds a `NAME` column (the first column becomes `HANDLE`)
-only when some agent's name differs from its handle, and `--json` always carries `sessionName`
-(after `carrier`); `check` shows a differing name and warns when `{machine}` is used without
-`DCF_HOST_MACHINE`.
-
-**Upgrade note.** A 2.0 list and a 2.0 `devcontainer.json` change nothing: with no template every
-name is the handle, `list` prints the same table, and an adapter that ignores `AGENT_SESSION_NAME`
-starts as before. To tell machines apart set `"sessionName": "{machine} {handle}"` and pair it with
-claude-code 1.9.0 (which uses the name) and, for `{machine}`, devcontainer-cli 1.16.2 and a
-`"DCF_HOST_MACHINE": "${localEnv:DCF_HOST_MACHINE}"` line in the `containerEnv` of the
-repository's `devcontainer.json` (until it is there `{machine}` renders `container`). A session
-that exists keeps its name until it is stopped and started again.
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/agents/CHANGELOG.md).
 

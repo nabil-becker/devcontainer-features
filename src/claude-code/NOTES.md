@@ -1,3 +1,23 @@
+## How it fits
+
+```text
+  host: task devcontainer:claude --> container: claude (native binary)
+                                          |        |
+   agents Feature <-- agent-adapter-claude'        |
+   (task agents -- <name>)                         |
+                                                   v
+              volume: CLAUDE_CONFIG_DIR  (login, settings, sessions)
+              (a repo may bind-mount a host folder on the same target)
+```
+
+| Data | Where it lives | Storage tier |
+| --- | --- | --- |
+| Login, settings, session history, adapter's session list | named volume at `CLAUDE_CONFIG_DIR` (`/var/lib/devcontainer-features/claude-code`); a repo may bind-mount a host folder there | 4 working set |
+
+Tiers are the four of ADR 0045: 1 git, 2 shared folder, 3 personal folder, 4 working set (rebuildable only).
+
+Used in: [windows-workstation-devhost](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/reference-architectures/windows-workstation-devhost.md), [agentic-devhost](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/reference-architectures/agentic-devhost.md)
+
 ## Deprecated in 1.7.0: claude-host, claude-fleet, claude-host-pin
 
 The [`agents`](../agents) Feature replaces them: a repository lists its agents in
@@ -331,3 +351,31 @@ instead of `(volume, writable)` in the post-create log.
 
 Two containers on the same config dir at once (one from VS Code, one from
 the CLI) contend for `.claude.json.lock`; run one.
+
+## Best practices
+
+- **Run `claude` once in each agent's folder, and accept the trust prompt, before `agents up`.** `claude --bg` refuses a folder Claude Code has never trusted (`Workspace not trusted`), and a nested git worktree needs its own entry (2026-10-29, "Trust for agent folders ..."). If you edit the trust entry in `~/.claude.json` by hand, write a temp file, keep a backup and replace the file; never redirect a command's output onto the file it reads (2026-10-29, "Factcheck folder trusted in the Claude config, backup kept"; 2026-10-31, "Auto-mode settings merged into Claude settings; 27 lines confirmed", where a split paste emptied `settings.json`).
+
+## Anti-patterns
+
+### Don't wake a resident session with flags
+
+- **Don't:** run `claude --bg --resume <id>` with extra flags (or `--bg -c`, or `--resume <name>`) to wake an agent's session, or compare its saved options exactly with the agent's `args`.
+- **Why:** 2026-10-30, "Restart-wake bug fixed in claude-code 1.9.1, PR #131 open": a flag given with `--bg --resume` starts a copy under a new id, and Claude Code adds saved options the operator never passed (2026-10-30, "Resident wake stays bare; extra saved options no longer start a copy").
+- **Instead:** let the adapter wake: it is always bare, compares only the saved options it wants, and says when one is missing or changed (changed `args` apply at the next fresh start).
+- **Caught by:** the `agent-adapter-claude` cases in `task test:claude-unit` (a fake `claude`); the real CLI is not tested (nothing yet).
+
+### Don't count a wake as done because a process exists
+
+- **Don't:** treat a started process as a woken session, or record a session id before the wake has held.
+- **Why:** 2026-10-30, "Consumer's claude-code 1.9.2 findings triaged": waking a session with no transcript crashed after the adapter had already recorded it.
+- **Instead:** the adapter confirms the wake for `AGENT_ADAPTER_SETTLE` seconds (default 5), starts fresh when the transcript is missing, and never records a crashed attempt. The cost is up to about 45 s at `agents up` with nine residents.
+- **Caught by:** the settle and missing-transcript cases in `task test:claude-unit`; the 2.1.314 crash behaviour is modelled from a consumer's report, not run (open item `fork-detection-check`).
+
+### Don't trust a background-session record or a pid after a rebuild
+
+- **Don't:** wake, or `attach` to, a session whose record in the Feature's volume may name a process of a container that is gone.
+- **Why:** 2026-11-03, "Stale background record cleared before agent wake; copy becomes an error (#155)": after `up --remove-existing-container`, each `agents up` started two hidden copies of a resident (2026-10-31 and 2026-11-02, "RS1 copy-on-wake report logged for the agents Feature backlog").
+- **Instead:** the adapter removes the records proven dead (another pid namespace, no such pid, or another start time) before a wake, and a copy that still happens is stopped and reported as an error. Do not wrap the adapter in a retry loop: every repeat wake made another copy.
+- **Caught by:** the unit tests of 1.9.7 in `task test:claude-unit`, against a fake; nothing yet against a real background service (open item `second-copies-real-service`).
+

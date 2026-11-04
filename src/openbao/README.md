@@ -19,6 +19,23 @@ Installs the OpenBao CLI (https://openbao.org), the open-source Vault fork, as a
 | mode | How the Feature is used. Only 'client' exists in this version: the bao CLI and dcf-secret against a server outside the container (BAO_ADDR). Override per container with OPENBAO_SETUP_MODE in containerEnv. | string | client |
 | version | OpenBao release to install (e.g. '2.7.1', with or without a leading 'v'), or 'latest'. Match your OpenBao server's version. | string | latest |
 
+## How it fits
+
+```text
+  go-task registry --> openbao:* tasks
+  bao CLI --BAO_ADDR (set in containerEnv)--> OpenBao server      dcf-secret --> bao
+    |
+    `--> token helper --> volume openbao-config-<id>/token  (or BAO_TOKEN from the environment)
+```
+
+| Data | Where it lives | Storage tier |
+| --- | --- | --- |
+| Login token | `token` in the Feature's volume `openbao-config-${devcontainerId}`, kept by a token helper (`BAO_CONFIG_PATH`), so a rebuild keeps the login; or `BAO_TOKEN` in the environment | 4 working set |
+
+Tiers are the four of ADR 0045: 1 git, 2 shared folder, 3 personal folder, 4 working set (rebuildable only).
+
+Used in: [secrets-with-openbao](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/reference-architectures/secrets-with-openbao.md)
+
 ## What it installs
 
 The `bao` release binary from `github.com/openbao/openbao`, at
@@ -290,6 +307,12 @@ Nothing is removed; `mode` stays `client`.
 
 ## Changes
 
+### [1.1.1] - 2026-11-03
+
+#### Changed
+
+- The README now has a "How it fits" section with a small diagram of how the Feature sits in a devcontainer, a table of the data it keeps and the storage tier of each, and "Used in" links to the reference architectures that use it. Documentation only: the Feature itself is unchanged. Nothing to do.
+
 ### [1.1.0] - 2026-11-03
 
 #### Added
@@ -305,12 +328,6 @@ Nothing is removed; `mode` stays `client`.
 #### Added
 
 - This changelog: every release of this Feature now has an entry here, written for its users, and the Feature's README shows the latest three under "Changes". Nothing to do.
-
-### [1.0.3] - 2026-10-28
-
-#### Fixed
-
-- Build-time downloads retry on transient network errors, so a flaky connection no longer fails the container build outright. Rebuild the container to pick it up. No change to options or tasks; nothing to do. ([#94](https://github.com/nabil-becker/devcontainer-features/pull/94))
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/openbao/CHANGELOG.md).
 
