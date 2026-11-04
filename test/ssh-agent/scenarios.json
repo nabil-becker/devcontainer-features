@@ -25,5 +25,18 @@
       }
     },
     "remoteUser": "vscode"
+  },
+  "openbao_keys": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "go-task": {},
+      "openbao": {
+        "version": "2.7.1"
+      },
+      "ssh-agent": {
+        "keyMode": true
+      }
+    },
+    "remoteUser": "vscode"
   }
 }

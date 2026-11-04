@@ -161,3 +161,52 @@ tasks:
     cmds:
       - openbao-setup
       - openbao-setup start
+
+  ssh:new:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Make an SSH key record in OpenBao: an ed25519 key NAME (default <repo>-<container>-sign) at dcf/ssh/<name> with the fields private_key, public_key and purpose (PURPOSE=, default git-signing) and its creation date in the metadata; generated in a private folder on tmpfs that is removed at once, no passphrase (the gate is the unseal and the login). Prints the public key and the next steps (ssh-agent:key:load, gh:ssh-key:add, ssh-agent:git:signing), never the private key. A name is never reused, also after a retire. COMMENT= sets the key comment (default the name). Exits with dcf-secret''s codes when the server is not ready.'
+    vars:
+      NAME: '{{.NAME | default ""}}'
+      COMMENT: '{{.COMMENT | default ""}}'
+      PURPOSE: '{{.PURPOSE | default ""}}'
+    cmds:
+      - openbao-run openbao-ssh new --name '{{.NAME}}' --comment '{{.COMMENT}}' --purpose '{{.PURPOSE}}'
+
+  ssh:put:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Store a private key you pipe in as the record NAME=<key> (dcf/ssh/<name>; PURPOSE=, default git-signing): read from stdin only, never an argument; its public key derived with ssh-keygen; an existing record is never overwritten. A key with a passphrase is asked for at ssh-keygen''s own prompt on a terminal, once, and stored without it.'
+    requires:
+      vars: [NAME]
+    vars:
+      PURPOSE: '{{.PURPOSE | default ""}}'
+    cmds:
+      - openbao-run openbao-ssh put --name '{{.NAME}}' --purpose '{{.PURPOSE}}'
+
+  ssh:import:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Bring keys kept elsewhere into OpenBao. FROM=file: FILE=<path> (NAME= default the file name), or the key on stdin with NAME= (what task devcontainer:openbao-ssh-import on the workstation streams in); the source file is left alone. FROM=ssh-agent: every private key of the ssh-agent Feature''s key volume (DIR= another folder) as ssh/<file name>, its creation date from the .meta sidecar, the fingerprint compared with what OpenBao returns, a protected key''s passphrase asked once at ssh-keygen''s prompt on a tmpfs copy; the volume''s allowed_signers.history and a line per key go into .devcontainer/allowed_signers (ALLOWED_SIGNERS= another file; the host commits it); one key is then loaded and git:verify run through ssh-agent; deleting the volume''s copy is asked per key on a terminal, never by default. FROM=agentic-register: the register''s keys/<principal> as register/<principal>. A record already there with the same key is skipped, with another key refused; it can run again.'
+    interactive: true
+    requires:
+      vars: [FROM]
+    vars:
+      FILE: '{{.FILE | default ""}}'
+      NAME: '{{.NAME | default ""}}'
+      DIR: '{{.DIR | default ""}}'
+    env:
+      ALLOWED_SIGNERS: '{{.ALLOWED_SIGNERS | default ""}}'
+    cmds:
+      - openbao-run openbao-ssh import --from '{{.FROM}}' --file '{{.FILE}}' --name '{{.NAME}}' --dir '{{.DIR}}'
+
+  ssh:retire:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Retire the record NAME=ssh/<key>: write a version that holds only its public key and purpose, dated, then destroy every version that held the private key (bao kv destroy, not recoverable); the metadata stays, with the retirement date, so the record still lists and its public key still verifies old signatures. `-- --plan` prints the steps and changes nothing. ssh-agent:key:rotate runs it as its last step.'
+    requires:
+      vars: [NAME]
+    cmds:
+      - openbao-run openbao-ssh retire --name '{{.NAME}}' {{.CLI_ARGS}}
+
+  ssh:age:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'List each SSH key record with its creation date, its age in days (or its retirement date) and its fingerprint; warns about a live key older than SSH_KEY_MAX_AGE_DAYS (default 365): rotate it with task ssh-agent:key:rotate NAME=ssh/<key>.'
+    cmds:
+      - openbao-run openbao-ssh age

@@ -1,7 +1,7 @@
 
 # GitHub CLI (gh) (gh)
 
-GitHub CLI (https://cli.github.com) as a member of this collection's ecosystem: keeps a gh already in the image (e.g. from the official ghcr.io/devcontainers/features/github-cli, which is augmented instead of replaced) or installs the sha256-verified release binary at /usr/local/bin/gh (version pinnable); owns the login state as a named volume at GH_CONFIG_DIR=/var/lib/devcontainer-features/gh so `gh auth login` survives rebuilds; and adds a post-create hook (gh-setup) that makes that directory usable by the remote user, configures git to take GitHub credentials from gh, and reports whether a login is present. Plus the Feature Taskfile.
+GitHub CLI (https://cli.github.com) as a member of this collection's ecosystem: keeps a gh already in the image (e.g. from the official ghcr.io/devcontainers/features/github-cli, which is augmented instead of replaced) or installs the sha256-verified release binary at /usr/local/bin/gh (version pinnable); owns the login state as a named volume at GH_CONFIG_DIR=/var/lib/devcontainer-features/gh so `gh auth login` survives rebuilds; and adds a post-create hook (gh-setup) that makes that directory usable by the remote user, configures git to take GitHub credentials from gh, and reports whether a login is present. Plus the Feature Taskfile, with gh:ssh-key:add to register a public key as a signing key.
 
 ## Example Usage
 
@@ -90,6 +90,17 @@ A repo's `mounts` entry on the same target wins over the Feature's volume.
 Alternatively point `GH_CONFIG_DIR` in the repo's `containerEnv` at any
 other mounted path; `gh-setup` follows the variable.
 
+## Registering a signing key
+
+`task gh:ssh-key:add` registers a public key at GitHub as a **signing** key (`gh ssh-key add
+--type signing`), never an authentication key: a signing-only key logs in to nothing if it leaks.
+The key comes from `FILE=<.pub>`, from OpenBao with `KEY=ssh/<name>` (the `openbao` Feature's
+`dcf-secret`, field `public_key`), or on stdin; `TITLE=` defaults to the record's name or the key's
+comment. A key already registered as a signing key is left alone (exit 0); a private key is
+refused. The login needs the `admin:ssh_signing_key` scope: `gh auth refresh -s
+admin:ssh_signing_key`. The `ssh-agent` Feature's `key:rotate` calls it (as `gh-ssh-key-add`) for
+its GitHub step.
+
 ## Pairs with
 
 - `ghcr.io/devcontainers/features/github-cli` for the apt-installed gh.
@@ -100,6 +111,12 @@ other mounted path; `gh-setup` follows the variable.
   go-task registry.
 
 ## Changes
+
+### [1.1.0] - 2026-11-04
+
+#### Added
+
+- `task gh:ssh-key:add` registers a public key at GitHub as a **signing** key (never an authentication key): `FILE=<.pub>`, `KEY=ssh/<name>` to read it from OpenBao (the openbao Feature), or the key on stdin; a key already registered as a signing key is left alone, and a private key is refused. Your gh login needs the `admin:ssh_signing_key` scope (`gh auth refresh -s admin:ssh_signing_key`). ssh-agent 1.4.0's `key:rotate` uses it. Nothing to do otherwise.
 
 ### [1.0.3] - 2026-11-03
 
@@ -112,12 +129,6 @@ other mounted path; `gh-setup` follows the variable.
 #### Fixed
 
 - Build-time downloads retry on transient network errors, so a flaky connection no longer fails the container build outright. Rebuild the container to pick it up. No change to options or tasks; nothing to do. ([#94](https://github.com/nabil-becker/devcontainer-features/pull/94))
-
-### [1.0.1] - 2026-10-21
-
-#### Fixed
-
-- Az installs the Azure CLI; Feature tasks run in the caller's folder ([#48](https://github.com/nabil-becker/devcontainer-features/pull/48))
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/gh/CHANGELOG.md).
 

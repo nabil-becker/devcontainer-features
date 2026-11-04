@@ -69,13 +69,45 @@ task devcontainer:up` and probes the fixed path anyway.
 On `windows-docker` or `windows-wslc`, add `"keyMode": true` only if you accept the trade-off
 below.
 
+## Keys from OpenBao (1.4.0)
+
+With the `openbao` Feature (1.3.0 or later) in the container, OpenBao keeps the private keys and
+this Feature only uses them (ADR 0048):
+
+```sh
+task openbao:login -- -method=userpass username=operator   # once per sitting (server mode unsealed)
+task ssh-agent:key:load NAME=ssh/<key> [MINUTES=60]       # the key into the agent, memory only
+task ssh-agent:key:lock NAME=ssh/<key>                    # out again, sooner than its lifetime
+```
+
+- **No file.** `key:load` runs `dcf-secret get ssh/<key> --field private_key | ssh-add -t <life> -`:
+  the key passes on a pipe into the agent and is never written anywhere. Only its public key is
+  noted (in `$XDG_RUNTIME_DIR` or `/tmp`, `ssh-agent-feature-<uid>/`), so `key:lock` works while
+  OpenBao is sealed.
+- **No longer than the login.** The lifetime is what the OpenBao token has left (`dcf-secret
+  ttl`), at most 480 minutes; `MINUTES` shortens it, and a longer one is cut to the login with a
+  line saying so. With under a minute left it refuses with exit 12 (log in again).
+- **Whose agent.** Key mode: the container's own agent (started if none runs). Socket mode: the
+  workstation's agent, and the task says so (`loaded ssh/<key> into the workstation's agent until
+  HH:MM`); keys the workstation already holds stay the workstation's. With neither, it refuses with
+  the verdict of `check`.
+- **OpenBao's answers come through**: exit 10 unreachable, 11 sealed (the Operator runs `task
+  openbao:unseal`), 12 no or expired login, 13 not allowed, 14 no such key; nothing is loaded. There
+  is no fallback to the key volume. Without the `openbao` Feature it says to add it.
+- **The start hook never fetches from OpenBao**: it never waits and never asks.
+
+Names are OpenBao's: `ssh/<key>` for signing keys, `register/<principal>` for the register's.
+`task openbao:ssh:new` makes one, `task openbao:ssh:import FROM=ssh-agent` moves the key volume's
+keys in (below), and from the workstation `task devcontainer:openbao-ssh-import FILE=<key>` streams one in.
+
 ## Loading keys
 
 - **Socket mode** (linux, macos, windows-wsl-docker): the agent is the host's, so load keys on
   the host with the host's `ssh-add`. `task devcontainer:ssh-add -- ~/.ssh/id_ed25519` runs it
   (no arguments lists with `-l`); it is a one-shot command that exits. Inside the container
   `task ssh-agent:keys` shows what the agent holds.
-- **Key mode** (opt-in): from the host, `task devcontainer:ssh-key-import FILE=<private key on the
+- **Key mode** (opt-in; **its key volume is deprecated and goes in 2.0**, every task below that uses
+  it prints one line naming its replacement): from the host, `task devcontainer:ssh-key-import FILE=<private key on the
   host>` streams the key into the running container through `devcontainer exec` on stdin (never
   as an argument, never into a log or process list) into the key volume with mode 0600, its `.pub`
   beside it when there is one, and loads it. It refuses when the container is not running, when
@@ -127,7 +159,18 @@ easy rotation.
 
 ## Rotating and retiring
 
-`task ssh-agent:key:rotate` replaces a signing key in four steps and stops at the first failure,
+**On OpenBao records** (`NAME=ssh/<key>`; optional when OpenBao holds exactly one active key and
+key mode is off), `task ssh-agent:key:rotate` keeps the four steps below and their order, with the
+records' lifecycle in the `openbao` Feature: (1) `openbao:ssh:new` makes `ssh/<new>` and it is
+loaded from OpenBao; (2) the `gh` Feature's `gh:ssh-key:add` registers it as a signing key (else
+`gh` directly, else the public key is printed and the rotation stops, to resume with
+`NEW=ssh/<new>`); (3) git is pointed at it and `git:verify` runs, and it gets a line in
+`.devcontainer/allowed_signers` valid after now (the file is made if missing); (4) only then
+`openbao:ssh:retire` destroys the old record's private key, its line gets valid-before now (added
+first if it had none), and it is unloaded. The host commits `.devcontainer/allowed_signers`. `--plan`
+and `REVOKE=1` work as below.
+
+On the key volume (deprecated, key mode), `task ssh-agent:key:rotate` replaces a signing key in four steps and stops at the first failure,
 removing nothing of the old key until the new one is proven:
 
 1. Make the new key (`NEW`, default the old name without a date suffix plus `-YYYYMMDD`) in the
@@ -141,9 +184,10 @@ removing nothing of the old key until the new one is proven:
    still names another key also stops the rotation.
 4. Only then retire the old key: unload it from the agent, append its public key, dated, to
    `allowed_signers.history` in the key volume, delete its private key. By default the old key stays
-   **registered at GitHub**, so its old commits keep their verified badge; `REVOKE=1` also removes it
-   there (`gh ssh-key delete <id> --yes`, the id found by matching the public key), after which old
-   commits show unverified at GitHub.
+   **registered at GitHub**; `REVOKE=1` also removes it there (`gh ssh-key delete <id> --yes`, the id
+   found by matching the public key). GitHub's documentation says a commit verified once stays
+   verified in its repository's network even if the key is later removed, so `REVOKE=1` loses only
+   the badge of commits GitHub had not yet verified.
 
 `task ssh-agent:key:rotate -- --plan` prints the steps and the keys involved and changes nothing.
 `NAME=<old key>` is optional when the volume holds exactly one key. `EMPTY_PASSPHRASE=1` skips the
@@ -161,7 +205,15 @@ key that needs no replacement. `task ssh-agent:key:age` lists each key with its 
 older ones), its age and fingerprint, and `task ssh-agent:check` warns when a key is older than
 `SSH_KEY_MAX_AGE_DAYS` (default 365): "older than N days; task ssh-agent:key:rotate".
 
-**Old signatures keep verifying locally.** Point git at the history file:
+**Old signatures keep verifying locally.** From 1.4.0 the record is `.devcontainer/allowed_signers`
+in the repository (one line per key, `namespaces="git"` with valid-after / valid-before; public
+keys only, reviewed in pull requests), which `openbao:ssh:import FROM=ssh-agent` fills from the
+history file and `key:rotate` keeps. Where the repository has that file, `git:signing` adds the
+signing key to it if missing and sets `gpg.ssh.allowedSignersFile` in the repository's config to
+the relative path `.devcontainer/allowed_signers`: git reads a relative path from the top of the
+work tree, from any subfolder and with `git -C` (tested), and so does Windows git on the same
+repository config. `ALLOWED_SIGNERS=<file>` names another file. A repository without the file
+gets none from `git:signing`. Before 1.4.0, point git at the history file:
 
 ```sh
 git config --global gpg.ssh.allowedSignersFile /var/lib/devcontainer-features/ssh-agent-key/allowed_signers.history
@@ -248,9 +300,13 @@ orders it behind `go-task` and `common-utils`.
 
 ## Tasks
 
-`task ssh-agent:version`, `check`, `setup`, `keys`, `key:load`, `key:add`, `key:new`, `key:remove`,
-`key:rotate`, `key:retire`, `key:age`, `git:signing`, `git:verify` (all in `ssh-agent`; the host side has `devcontainer:ssh-add` and
-`devcontainer:ssh-key-import`).
+`task ssh-agent:version`, `check`, `setup`, `keys`, `key:load`, `key:lock`, `key:rotate`,
+`git:signing`, `git:verify`; deprecated with the key volume (gone in 2.0): `key:add`, `key:new`,
+`key:unlock`, `key:remove DELETE=1`, `key:retire`, `key:age`, `key:load` with no `NAME` (all in
+`ssh-agent`; the host side has `devcontainer:ssh-add`, `devcontainer:openbao-ssh-import` and the
+deprecated `devcontainer:ssh-key-import`). The records' own tasks are the `openbao` Feature's
+(`openbao:ssh:new`, `put`, `import`, `retire`, `age`) and GitHub's step is the `gh` Feature's
+(`gh:ssh-key:add`).
 
 ## Limits and troubleshooting
 
@@ -290,6 +346,22 @@ this collection or of `devcontainers/features` forwards the agent for the CLI; t
 the launcher's mount instead of a process on the host, and is honest where a host type cannot.
 
 ## Version and upgrade
+
+`1.4.0`: keys from OpenBao (`key:load` / `key:lock NAME=ssh/<key>`, `key:rotate` on OpenBao
+records, `.devcontainer/allowed_signers`), and the key volume's tasks deprecated: they keep working
+and print one line each. **Nothing breaks**; a consumer pinned to `:1` sees the deprecation lines.
+To move off key mode's volume, once per container:
+
+| Step | Who | What |
+|---|---|---|
+| 1 | maintainer | add `openbao` with `"mode": "server"` (or a `BAO_ADDR` of your server) to `devcontainer.json`, rebuild |
+| 2 | the Operator, in a plain terminal | `task openbao:init` (once), `task openbao:unseal`, `task openbao:login` |
+| 3 | the Operator | `task openbao:ssh:import FROM=ssh-agent`; the host commits `.devcontainer/allowed_signers` |
+| 4 | everyone | `key:unlock NAME=<file>` becomes `key:load NAME=ssh/<file> [MINUTES=]` |
+
+In 2.0 the key volume, its mount and the deprecated tasks go, and `keyMode` becomes `localAgent`
+(an in-container agent with keys in memory only); removing a mount does not delete the volume, so
+import first and remove the old volume with the engine's own command.
 
 `1.2.0`: the start hook no longer hangs on a passphrase-protected key in key mode: it never asks, it
 skips the key with one warning and exits 0. `task ssh-agent:setup` (and the key tasks) ask at ssh-add's

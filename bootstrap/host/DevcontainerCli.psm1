@@ -1480,10 +1480,10 @@ function Write-GeneralPurposeKeyWarning {
         fingerprints, never key material.
     #>
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$KeyFile)
+    param([Parameter(Mandatory)][string]$KeyFile, [string]$Label = 'ssh-key-import')
     $name = Split-Path -Leaf $KeyFile
     if ($name -in 'id_ed25519', 'id_ecdsa', 'id_rsa', 'id_dsa', 'id_ed25519_sk', 'id_ecdsa_sk') {
-        Write-Warning "ssh-key-import: $name is the default name of a general-purpose key. Import only a dedicated signing key (one key per purpose and per container, named <repo>-<container>-sign) that opens nothing else; task ssh-agent:key:new inside the container makes one that never leaves it."
+        Write-Warning "${Label}: $name is the default name of a general-purpose key. Import only a dedicated signing key (one key per purpose and per container, named <repo>-<container>-sign) that opens nothing else; task ssh-agent:key:new inside the container makes one that never leaves it."
     }
     $keygen = Get-Command ssh-keygen -ErrorAction SilentlyContinue
     $pub = $null
@@ -1524,7 +1524,7 @@ function Write-GeneralPurposeKeyWarning {
     }
     if ($hit) {
         $shown = if ($fp) { " ($fp)" } else { '' }
-        Write-Warning "ssh-key-import: the public key of $name$shown $hit, so it is a general-purpose key. A key that also opens GitHub, servers or other repos must not live in a container volume: import a dedicated signing key instead (registered at GitHub as a signing key only)."
+        Write-Warning "${Label}: the public key of $name$shown $hit, so it is a general-purpose key. A key that also opens GitHub, servers or other repos must not live in a container volume: import a dedicated signing key instead (registered at GitHub as a signing key only)."
     }
 }
 
@@ -1551,6 +1551,7 @@ function Import-SshKey {
     if (-not $KeyFile -or -not (Test-Path -LiteralPath $KeyFile -PathType Leaf)) {
         throw "ssh-key-import: FILE=<path of a private key on this host> is required, and '$KeyFile' is not a file."
     }
+    Write-Warning "ssh-key-import: deprecated: it puts the key in the ssh-agent Feature's key volume, which goes in ssh-agent 2.0; use task devcontainer:openbao-ssh-import FILE=<key> (the key goes into OpenBao; the openbao Feature in the container, unsealed and logged in)."
     Write-GeneralPurposeKeyWarning -KeyFile $KeyFile
     $folder = (Resolve-Path $WorkspaceFolder).Path
     $ids = @(Get-RunningDevcontainerId -WorkspaceFolder $folder -DockerPath $DockerPath)
@@ -1567,6 +1568,43 @@ function Import-SshKey {
     }
     Invoke-DevcontainerCliProcess @common -Arguments @('ssh-agent-setup', 'key-load')
     if ($script:CliExitCode -ne 0) { throw "ssh-key-import: loading the keys failed (exit $($script:CliExitCode))." }
+}
+
+function Import-OpenBaoSshKey {
+    <#
+    .SYNOPSIS
+        The one-shot import of a private key of this host into OpenBao (task
+        devcontainer:openbao-ssh-import), which replaces ssh-key-import.
+    .DESCRIPTION
+        The key goes through `devcontainer exec` on stdin, never as an argument, into the openbao
+        Feature's `openbao-ssh import --from file` (task openbao:ssh:import FROM=file), which
+        stores it as ssh/<name> and adds its line to the repository's .devcontainer/allowed_signers.
+        The container refuses when the server is sealed or nobody is logged in, before storing
+        anything. Throws with a clear message when the file is missing, no container runs, or the
+        container refuses. Nothing is left running on the host.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$WorkspaceFolder,
+        [string]$KeyFile,
+        [string]$Name,
+        [string]$NodeVersion,
+        [string]$CliVersion,
+        [string]$DockerPath
+    )
+    if (-not $KeyFile -or -not (Test-Path -LiteralPath $KeyFile -PathType Leaf)) {
+        throw "openbao-ssh-import: FILE=<path of a private key on this host> is required, and '$KeyFile' is not a file."
+    }
+    if (-not $Name) { $Name = Split-Path -Leaf $KeyFile }
+    Write-GeneralPurposeKeyWarning -KeyFile $KeyFile -Label 'openbao-ssh-import'
+    $folder = (Resolve-Path $WorkspaceFolder).Path
+    $ids = @(Get-RunningDevcontainerId -WorkspaceFolder $folder -DockerPath $DockerPath)
+    if ($ids.Count -eq 0) { throw "No running devcontainer for $folder. Start it with: task dc:start" }
+    $common = @{ Subcommand = 'exec'; WorkspaceFolder = $folder; NodeVersion = $NodeVersion; CliVersion = $CliVersion; DockerPath = $DockerPath }
+    Invoke-DevcontainerCliProcess @common -Arguments @('openbao-ssh', 'import', '--from', 'file', '--name', $Name) -InputFile $KeyFile
+    if ($script:CliExitCode -ne 0) {
+        throw "openbao-ssh-import: the container refused or failed (exit $($script:CliExitCode), see above). It needs the openbao Feature (1.3.0 or later), its server unsealed and a login (task openbao:login in the container); a key with a passphrase is imported inside the container instead (task openbao:ssh:import FROM=file FILE=<path>), where ssh-keygen can ask for it."
+    }
 }
 
 # ------------------------------------------------------ cloud-folder login ----
@@ -1900,6 +1938,13 @@ function Invoke-DevcontainerCli {
         return
     }
 
+    # `openbao-ssh-import` is not a CLI subcommand: the key file is Arguments[0], the name [1].
+    if ($Subcommand -eq 'openbao-ssh-import') {
+        $a = @($Arguments)
+        Import-OpenBaoSshKey -WorkspaceFolder $WorkspaceFolder -KeyFile ($a | Select-Object -First 1) -Name ($a | Select-Object -Skip 1 -First 1) -NodeVersion $NodeVersion -CliVersion $CliVersion -DockerPath $DockerPath
+        return
+    }
+
     # `ssh-key-import` is not a CLI subcommand: the key file is Arguments[0].
     if ($Subcommand -eq 'ssh-key-import') {
         Import-SshKey -WorkspaceFolder $WorkspaceFolder -KeyFile ($Arguments | Select-Object -First 1) -NodeVersion $NodeVersion -CliVersion $CliVersion -DockerPath $DockerPath
@@ -1967,4 +2012,4 @@ function Invoke-DevcontainerCli {
     exit $rc
 }
 
-Export-ModuleMember -Function Get-HostTypeId, Get-DefaultHostTypePriority, Resolve-HostType, Resolve-SshAgent, Resolve-HostProfile, Initialize-HostEnvironment, Test-FuseRequested, Get-FuseRefusal, Get-FuseRunArgument, Get-FuseSlotMissing, Write-FuseSlotWarning, Write-FuseRefusedWarning, ConvertTo-MachineName, Get-HostMachineName, Test-MachineSlotMissing, Write-MachineSlotWarning, Get-DevcontainerConfigFile, Get-HostMount, Test-CloudFolderMount, ConvertTo-MountArgument, ConvertTo-JsonWithoutComment, Get-ConfiguredMountTarget, Test-HostMountsEnabled, Resolve-HostMount, Initialize-HostMountSource, Get-HostMountArgument, Show-HostProfile, Import-SshKey, Clear-HostProfileCache, Get-SettingOrEnv, ConvertFrom-TaskCliArgString, Get-PortableNodeDir, Invoke-DcfDownload, Get-DevcontainersCliEntrypoint, Remove-DevcontainersCli, Resolve-DockerPath, Get-WorkspaceFolderVariant, Get-RunningDevcontainerId, Stop-Devcontainer, Test-BuildSubcommand, Get-BuildLockStateDir, Get-BuildLockLabel, Get-BuildLockWaitMessage, Get-EngineBuildxVersion, Get-BuildLockSkipReason, Enter-DevcontainerBuildLock, Exit-DevcontainerBuildLock, Test-EngineSubcommand, Get-ContainerEngineCheck, Test-ContainerEngineResponding, Get-ContainerEngineError, Get-ContainerEngineStartHint, Wait-ContainerEngine, Write-ContainerEngineDiagnosis, Get-DevcontainerCliInvocation, Invoke-DevcontainerCliProcess, Get-LauncherCacheRoot, Get-CloudFolderRcloneVersion, Get-WorkstationRclone, Open-Browser, Invoke-CloudFolderRelayRequest, Invoke-CloudFolderLoginRelay, Invoke-CloudFolderLogin, Invoke-DevcontainerCli
+Export-ModuleMember -Function Get-HostTypeId, Get-DefaultHostTypePriority, Resolve-HostType, Resolve-SshAgent, Resolve-HostProfile, Initialize-HostEnvironment, Test-FuseRequested, Get-FuseRefusal, Get-FuseRunArgument, Get-FuseSlotMissing, Write-FuseSlotWarning, Write-FuseRefusedWarning, ConvertTo-MachineName, Get-HostMachineName, Test-MachineSlotMissing, Write-MachineSlotWarning, Get-DevcontainerConfigFile, Get-HostMount, Test-CloudFolderMount, ConvertTo-MountArgument, ConvertTo-JsonWithoutComment, Get-ConfiguredMountTarget, Test-HostMountsEnabled, Resolve-HostMount, Initialize-HostMountSource, Get-HostMountArgument, Show-HostProfile, Import-SshKey, Import-OpenBaoSshKey, Clear-HostProfileCache, Get-SettingOrEnv, ConvertFrom-TaskCliArgString, Get-PortableNodeDir, Invoke-DcfDownload, Get-DevcontainersCliEntrypoint, Remove-DevcontainersCli, Resolve-DockerPath, Get-WorkspaceFolderVariant, Get-RunningDevcontainerId, Stop-Devcontainer, Test-BuildSubcommand, Get-BuildLockStateDir, Get-BuildLockLabel, Get-BuildLockWaitMessage, Get-EngineBuildxVersion, Get-BuildLockSkipReason, Enter-DevcontainerBuildLock, Exit-DevcontainerBuildLock, Test-EngineSubcommand, Get-ContainerEngineCheck, Test-ContainerEngineResponding, Get-ContainerEngineError, Get-ContainerEngineStartHint, Wait-ContainerEngine, Write-ContainerEngineDiagnosis, Get-DevcontainerCliInvocation, Invoke-DevcontainerCliProcess, Get-LauncherCacheRoot, Get-CloudFolderRcloneVersion, Get-WorkstationRclone, Open-Browser, Invoke-CloudFolderRelayRequest, Invoke-CloudFolderLoginRelay, Invoke-CloudFolderLogin, Invoke-DevcontainerCli

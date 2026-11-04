@@ -1556,6 +1556,12 @@ exit 0
         foreach ($f in Get-ChildItem $script:Calls -Filter '*.args') { (Get-Content $f.FullName -Raw) | Should -Not -Match ([regex]::Escape($script:Secret)) }
     }
 
+    It 'says it is deprecated, naming openbao-ssh-import' {
+        $env:DCF_TEST_RUNNING = '1'
+        $w = Import-SshKey -WorkspaceFolder $script:Ws -KeyFile $script:Key 3>&1 6>$null | Out-String
+        $w | Should -Match 'deprecated: .*task devcontainer:openbao-ssh-import FILE=<key>'
+    }
+
     It 'a key with no .pub beside it makes two calls' {
         $env:DCF_TEST_RUNNING = '1'
         Import-SshKey -WorkspaceFolder $script:Ws -KeyFile $script:NoPub 6>$null
@@ -1622,6 +1628,92 @@ exit 0
             $w = Import-SshKey -WorkspaceFolder $script:Ws -KeyFile $gen 3>&1 6>$null | Out-String
             $w | Should -Not -Match 'warning'
         }
+    }
+}
+
+# openbao-ssh-import (task devcontainer:openbao-ssh-import): the key file reaches `devcontainer exec` of
+# `openbao-ssh import --from file` on stdin and never in its arguments; the bash twin's tests are in
+# ssh_key_import_test.sh.
+Describe 'openbao-ssh-import' -Skip:$IsWindows {
+    BeforeAll {
+        $script:EnvNames = 'HOST_TYPE', 'DEVCONTAINER_DOCKER_PATH', 'HOME', 'DCF_TEST_RUNNING', 'DCF_TEST_REFUSE', 'DCF_TEST_CALLS'
+        $script:SavedEnv = @{}
+        foreach ($n in $script:EnvNames) { $script:SavedEnv[$n] = [Environment]::GetEnvironmentVariable($n) }
+        $script:SavedPath = $env:PATH
+        $script:Bin = Join-Path $TestDrive 'obin'
+        $script:Calls = Join-Path $TestDrive 'ocalls'
+        New-Item -ItemType Directory -Path $script:Bin, $script:Calls | Out-Null
+        $stub = @'
+#!/bin/sh
+n=$(ls "$DCF_TEST_CALLS" | grep -c args)
+for a in "$@"; do echo "$a"; done > "$DCF_TEST_CALLS/$n.args"
+case "$*" in *openbao-ssh*) cat > "$DCF_TEST_CALLS/$n.stdin" ;; *) : > "$DCF_TEST_CALLS/$n.stdin" ;; esac
+case "$*" in *openbao-ssh*) if [ "$DCF_TEST_REFUSE" = 1 ]; then echo "dcf-secret: the server is sealed" >&2; exit 11; fi ;; esac
+exit 0
+'@
+        [System.IO.File]::WriteAllText((Join-Path $script:Bin 'devcontainer'), $stub.Replace("`r`n", "`n"))
+        [System.IO.File]::WriteAllText((Join-Path $script:Bin 'docker'), "#!/bin/sh`n[ `"`$1`" = ps ] && [ `"`$DCF_TEST_RUNNING`" = 1 ] && echo abc123`nexit 0`n")
+        chmod +x (Join-Path $script:Bin 'devcontainer') (Join-Path $script:Bin 'docker')
+        $script:Secret = 'SECRET-KEY-BYTES-0123456789'
+        $script:Begin = '-----BEGIN OPENSSH ' + 'PRIVATE KEY-----'
+        $script:End = '-----END OPENSSH ' + 'PRIVATE KEY-----'
+        $script:Key = Join-Path $TestDrive 'work-sign'
+        [System.IO.File]::WriteAllText($script:Key, "$($script:Begin)`n$($script:Secret)`n$($script:End)`n")
+        $script:Ws = Join-Path $TestDrive 'ows'
+        New-Item -ItemType Directory -Path $script:Ws | Out-Null
+        function Get-CallCount { @(Get-ChildItem $script:Calls -Filter '*.args').Count }
+    }
+    BeforeEach {
+        foreach ($n in $script:EnvNames) { [Environment]::SetEnvironmentVariable($n, $null) }
+        $env:PATH = $script:Bin + [System.IO.Path]::PathSeparator + $script:SavedPath
+        $env:HOME = Join-Path $TestDrive 'ohome'
+        $env:HOST_TYPE = 'linux'
+        $env:DCF_TEST_CALLS = $script:Calls
+        Get-ChildItem $script:Calls | Remove-Item
+        Clear-HostProfileCache
+    }
+    AfterAll {
+        foreach ($n in $script:EnvNames) { [Environment]::SetEnvironmentVariable($n, $script:SavedEnv[$n]) }
+        $env:PATH = $script:SavedPath
+    }
+
+    It 'streams the key into openbao-ssh import --from file on stdin, never in an argument, in one call' {
+        $env:DCF_TEST_RUNNING = '1'
+        $w = Import-OpenBaoSshKey -WorkspaceFolder $script:Ws -KeyFile $script:Key 3>&1 6>$null | Out-String
+        Get-CallCount | Should -Be 1
+        (Get-Content (Join-Path $script:Calls '0.args')) -join ' ' | Should -Match 'openbao-ssh import --from file --name work-sign$'
+        (Get-Content (Join-Path $script:Calls '0.stdin') -Raw) | Should -Match ([regex]::Escape($script:Secret))
+        (Get-Content (Join-Path $script:Calls '0.args') -Raw) | Should -Not -Match ([regex]::Escape($script:Secret))
+        $w | Should -Not -Match 'deprecated'
+    }
+
+    It 'passes NAME as the record name' {
+        $env:DCF_TEST_RUNNING = '1'
+        Import-OpenBaoSshKey -WorkspaceFolder $script:Ws -KeyFile $script:Key -Name 'other-sign' 6>$null
+        (Get-Content (Join-Path $script:Calls '0.args')) -join ' ' | Should -Match '--name other-sign$'
+    }
+
+    It 'refuses a missing file, naming FILE, and starts nothing' {
+        $env:DCF_TEST_RUNNING = '1'
+        { Import-OpenBaoSshKey -WorkspaceFolder $script:Ws -KeyFile (Join-Path $TestDrive 'missing') 6>$null } | Should -Throw '*FILE=<path of a private key on this host>*'
+        Get-CallCount | Should -Be 0
+    }
+
+    It 'refuses when no container runs and starts nothing' {
+        { Import-OpenBaoSshKey -WorkspaceFolder $script:Ws -KeyFile $script:Key 6>$null } | Should -Throw '*task dc:start*'
+        Get-CallCount | Should -Be 0
+    }
+
+    It 'a container that refuses fails the import, naming the login' {
+        $env:DCF_TEST_RUNNING = '1'
+        $env:DCF_TEST_REFUSE = '1'
+        { Import-OpenBaoSshKey -WorkspaceFolder $script:Ws -KeyFile $script:Key 6>$null 2>$null } | Should -Throw '*exit 11*task openbao:login*'
+    }
+
+    It 'the launcher dispatches the openbao-ssh-import subcommand with the file and the name' {
+        $env:DCF_TEST_RUNNING = '1'
+        Invoke-DevcontainerCli -Subcommand 'openbao-ssh-import' -WorkspaceFolder $script:Ws -Arguments @($script:Key, 'disp-sign') 6>$null
+        (Get-Content (Join-Path $script:Calls '0.args')) -join ' ' | Should -Match 'openbao-ssh import --from file --name disp-sign$'
     }
 }
 

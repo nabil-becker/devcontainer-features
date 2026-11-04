@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Docker-free tests of `ssh-key-import` in the bash twin (src/devcontainer-cli/devcontainer-cli.sh), the
-# counterpart of the Pester tests 'ssh-key-import' in DevcontainerCli.Tests.ps1: the key file of the host
+# Docker-free tests of `ssh-key-import` (deprecated: it says so first) and `openbao-ssh-import` in the
+# bash twin (src/devcontainer-cli/devcontainer-cli.sh), the counterpart of the Pester tests
+# 'ssh-key-import' and 'openbao-ssh-import' in DevcontainerCli.Tests.ps1. ssh-key-import: the key file of the host
 # reaches `devcontainer exec` on stdin and never in its arguments, the .pub follows when it exists, the
 # Feature's key load runs last, and the refusals (no file, no running container, the container refusing
 # because key mode is off) are clear and start nothing else. A stub `devcontainer` records each call's
@@ -29,7 +30,7 @@ for tool in uname grep cat dirname mkdir id awk tr sed basename env ls ssh-keyge
 printf '#!/bin/sh\n[ "$1" = ps ] && [ "${DCF_TEST_RUNNING:-}" = 1 ] && echo abc123\nexit 0\n' > "$bin/docker"
 # devcontainer: call N's arguments (one per line) and stdin; exit 1 on the key-stdin call when DCF_TEST_REFUSE=1.
 # shellcheck disable=SC2016
-printf '#!/bin/sh\nn=$(ls "$DCF_TEST_CALLS" | grep -c args)\nfor a in "$@"; do echo "$a"; done > "$DCF_TEST_CALLS/$n.args"\ncase "$*" in *key-stdin*) cat > "$DCF_TEST_CALLS/$n.stdin" ;; *) : > "$DCF_TEST_CALLS/$n.stdin" ;; esac\ncase "$*" in *key-stdin*) [ "${DCF_TEST_REFUSE:-}" = 1 ] && { echo "ssh-agent: key mode is off in this container" >&2; exit 1; } ;; esac\nexit 0\n' > "$bin/devcontainer"
+printf '#!/bin/sh\nn=$(ls "$DCF_TEST_CALLS" | grep -c args)\nfor a in "$@"; do echo "$a"; done > "$DCF_TEST_CALLS/$n.args"\ncase "$*" in *key-stdin* | *openbao-ssh*) cat > "$DCF_TEST_CALLS/$n.stdin" ;; *) : > "$DCF_TEST_CALLS/$n.stdin" ;; esac\ncase "$*" in *key-stdin* | *openbao-ssh*) [ "${DCF_TEST_REFUSE:-}" = 1 ] && { echo "the container refuses" >&2; exit 11; } ;; esac\nexit 0\n' > "$bin/devcontainer"
 chmod +x "$bin/docker" "$bin/devcontainer"
 echo 'Linux version 6.1.0 (builder@host) (gcc) #1 SMP' > "$T/proc-linux"
 
@@ -42,11 +43,15 @@ printf 'ssh-ed25519 AAAAPUBLIC test\n' > "$T/id_test.pub"
 printf '%s\n%s\n%s\n' "$begin" "$secret" "$end" > "$T/id_nopub"
 
 # imp <file> [VAR=value ...]: out = stdout+stderr, rc = exit status, calls recorded in $T/calls.
+# SUB (default ssh-key-import) is the subcommand, NAMEARG an optional second argument.
+SUB=ssh-key-import NAMEARG=''
 imp() {
   local f="$1"; shift
+  local -a extra=()
+  [ -z "$NAMEARG" ] || extra=("$NAMEARG")
   rm -f "$T/calls"/*
   out="$(env -i PATH="$bin" HOME="$T" XDG_CACHE_HOME="$T/cache" DCF_HOST_UNAME=Linux DCF_HOST_PROC_VERSION="$T/proc-linux" \
-    DCF_TEST_CALLS="$T/calls" "$@" "$bash_bin" "$cli_sh" run ssh-key-import --workspace-folder "$T/ws" -- "$f" 2>&1 </dev/null)"
+    DCF_TEST_CALLS="$T/calls" "$@" "$bash_bin" "$cli_sh" run "$SUB" --workspace-folder "$T/ws" -- "$f" "${extra[@]}" 2>&1 </dev/null)"
   rc=$?
   ncalls="$(find "$T/calls" -name '*.args' | wc -l)"
 }
@@ -61,6 +66,7 @@ check 'the .pub reached stdin of call 1' "$(cat "$T/id_test.pub")" "$(cat "$T/ca
 check 'call 2 is the Feature key load' 'ssh-agent-setup key-load' "$(tail -n 2 "$T/calls/2.args" | tr '\n' ' ' | sed 's/ *$//')"
 check 'the key never appears in any argument' 0 "$(grep -c -F "$secret" "$T/calls"/*.args | awk -F: '{s+=$2} END {print s+0}')"
 check 'the key never appears in the output' 0 "$(grep -c -F "$secret" <<<"$out")"
+check 'ssh-key-import says it is deprecated, naming openbao-ssh-import' 1 "$(grep -c 'deprecated: .*task devcontainer:openbao-ssh-import FILE=<key>' <<<"$out")"
 
 imp "$T/id_nopub" DCF_TEST_RUNNING=1
 check 'a key with no .pub beside it: two calls' 2 "$ncalls"
@@ -76,9 +82,41 @@ check 'it says how to start it' 1 "$(grep -c 'task dc:start' <<<"$out")"
 check 'no exec was attempted' 0 "$ncalls"
 
 imp "$T/id_test" DCF_TEST_RUNNING=1 DCF_TEST_REFUSE=1
-check 'a container that refuses fails the import' 1 "$rc"
+check 'a container that refuses fails the import' 1 "$([ "$rc" -ne 0 ] && echo 1 || echo 0)"
 check 'the message says key mode must be on' 1 "$(grep -c 'keyMode: true' <<<"$out")"
+check 'the container'"'"'s exit code is passed on' 11 "$rc"
 check 'after a refusal neither the .pub nor the load runs' 1 "$ncalls"
+
+# --- openbao-ssh-import: one exec of openbao-ssh import --from file, the key on its stdin.
+SUB=openbao-ssh-import
+imp "$T/id_test" DCF_TEST_RUNNING=1
+check 'openbao-ssh-import exits 0' 0 "$rc"
+check 'openbao-ssh-import: one exec call' 1 "$ncalls"
+check 'openbao-ssh-import: it runs openbao-ssh import --from file with the file name' 'exec --workspace-folder '"$T/ws"' openbao-ssh import --from file --name id_test' "$(tr '\n' ' ' < "$T/calls/0.args" | sed 's/ *$//')"
+check 'openbao-ssh-import: the key bytes reached its stdin' "$(cat "$T/id_test")" "$(cat "$T/calls/0.stdin")"
+check 'openbao-ssh-import: the key never appears in an argument' 0 "$(grep -c -F "$secret" "$T/calls/0.args")"
+check 'openbao-ssh-import: the key never appears in the output' 0 "$(grep -c -F "$secret" <<<"$out")"
+check 'openbao-ssh-import: no deprecation line' 0 "$(grep -c 'deprecated' <<<"$out")"
+NAMEARG=work-sign
+imp "$T/id_test" DCF_TEST_RUNNING=1
+check 'openbao-ssh-import: NAME is passed as the record name' 'openbao-ssh import --from file --name work-sign' "$(tail -n 6 "$T/calls/0.args" | tr '\n' ' ' | sed 's/ *$//')"
+NAMEARG=''
+imp "$T/missing" DCF_TEST_RUNNING=1
+check 'openbao-ssh-import: a missing file is refused' 1 "$([ "$rc" -ne 0 ] && echo 1 || echo 0)"
+check 'openbao-ssh-import: the refusal names FILE' 1 "$(grep -c 'FILE=<path of a private key on this host>' <<<"$out")"
+check 'openbao-ssh-import: nothing started for a missing file' 0 "$ncalls"
+imp "$T/id_test"
+check 'openbao-ssh-import: no running container is exit 1' 1 "$rc"
+check 'openbao-ssh-import: says how to start it' 1 "$(grep -c 'task dc:start' <<<"$out")"
+check 'openbao-ssh-import: no exec attempted' 0 "$ncalls"
+imp "$T/id_test" DCF_TEST_RUNNING=1 DCF_TEST_REFUSE=1
+check 'openbao-ssh-import: the container'"'"'s exit code is passed on' 11 "$rc"
+check 'openbao-ssh-import: the message names the login' 1 "$(grep -c 'task openbao:login' <<<"$out")"
+cp "$T/id_test" "$T/id_ed25519"
+imp "$T/id_ed25519" DCF_TEST_RUNNING=1
+check 'openbao-ssh-import: a default name is warned about, under its own label' 1 "$(grep -c 'openbao-ssh-import: warning: id_ed25519 is the default name' <<<"$out")"
+rm -f "$T/id_ed25519"
+SUB=ssh-key-import
 
 # --- host-side warnings: a default name, or a public key that also opens something on this host.
 # Real throwaway keys made here (the host's ssh-keygen); the import itself still goes to the stubs.

@@ -27,3 +27,13 @@ tasks:
     desc: 'Re-run the post-create setup: make GH_CONFIG_DIR usable by the current user, configure the git credential helper for github.com, report the login state (idempotent; GH_SETUP_GIT_CREDENTIAL_HELPER overrides the Feature option).'
     cmds:
       - gh-setup
+
+  ssh-key:add:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Register a public key at GitHub as a SIGNING key (gh ssh-key add --type signing), never an authentication key: FILE=<.pub path>, or KEY=ssh/<name> to read its public key from OpenBao (the openbao Feature''s dcf-secret), or the public key on stdin; TITLE= (default the record''s name or the key''s comment). A key already registered as a signing key is left alone (exit 0); a private key is refused. Needs gh logged in with the admin:ssh_signing_key scope (gh auth refresh -s admin:ssh_signing_key). ssh-agent''s key:rotate uses it.'
+    vars:
+      FILE: '{{.FILE | default ""}}'
+      KEY: '{{.KEY | default ""}}'
+      TITLE: '{{.TITLE | default ""}}'
+    cmds:
+      - gh-ssh-key-add --file '{{.FILE}}' --key '{{.KEY}}' --title '{{.TITLE}}'
