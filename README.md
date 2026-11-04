@@ -33,6 +33,8 @@ pinned release) and verifies what it downloads before installing it, with one
 exception: `devcontainer-cli` verifies its private Node.js but not the npm
 package of the CLI itself (see its notes).
 
+Four ways to assemble the Features, with their data and what has gone wrong in each combination: [reference architectures](docs/reference-architectures/README.md).
+
 ### This repository's own devhost
 
 The `devhost` Feature (the way of working: backs, ledger, briefing, verify guards) is local-only. It is

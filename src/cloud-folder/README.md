@@ -25,6 +25,27 @@ One fixed path in the devcontainer (mountPoint, default /mnt/cloud-folder) for a
 | syncInterval | sync: how often the timer runs a sync (a number of seconds, or with s, m or h: 900, 15m, 1h). 0: no timer, sync on demand only (task cloud-folder:sync). Override with CLOUD_FOLDER_SYNC_INTERVAL. | string | 15m |
 | rcloneVersion | The rclone release to install for sync and mount (with or without a leading v), or 'latest'. The default is pinned with its sha256 per architecture in this Feature; another version is verified against the release's SHA256SUMS. Not installed in mode host, nor when the image already has rclone (that one is kept). | string | 1.75.2 |
 
+## How it fits
+
+```text
+  shared folder (SharePoint / OneDrive)
+     |  host mode: sync client's host folder, bind-mounted by the
+     |             devcontainer-cli launcher at /mnt/cloud-folder-host
+     |  sync/mount mode: rclone, signed in inside the container
+     v
+  /mnt/cloud-folder  (mountPoint)  <-- people and agents read and write
+     rclone token, config, sync state --> volume: cloud-folder-<id>
+```
+
+| Data | Where it lives | Storage tier |
+| --- | --- | --- |
+| The shared documents themselves | the cloud folder; `/mnt/cloud-folder` shows it (in sync mode a copy in the container filesystem, fetched again after a rebuild) | 2 shared folder |
+| rclone token and config, sync state, logs, VFS cache | named volume at `/var/lib/devcontainer-features/cloud-folder` | 4 working set |
+
+Tiers are the four of ADR 0045: 1 git, 2 shared folder, 3 personal folder, 4 working set (rebuildable only).
+
+Used in: [windows-workstation-devhost](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/reference-architectures/windows-workstation-devhost.md)
+
 ## What it gives you
 
 One fixed path in the container, `/mnt/cloud-folder` by default (option `mountPoint`), for a
@@ -518,6 +539,22 @@ override the options for one call.
     fake the device and the mount, and the `mount_fuse` scenario runs the real mount only where the
     test's engine has `/dev/fuse`.
 
+## Anti-patterns
+
+### Don't build on file semantics of the mount you have not probed
+
+- **Don't:** put a store on the cloud folder (mount mode is rclone FUSE) that needs hard links, particular modes (`0444`), atomic rename or fixed conflict names.
+- **Why:** 2026-11-03, "Ledger and register storage location answered; shared-folder mirror blocked by hard links": the design assumed a mirror that rclone FUSE cannot take, though the architecture review of 2026-10-31 had flagged modes and conflict names.
+- **Instead:** before choosing a store, run `ln`, `mv` and `chmod` on the target; keep such a store on a local volume and copy to the folder; use sync mode when the mount cannot do what the store needs.
+- **Caught by:** nothing yet (open item `register-store-no-hardlink`, upstream).
+
+### Don't use different rclone versions on the workstation and in the container, or leave the sign-in port open
+
+- **Don't:** pin one rclone version in the container and run another on the workstation for the sign-in, or keep a listener on `53682` after signing in.
+- **Why:** 2026-10-29, "Question answered: personal OneDrive mount for this repository": the pasted token was rejected, and a token is only readable when both sides run the same rclone (see "Limits"); and 2026-10-29, "Question answered: can the rclone callback port be dynamic" (Microsoft allows only `http://localhost:53682/`).
+- **Instead:** pin one version in `devcontainer.json` (`rcloneVersion`); `task cloud-folder:login` runs the workstation rclone at the same version, verified against `SHA256SUMS`, and opens `53682` only while you sign in.
+- **Caught by:** `task test:cloud-folder-login` (the default pin equals the Feature's; the listener is closed after success, failure and timeout).
+
 ## Why it exists
 
 The two Features for rclone published on containers.dev (checked 2026-10-27:
@@ -567,6 +604,12 @@ v=1.75.2; curl -fsSL https://downloads.rclone.org/v$v/SHA256SUMS | grep -E "rclo
 
 ## Changes
 
+### [1.3.3] - 2026-11-03
+
+#### Changed
+
+- The README now has a "How it fits" section with a small diagram of how the Feature sits in a devcontainer, a table of the data it keeps and the storage tier of each, and "Used in" links to the reference architectures that use it. Documentation only: the Feature itself is unchanged. Nothing to do.
+
 ### [1.3.2] - 2026-11-03
 
 #### Added
@@ -586,20 +629,6 @@ v=1.75.2; curl -fsSL https://downloads.rclone.org/v$v/SHA256SUMS | grep -E "rclo
   mount and the sync timer are detached and go on in the background. A problem is a warning with
   the command to fix it (`task cloud-folder:status`, `:login`, `:start`). The explicit tasks
   (`start`, `sync`, `status`, `login`) keep their real exit codes.
-
-### [1.3.0] - 2026-10-29
-
-#### Changed
-
-- **One sign-in command, wherever it runs.** `task cloud-folder:login` now runs rclone's own browser
-  sign-in (`rclone authorize "onedrive" --auth-no-open-browser`) in the container instead of
-  asking for a token from another machine with the same rclone version. Sign in in any browser and
-  paste back the address it fails to open (`http://localhost:53682/?code=...`), or, from the
-  workstation with `devcontainer-cli` 1.16.0, let the launcher relay the browser into the container.
-  A pasted token is still accepted at the same prompt, and `-- --token` asks for nothing else. See
-  "Signing in". `login` takes `-- --relay` (the launcher's) and `-- --token`;
-  `CLOUD_FOLDER_LOGIN_TIMEOUT` bounds the wait (default 600 s). The token is still written only into
-  the volume's `rclone.conf`.
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/cloud-folder/CHANGELOG.md).
 

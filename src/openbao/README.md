@@ -19,6 +19,30 @@ Installs the OpenBao CLI (https://openbao.org), the open-source Vault fork, as a
 | mode | How the Feature is used. 'client' (default): the bao CLI and dcf-secret against a server outside the container (BAO_ADDR). 'server': also run a server in the container (raft storage on the Feature's volume, loopback only, started at post-start, sealed until `task openbao:unseal`; needs OpenBao 2.4.0 or newer). Override per container with OPENBAO_SETUP_MODE in containerEnv. | string | client |
 | version | OpenBao release to install (e.g. '2.7.1', with or without a leading 'v'), or 'latest'. Match your OpenBao server's version. | string | latest |
 
+## How it fits
+
+```text
+  go-task registry --> openbao:* tasks
+  bao CLI --BAO_ADDR (set in containerEnv)--> OpenBao server      dcf-secret --> bao
+    |
+    `--> token helper --> volume openbao-config-<id>/token  (or BAO_TOKEN from the environment)
+
+  mode server: post-start --> bao server (127.0.0.1:8200, raft) --> volume openbao-config-<id>/
+                              sealed until task openbao:unseal       raft/, audit.log, approle/
+```
+
+| Data | Where it lives | Storage tier |
+| --- | --- | --- |
+| Login token | `token` in the Feature's volume `openbao-config-${devcontainerId}`, kept by a token helper (`BAO_CONFIG_PATH`), so a rebuild keeps the login; or `BAO_TOKEN` in the environment | 4 working set |
+| Server storage (mode server) | `raft/` in the same volume: every secret, policy and role of the local server | 4 working set, with ADR 0048's bounded-loss exception: not rebuildable, so a lost machine loses what came after the last backup (backups arrive in 1.3.0; until then a snapshot by hand) |
+| Audit log (mode server) | `audit.log` in the same volume | 4 working set |
+| AppRole secret ids (mode server) | `approle/<role>/` in the same volume, mode 600 | 4 working set (reissued with `task openbao:approle:issue ALL=1`) |
+| Unseal shares | never in the container: printed once by `task openbao:init` | custody, outside the tiers (ADR 0049) |
+
+Tiers are the four of ADR 0045: 1 git, 2 shared folder, 3 personal folder, 4 working set (rebuildable only).
+
+Used in: [secrets-with-openbao](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/reference-architectures/secrets-with-openbao.md)
+
 ## What it installs
 
 The `bao` release binary from `github.com/openbao/openbao`, at
@@ -486,6 +510,12 @@ through `openbao-run` (the same `bao` call; in client mode nothing is added) and
 - `dcf-secret`'s failure lines now name the tasks: sealed points to `task openbao:unseal`, not initialised to `task openbao:init`, unreachable to `task openbao:server:status`, each adding what to do against a server elsewhere. The exit codes are unchanged.
 - In server mode `BAO_ADDR` defaults to the local server for `dcf-secret` and every task when you have not set it (a bare `bao` still needs `BAO_ADDR`). The tasks `status`, `login`, `logout`, `kv:get` and `setup` run the same `bao` call through `openbao-run`, which adds only that default; client mode is unchanged. `task openbao:setup` now also runs the start hook.
 
+### [1.1.1] - 2026-11-03
+
+#### Changed
+
+- The README now has a "How it fits" section with a small diagram of how the Feature sits in a devcontainer, a table of the data it keeps and the storage tier of each, and "Used in" links to the reference architectures that use it. Documentation only: the Feature itself is unchanged. Nothing to do.
+
 ### [1.1.0] - 2026-11-03
 
 #### Added
@@ -495,12 +525,6 @@ through `openbao-run` (the same `bao` call; in client mode nothing is added) and
 - **The `mode` option**, with the one value `client` (the default, what the Feature always did: the CLI against a server outside the container). A later version adds `server`. `OPENBAO_SETUP_MODE` in `containerEnv` overrides it per container. Nothing to do.
 - `task openbao:logout`: revokes your token on the server and erases the saved one, so no login is left behind (`bao token revoke -self` alone leaves the dead token stored, and `dcf-secret` then says to log in). Nothing to do unless you log out.
 - `task openbao:setup`: re-runs the post-create hook.
-
-### [1.0.4] - 2026-11-03
-
-#### Added
-
-- This changelog: every release of this Feature now has an entry here, written for its users, and the Feature's README shows the latest three under "Changes". Nothing to do.
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/openbao/CHANGELOG.md).
 

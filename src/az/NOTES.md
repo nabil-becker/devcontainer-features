@@ -1,3 +1,20 @@
+## How it fits
+
+```text
+  ghcr.io/devcontainers/features/azure-cli --dependsOn--> az CLI + bicep
+                                                              |
+  go-task registry --> az:* tasks                             |
+  az --login--> Azure       volume: AZURE_CONFIG_DIR <--------'
+```
+
+| Data | Where it lives | Storage tier |
+| --- | --- | --- |
+| Login state (tokens, subscriptions, config) | named volume at `AZURE_CONFIG_DIR` (`/var/lib/devcontainer-features/az`) | 4 working set |
+
+Tiers are the four of ADR 0045: 1 git, 2 shared folder, 3 personal folder, 4 working set (rebuildable only).
+
+Used in: [secrets-with-openbao](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/reference-architectures/secrets-with-openbao.md)
+
 ## az comes with it (dependsOn)
 
 The Feature brings the Azure CLI in itself, through `dependsOn` on the

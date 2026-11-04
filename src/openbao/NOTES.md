@@ -1,3 +1,27 @@
+## How it fits
+
+```text
+  go-task registry --> openbao:* tasks
+  bao CLI --BAO_ADDR (set in containerEnv)--> OpenBao server      dcf-secret --> bao
+    |
+    `--> token helper --> volume openbao-config-<id>/token  (or BAO_TOKEN from the environment)
+
+  mode server: post-start --> bao server (127.0.0.1:8200, raft) --> volume openbao-config-<id>/
+                              sealed until task openbao:unseal       raft/, audit.log, approle/
+```
+
+| Data | Where it lives | Storage tier |
+| --- | --- | --- |
+| Login token | `token` in the Feature's volume `openbao-config-${devcontainerId}`, kept by a token helper (`BAO_CONFIG_PATH`), so a rebuild keeps the login; or `BAO_TOKEN` in the environment | 4 working set |
+| Server storage (mode server) | `raft/` in the same volume: every secret, policy and role of the local server | 4 working set, with ADR 0048's bounded-loss exception: not rebuildable, so a lost machine loses what came after the last backup (backups arrive in 1.3.0; until then a snapshot by hand) |
+| Audit log (mode server) | `audit.log` in the same volume | 4 working set |
+| AppRole secret ids (mode server) | `approle/<role>/` in the same volume, mode 600 | 4 working set (reissued with `task openbao:approle:issue ALL=1`) |
+| Unseal shares | never in the container: printed once by `task openbao:init` | custody, outside the tiers (ADR 0049) |
+
+Tiers are the four of ADR 0045: 1 git, 2 shared folder, 3 personal folder, 4 working set (rebuildable only).
+
+Used in: [secrets-with-openbao](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/reference-architectures/secrets-with-openbao.md)
+
 ## What it installs
 
 The `bao` release binary from `github.com/openbao/openbao`, at
