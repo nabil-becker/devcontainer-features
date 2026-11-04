@@ -18,6 +18,22 @@ Installs kustomize (https://kustomize.io), the Kubernetes manifest customization
 | installTaskfile | Also install this Feature's Taskfile into /usr/local/share/go-task/includes.d so its tasks appear under the <id>: namespace of a root Taskfile that includes /usr/local/share/go-task/features.yml (see the go-task Feature). | boolean | true |
 | version | kustomize release to install (e.g. '5.8.3', with or without a leading 'v'), or 'latest'. Pin it to what your CI uses so `kustomize build` output matches. | string | latest |
 
+## How it fits
+
+```text
+  files --> kustomize build --> manifests --> kubeconform (optional pipe)
+  helm on PATH (kubectl-helm-minikube) --> --enable-helm charts
+  (standalone: no kubectl, no KUBECONFIG, no cluster)
+```
+
+| Data | Where it lives | Storage tier |
+| --- | --- | --- |
+| Nothing | installs a binary only; no volume, no hook | none |
+
+Tiers are the four of ADR 0045: 1 git, 2 shared folder, 3 personal folder, 4 working set (rebuildable only).
+
+Used in: [kubernetes-toolbox](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/reference-architectures/kubernetes-toolbox.md)
+
 ## What it installs
 
 The `kustomize` release binary from `github.com/kubernetes-sigs/kustomize`,
@@ -137,6 +153,12 @@ Feature to compare.
 
 ## Changes
 
+### [1.0.5] - 2026-11-03
+
+#### Changed
+
+- The README now has a "How it fits" section with a small diagram of how the Feature sits in a devcontainer, a table of the data it keeps and the storage tier of each, and "Used in" links to the reference architectures that use it. Documentation only: the Feature itself is unchanged. Nothing to do.
+
 ### [1.0.4] - 2026-11-03
 
 #### Added
@@ -148,12 +170,6 @@ Feature to compare.
 #### Fixed
 
 - Build-time downloads retry on transient network errors, so a flaky connection no longer fails the container build outright. Rebuild the container to pick it up. No change to options or tasks; nothing to do. ([#94](https://github.com/nabil-becker/devcontainer-features/pull/94))
-
-### [1.0.2] - 2026-10-21
-
-#### Fixed
-
-- Az installs the Azure CLI; Feature tasks run in the caller's folder ([#48](https://github.com/nabil-becker/devcontainer-features/pull/48))
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/kustomize/CHANGELOG.md).
 

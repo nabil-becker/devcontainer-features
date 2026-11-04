@@ -18,6 +18,23 @@ Installs the Coder CLI (https://coder.com) as a release binary at /usr/local/bin
 | installTaskfile | Also install this Feature's Taskfile into /usr/local/share/go-task/includes.d so its tasks appear under the <id>: namespace of a root Taskfile that includes /usr/local/share/go-task/features.yml (see the go-task Feature). | boolean | true |
 | version | Coder release to install (e.g. '2.36.7', with or without a leading 'v'), or 'latest'. Match your Coder server's version. | string | latest |
 
+## How it fits
+
+```text
+  go-task registry --> coder-cli:* tasks
+  coder CLI --login--> Coder server (coderd)
+       |
+       `--> volume: CODER_CONFIG_DIR  (session token, server url)
+```
+
+| Data | Where it lives | Storage tier |
+| --- | --- | --- |
+| Login session (`session`, `url`) | named volume at `CODER_CONFIG_DIR` (`/var/lib/devcontainer-features/coder-cli`) | 4 working set |
+
+Tiers are the four of ADR 0045: 1 git, 2 shared folder, 3 personal folder, 4 working set (rebuildable only).
+
+Used in: none yet
+
 ## What it installs
 
 The `coder` release binary from `github.com/coder/coder`, at
@@ -178,6 +195,12 @@ installing it.
 
 ## Changes
 
+### [1.1.5] - 2026-11-03
+
+#### Changed
+
+- The README now has a "How it fits" section with a small diagram of how the Feature sits in a devcontainer, a table of the data it keeps and the storage tier of each, and "Used in" links to the reference architectures that use it. Documentation only: the Feature itself is unchanged. Nothing to do.
+
 ### [1.1.4] - 2026-11-03
 
 #### Added
@@ -189,12 +212,6 @@ installing it.
 #### Fixed
 
 - Build-time downloads retry on transient network errors, so a flaky connection no longer fails the container build outright. Rebuild the container to pick it up. No change to options or tasks; nothing to do. ([#94](https://github.com/nabil-becker/devcontainer-features/pull/94))
-
-### [1.1.2] - 2026-10-21
-
-#### Fixed
-
-- Az installs the Azure CLI; Feature tasks run in the caller's folder ([#48](https://github.com/nabil-becker/devcontainer-features/pull/48))
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/coder-cli/CHANGELOG.md).
 

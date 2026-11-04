@@ -1,3 +1,21 @@
+## How it fits
+
+```text
+  go-task registry --> argocd:* tasks
+  argocd CLI --login--> Argo CD server
+       |
+       `--> volume: ARGOCD_CONFIG_DIR  (login session, tokens)
+  (reads no KUBECONFIG; works with kustomize/kubeconform only as a workflow)
+```
+
+| Data | Where it lives | Storage tier |
+| --- | --- | --- |
+| Login session (contexts, servers, tokens) | named volume at `ARGOCD_CONFIG_DIR` (`/var/lib/devcontainer-features/argocd`) | 4 working set |
+
+Tiers are the four of ADR 0045: 1 git, 2 shared folder, 3 personal folder, 4 working set (rebuildable only).
+
+Used in: [kubernetes-toolbox](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/reference-architectures/kubernetes-toolbox.md)
+
 ## What it installs
 
 The `argocd` CLI binary from `github.com/argoproj/argo-cd`, at

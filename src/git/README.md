@@ -23,6 +23,26 @@ Augments whichever git the image already has (base image, common-utils or ghcr.i
 | commitEmail | Commit identity email (e.g. 'bot@noreply.invalid'). When set, the git wrapper exports GIT_AUTHOR_EMAIL and GIT_COMMITTER_EMAIL with this value for every git invocation that has not set them: environment variables beat every config level, including a repository-local user.email in a shared git dir, and `git commit -s` signs off with it. Installs the wrapper even with worktreeAware=false. Empty = identity left alone. | string | - |
 | commitWhenEnv | Apply the commit identity only to git run with this environment variable set and non-empty, e.g. 'CLAUDECODE', which Claude Code sets on every process it starts (its tools, its subagents, headless runs): agents commit as commitName/commitEmail while a person's own terminal keeps their identity. Empty = the identity applies to every git invocation. | string | - |
 
+## How it fits
+
+```text
+  host: ~/.git-dirs  --bind mount (devcontainer-cli launcher)--> /git-dirs
+  checkout's .git pointer --> git wrapper (/usr/local/bin/git) maps it
+  git-setup (post-create): safe.directory, core.hooksPath
+     |
+     v
+  volume: GIT_CONFIG_GLOBAL  (identity, credential helper)
+```
+
+| Data | Where it lives | Storage tier |
+| --- | --- | --- |
+| The checkout's git dir | outside the workspace, in the host's `~/.git-dirs`, mounted at `/git-dirs` | 1 git |
+| Global git config (identity, credential helper) | named volume at `/var/lib/devcontainer-features/git` | 4 working set |
+
+Tiers are the four of ADR 0045: 1 git, 2 shared folder, 3 personal folder, 4 working set (rebuildable only).
+
+Used in: [windows-workstation-devhost](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/reference-architectures/windows-workstation-devhost.md), [agentic-devhost](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/reference-architectures/agentic-devhost.md)
+
 ## A git dir outside the workspace: one mount, added by the launcher
 
 On this collection's Windows hosts a checkout lives in OneDrive and its git
@@ -290,6 +310,12 @@ it.
 
 ## Changes
 
+### [1.4.6] - 2026-11-03
+
+#### Changed
+
+- The README now has a "How it fits" section with a small diagram of how the Feature sits in a devcontainer, a table of the data it keeps and the storage tier of each, and "Used in" links to the reference architectures that use it. Documentation only: the Feature itself is unchanged. Nothing to do.
+
 ### [1.4.5] - 2026-11-03
 
 #### Added
@@ -301,12 +327,6 @@ it.
 #### Fixed
 
 - The install no longer fails sporadically: every download error is retried, and a check no longer closes its pipe early under `pipefail`. Rebuild to pick it up; no change to options or tasks. ([#89](https://github.com/nabil-becker/devcontainer-features/pull/89))
-
-### [1.4.3] - 2026-10-23
-
-#### Added
-
-- The ssh-agent Feature 1.0.0, the agent mount and key tasks (slice 4; devcontainer-cli 1.8.0, git 1.4.3) ([#68](https://github.com/nabil-becker/devcontainer-features/pull/68))
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/git/CHANGELOG.md).
 

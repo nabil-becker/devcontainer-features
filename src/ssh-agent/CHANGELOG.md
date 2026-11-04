@@ -20,6 +20,12 @@ Entries from 1.0.0 to 1.3.0 were generated from the commit history (`.github/scr
 
 - **The key volume and its tasks**: `key:new`, `key:add`, `key:unlock`, `key:retire`, `key:age`, `key:remove DELETE=1`, `key:load` with no `NAME`, `key:lock` and `key:rotate` of a volume key, and the old workstation import (`devcontainer:ssh-key-import`) still work as before and print one line naming what replaces them; the start hook says so once in key mode when the volume holds keys. They are removed in ssh-agent 2.0, where `keyMode` becomes `localAgent`. **Nothing breaks now**; to move, add the openbao Feature and run `task openbao:ssh:import FROM=ssh-agent` once, then `key:unlock NAME=<file>` becomes `key:load NAME=ssh/<file>`. A setup in socket mode that never used key mode changes nothing.
 
+## [1.3.2] - 2026-11-03
+
+### Changed
+
+- The README now has a "How it fits" section with a small diagram of how the Feature sits in a devcontainer, a table of the data it keeps and the storage tier of each, and "Used in" links to the reference architectures that use it. Where the Feature has them, its best practices and anti-patterns are in the README too. Documentation only: the Feature itself is unchanged. Nothing to do.
+
 ## [1.3.1] - 2026-11-03
 
 ### Added

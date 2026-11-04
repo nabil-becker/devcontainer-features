@@ -1,3 +1,19 @@
+## How it fits
+
+```text
+  every Feature drops a Taskfile --> /usr/local/share/go-task/includes.d/
+  task-features-registry --> features.yml  <-- one include in the root Taskfile
+  host side: bootstrap/devcontainer.yml gives task devcontainer:up|exec|...
+```
+
+| Data | Where it lives | Storage tier |
+| --- | --- | --- |
+| Nothing | the registry files are in the image and rebuilt with it; no volume | none |
+
+Tiers are the four of ADR 0045: 1 git, 2 shared folder, 3 personal folder, 4 working set (rebuildable only).
+
+Used in: [windows-workstation-devhost](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/reference-architectures/windows-workstation-devhost.md), [agentic-devhost](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/reference-architectures/agentic-devhost.md)
+
 ## Why not `ghcr.io/devcontainers-extra/features/go-task`?
 
 That community Feature works, but it resolves the binary through `nanolayer`

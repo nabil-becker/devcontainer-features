@@ -18,6 +18,23 @@ Brings in the Azure CLI through dependsOn on ghcr.io/devcontainers/features/azur
 | installTaskfile | Also install this Feature's Taskfile into /usr/local/share/go-task/includes.d so its tasks appear under the <id>: namespace of a root Taskfile that includes /usr/local/share/go-task/features.yml (see the go-task Feature). | boolean | true |
 | bicepFromPath | At post-create, when a bicep binary is on PATH (the azure-cli Feature's installBicep puts one there), set `az config set bicep.use_binary_from_path=true` so `az bicep` and `az deployment` use it instead of asking to install their own copy. Override per container with AZ_SETUP_BICEP_FROM_PATH in containerEnv. | boolean | true |
 
+## How it fits
+
+```text
+  ghcr.io/devcontainers/features/azure-cli --dependsOn--> az CLI + bicep
+                                                              |
+  go-task registry --> az:* tasks                             |
+  az --login--> Azure       volume: AZURE_CONFIG_DIR <--------'
+```
+
+| Data | Where it lives | Storage tier |
+| --- | --- | --- |
+| Login state (tokens, subscriptions, config) | named volume at `AZURE_CONFIG_DIR` (`/var/lib/devcontainer-features/az`) | 4 working set |
+
+Tiers are the four of ADR 0045: 1 git, 2 shared folder, 3 personal folder, 4 working set (rebuildable only).
+
+Used in: [secrets-with-openbao](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/reference-architectures/secrets-with-openbao.md)
+
 ## az comes with it (dependsOn)
 
 The Feature brings the Azure CLI in itself, through `dependsOn` on the
@@ -115,6 +132,12 @@ other mounted path; `az-setup` follows the variable.
 
 ## Changes
 
+### [1.1.3] - 2026-11-03
+
+#### Changed
+
+- The README now has a "How it fits" section with a small diagram of how the Feature sits in a devcontainer, a table of the data it keeps and the storage tier of each, and "Used in" links to the reference architectures that use it. Documentation only: the Feature itself is unchanged. Nothing to do.
+
 ### [1.1.2] - 2026-11-03
 
 #### Added
@@ -126,12 +149,6 @@ other mounted path; `az-setup` follows the variable.
 #### Changed
 
 - Maintenance release; nothing changes for you (no option, task or behaviour change). ([#54](https://github.com/nabil-becker/devcontainer-features/pull/54))
-
-### [1.1.0] - 2026-10-21
-
-#### Fixed
-
-- Az installs the Azure CLI; Feature tasks run in the caller's folder ([#48](https://github.com/nabil-becker/devcontainer-features/pull/48))
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/az/CHANGELOG.md).
 

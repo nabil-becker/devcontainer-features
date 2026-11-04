@@ -159,6 +159,8 @@ The domain words of the project itself are not here; they live with the project'
   shared folder (the cloud-folder mount, which holds the register mirror), tier 3 the Operator's
   personal folder (not mounted unless asked), tier 4 the working set (Feature volumes and scratch,
   rebuildable only). If losing a machine would lose something, it is in the wrong tier (ADR-0045).
+- **Custody**: what people hold outside every storage tier, such as the OpenBao unseal shares and
+  recovery key, because they are the gate to the tiers and cannot sit inside one (ADR-0049).
 
 ## Work
 
@@ -326,6 +328,61 @@ The domain words of the project itself are not here; they live with the project'
 - **Non-functional requirement** (NFR): one of thirteen requirements (NFR-1 to NFR-13) that every work
   item touching a Feature must meet, or else record a backlog item or a written exception in the
   Feature's NOTES (`docs/principles/non-functional-requirements.md`).
+
+## Secrets
+
+The words of the secrets split: OpenBao keeps every secret, `ssh-agent` only uses keys (ADR-0048).
+
+- **Master of secrets**: OpenBao, in the role ADR-0048 gives it: it keeps every private key and
+  token the collection creates or stores, and their lifecycle; `ssh-agent` only uses keys. Keys a
+  workstation holds stay the workstation's, and the recovery key is outside it.
+- **Client mode**: the `openbao` Feature's default mode: the `bao` CLI only, `BAO_ADDR` pointing at
+  a server outside the container, plus the volume and `dcf-secret`. It meets ADR-0045 as it stands.
+- **Server mode**: the `openbao` Feature's other mode: a server run inside the container at
+  post-start, raft storage on the Feature's own volume, sealed until the Operator unseals it. Its
+  storage is the bounded-loss exception to ADR-0045.
+- **Seal and unseal**: a sealed server cannot read its store; unsealing, once per server start,
+  needs a quorum of the unseal shares (`openbao:unseal`).
+- **Unseal share**: one of the 3 Shamir shares (threshold 2) the Operator keeps in a password
+  manager, on paper offline, and with a second person or on a hardware key; never in git, the
+  container or the shared folder.
+- **The gate**: the two steps that open the master of secrets: the Operator's unseal once per
+  server start, then the Operator's login once per sitting.
+- **Sitting**: the span between the Operator's login to OpenBao and the end of that token (4 hours,
+  at most 8, in a server this Feature runs); a key loaded for a sitting lives no longer than it.
+- **Secret name**: the path a secret is kept under in OpenBao, as `dcf-secret get <name>` and
+  `put` take it (`ssh/<key>`, `register/<principal>`).
+- **Back identity**: the AppRole a back (scribe, secretary, librarian, tester) logs in with, bound
+  to loopback and to its own secret name path, working only while the server is unsealed.
+- **Register operator key**: the Operator's key that signs the register's operator acts; kept in
+  OpenBao and loaded for a sitting by `key:load` (ADR-0048, replacing ADR-0046).
+- **Recovery key**: the register's second operator key, kept offline outside OpenBao, the one
+  stated exception to "OpenBao keeps everything".
+- **Key mode**: the `ssh-agent` Feature's opt-in mode with a key volume and key tasks; deprecated
+  by ADR-0048, and renamed `localAgent` (an in-container agent whose keys live only in memory) in
+  `ssh-agent` 2.0.
+- **Central server**: an owner-run OpenBao server that devcontainers reach in client mode; the
+  only server a wrapping token can be unwrapped against.
+- **Snapshot**: the raft file `bao operator raft snapshot save` writes: the whole store, as
+  ciphertext.
+- **Backup**: the `openbao` Feature's named copy of a snapshot in a destination
+  (`openbao-<machine>-<UTC time>.snap`, never overwritten); `openbao:backup` writes it and
+  `openbao:restore` reads it. Scheduled backups are optional and off by default.
+- **Workstation scheduler**: the consumer's own scheduler on the workstation (Windows Task
+  Scheduler) running a one-shot task such as `task dc:exec -- task openbao:backup`; the launcher
+  never registers it (ADR-0024, ADR-0026). Not the Host.
+- **Throwaway init**: the first step of a restore into a fresh server: it initialises the server
+  with shares and a root token that are discarded once the snapshot is restored.
+- **Onboarding instance**: a second, short-lived server holding only the shared keys, from which
+  `openbao:onboard:export` takes the snapshot handed to a new devhost, never a snapshot of the
+  sender's own store.
+- **Claim**: `openbao:onboard:claim`, run after restoring someone else's snapshot: it makes the
+  store the receiver's own with `bao operator rotate-keys` (new unseal shares, the OpenBao name for
+  what was `rekey`), revokes what the sender held, reissues the back identities and rotates the
+  data key.
+- **Response wrapping**: a one-use, short-lived wrapping token that holds one secret in the
+  issuing server's cubbyhole (`openbao:wrap`, `openbao:unwrap`); one token per secret, and it works
+  only against a central server.
 
 ## The bar layer
 

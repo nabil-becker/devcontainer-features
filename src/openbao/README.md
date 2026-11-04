@@ -23,6 +23,30 @@ Installs the OpenBao CLI (https://openbao.org), the open-source Vault fork, as a
 | backupWarnAfter | Server mode: `task openbao:server:status` warns when the last backup is older than this (30m, 12h, 7d). Override with OPENBAO_SETUP_BACKUP_WARN_AFTER. | string | 7d |
 | version | OpenBao release to install (e.g. '2.7.1', with or without a leading 'v'), or 'latest'. Match your OpenBao server's version. | string | latest |
 
+## How it fits
+
+```text
+  go-task registry --> openbao:* tasks
+  bao CLI --BAO_ADDR (set in containerEnv)--> OpenBao server      dcf-secret --> bao
+    |
+    `--> token helper --> volume openbao-config-<id>/token  (or BAO_TOKEN from the environment)
+
+  mode server: post-start --> bao server (127.0.0.1:8200, raft) --> volume openbao-config-<id>/
+                              sealed until task openbao:unseal       raft/, audit.log, approle/
+```
+
+| Data | Where it lives | Storage tier |
+| --- | --- | --- |
+| Login token | `token` in the Feature's volume `openbao-config-${devcontainerId}`, kept by a token helper (`BAO_CONFIG_PATH`), so a rebuild keeps the login; or `BAO_TOKEN` in the environment | 4 working set |
+| Server storage (mode server) | `raft/` in the same volume: every secret, policy and role of the local server | 4 working set, with ADR 0048's bounded-loss exception: not rebuildable, so a lost machine loses what came after the last backup (backups arrive in 1.3.0; until then a snapshot by hand) |
+| Audit log (mode server) | `audit.log` in the same volume | 4 working set |
+| AppRole secret ids (mode server) | `approle/<role>/` in the same volume, mode 600 | 4 working set (reissued with `task openbao:approle:issue ALL=1`) |
+| Unseal shares | never in the container: printed once by `task openbao:init` | custody, outside the tiers (ADR 0049) |
+
+Tiers are the four of ADR 0045: 1 git, 2 shared folder, 3 personal folder, 4 working set (rebuildable only).
+
+Used in: [secrets-with-openbao](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/reference-architectures/secrets-with-openbao.md)
+
 ## What it installs
 
 The `bao` release binary from `github.com/openbao/openbao`, at
@@ -846,15 +870,11 @@ secret ids; making or deleting a role asks for two shares). A server initialised
 - `dcf-secret`'s failure lines now name the tasks: sealed points to `task openbao:unseal`, not initialised to `task openbao:init`, unreachable to `task openbao:server:status`, each adding what to do against a server elsewhere. The exit codes are unchanged.
 - In server mode `BAO_ADDR` defaults to the local server for `dcf-secret` and every task when you have not set it (a bare `bao` still needs `BAO_ADDR`). The tasks `status`, `login`, `logout`, `kv:get` and `setup` run the same `bao` call through `openbao-run`, which adds only that default; client mode is unchanged. `task openbao:setup` now also runs the start hook.
 
-### [1.1.0] - 2026-11-03
+### [1.1.1] - 2026-11-03
 
-#### Added
+#### Changed
 
-- **Your `bao login` now survives a rebuild.** The Feature owns a named volume (`openbao-config-<devcontainerId>`, at `/var/lib/devcontainer-features/openbao`, named by `OPENBAO_STATE_DIR`) and points `bao` at a token helper (`BAO_CONFIG_PATH`, set in `containerEnv`, so it holds for `devcontainer exec` too) that keeps the token there, as `gh` and `az` keep their logins. The post-create hook, `openbao-setup` (also `task openbao:setup`), makes the folder usable and moves a token left in `~/.vault-token` into it once. **You must act once:** rebuild the container and run `bao login` again, because the volume starts empty. A repo that sets its own `BAO_CONFIG_PATH` replaces the Feature's config (the hook says so); add `token_helper = "/usr/local/bin/openbao-token-helper"` to it. A repo that wants the state on the host disk bind-mounts the same target. A `BAO_TOKEN` in the environment still takes precedence over the saved login.
-- **`dcf-secret`**, a command for scripts and other Features to read and write a secret without knowing where the server runs: `dcf-secret get <name>`, `dcf-secret put <name> --field <field>` (the value on stdin) and `dcf-secret status`. `put` writes only that field and keeps the secret's other fields (it creates the secret when it does not exist); `--replace` makes the secret exactly that one field. A token whose policy lacks the `patch` capability is refused with exit 13 rather than silently replacing the secret. It fails with fixed exit codes (10 unreachable, 11 sealed, 12 not logged in, 13 denied, 14 no such secret), each with one line saying what to do, and never falls back to a key on disk. Secrets live in a KV v2 mount named `dcf` (`DCF_SECRET_MOUNT` changes it). Nothing to do unless you want it; `task openbao:kv:get` is unchanged.
-- **The `mode` option**, with the one value `client` (the default, what the Feature always did: the CLI against a server outside the container). A later version adds `server`. `OPENBAO_SETUP_MODE` in `containerEnv` overrides it per container. Nothing to do.
-- `task openbao:logout`: revokes your token on the server and erases the saved one, so no login is left behind (`bao token revoke -self` alone leaves the dead token stored, and `dcf-secret` then says to log in). Nothing to do unless you log out.
-- `task openbao:setup`: re-runs the post-create hook.
+- The README now has a "How it fits" section with a small diagram of how the Feature sits in a devcontainer, a table of the data it keeps and the storage tier of each, and "Used in" links to the reference architectures that use it. Documentation only: the Feature itself is unchanged. Nothing to do.
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/openbao/CHANGELOG.md).
 

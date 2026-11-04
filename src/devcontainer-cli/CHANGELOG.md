@@ -18,6 +18,12 @@ Entries from 1.0.0 to 1.18.1 were generated from the commit history (`.github/sc
 
 - `task devcontainer:ssh-key-import` (the key into ssh-agent's key volume) still works and says it is deprecated; it goes with ssh-agent 2.0. Use `devcontainer:openbao-ssh-import`.
 
+## [1.18.3] - 2026-11-03
+
+### Changed
+
+- The README now has a "How it fits" section with a small diagram of how the Feature sits in a devcontainer, a table of the data it keeps and the storage tier of each, and "Used in" links to the reference architectures that use it. Documentation only: the Feature itself is unchanged. Nothing to do.
+
 ## [1.18.2] - 2026-11-03
 
 ### Added

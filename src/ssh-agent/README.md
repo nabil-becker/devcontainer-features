@@ -19,6 +19,24 @@ Makes an SSH agent available to every process in the devcontainer (SSH_AUTH_SOCK
 | passphraseTimeout | Key mode: seconds `task ssh-agent:setup` (and the key tasks) wait for the passphrase of a protected key typed at ssh-add's own prompt. On the timeout, with no terminal to ask on, or with 0 (never prompt), they print one warning (the key is not loaded; task ssh-agent:setup loads it later) and go on with exit 0. The start hook itself never asks: it skips a protected key with that warning. Override per container with SSH_AGENT_SETUP_PASSPHRASE_TIMEOUT in containerEnv. | string | 120 |
 | keyMode | Opt-in, temporary: when no host agent socket is forwarded, start an ssh-agent inside the container on the fixed socket and load the private keys found in the ssh-agent-key volume. This puts a private key in the container, which breaks the default rule that the key never enters it; use it only where the host type cannot forward its agent (windows-docker, windows-wslc). Override per container with SSH_AGENT_SETUP_KEY_MODE in containerEnv, or per start with SSH_AGENT_MODE=key on the launcher. | boolean | false |
 
+## How it fits
+
+```text
+  host SSH agent socket --bind mount (devcontainer-cli launcher)-->
+        /var/lib/devcontainer-features/ssh-agent/agent.sock = SSH_AUTH_SOCK
+  git commit -S, ssh  --> the agent; the private key never enters the container
+  Windows engines: none; opt-in key mode keeps keys in a volume
+  git Feature: signing config
+```
+
+| Data | Where it lives | Storage tier |
+| --- | --- | --- |
+| Private keys | none in the default mode; only in the opt-in key mode, in a named volume at `/var/lib/devcontainer-features/ssh-agent-key` | 4 working set |
+
+Tiers are the four of ADR 0045: 1 git, 2 shared folder, 3 personal folder, 4 working set (rebuildable only).
+
+Used in: [windows-workstation-devhost](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/reference-architectures/windows-workstation-devhost.md), [secrets-with-openbao](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/reference-architectures/secrets-with-openbao.md)
+
 ## What it gives you
 
 Every process in the container, `devcontainer exec` and `claude` sessions included, sees
@@ -359,6 +377,26 @@ deprecated `devcontainer:ssh-key-import`). The records' own tasks are the `openb
 - The key volume is a named volume: a container-engine storage reset deletes it (the key is on your
   host anyway; re-import it).
 
+## Best practices
+
+- **Prefer socket mode; use key mode only where the host has no agent to forward, with a dedicated signing key.** In socket mode the private key never enters the container; key mode puts it in the key volume, readable by every process in the container (see "The opt-in key mode, temporary").
+
+## Anti-patterns
+
+### Don't prompt for a passphrase in the start hook
+
+- **Don't:** run `ssh-add`, or anything that reads the terminal, in a start hook, and don't put a passphrase-protected key where the hook loads it expecting a prompt.
+- **Why:** 2026-10-30, "Start hook no longer waits on ssh-add; passphrase prompt gets a bounded wait and a warning". The hook prompted on `/dev/tty`, the devcontainer CLI waits for every Feature's start hook, and one start hung about 775 s until WSL's exec connection dropped; the error named another Feature's hook (2026-10-30, "Consumer diagnostics read; copy cause and start hang settled").
+- **Instead:** let the hook load only keys without a passphrase (it skips protected ones with one warning and exits 0), and load a protected key from a terminal with `task ssh-agent:setup` or `task ssh-agent:key:unlock` (which waits up to `passphraseTimeout`).
+- **Caught by:** the pty cases in `passphrase_test.sh`, run by `task test:ssh-agent-unit` (the hook never asks, skips a protected key, exits 0).
+
+### Don't use `key:unlock` for a key that has no passphrase
+
+- **Don't:** unlock an unprotected key with `task ssh-agent:key:unlock MINUTES=<n>` and expect it to drop out after the lifetime.
+- **Why:** 2026-11-03, "ssh-agent 1.3.0 adds timed key unlock and key lock": the start hook loads every key without a passphrase, with no lifetime, so the next container start puts it back for good.
+- **Instead:** use timed unlock for protected keys only (they are skipped at start and so stay out until unlocked again); to take an unprotected key out, `task ssh-agent:key:remove NAME=<file>`.
+- **Caught by:** nothing yet (the "Limits" section says so; a guard in `key:unlock` for an unprotected key is not on the backlog).
+
 ## Why it exists
 
 VS Code forwards the host agent only into its own terminals, and the devcontainer CLI does not
@@ -421,17 +459,17 @@ volume, and a rebuild re-runs the hook.
 
 - **The key volume and its tasks**: `key:new`, `key:add`, `key:unlock`, `key:retire`, `key:age`, `key:remove DELETE=1`, `key:load` with no `NAME`, `key:lock` and `key:rotate` of a volume key, and the old workstation import (`devcontainer:ssh-key-import`) still work as before and print one line naming what replaces them; the start hook says so once in key mode when the volume holds keys. They are removed in ssh-agent 2.0, where `keyMode` becomes `localAgent`. **Nothing breaks now**; to move, add the openbao Feature and run `task openbao:ssh:import FROM=ssh-agent` once, then `key:unlock NAME=<file>` becomes `key:load NAME=ssh/<file>`. A setup in socket mode that never used key mode changes nothing.
 
+### [1.3.2] - 2026-11-03
+
+#### Changed
+
+- The README now has a "How it fits" section with a small diagram of how the Feature sits in a devcontainer, a table of the data it keeps and the storage tier of each, and "Used in" links to the reference architectures that use it. Where the Feature has them, its best practices and anti-patterns are in the README too. Documentation only: the Feature itself is unchanged. Nothing to do.
+
 ### [1.3.1] - 2026-11-03
 
 #### Added
 
 - This changelog: every release of this Feature now has an entry here, written for its users, and the Feature's README shows the latest three under "Changes". Nothing to do.
-
-### [1.3.0] - 2026-11-03
-
-#### Added
-
-- `task ssh-agent:key:unlock NAME=<key> [MINUTES=15]` loads one key from the key volume into the agent for a sitting (at most 480 minutes), asking for its passphrase on the terminal, and says when it drops out; `task ssh-agent:key:lock NAME=<key>` drops it sooner. Key mode only. Nothing to do for existing setups. ([#152](https://github.com/nabil-becker/devcontainer-features/pull/152))
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/ssh-agent/CHANGELOG.md).
 

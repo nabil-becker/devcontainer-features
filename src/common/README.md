@@ -17,6 +17,23 @@ Shared helpers used by this collection's Features: dcf-persist (installed, also 
 |-----|-----|-----|-----|
 | installTaskfile | Also install this Feature's Taskfile into /usr/local/share/go-task/includes.d so its tasks appear under the <id>: namespace of a root Taskfile that includes /usr/local/share/go-task/features.yml (see the go-task Feature). | boolean | true |
 
+## How it fits
+
+```text
+  Features' post-create hooks  --call-->  dcf-persist <dir>
+  a repo's own post-create scripts ----->   (hands a volume or bind mount
+  every installer  --source-->  dcf-curl.sh   to the remote user, reports
+                                              volume | bind | image)
+```
+
+| Data | Where it lives | Storage tier |
+| --- | --- | --- |
+| Nothing of its own | helpers only; the directories it prepares belong to the calling Feature | none |
+
+Tiers are the four of ADR 0045: 1 git, 2 shared folder, 3 personal folder, 4 working set (rebuildable only).
+
+Used in: [windows-workstation-devhost](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/reference-architectures/windows-workstation-devhost.md)
+
 ## What `dcf-persist` does
 
 `dcf-persist [--label <name>] <dir>...` is the one helper behind every
@@ -112,6 +129,12 @@ copy is identical to it.
 
 ## Changes
 
+### [1.0.4] - 2026-11-03
+
+#### Changed
+
+- The README now has a "How it fits" section with a small diagram of how the Feature sits in a devcontainer, a table of the data it keeps and the storage tier of each, and "Used in" links to the reference architectures that use it. Documentation only: the Feature itself is unchanged. Nothing to do.
+
 ### [1.0.3] - 2026-11-03
 
 #### Added
@@ -123,12 +146,6 @@ copy is identical to it.
 #### Fixed
 
 - Build-time downloads retry on transient network errors, so a flaky connection no longer fails the container build outright. Rebuild the container to pick it up. No change to options or tasks; nothing to do. ([#94](https://github.com/nabil-becker/devcontainer-features/pull/94))
-
-### [1.0.1] - 2026-10-21
-
-#### Fixed
-
-- Az installs the Azure CLI; Feature tasks run in the caller's folder ([#48](https://github.com/nabil-becker/devcontainer-features/pull/48))
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/common/CHANGELOG.md).
 

@@ -18,6 +18,23 @@ Owns the kubeconfig for the Kubernetes tools in the image that read one (kubectl
 | installTaskfile | Also install this Feature's Taskfile into /usr/local/share/go-task/includes.d so its tasks appear under the <id>: namespace of a root Taskfile that includes /usr/local/share/go-task/features.yml (see the go-task Feature). | boolean | true |
 | restrictPermissions | At post-create, chmod the kubeconfig file to 0600 when it exists (kubectl and helm warn about a group- or world-readable one; it holds credentials). Override per container with KUBE_STATE_SETUP_RESTRICT_PERMISSIONS in containerEnv. | boolean | true |
 
+## How it fits
+
+```text
+  kubeconfig --task kube-state:import--> volume: KUBECONFIG
+                                              |
+                  kubectl (kubectl-helm-minikube), velero read it
+  (kustomize, kubeconform, argocd do not)
+```
+
+| Data | Where it lives | Storage tier |
+| --- | --- | --- |
+| Kubeconfig (cluster credentials) | named volume at `/var/lib/devcontainer-features/kube-state` (`KUBECONFIG` points into it) | 4 working set |
+
+Tiers are the four of ADR 0045: 1 git, 2 shared folder, 3 personal folder, 4 working set (rebuildable only).
+
+Used in: [kubernetes-toolbox](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/reference-architectures/kubernetes-toolbox.md)
+
 ## State only: no kubectl installed
 
 This Feature owns the kubeconfig the Kubernetes tools in the image share
@@ -111,6 +128,12 @@ Linux/macOS), with `KUBECONFIG` left at its default. Alternatively point
 
 ## Changes
 
+### [1.0.4] - 2026-11-03
+
+#### Changed
+
+- The README now has a "How it fits" section with a small diagram of how the Feature sits in a devcontainer, a table of the data it keeps and the storage tier of each, and "Used in" links to the reference architectures that use it. Documentation only: the Feature itself is unchanged. Nothing to do.
+
 ### [1.0.3] - 2026-11-03
 
 #### Added
@@ -122,12 +145,6 @@ Linux/macOS), with `KUBECONFIG` left at its default. Alternatively point
 #### Fixed
 
 - `task kube-state:...` now runs in the folder you call it from, not in the Taskfile include folder, so it finds your repository. Rebuild to pick it up; nothing to change. ([#48](https://github.com/nabil-becker/devcontainer-features/pull/48))
-
-### [1.0.1] - 2026-10-20
-
-#### Changed
-
-- Features docs to the NOTES standard; records of 2026-10-17 to 2026-10-19 ([#14](https://github.com/nabil-becker/devcontainer-features/pull/14))
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/kube-state/CHANGELOG.md).
 

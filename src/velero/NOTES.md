@@ -1,3 +1,20 @@
+## How it fits
+
+```text
+  go-task registry --> velero:* tasks
+  velero CLI --KUBECONFIG--> cluster (backup / restore)
+                ^
+  kube-state owns the kubeconfig volume (kubectl from kubectl-helm-minikube)
+```
+
+| Data | Where it lives | Storage tier |
+| --- | --- | --- |
+| Nothing of its own | installs a binary only; the kubeconfig comes from `kube-state` or elsewhere | none |
+
+Tiers are the four of ADR 0045: 1 git, 2 shared folder, 3 personal folder, 4 working set (rebuildable only).
+
+Used in: [kubernetes-toolbox](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/reference-architectures/kubernetes-toolbox.md)
+
 ## What it installs
 
 The `velero` release binary from `github.com/vmware-tanzu/velero`, at
