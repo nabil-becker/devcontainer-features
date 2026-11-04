@@ -161,6 +161,11 @@ The way of working grows from what real work shows it lacks, never ahead of it:
 - One way to do each action: its task in `Taskfile.yml`, for engineers and agents alike.
 - The Operator decides; sessions advise. A permission counts only when the Operator grants it in
   their own settings.
+- A pull request's ready or draft is the host's status on the work, not CI's: the host marks it
+  ready when its work is done and it is confident CI passes (the checks run here, a trial merge
+  against `main` and the other ready pull requests); a red CI on a ready pull request is fixed in
+  place, not flipped back to draft. The Operator reviews and merges what is ready (ADR 0040,
+  ADR 0053).
 - Records that only grow (the ledger, the lexicon, the ADRs) are corrected by adding, never by
   editing.
 - Paths and ids, never content: nothing committed holds real data, credentials, identifiers or a

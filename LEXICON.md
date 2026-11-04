@@ -378,8 +378,13 @@ The words of the secrets split: OpenBao keeps every secret, `ssh-agent` only use
   sender's own store.
 - **Claim**: `openbao:onboard:claim`, run after restoring someone else's snapshot: it makes the
   store the receiver's own with `bao operator rotate-keys` (new unseal shares, the OpenBao name for
-  what was `rekey`), revokes what the sender held, reissues the back identities and rotates the
-  data key.
+  what was `rekey`), with the claim token, revokes what the sender held, reissues the back
+  identities and rotates the data key (`bao operator rotate`), so only what is written afterwards
+  is out of the sender's reach.
+- **Claim token**: the onboarding instance's root token, which `openbao:onboard:export` prints once
+  beside the fresh unseal shares; the receiver gives it to the claim, because `rotate-keys` needs a
+  token on OpenBao 2.6 and later and a restored store holds only the sender's; the claim revokes it
+  at the end.
 - **Response wrapping**: a one-use, short-lived wrapping token that holds one secret in the
   issuing server's cubbyhole (`openbao:wrap`, `openbao:unwrap`); one token per secret, and it works
   only against a central server.
