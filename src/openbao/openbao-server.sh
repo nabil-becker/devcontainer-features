@@ -107,7 +107,9 @@ unseal_loop() {
     [ "$st_rc" -eq 2 ] || state_exit
     n=$((n + 1))
     [ "$n" -le 6 ] || die 1 "still sealed after $((n - 1)) shares: check the shares and start again (bao operator unseal -reset clears the progress)"
-    bao operator unseal || die 1 "bao could not take that share (a wrong share? bao operator unseal -reset clears the progress, then run this again)"
+    paste_off
+    echo "openbao: share $n: one of the three unseal shares task openbao:init printed (a long base64 string; NOT your Operator password), typed at bao's hidden prompt:" >&2
+    bao operator unseal || die 1 "bao could not take that as an unseal share: a password typed instead of a share, or a mistyped share? A share is the base64 string openbao:init printed, not the Operator password. bao operator unseal -reset clears the progress, then run this again"
   done
   wait_active || say "the server is unsealed but has not become the active node yet; give it a few seconds"
 }
@@ -421,8 +423,9 @@ as_root() { # <task> <what it is for> <command> [args]: the command runs with a 
     n=$((n + 1))
     [ "$n" -le $((req + 2)) ] || die 1 "the root token generation did not complete after $((n - 1)) shares: check the shares and run the task again (the attempt is cancelled)"
     # bao's own prompt goes to its stdout, which is captured here (the JSON is read back): so say it
-    printf 'Unseal share %s of %s (hidden): ' "$n" "$req" >&2
-    out="$(bao operator generate-root -otp="$root_otp" -format=json)" || { printf '\n' >&2; die 1 "bao could not take that share; the attempt is cancelled: run the task again"; }
+    paste_off
+    printf 'Unseal share %s of %s (one of the three shares task openbao:init printed; not your password) (hidden): ' "$n" "$req" >&2
+    out="$(bao operator generate-root -otp="$root_otp" -format=json)" || { printf '\n' >&2; die 1 "bao could not take that as an unseal share: a password typed instead of a share, or a mistyped share? A share is the base64 string openbao:init printed, not the Operator password; the attempt is cancelled: run the task again"; }
     printf '\n' >&2
     grep -Eq '"complete"[[:space:]]*:[[:space:]]*true' <<<"$out" && break
   done
