@@ -84,6 +84,33 @@ tasks:
     cmds:
       - openbao-run bao kv get {{.CLI_ARGS}} '{{.KEY}}'
 
+  backup:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Server mode (client mode: with a role or token the server''s owner provides): write a raft snapshot to DEST=<folder> (else the backupDest option, else the folder recorded at init) as openbao-<machine>-<UTC time>.snap, never over a file that exists, from a private tmpfs folder that is removed on every way out; then keep only the newest KEEP=<n> (else backupKeep, default 30; 0 keeps all) of this machine''s own files there. Logs in with the backup role (a server made before 1.3.0: your login). Non-interactive, so a scheduler can run it. Prints the path and sha256. Exit 0 written, 10 unreachable, 11 sealed or not initialised, 12 cannot log in, 13 the snapshot read is denied, 20 DEST missing or not writable, 2 no destination. The unseal shares never go with a backup.'
+    env:
+      OPENBAO_TASK_DEST: '{{.DEST | default ""}}'
+      OPENBAO_TASK_KEEP: '{{.KEEP | default ""}}'
+    cmds:
+      - openbao-server backup
+
+  backup:role:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Server mode, the Operator only, in a plain terminal (refuses inside an agent''s job and without a terminal): make the backup role (read on the snapshot path only, loopback only) on a server initialised before 1.3.0, from a root token generated from two unseal shares, used once and revoked.'
+    interactive: true
+    cmds:
+      - openbao-server backup-role
+
+  restore:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Server mode, the Operator only, in a plain terminal (refuses inside an agent''s job and without a terminal): install the snapshot FROM=<file> written by task openbao:backup. On an empty server it first initialises with one throwaway share (discarded); on a store in use it replaces it after you type restore and a root token generated from two of its shares (used once, revoked). The restored store is sealed under the snapshot''s own shares: enter two of them, then every AppRole gets a new secret id. Safe to run twice; a half-done restore starts again from empty. Warns when the file is from another machine.'
+    interactive: true
+    requires:
+      vars: [FROM]
+    env:
+      OPENBAO_TASK_FROM: '{{.FROM}}'
+    cmds:
+      - openbao-server restore
+
   setup:
     dir: '{{.USER_WORKING_DIR}}'
     desc: 'Re-run the post-create setup: make OPENBAO_STATE_DIR usable by the current user, move a token left in ~/.vault-token into it, report the token helper, the address and whether a login is saved; in server mode also run the start hook (write the server config, start the server if it is not running, say whether it is sealed). Idempotent; OPENBAO_SETUP_MODE overrides the Feature option.'

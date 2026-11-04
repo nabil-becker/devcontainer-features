@@ -1,6 +1,6 @@
 {
   "id": "openbao",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "name": "OpenBao CLI",
   "description": "Installs the OpenBao CLI (https://openbao.org), the open-source Vault fork, as a release binary at /usr/local/bin/bao, verified against the release's checksums.txt. Owns the login state as a named volume at OPENBAO_STATE_DIR=/var/lib/devcontainer-features/openbao (bao's token helper, set through BAO_CONFIG_PATH, keeps the token in it) so `bao login` survives rebuilds, with the post-create hook openbao-setup, and installs dcf-secret, the one command the collection's Features use to read and write secrets (get, put, status, with fixed exit codes). Mode client (the default) is the CLI against a server of yours (set BAO_ADDR in containerEnv). Mode server also runs a server inside the container, started at post-start with raft storage on the same volume and sealed until the Operator unseals it: tasks openbao:init (unseal shares printed only to a terminal, a backup choice asked for), openbao:unseal, openbao:seal, userpass login for the Operator, loopback-bound AppRole roles (openbao:approle:issue) and openbao:server:status.",
   "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/openbao",
@@ -19,6 +19,26 @@
       ],
       "default": "client",
       "description": "How the Feature is used. 'client' (default): the bao CLI and dcf-secret against a server outside the container (BAO_ADDR). 'server': also run a server in the container (raft storage on the Feature's volume, loopback only, started at post-start, sealed until `task openbao:unseal`; needs OpenBao 2.4.0 or newer). Override per container with OPENBAO_SETUP_MODE in containerEnv."
+    },
+    "backupDest": {
+      "type": "string",
+      "default": "",
+      "description": "Server mode: the folder (an absolute path inside the container, e.g. a bind-mounted cloud folder or a USB disk) that `task openbao:backup` and the backup timer write to when no DEST is given. Empty (the default): no default destination, so nothing is backed up unless you run `task openbao:backup DEST=<folder>`; `task openbao:init` also records a destination. Override per container with OPENBAO_SETUP_BACKUP_DEST."
+    },
+    "backupKeep": {
+      "type": "string",
+      "default": "30",
+      "description": "Server mode: how many backups of this machine to keep in the destination (the newest N); older ones named openbao-<machine>-<UTC time>.snap are removed after each backup, nothing else ever is. 0 keeps every backup. Every backup holds every secret (encrypted; the unseal shares open it), so they should not pile up. Override with OPENBAO_SETUP_BACKUP_KEEP."
+    },
+    "backupInterval": {
+      "type": "string",
+      "default": "",
+      "description": "Server mode: run a backup into the default destination every so often (5m, 6h, 1d; at least 5 minutes) from a timer the start hook starts inside the container. Empty (the default): off; backups are then yours to run, or to schedule from the host with its own scheduler (see the NOTES). A sealed server is skipped until the next tick. Override with OPENBAO_SETUP_BACKUP_INTERVAL."
+    },
+    "backupWarnAfter": {
+      "type": "string",
+      "default": "7d",
+      "description": "Server mode: `task openbao:server:status` warns when the last backup is older than this (30m, 12h, 7d). Override with OPENBAO_SETUP_BACKUP_WARN_AFTER."
     },
     "version": {
       "type": "string",

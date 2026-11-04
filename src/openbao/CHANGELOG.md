@@ -8,6 +8,21 @@ here; `task lint` fails when the entry is missing.
 
 Entries from 1.0.0 to 1.0.3 were generated from the commit history (`.github/scripts/changelog.py backfill`) and the "Changes in x.y.z" sections that NOTES.md used to hold; most list commit subjects as written then; the newest of them is in wording for users.
 
+## [1.3.0] - 2026-11-04
+
+### Added
+
+- **`task openbao:backup`** (server mode): a raft snapshot into `DEST=<folder>` (else the new `backupDest` option, else the folder recorded at `init`) as `openbao-<machine>-<UTC time>.snap`, **never over a file that exists**, from a private tmpfs folder that is removed on every way out; it prints the path and sha256, records them for `server:status`, and keeps only the newest `KEEP` (the `backupKeep` option, default 30; 0 keeps all) of **this machine's own** files in `DEST`. It logs in with a new **`backup` AppRole** that `init` makes (read on the snapshot path only, loopback only). Exit codes: 0 written, 10 unreachable, 11 sealed or not initialised, 12 cannot log in, 13 snapshot read denied, 20 `DEST` missing or not writable. **Backups are optional and off by default.** The unseal shares never go with a snapshot.
+- **`task openbao:restore FROM=<file>`**: installs a snapshot. On an empty server it initialises with one throwaway share and installs the snapshot over it; on a store in use it asks you to type `restore` and uses a root token made from two of the current shares (used once, revoked). The restored store is sealed under the shares it came from: you enter two of them and the restored Operator's password, and every AppRole gets a new secret id. Safe to run twice; a half-done restore starts again from empty. Warns when the file is from another machine. Refuses inside an agent's job and without a terminal.
+- **`task openbao:backup:role`** makes the backup role on a server initialised before 1.3.0.
+- Options `backupDest`, `backupKeep`, `backupInterval` (a timer in the container the start hook starts: `5m`, `6h`, `1d`; empty = off) and `backupWarnAfter` (default `7d`), each with an `OPENBAO_SETUP_BACKUP_*` twin. OpenBao has no scheduled snapshots of its own and its snapshot agent needs systemd or cron and names and prunes files differently, so the timer is the Feature's own; the NOTES give the Windows Task Scheduler line for a host-side schedule.
+- `task openbao:server:status` shows the last backup's age, place and sha256, and warns past `backupWarnAfter`, with no backup taken yet, or with the explicit "no backup".
+- `openbao-server after-write`: what a task that writes a secret ends with (a "not backed up since" reminder, or the backup when a destination is set); it always exits 0, so the write stands whatever the backup does.
+
+### Changed
+
+- **Action for new servers:** `init` now also writes the policy `rootgen`, which the Operator's login carries: it lets the login start a root token generation (OpenBao 2.6.0 and later made that call authenticated) that only two unseal shares complete. A server initialised by 1.2.0 lacks it and the `backup` role: `restore` on a store in use says so and stops before any share is typed, and `openbao:backup` uses your login with a line saying so.
+
 ## [1.2.0] - 2026-11-03
 
 ### Added

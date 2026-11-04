@@ -509,6 +509,38 @@ protected by the unseal shares. A snapshot without the shares is useless; with t
 everything. So the shares never go where the backups go (section 9). Old snapshots keep keys
 retired since; `backupKeep` bounds how long.
 
+### Slice 2b findings (2026-11-04): the check of scheduled snapshots, and what restore needs
+
+Recorded by the backup and restore build (openbao 1.3.0), from OpenBao's tree and documentation and
+from a real 2.7.2 server.
+
+- **Scheduled snapshots (second-review ruling 4): nothing fits, so the Feature builds `backupInterval`
+  and `backupKeep` itself.** OpenBao has no scheduled or automatic raft snapshots (the API page lists
+  only the snapshot read, the restore and `snapshot-force`; the Vault feature of that name is
+  Enterprise). `openbao/openbao-snapshot-agent` (v0.4.5, MPL-2.0) is a recipe: an OpenBao Agent for
+  authentication plus a systemd timer or cron job running `bao operator raft snapshot save` to a
+  date-named file and `find -mtime` for retention. It needs systemd or cron (a devcontainer has
+  neither), names files by date with no machine and no overwrite check, prunes by age over everything
+  in the folder, and has no sealed case. The Feature's own timer (started by the start hook, off by
+  default) and pruning (only its own name pattern) are built, and the NOTES give the Task Scheduler
+  line.
+- **Capabilities:** `read` on `sys/storage/raft/snapshot` is all a snapshot save needs (a role with
+  only that saves one and is denied `snapshot-force`); a restore is `update` on `snapshot` or
+  `snapshot-force`.
+- **A restore needs the snapshot's own shares, and `-force` across different shares.** A plain restore
+  into a server with other shares is refused ("could not verify hash file ... use the snapshot-force
+  API"), so the throwaway init uses `restore -force`; the node then seals itself and opens only with
+  the shares of the store the snapshot came from.
+- **Finding that changes section 5's "root token from the shares": from OpenBao 2.6.0 `bao operator
+  generate-root` is authenticated** (`sys/generate-root-token`; the unauthenticated `sys/generate-root`
+  is deprecated and off by default: an unauthenticated call is a 403). A root token cannot be made from
+  the shares alone: it needs a login that may call the endpoint. The Feature gives the Operator's login
+  a small policy `rootgen` (start an attempt, give a share; only two shares complete it) written by
+  `init`, and the policy that narrows the Operator (ruling 3) must not remove it; the throwaway-init
+  path needs no root-from-shares step at all (the throwaway root token is the token), and the restore
+  ends with the Operator's own login (a password prompt) to reissue the secret ids instead of a second
+  root token, which saves two share entries. A store initialised before 1.3.0 has no `rootgen`.
+
 ## 5. The gate: unseal, login, and what each step opens
 
 ```
@@ -1053,10 +1085,10 @@ checks it and what the design does if the answer is no.
 |---|---|---|
 | Whether `rotate-keys` or `rotate` changes the key that encrypts the data, or only the key that protects it (the pages read do not say; Vault's documentation, from memory, says `rotate` is what changes it) | 2c: documentation, then a test of what the sender's old shares open in a later snapshot | the design already assumes the worse case (section 15a); the NOTES say so |
 | That an accessor listing and revoke, revocation by prefix, and deleting a role reach every token and every secret id the sender held (no single call that revokes everything is confirmed) | 2c: a test that a token and a secret id from the snapshot fail after `claim` | disable and re-enable each auth mount and rebuild from the reissue (section 15a) |
-| The capabilities needed for `sys/storage/raft/snapshot` and `snapshot-force` (the fetched pages do not list them) | 2a and 2b: Feature tests | the `backup` role's policy and exit 13 are adjusted |
-| That a restore needs a token on a fresh server (the throwaway init) and the snapshot's own shares (taken from Vault's flow) | 2b: a Feature test of restore on a fresh server, run twice | the throwaway init is changed; nothing else depends on it |
+| The capabilities needed for `sys/storage/raft/snapshot` and `snapshot-force` (the fetched pages do not list them) | 2a and 2b: Feature tests (answered 2026-11-04: `read` saves, `snapshot-force` is a separate path; see "Slice 2b findings") | the `backup` role's policy and exit 13 are adjusted |
+| That a restore needs a token on a fresh server (the throwaway init) and the snapshot's own shares (taken from Vault's flow) | 2b: a Feature test of restore on a fresh server, run twice (answered against a real 2.7.2 for the shares and `-force`; the task run is the CI scenario `backup_restore`) | the throwaway init is changed; nothing else depends on it |
 | AppRole: that `token_bound_cidrs` is honoured, the default of `secret_id_ttl`, destroying a secret id by accessor, and that deleting a role ends its secret ids | 2a: tests | the reissue and the revocation use the call that does |
-| OpenBao's own scheduled snapshots and the `openbao/openbao-snapshot-agent` (the API page returned 404; a search found Vault's, which is Enterprise, and the agent repository) | 2b, first step (section 4) | the Feature's own timer and pruning, with the NOTES saying why |
+| OpenBao's own scheduled snapshots and the `openbao/openbao-snapshot-agent` (the API page returned 404; a search found Vault's, which is Enterprise, and the agent repository) | 2b, first step (section 4): answered 2026-11-04, nothing fits | the Feature's own timer and pruning, with the NOTES saying why |
 | `disable_mlock` with raft, and raft's needs (bbolt, `fsync`, the lock) in a container (the configuration page does not mention `disable_mlock`) | 2a | the config or the NOTES change |
 | Wrapping: `-wrap-ttl` per secret, the policy's minimum and maximum wrapping TTL, and what `sys/wrapping/lookup` returns (creation path, TTL) | 2c: a Feature test against a server | the check or the token per secret is redesigned; route (a) is unaffected |
 | Two servers (the sender's and the onboarding instance) running in one container | 2c | a second devcontainer does it (section 15a) |
