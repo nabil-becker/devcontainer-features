@@ -24,17 +24,12 @@ sections between them); `devhost-ledger show --month 2026-11` one month. The bri
 report, the site and the ledger review read the same view. `agentic-register verify` checks every
 signature; `task devhost:verify` runs it at each commit.
 
-## The history in git
+## How the records moved
 
-The monthly files `2026-10.md` and `2026-11.md`, the cost reports `costs-2026-1*-*.md` and
-`.jsonl`, and `TODO.md` were removed from the tree when the records moved, and then purged from
-git history (the Operator's decision of 2026-11-04): no commit holds them any more, and commits that
-only touched them are gone, so their old hashes no longer resolve on `main`. Old pull requests on
-GitHub may still show them; the Operator accepted that. Every entry of the monthly files was
-imported into the register first, each marked as a backfill with its source file, line, original
-date and the SHA-256 of its text (`agentic-register import --markdown`), the reviews in them were
-copied to the reviews folder (`devhost-ledger carry-reviews`), and the cost stores and reports were
-merged into the cold-storage archive above.
+Every entry of the former monthly files was imported into the register, each marked as a backfill
+with its source file, line, original date and the SHA-256 of its text (`agentic-register import
+--markdown`); the reviews in them were copied to the reviews folder (`devhost-ledger
+carry-reviews`), and the cost stores and reports were merged into the cold-storage archive above.
 
 ## Correcting an entry
 
