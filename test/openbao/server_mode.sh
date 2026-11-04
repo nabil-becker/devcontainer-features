@@ -79,11 +79,13 @@ unseal_again() { # type the two saved shares at task openbao:unseal's prompts
 # A root token made from the saved shares by hand (the test's own use, to inspect and tamper with
 # a role, which the Operator's token may not): $rootok, to be dropped with drop_root.
 make_root() {
-  local otp out enc
+  local otp out enc nonce
   otp="$(bao operator generate-root -generate-otp)"
-  bao operator generate-root -init -otp="$otp" > /dev/null || return 1
-  out="$(sed -n 1p "$work/shares" | bao operator generate-root -otp="$otp" -format=json -)" || return 1
-  out="$(sed -n 2p "$work/shares" | bao operator generate-root -otp="$otp" -format=json -)" || return 1
+  # A share read from stdin (-) needs the attempt's nonce; only bao's own prompt looks it up.
+  out="$(bao operator generate-root -init -otp="$otp" -format=json)" || return 1
+  nonce="$(sed -n 's/.*"nonce": *"\([^"]*\)".*/\1/p' <<<"$out" | head -n 1)"
+  out="$(sed -n 1p "$work/shares" | bao operator generate-root -nonce="$nonce" -format=json -)" || return 1
+  out="$(sed -n 2p "$work/shares" | bao operator generate-root -nonce="$nonce" -format=json -)" || return 1
   enc="$(sed -n 's/.*"encoded_token": *"\([^"]*\)".*/\1/p' <<<"$out" | head -n 1)"
   rootok="$(printf '%s' "$enc" | bao operator generate-root -decode=- -otp="$otp")" && [ -n "$rootok" ]
 }
