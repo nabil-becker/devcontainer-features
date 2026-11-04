@@ -144,6 +144,7 @@ Every script reads the same variables; a repository overrides them in `container
 |---|---|---|
 | `DEVHOST_ROOT` | `$CLAUDE_PROJECT_DIR`, else the hook's cwd or its nearest ancestor holding `.claude/settings.json` | The repository the backs keep; when set, it must hold `.claude/settings.json` or the backs stay quiet |
 | `DEVHOST_STATE` | `/var/lib/devcontainer-features/devhost` | Job state (offsets, locks, logs, pending files, `runs.jsonl`); set by the Feature's `containerEnv` |
+| `PYTHONPYCACHEPREFIX` | `/tmp/pycache` | Where Python writes its bytecode, so the backs, the tests and the tools leave no `__pycache__` folders in the checkout (which may sit in a synced folder); set by the Feature's `containerEnv` since 1.12.1 |
 | `DEVHOST_RECORDS_DIR` | unset (the repository) | The folder of the records kept outside git (a shared folder); moves the defaults below ("Records outside git") |
 | `DEVHOST_LEDGER_REGISTER` | unset (Markdown files) | The agentic-register register that holds the ledger ("Records outside git") |
 | `DEVHOST_LEDGER_DIR` | `docs/ledger` (`<records>/ledger`) | Monthly ledger files `YYYY-MM.md` (scribe), when the ledger is not a register |
