@@ -11,7 +11,7 @@ engineer's machine, can pick up from the repository alone. This is the order to 
 ## Steps
 
 1. **Account for the work in the records.** Every unit of work has a ledger entry; every open
-   item is in `TODO.md` with an owner and a date; every settled term is in `LEXICON.md`; every
+   item is in the backlog (`TODO.md`, at the root or in `DEVHOST_RECORDS_DIR`) with an owner and a date; every settled term is in `LEXICON.md`; every
    decision that needed more than a line has an ADR (`/new-adr`). Inside the devhost the backs
    did most of this after each turn: read what they added (the quiet notices name it) and add or
    reword by hand only what they missed or got wrong. On a workstation there are no backs: write
@@ -21,7 +21,9 @@ engineer's machine, can pick up from the repository alone. This is the order to 
 2. **Check the scribe's ledger entries; never edit one.** Each entry against what happened: every
    unit of work has one, including each con's job; the friction is complete and tagged; the
    Operator's decisions are theirs; no real data, credentials or forbidden words; the Measures
-   line carries numbers. A wrong entry is corrected by a new entry with a `Corrects:` line.
+   line carries numbers. A wrong entry is corrected by a new entry with a `Corrects:` line. With the
+   ledger in a register (`DEVHOST_LEDGER_REGISTER`) read them with `devhost-ledger show`; they and the
+   backlog in the shared folder are not in git, so there is nothing of theirs to commit.
 
 3. **Run the guards and the checks.**
 

@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# devhost-ledger: runs the devhost's ledger.py (installed under /usr/local/share/devhost): the ledger as
+# Markdown whether it is kept in files or in a register (show, tail, where), and the register's writes
+# (add, add-runs, back-runs; review keeps a ledger review beside it).
+exec python3 /usr/local/share/devhost/python/ledger.py "$@"

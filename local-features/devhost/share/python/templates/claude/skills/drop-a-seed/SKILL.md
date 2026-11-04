@@ -14,9 +14,10 @@ the Operator decides and trims.
 
 ## Steps
 
-1. **Read before asking.** The records in order: `docs/ledger/*.md` oldest first (skip an entry a
+1. **Read before asking.** The records in order: the ledger oldest first (`devhost-ledger show`: the
+   monthly files `docs/ledger/*.md`, or the register when the records are outside git) (skip an entry a
    later one `Corrects:`, keep the correction in the story), each `## Review` section,
-   `docs/night-shift/`, `docs/adr/`, the cost reports `docs/ledger/costs-*.md` (`task devhost:report`
+   `docs/night-shift/`, `docs/adr/`, the cost reports `costs-*.md` (`docs/ledger/`, or `<DEVHOST_RECORDS_DIR>/costs/`; `task devhost:report`
    rebuilds one), `git log`. Then the seed received: `docs/iterations/package/` (its `README.md`,
    its papers), and `docs/proposals/iteration-package.md`. A subagent that reads for you writes
    its brief to `docs/iterations/records-brief-<N>.md`, in the repository: a scratchpad does not

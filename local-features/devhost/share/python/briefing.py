@@ -27,8 +27,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import branches  # noqa: E402
+import ledger  # noqa: E402
 import report  # noqa: E402
-from devhost_common import (DECISIONS_HEADING, REVIEWED_MARKER, backlog_path, ledger_dir, month,  # noqa: E402
+from devhost_common import (DECISIONS_HEADING, REVIEWED_MARKER, backlog_path, month,  # noqa: E402
                             night_shift_dir, rel, review_every, repo_root, state_dir)
 
 ENTRY = re.compile(r"^### (\d{4}-\d{2}-\d{2})", re.M)
@@ -38,15 +39,16 @@ DEFAULT_SHARE = "/usr/local/share/devhost"  # where install.sh puts the share/ t
 
 
 def ledger_status(root: Path) -> list[str]:
-    folder = ledger_dir(root)
-    files = sorted(folder.glob("[0-9][0-9][0-9][0-9]-[0-9][0-9].md")) if folder.is_dir() else []
-    text = "".join(f.read_text(encoding="utf-8", errors="replace") + "\n" for f in files)
+    try:
+        text = "".join(t + "\n" for _, t in ledger.months(root))
+    except ledger.RegisterError as exc:
+        return [f"Ledger ({ledger.where(root)}) not readable: {exc}."]
     reviews = list(REVIEW.finditer(text))
     since = text[reviews[-1].end():] if reviews else text
     entries = ENTRY.findall(since)
     friction = [f for f in FRICTION.findall(since) if not f.strip().lower().startswith("none")]
     where = f"the last review ({reviews[-1].group(1)})" if reviews else "the start (no review yet)"
-    lines = [f"Ledger ({rel(root, folder)}/): {len(entries)} entries since {where}, {len(friction)} with friction."]
+    lines = [f"Ledger ({ledger.where(root)}): {len(entries)} entries since {where}, {len(friction)} with friction."]
     if len(entries) >= review_every():
         lines.append("Review due: run /ledger-review (it reads the cost report first).")
     return lines

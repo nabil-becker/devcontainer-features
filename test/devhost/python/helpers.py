@@ -25,7 +25,9 @@ PERSON = "Guinevere Pendragon"
 ENV_VARS = ("DEVHOST_ROOT", "DEVHOST_STATE", "DEVHOST_LEDGER_DIR", "DEVHOST_BACKLOG", "DEVHOST_LEXICON",
             "DEVHOST_ADR_DIR", "DEVHOST_MODEL_DIR", "DEVHOST_NIGHT_SHIFT_DIR", "DEVHOST_ENGINEER", "DEVHOST_REDACT_FILE",
             "DEVHOST_REDACT_WITH", "DEVHOST_FORBIDDEN_WORDS", "DEVHOST_BASE_REF", "CLAUDE_CONFIG_DIR",
-            "CLAUDE_PROJECT_DIR", "DEVHOST_SHARE", "DEVHOST_GH", "DEVHOST_REVIEW_EVERY", "DEVHOST_MONTHLY_TARGET", "DEVHOST_BAO", "OPENBAO_STATE_DIR", "BAO_ADDR")
+            "CLAUDE_PROJECT_DIR", "DEVHOST_SHARE", "DEVHOST_GH", "DEVHOST_REVIEW_EVERY", "DEVHOST_MONTHLY_TARGET", "DEVHOST_BAO", "OPENBAO_STATE_DIR", "BAO_ADDR",
+            "DEVHOST_RECORDS_DIR", "DEVHOST_COSTS_DIR", "DEVHOST_REVIEWS_DIR", "DEVHOST_LEDGER_REGISTER",
+            "DEVHOST_AGENTIC_REGISTER", "AGENTIC_REGISTER_LIB", "FAKE_AR")
 
 
 def load(name: str):
@@ -109,6 +111,68 @@ def fake_gh(base: Path, data: dict) -> None:
         "else:\n    print(json.dumps([{'headRefName': n, 'state': s} for n, v in data.items() for s in v]))\n", encoding="utf-8")
     script.chmod(script.stat().st_mode | stat.S_IXUSR)
     os.environ["DEVHOST_GH"] = str(script)
+
+
+# The vendored agentic-register library (its Markdown importer parses a new entry as the import did).
+AGENTIC_REGISTER_LIB = HERE.parents[2] / "local-features" / "agentic-register"
+
+FAKE_AR = """#!{python}
+# A stand-in for the agentic-register command: the entries are a JSON list in $FAKE_AR/entries.json,
+# every call is logged to $FAKE_AR/calls.jsonl. An entry whose title holds REFUSE is refused.
+import hashlib, json, os, sys, time
+d = os.environ["FAKE_AR"]
+args = sys.argv[1:]
+open(os.path.join(d, "calls.jsonl"), "a").write(json.dumps(args) + "\\n")
+path = os.path.join(d, "entries.json")
+entries = json.load(open(path)) if os.path.exists(path) else []
+def opt(name, default=None):
+    return args[args.index(name) + 1] if name in args else default
+cmd = args[0]
+if os.path.exists(os.path.join(d, "fail-" + cmd)):
+    print("agentic-register: " + cmd + " failed on purpose", file=sys.stderr); sys.exit(1)
+if cmd == "query":
+    print(json.dumps([dict(e, data=json.dumps(e["data"])) for e in entries]))
+elif cmd == "add":
+    data = json.load(open(opt("--file")))
+    if "REFUSE" in str(data.get("title", "")):
+        print(json.dumps({{"refused": "guarded", "detail": "the guard said no"}})); sys.exit(1)
+    i = hashlib.sha256(json.dumps([len(entries), data], sort_keys=True).encode()).hexdigest()
+    entries.append({{"id": i, "at": os.environ.get("FAKE_AT", "2026-11-05T10:00:00Z"), "principal": opt("--as"),
+                    "kind": opt("--kind"), "data": data}})
+    json.dump(entries, open(path, "w"))
+    print(json.dumps({{"id": i}}))
+elif cmd == "registers":
+    print(json.dumps([{{"name": opt("--register", "ledger"), "mirror": os.environ.get("FAKE_MIRROR", "")}}]))
+elif cmd in ("mirror", "verify"):
+    rc = int(open(os.path.join(d, cmd + "-rc")).read()) if os.path.exists(os.path.join(d, cmd + "-rc")) else 0
+    print("agentic-register: " + cmd + (" refused 1, 1 fork(s)" if rc else " ok")); sys.exit(rc)
+"""
+
+
+def fake_register(base: Path, entries: list[dict] | None = None) -> Path:
+    """Point DEVHOST_AGENTIC_REGISTER at a fake agentic-register holding `entries`; returns its folder."""
+    import stat
+    folder = base / "fake-ar"
+    folder.mkdir(exist_ok=True)
+    (folder / "entries.json").write_text(json.dumps(entries or []), encoding="utf-8")
+    script = base / "agentic-register"
+    script.write_text(FAKE_AR.format(python=sys.executable), encoding="utf-8")
+    script.chmod(script.stat().st_mode | stat.S_IXUSR)
+    os.environ["DEVHOST_AGENTIC_REGISTER"] = str(script)
+    os.environ["FAKE_AR"] = str(folder)
+    os.environ["DEVHOST_LEDGER_REGISTER"] = "ledger"
+    os.environ["AGENTIC_REGISTER_LIB"] = str(AGENTIC_REGISTER_LIB)
+    return folder
+
+
+def work(title: str, at: str = "2026-11-03T13:30:00Z", date: str | None = None, line: int = 1,
+         source: str = "docs/ledger/x.md", **data) -> dict:
+    """A register `work` entry as the query returns it; `date` makes it an imported (backfilled) one."""
+    import hashlib
+    d = {"title": title, "session": "host (s)", "friction": [{"tag": "untagged", "text": "none"}], **data}
+    if date:
+        d["backfill"] = {"source": source, "line": line, "date": date, "sha256": "0" * 64}
+    return {"id": hashlib.sha256((title + at).encode()).hexdigest(), "at": at, "principal": "host", "kind": "work", "data": d}
 
 
 def track(root: Path) -> None:

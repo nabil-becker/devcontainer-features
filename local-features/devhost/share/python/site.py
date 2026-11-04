@@ -28,8 +28,9 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from devhost_common import (COST_REPORT, DECISIONS_HEADING, MONTHLY, REVIEWED_MARKER, adr_dir, backlog_path,  # noqa: E402
-                            git, ledger_dir, night_shift_dir, review_every, read_text, redact_text, rel, repo_root,
+from ledger import RegisterError, months as ledger_months, where as ledger_where  # noqa: E402
+from devhost_common import (COST_REPORT, DECISIONS_HEADING, REVIEWED_MARKER, adr_dir, backlog_path,  # noqa: E402
+                            costs_dir, git, in_repo, night_shift_dir, review_every, read_text, redact_text, rel, repo_root,
                             tracked_files, write_text)
 
 SCHEMA = 1
@@ -207,7 +208,6 @@ def collect(root: Path, with_prs: bool = False) -> dict:
             texts[path] = read_text(files[path])
         return texts[path]
 
-    ledger_prefix = rel(root, ledger_dir(root)) + "/"
     adr_prefix = rel(root, adr_dir(root)) + "/"
     night_prefix = rel(root, night_shift_dir(root)) + "/"
     backlog = rel(root, backlog_path(root))
@@ -215,10 +215,26 @@ def collect(root: Path, with_prs: bool = False) -> dict:
     def under(prefix: str, pattern: re.Pattern) -> list[str]:
         return sorted(p for p in files if p.startswith(prefix) and "/" not in p[len(prefix):] and pattern.match(p[len(prefix):]))
 
-    todo = parse_todo(text(backlog)) if backlog in files else {"sections": []}
-    months = under(ledger_prefix, MONTHLY)
-    ledger = parse_ledger([(p, text(p)) for p in months])
-    costs = parse_costs([(p, text(p)) for p in under(ledger_prefix, COST_REPORT)])
+    # The records may live outside git (DEVHOST_RECORDS_DIR, a register): read where they are, and say so
+    # when they cannot be read, never show an empty ledger or backlog in silence.
+    backlog_file = backlog_path(root)
+    if backlog in files:
+        todo = parse_todo(text(backlog))
+    elif backlog_file.is_file() and not in_repo(root, backlog_file):
+        texts[backlog] = read_text(backlog_file)
+        todo = parse_todo(texts[backlog])
+    else:
+        todo = {"sections": []}
+        if not in_repo(root, backlog_file):
+            notes.append(f"Backlog not found at {backlog} (DEVHOST_RECORDS_DIR): is the shared folder mounted?")
+    try:
+        ledger = parse_ledger(ledger_months(root))
+    except RegisterError as exc:
+        notes.append(f"Ledger not readable ({ledger_where(root)}): {exc}")
+        ledger = parse_ledger([])
+    folder = costs_dir(root)
+    reports = sorted(p for p in folder.glob("costs-*.md") if COST_REPORT.match(p.name)) if folder.is_dir() else []
+    costs = parse_costs([(rel(root, p), read_text(p)) for p in reports])
 
     features = []
     for p in sorted(files):
@@ -259,6 +275,9 @@ def collect(root: Path, with_prs: bool = False) -> dict:
         except OSError:
             continue  # tracked but deleted in the working tree
         docs.append({"path": p, "title": first_heading(t, p.rsplit("/", 1)[-1]), "group": group_of(p), "text": t})
+    if backlog not in files and backlog in texts:   # the backlog kept outside git is still a document of the page
+        docs.append({"path": backlog, "title": first_heading(texts[backlog], "TODO.md"), "group": "Way of working",
+                     "text": texts[backlog]})
     docs.sort(key=lambda d: (GROUPS.index(d["group"]), d["path"]))
 
     prs = open_prs(root, notes) if with_prs else None
