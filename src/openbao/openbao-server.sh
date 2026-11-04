@@ -16,8 +16,9 @@
 #                                         OPENBAO_TASK_ALL variables the Taskfile sets)
 #   openbao-server approle-revoke         ROLE=<name> (OPENBAO_TASK_ROLE)
 #
-# Every command that handles a share or a token (init, unseal, seal) refuses inside an agent's job
-# and, for init and unseal, without a terminal: the shares and the token must never reach a
+# Every command that handles a share or a token (init, unseal, seal, and approle-issue with
+# POLICY_PATH and approle-revoke, which make a root token from the shares for their one step and
+# revoke it after) refuses inside an agent's job and, for all but seal, without a terminal: the shares and the token must never reach a
 # transcript, which the scribe reads. Exit codes: dcf-secret's numbers where they mean the same
 # (10 unreachable, 11 sealed or not initialised, 12 no valid token, 14 no such role), 3 refused
 # (an agent's job, no terminal, the wrong mode), 2 a wrong call, 1 a step failed.
@@ -123,9 +124,12 @@ unseal_loop() {
 # ---------------------------------------------------------------------------------- init ----
 operator_policy() {
   cat <<EOF
-# The Operator (userpass): the secrets, the snapshot read, AppRole roles and their secret ids, the
-# policies the AppRole tasks write (approle-*), and sealing. Not the rest of sys/: no
-# snapshot-force, no audit, no policy except approle-*. Written by openbao:init.
+# The Operator (userpass): the secrets, the snapshot read, sealing, reissuing the secret ids of
+# AppRole roles that already exist, and starting or cancelling a root-token generation (which only
+# the unseal shares can complete). NOT any policy (sys/policies/acl/*), not the making, changing or
+# deleting of a role, not snapshot-force, not audit: a token that could write a policy could give a
+# role snapshot-force. Creating and deleting roles use a root token made from the shares for that
+# step only. Written by openbao:init.
 path "$mount/*" {
   capabilities = ["create", "read", "update", "patch", "delete", "list"]
 }
@@ -138,11 +142,20 @@ path "sys/seal" {
 path "auth/approle/role" {
   capabilities = ["list"]
 }
-path "auth/approle/role/*" {
-  capabilities = ["create", "read", "update", "delete", "list"]
+path "auth/approle/role/+/role-id" {
+  capabilities = ["read"]
 }
-path "sys/policies/acl/approle-*" {
-  capabilities = ["create", "read", "update", "delete"]
+path "auth/approle/role/+/secret-id" {
+  capabilities = ["create", "update", "list"]
+}
+path "auth/approle/role/+/secret-id-accessor/destroy" {
+  capabilities = ["update"]
+}
+path "sys/generate-root-token/attempt" {
+  capabilities = ["read", "update", "delete"]
+}
+path "sys/generate-root-token/update" {
+  capabilities = ["update"]
 }
 EOF
 }
@@ -253,6 +266,7 @@ EOF
 
   local rc=0
   (
+    # shellcheck disable=SC2030  # in this subshell only
     export BAO_TOKEN="$root"
     configure_store
   ) || rc=$?
@@ -364,10 +378,86 @@ cmd_status() {
 }
 
 # --------------------------------------------------------------------------------- approle ----
+# A root token from the unseal shares, for one step. `bao operator generate-root` (OTP flow): the
+# attempt is started with a one-time password kept in a variable, the Operator types the shares at
+# bao's own hidden prompt (as in unseal), the encoded token is decoded with the OTP, the step runs
+# with the token (BAO_TOKEN in a subshell, nowhere else), and the token is revoked straight after,
+# also on failure or an interrupt (the attempt is cancelled when it was abandoned). No share, OTP
+# or token is printed, logged or put in a file; the OTP is the one argument (useless without the
+# encoded token, which goes over stdin).
+root_otp="" root_tok="" root_started=0 root_done=0
+root_cleanup() {
+  if [ -n "$root_tok" ]; then
+    BAO_TOKEN="$root_tok" bao token revoke -self >/dev/null 2>&1 || echo "$prog: THE ROOT TOKEN COULD NOT BE REVOKED: revoke it now (bao token revoke -self with it), or seal the server" >&2
+    root_tok=""
+  fi
+  if [ "$root_started" -eq 1 ] && [ "$root_done" -eq 0 ]; then
+    bao operator generate-root -cancel >/dev/null 2>&1 || true
+  fi
+  root_started=0
+  root_otp=""
+}
+as_root() { # <task> <what it is for> <command> [args]: the command runs with a root token
+  local task="$1" what="$2" out req n=0 enc rc=0
+  shift 2
+  guard "$task" "it needs a root token made from the unseal shares, which must never land in a transcript"
+  need_tty "$task"
+  trap 'root_cleanup' EXIT
+  trap 'root_cleanup; exit 130' INT TERM HUP
+  root_otp="$(bao operator generate-root -generate-otp)" && [ -n "$root_otp" ] || die 1 "bao could not make a one-time password for the root token (does the Operator's login still hold? task openbao:login)"
+  out="$(bao operator generate-root -init -otp="$root_otp" -format=json 2>&1)" || {
+    echo "$prog: bao could not start a root token generation. One may already be in progress (bao operator generate-root -status; -cancel ends it)." >&2
+    die 3 "nothing was changed"
+  }
+  root_started=1
+  req="$(sed -n 's/.*"required"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' <<<"$out" | head -n 1)"
+  [ -n "$req" ] || req=2
+  echo "openbao: $what needs a root token, made from $req unseal shares typed at the prompt (hidden); it is used for this step only and revoked straight after." >&2
+  while :; do
+    n=$((n + 1))
+    [ "$n" -le $((req + 2)) ] || die 1 "the root token generation did not complete after $((n - 1)) shares: check the shares and run the task again (the attempt is cancelled)"
+    # bao's own prompt goes to its stdout, which is captured here (the JSON is read back): so say it
+    printf 'Unseal share %s of %s (hidden): ' "$n" "$req" >&2
+    out="$(bao operator generate-root -otp="$root_otp" -format=json)" || { printf '\n' >&2; die 1 "bao could not take that share; the attempt is cancelled: run the task again"; }
+    printf '\n' >&2
+    grep -Eq '"complete"[[:space:]]*:[[:space:]]*true' <<<"$out" && break
+  done
+  root_done=1
+  enc="$(sed -n 's/.*"encoded_token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$out" | head -n 1)"
+  out=""
+  root_tok="$(printf '%s' "$enc" | bao operator generate-root -decode=- -otp="$root_otp")" && [ -n "$root_tok" ] || die 1 "the root token could not be decoded: the shares were probably wrong; run the task again"
+  enc=""
+  root_otp=""
+  (
+    # shellcheck disable=SC2031  # the token is meant to live in this subshell only
+    export BAO_TOKEN="$root_tok"
+    "$@"
+  ) || rc=$?
+  root_cleanup
+  trap - EXIT INT TERM HUP
+  return "$rc"
+}
+
+# What the root token is used for.
+create_role() { # <role> <policy> <ppath>
+  # The role may read this one secret and nothing else (not even a listing).
+  printf 'path "%s/data/%s" {\n  capabilities = ["read"]\n}\n' "${3%%/*}" "${3#*/}" | bao policy write "$2" - >/dev/null || { say "could not write the policy $2"; return 1; }
+  # Loopback only: a stolen secret id works from inside this container, and the token it gives
+  # too. Short tokens (5 minutes, at most 15); secret ids that do not expire, so the backs do
+  # not stop on a date nobody watches (they are reissued instead).
+  bao write "auth/approle/role/$1" token_policies="$2" token_ttl=5m token_max_ttl=15m \
+    secret_id_ttl=0 secret_id_num_uses=0 secret_id_bound_cidrs=127.0.0.1/32 token_bound_cidrs=127.0.0.1/32 >/dev/null || { say "could not write the role $1"; return 1; }
+}
+delete_role() { # <role>
+  # Deleting a role destroys the secret ids issued under it (OpenBao's role deletion flushes them).
+  bao delete "auth/approle/role/$1" >/dev/null || { say "could not delete the role $1"; return 1; }
+  bao policy delete "approle-$1" >/dev/null 2>&1 || true
+}
+
 role_ok() { [[ "$1" =~ ^[a-z][a-z0-9_-]{0,63}$ ]]; }
 ppath_ok() { [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)+$ ]]; }
 list_keys() { bao list "$1" 2>/dev/null | sed '1,2d'; }
-role_exists() { bao read "auth/approle/role/$1" >/dev/null 2>&1; }
+role_exists() { bao read "auth/approle/role/$1/role-id" >/dev/null 2>&1; }
 
 # One valid secret id per role: the old ones are destroyed (issuing a new one does not end the
 # others of the role, so their accessors are destroyed first), then one is made and written, with
@@ -397,6 +487,12 @@ cmd_approle_issue() {
   else
     [ -n "$role" ] || die 2 "name a role (ROLE=<name>, lower case, with POLICY_PATH=<mount/path> the first time) or ALL=1"
   fi
+  [ -z "$ppath" ] || {
+    ppath_ok "$ppath" || die 2 "'$ppath' is not <mount>/<path> (letters, digits, . _ - and / between parts)"
+    role_ok "$role" || die 2 "'$role' is not a role name (lower case letters, digits, - and _, starting with a letter)"
+    guard approle:issue "making a role needs a root token made from the unseal shares, which must never land in a transcript"
+    need_tty approle:issue
+  }
   preflight
   if [ -n "$all" ]; then
     local r n=0 failed=0
@@ -412,17 +508,11 @@ cmd_approle_issue() {
   local policy="approle-$role"
   if [ -n "$ppath" ]; then
     ppath_ok "$ppath" || die 2 "'$ppath' is not <mount>/<path> (letters, digits, . _ - and / between parts)"
-    # The role may read this one secret and nothing else (not even a listing).
-    printf 'path "%s/data/%s" {\n  capabilities = ["read"]\n}\n' "${ppath%%/*}" "${ppath#*/}" | bao policy write "$policy" - >/dev/null || die 1 "could not write the policy $policy"
+    # Making a role writes a policy: that is the shares' step (a token that could write any policy
+    # could give a role snapshot-force). Refused inside an agent's job and without a terminal.
+    as_root approle:issue "making the role $role (it writes a policy)" create_role "$role" "$policy" "$ppath" || die 1 "the role $role was not made (the messages above say why); the root token is revoked"
   elif ! role_exists "$role"; then
-    die 2 "role '$role' does not exist: give POLICY_PATH=<mount/path> (the one secret it may read) the first time"
-  fi
-  if [ -n "$ppath" ]; then
-    # Loopback only: a stolen secret id works from inside this container, and the token it gives
-    # too. Short tokens (5 minutes, at most 15); secret ids that do not expire, so the backs do
-    # not stop on a date nobody watches (they are reissued instead).
-    bao write "auth/approle/role/$role" token_policies="$policy" token_ttl=5m token_max_ttl=15m \
-      secret_id_ttl=0 secret_id_num_uses=0 secret_id_bound_cidrs=127.0.0.1/32 token_bound_cidrs=127.0.0.1/32 >/dev/null || die 1 "could not write the role $role"
+    die 2 "role '$role' does not exist: give POLICY_PATH=<mount/path> (the one secret it may read) the first time; making a role asks for the unseal shares"
   fi
   reissue_role "$role" || exit 1
 }
@@ -432,11 +522,12 @@ cmd_approle_revoke() {
   local role="${OPENBAO_TASK_ROLE:-}"
   [ -n "$role" ] || die 2 "name a role: ROLE=<name>"
   role_ok "$role" || die 2 "'$role' is not a role name"
+  guard approle:revoke "deleting a role needs a root token made from the unseal shares, which must never land in a transcript"
+  need_tty approle:revoke
   preflight
   role_exists "$role" || die 14 "no such role '$role'"
-  # Deleting a role destroys the secret ids issued under it (OpenBao's role deletion flushes them).
-  bao delete "auth/approle/role/$role" >/dev/null || die 1 "could not delete the role $role"
-  bao policy delete "approle-$role" >/dev/null 2>&1 || true
+  # Deleting a role, and its policy, is the shares' step (see approle:issue).
+  as_root approle:revoke "deleting the role $role" delete_role "$role" || die 1 "the role $role was not deleted (the messages above say why); the root token is revoked"
   rm -rf "${dir:?}/approle/$role"
   echo "openbao: role $role deleted with its secret ids and its policy, and its files under $dir/approle removed; a token it already made lives at most 15 minutes (token_max_ttl)" >&2
 }

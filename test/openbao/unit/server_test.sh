@@ -15,7 +15,12 @@
 #    configuration in order, the root token used only for it and then revoked, and a failed step
 #    revoking it too; only -pgp-keys accepted;
 #  - unseal and seal; status in every state with the backup warning; the AppRole tasks (a role's
-#    policy, loopback binding, one valid secret id written 0600 and never printed, ALL=1, revoke).
+#    policy, loopback binding, one valid secret id written 0600 and never printed, ALL=1, revoke): the
+#    Operator's token (the stub refuses it a policy write and a role write or delete) only reissues;
+#    making and deleting a role go through the root token the shares make (generate-root, two shares
+#    typed under a pseudo-terminal, the token used for that step only and revoked after, also after a
+#    failing step, a wrong share cancelling the attempt), refused inside an agent's job and without a
+#    terminal.
 # Part of `task lint` (`task test:openbao-unit`). SCRIPT points the test at another copy of the
 # script (used to show a test fails when the code it covers is broken). Needs task, and script(1)
 # for the terminal tests (skipped without it).
@@ -43,6 +48,7 @@ cat > "$T/bin/bao" <<'STUB'
 echo "$*" >> "$STUB_LOG"
 echo "$1 $2 token=${BAO_TOKEN-unset}" >> "$STUB_DIR/tokens.log"
 st="$(cat "$STUB_DIR/stubstate" 2>/dev/null || echo unsealed)"
+deny_operator() { [ "${BAO_TOKEN:-}" != s.OPERATOR ] || { echo "Error: permission denied" >&2; exit 2; }; }
 have() { grep -qxF "$1" "$STUB_DIR/have" 2>/dev/null; }
 add() { echo "$1" >> "$STUB_DIR/have"; }
 drop() { grep -vxF "$1" "$STUB_DIR/have" > "$STUB_DIR/have.new" 2>/dev/null; mv "$STUB_DIR/have.new" "$STUB_DIR/have"; }
@@ -71,19 +77,41 @@ case "$1 $2" in
   "read -format=json") echo '{"data": {"is_self": true}}' | sed 's/"is_self": true/"is_self": true/'; exit 0 ;;
   "secrets enable") [ -z "${STUB_STEP_FAIL:-}" ] || exit 2; add "sys/mounts/dcf"; exit 0 ;;
   "auth enable") add "sys/auth/$3"; exit 0 ;;
-  "policy write") cat > "$STUB_DIR/policy.$3"; exit 0 ;;
-  "policy delete") rm -f "$STUB_DIR/policy.$3"; exit 0 ;;
+  "operator generate-root")
+    case "$*" in
+      *-generate-otp*) echo "OTP-STUB-1234"; exit 0 ;;
+      *-init*)
+        [ ! -e "$STUB_DIR/gr.attempt" ] || { echo "Error: a root generation attempt is already in progress" >&2; exit 2; }
+        echo 0 > "$STUB_DIR/gr.attempt"
+        echo '{"nonce": "n1", "started": true, "progress": 0, "required": 2, "complete": false, "encoded_token": ""}'; exit 0 ;;
+      *-cancel*) rm -f "$STUB_DIR/gr.attempt"; echo cancelled >> "$STUB_DIR/gr.cancelled"; exit 0 ;;
+      *-decode=-*) cat > /dev/null; echo "s.GENROOT"; exit 0 ;;
+      *)
+        [ -e "$STUB_DIR/gr.attempt" ] || exit 2
+        IFS= read -rs share
+        [ "$share" != BADSHARE ] || { echo "Error posting unseal key: stub" >&2; exit 2; }
+        n=$(( $(cat "$STUB_DIR/gr.attempt") + 1 )); echo "$n" > "$STUB_DIR/gr.attempt"
+        if [ "$n" -ge 2 ]; then
+          rm -f "$STUB_DIR/gr.attempt"
+          echo '{"nonce": "n1", "started": true, "progress": 2, "required": 2, "complete": true, "encoded_token": "ENCODED-STUB"}'
+        else
+          echo '{"nonce": "n1", "started": true, "progress": 1, "required": 2, "complete": false, "encoded_token": ""}'
+        fi
+        exit 0 ;;
+    esac ;;
+  "policy write") deny_operator; cat > "$STUB_DIR/policy.$3"; exit 0 ;;
+  "policy delete") deny_operator; rm -f "$STUB_DIR/policy.$3"; exit 0 ;;
   "list auth/approle/role")
     roles="$(sed -n 's#^auth/approle/role/##p' "$STUB_DIR/have" 2>/dev/null)"
     [ -n "$roles" ] || { echo "No value found" >&2; exit 2; }
     printf 'Keys\n----\n%s\n' "$roles"; exit 0 ;;
-  "delete auth/approle/role/"*) drop "$2"; rm -f "$STUB_DIR/acc.${2##*/}"; exit 0 ;;
+  "delete auth/approle/role/"*) deny_operator; drop "$2"; rm -f "$STUB_DIR/acc.${2##*/}"; exit 0 ;;
 esac
 case "$1" in
   read)
     case "$2" in
       -field=role_id) echo "ROLEID-${3#auth/approle/role/}" | sed 's#/role-id##'; exit 0 ;;
-      *) have "$2" && exit 0; exit 2 ;;
+      *) have "${2%/role-id}" && exit 0; exit 2 ;;
     esac ;;
   list)
     r="${2#auth/approle/role/}"; r="${r%/secret-id}"
@@ -101,7 +129,7 @@ case "$1" in
         echo "ACC-$n" >> "$STUB_DIR/acc.$r"
         printf 'SECRETID-%s' "$n"; exit 0 ;;
       "auth/userpass/users/operator "*) cat > "$STUB_DIR/userpass.stdin"; exit 0 ;;
-      "auth/approle/role/"*) add "$2"; exit 0 ;;
+      "auth/approle/role/"*) deny_operator; [ -z "${STUB_ROLE_FAIL:-}" ] || { echo "Error writing role: stub" >&2; exit 2; }; add "$2"; exit 0 ;;
     esac ;;
   delete) exit 0 ;;
 esac
@@ -131,7 +159,7 @@ reset() { # <state>: a fresh stub state and state dir
   : > "$LOG"
 }
 envs() { # the environment every run gets, the mode first
-  echo "PATH=$T/bin:/usr/local/bin:/usr/bin:/bin" "HOME=$T/home" "STUB_LOG=$LOG" "STUB_DIR=$T" "OPENBAO_STATE_DIR=$T/state" "OPENBAO_FEATURE_DIR=$T/feat-${MODE_FEAT:-server}"
+  echo "PATH=$T/bin:/usr/local/bin:/usr/bin:/bin" "HOME=$T/home" "STUB_LOG=$LOG" "STUB_DIR=$T" "OPENBAO_STATE_DIR=$T/state" "OPENBAO_FEATURE_DIR=$T/feat-${MODE_FEAT:-server}" ${OPTOK:+"BAO_TOKEN=$OPTOK"}
 }
 MODE_FEAT=server
 # run [VAR=value ...] -- <args>: stdout+stderr in $out, exit status in $rc, no terminal
@@ -403,48 +431,20 @@ lacks "status in client mode: no backup warning" "backup:" "$out"
 MODE_FEAT=server
 
 # ---------------------------------------------------------------------------------- approle ----
+# The Operator's token (OPTOK) may reissue secret ids of roles that exist; the stub answers
+# "permission denied" to it for a policy write or delete and for writing or deleting a role. Making
+# and deleting a role therefore only works through the root token the shares make (as_root).
+OPTOK=s.OPERATOR
+SH='SHARE-ONE;SHARE-TWO'
+mkrole() { # <role> <mount/path>: through a terminal, typing two shares
+  term "$SH" OPENBAO_TASK_ROLE="$1" OPENBAO_TASK_POLICY_PATH="$2" -- approle-issue
+}
+# refusals that come before any share or call, and need no terminal
 reset unsealed
-run OPENBAO_TASK_ROLE=scribe OPENBAO_TASK_POLICY_PATH=dcf/register/scribe -- approle-issue
-check "approle:issue a new role: exit 0" 0 "$rc"
-check "the policy is named after the role and reads that one secret" 'path "dcf/data/register/scribe" {' "$(sed -n 1p "$T/policy.approle-scribe")"
-check "and only reads" '  capabilities = ["read"]' "$(sed -n 2p "$T/policy.approle-scribe")"
-rolecall="$(grep '^write auth/approle/role/scribe token_policies' "$LOG")"
-has "the role is bound to loopback for the secret id" "secret_id_bound_cidrs=127.0.0.1/32" "$rolecall"
-has "and for the token" "token_bound_cidrs=127.0.0.1/32" "$rolecall"
-has "the token lives 5 minutes, at most 15" "token_ttl=5m token_max_ttl=15m" "$rolecall"
-has "secret ids do not expire" "secret_id_ttl=0 secret_id_num_uses=0" "$rolecall"
-has "the role carries its policy" "token_policies=approle-scribe" "$rolecall"
-check "the secret id is written" "SECRETID-1" "$(cat "$T/state/approle/scribe/secret_id")"
-check "with the role id" "ROLEID-scribe" "$(cat "$T/state/approle/scribe/role_id")"
-check "the secret id file is mode 600" 600 "$(stat -c %a "$T/state/approle/scribe/secret_id")"
-check "the folder is private" 700 "$(stat -c %a "$T/state/approle/scribe")"
-lacks "the secret id is never printed" "SECRETID" "$out"
-lacks "nor the role id" "ROLEID" "$out"
-lacks "nor put in an argument" "SECRETID" "$(calls)"
-# reissue: exactly one valid secret id afterwards
-: > "$LOG"
-run OPENBAO_TASK_ROLE=scribe -- approle-issue
-check "reissuing an existing role: exit 0" 0 "$rc"
-check "the old secret id's accessor is destroyed" 1 "$(grep -c 'secret-id-accessor/destroy secret_id_accessor=ACC-1' "$LOG")"
-check "a new secret id replaces it" "SECRETID-2" "$(cat "$T/state/approle/scribe/secret_id")"
-check "one valid secret id is left" "ACC-2" "$(cat "$T/acc.scribe")"
-check "an existing role's settings are not rewritten without POLICY_PATH" 0 "$(grep -c '^write auth/approle/role/scribe token_policies' "$LOG")"
-# ALL=1
-run OPENBAO_TASK_ROLE=librarian OPENBAO_TASK_POLICY_PATH=dcf/register/librarian -- approle-issue
-: > "$LOG"
-run OPENBAO_TASK_ALL=1 -- approle-issue
-check "ALL=1: exit 0" 0 "$rc"
-check "ALL=1 reissues every role (in the order the server lists them)" "SECRETID-5 SECRETID-4" "$(printf '%s %s' "$(cat "$T/state/approle/librarian/secret_id")" "$(cat "$T/state/approle/scribe/secret_id")")"
-check "ALL=1: the old ids are destroyed" 2 "$(grep -c 'secret-id-accessor/destroy' "$LOG")"
-check "ALL=1 rewrites no role" 0 "$(grep -c '^write auth/approle/role/[a-z]* token_policies' "$LOG")"
-reset unsealed
-run OPENBAO_TASK_ALL=1 -- approle-issue
-check "ALL=1 with no roles: exit 0" 0 "$rc"
-has "ALL=1 with no roles says so" "no AppRole roles" "$out"
-# refusals and preflight
 run OPENBAO_TASK_ROLE=newrole -- approle-issue
 check "a new role without POLICY_PATH: exit 2" 2 "$rc"
 has "says to give POLICY_PATH" "POLICY_PATH" "$out"
+has "and that making a role asks for the shares" "unseal shares" "$out"
 run OPENBAO_TASK_ROLE='Bad Role' OPENBAO_TASK_POLICY_PATH=dcf/x -- approle-issue
 check "a bad role name: exit 2" 2 "$rc"
 run OPENBAO_TASK_ROLE=ok OPENBAO_TASK_POLICY_PATH='dcf' -- approle-issue
@@ -455,28 +455,145 @@ run OPENBAO_TASK_ALL=1 OPENBAO_TASK_ROLE=x -- approle-issue
 check "ALL=1 with a role: exit 2" 2 "$rc"
 run -- approle-issue
 check "no role and no ALL: exit 2" 2 "$rc"
-reset sealed
-run OPENBAO_TASK_ROLE=x OPENBAO_TASK_POLICY_PATH=dcf/x -- approle-issue
-check "approle:issue on a sealed server: exit 11" 11 "$rc"
-reset unsealed
-run OPENBAO_TASK_ROLE=x OPENBAO_TASK_POLICY_PATH=dcf/x STUB_LOOKUP_RC=2 -- approle-issue
-check "approle:issue without a login: exit 12" 12 "$rc"
-check "approle:issue without a login writes nothing" 0 "$(grep -c '^write\|^policy' "$LOG")"
-reset down
-run OPENBAO_TASK_ROLE=x OPENBAO_TASK_POLICY_PATH=dcf/x -- approle-issue
-check "approle:issue with the server unreachable: exit 10" 10 "$rc"
-# revoke
-reset unsealed
-run OPENBAO_TASK_ROLE=scribe OPENBAO_TASK_POLICY_PATH=dcf/register/scribe -- approle-issue
-run OPENBAO_TASK_ROLE=scribe -- approle-revoke
-check "approle:revoke: exit 0" 0 "$rc"
-check "approle:revoke deletes the role (OpenBao ends its secret ids with it)" 1 "$(grep -c '^delete auth/approle/role/scribe' "$LOG")"
-check "approle:revoke deletes the role's policy" 1 "$(grep -c '^policy delete approle-scribe' "$LOG")"
-check "approle:revoke removes the files" "no" "$([ -e "$T/state/approle/scribe" ] && echo yes || echo no)"
-run OPENBAO_TASK_ROLE=scribe -- approle-revoke
-check "approle:revoke of an unknown role: exit 14" 14 "$rc"
 run -- approle-revoke
 check "approle:revoke without a role: exit 2" 2 "$rc"
+# making and deleting a role refuse inside an agent's job and without a terminal, before any call
+for v in DEVHOST_JOB_CHILD CLAUDECODE; do
+  reset unsealed
+  run "$v=1" OPENBAO_TASK_ROLE=scribe OPENBAO_TASK_POLICY_PATH=dcf/register/scribe -- approle-issue
+  check "approle:issue with POLICY_PATH refuses inside an agent's job ($v): exit 3" 3 "$rc"
+  has "approle:issue ($v): the line names the variable" "refuses to run inside an agent's job ($v is set)" "$out"
+  check "approle:issue ($v): bao is never called" "" "$(calls)"
+  run "$v=1" OPENBAO_TASK_ROLE=scribe -- approle-revoke
+  check "approle:revoke refuses inside an agent's job ($v): exit 3" 3 "$rc"
+  check "approle:revoke ($v): bao is never called" "" "$(calls)"
+done
+reset unsealed
+run OPENBAO_TASK_ROLE=scribe OPENBAO_TASK_POLICY_PATH=dcf/register/scribe -- approle-issue
+check "approle:issue with POLICY_PATH without a terminal: exit 3" 3 "$rc"
+has "approle:issue without a terminal says so" "needs a terminal" "$out"
+check "approle:issue without a terminal: bao is never called" "" "$(calls)"
+run OPENBAO_TASK_ROLE=scribe -- approle-revoke
+check "approle:revoke without a terminal: exit 3" 3 "$rc"
+check "approle:revoke without a terminal: bao is never called" "" "$(calls)"
+# a plain reissue of a role that exists needs no terminal and no agent-job refusal
+reset unsealed
+run CLAUDECODE=1 OPENBAO_TASK_ROLE=ghost -- approle-issue
+check "a reissue is not refused inside an agent's job (the role is just missing: exit 2)" 2 "$rc"
+
+if [ "$have_script" -eq 1 ]; then
+  # making a role: the shares make a root token, used for the policy and the role only
+  reset unsealed
+  mkrole scribe dcf/register/scribe
+  check "approle:issue a new role: exit 0" 0 "$rc"
+  has "it says it asks for the shares" "unseal shares typed at the prompt" "$out"
+  check "the policy is named after the role and reads that one secret" 'path "dcf/data/register/scribe" {' "$(sed -n 1p "$T/policy.approle-scribe")"
+  check "and only reads" '  capabilities = ["read"]' "$(sed -n 2p "$T/policy.approle-scribe")"
+  rolecall="$(grep '^write auth/approle/role/scribe token_policies' "$LOG")"
+  has "the role is bound to loopback for the secret id" "secret_id_bound_cidrs=127.0.0.1/32" "$rolecall"
+  has "and for the token" "token_bound_cidrs=127.0.0.1/32" "$rolecall"
+  has "the token lives 5 minutes, at most 15" "token_ttl=5m token_max_ttl=15m" "$rolecall"
+  has "secret ids do not expire" "secret_id_ttl=0 secret_id_num_uses=0" "$rolecall"
+  has "the role carries its policy" "token_policies=approle-scribe" "$rolecall"
+  check "the secret id is written" "SECRETID-1" "$(cat "$T/state/approle/scribe/secret_id")"
+  check "with the role id" "ROLEID-scribe" "$(cat "$T/state/approle/scribe/role_id")"
+  check "the secret id file is mode 600" 600 "$(stat -c %a "$T/state/approle/scribe/secret_id")"
+  check "the folder is private" 700 "$(stat -c %a "$T/state/approle/scribe")"
+  check "the policy and the role were written with the generated root token" 2 "$(grep -cE '^(policy write|write auth/approle/role/scribe) token=s.GENROOT' "$T/tokens.log")"
+  check "the secret id was made with the Operator's token, not the root one" "yes" "$(grep -q '^write -f token=s.OPERATOR' "$T/tokens.log" && ! grep -q '^write -f token=s.GENROOT' "$T/tokens.log" && echo yes)"
+  check "the root token is revoked with itself, after the step" "yes" "$(grep -q '^token revoke token=s.GENROOT' "$T/tokens.log" && echo yes)"
+  order="$(grep -nE '^(operator generate-root|policy write|write auth/approle/role/scribe token_policies|token revoke)' "$LOG" | sed 's/^[0-9]*://' | awk '{print $1" "$2}' | paste -sd'|')"
+  check "the order: one-time password, init, two shares, decode, the step, the revoke" "operator generate-root|operator generate-root|operator generate-root|operator generate-root|operator generate-root|policy write|write auth/approle/role/scribe|token revoke" "$order"
+  lacks "no share is in the log of calls" "SHARE-" "$(calls)"
+  lacks "no share is echoed to the screen" "SHARE-" "$out"
+  lacks "the root token is not on the screen" "GENROOT" "$out"
+  lacks "no encoded token is on the screen" "ENCODED-STUB" "$out"
+  check "no share or token is written anywhere in the state dir" "" "$(grep -rl 'SHARE-\|GENROOT\|ENCODED' "$T/state" 2>/dev/null)"
+  check "the attempt is not left open" "no" "$([ -e "$T/gr.attempt" ] && echo yes || echo no)"
+  # the Operator's token alone cannot do what the shares do
+  rc=0; out="$(BAO_TOKEN=s.OPERATOR bash -c "PATH=$T/bin:\$PATH STUB_LOG=$LOG STUB_DIR=$T bao policy write approle-evil -" 2>&1 </dev/null)" || rc=$?
+  check "the Operator's token cannot write a policy (stub playing the server's answer)" 2 "$rc"
+  has "permission denied" "permission denied" "$out"
+  # reissue: exactly one valid secret id afterwards, the Operator's token only
+  : > "$LOG"; : > "$T/tokens.log"
+  run OPENBAO_TASK_ROLE=scribe -- approle-issue
+  check "reissuing an existing role: exit 0" 0 "$rc"
+  check "the old secret id's accessor is destroyed" 1 "$(grep -c 'secret-id-accessor/destroy secret_id_accessor=ACC-1' "$LOG")"
+  check "a new secret id replaces it" "SECRETID-2" "$(cat "$T/state/approle/scribe/secret_id")"
+  check "one valid secret id is left" "ACC-2" "$(cat "$T/acc.scribe")"
+  check "an existing role's settings are not rewritten without POLICY_PATH" 0 "$(grep -c '^write auth/approle/role/scribe token_policies' "$LOG")"
+  check "a reissue never asks for the shares (no generate-root call)" 0 "$(grep -c 'generate-root' "$LOG")"
+  check "a reissue uses only the Operator's token" 0 "$(grep -vc 'token=s.OPERATOR' "$T/tokens.log")"
+  # ALL=1
+  mkrole librarian dcf/register/librarian
+  : > "$LOG"; : > "$T/tokens.log"
+  run OPENBAO_TASK_ALL=1 -- approle-issue
+  check "ALL=1: exit 0" 0 "$rc"
+  check "ALL=1 reissues every role (in the order the server lists them)" "SECRETID-5 SECRETID-4" "$(printf '%s %s' "$(cat "$T/state/approle/librarian/secret_id")" "$(cat "$T/state/approle/scribe/secret_id")")"
+  check "ALL=1: the old ids are destroyed" 2 "$(grep -c 'secret-id-accessor/destroy' "$LOG")"
+  check "ALL=1 rewrites no role" 0 "$(grep -c '^write auth/approle/role/[a-z]* token_policies' "$LOG")"
+  check "ALL=1 uses only the Operator's token, no shares" 0 "$(grep -c 'generate-root' "$LOG")"
+  reset unsealed
+  run OPENBAO_TASK_ALL=1 -- approle-issue
+  check "ALL=1 with no roles: exit 0" 0 "$rc"
+  has "ALL=1 with no roles says so" "no AppRole roles" "$out"
+  # a wrong share: the attempt is cancelled, the role is not made, no root token exists to revoke
+  reset unsealed
+  rm -f "$T/gr.cancelled"
+  term "BADSHARE;SHARE-TWO" OPENBAO_TASK_ROLE=bad OPENBAO_TASK_POLICY_PATH=dcf/x -- approle-issue
+  check "a refused share: exit 1" 1 "$rc"
+  check "the attempt is cancelled" "cancelled" "$(cat "$T/gr.cancelled" 2>/dev/null | head -n 1)"
+  check "no role was made" 0 "$(grep -c '^write auth/approle/role/bad' "$LOG")"
+  check "no policy was written" 0 "$(grep -c '^policy write' "$LOG")"
+  # an attempt already running (someone else's) is not taken over or cancelled
+  reset unsealed
+  echo 1 > "$T/gr.attempt"
+  rm -f "$T/gr.cancelled"
+  mkrole bad dcf/x
+  check "an attempt already in progress: exit 3" 3 "$rc"
+  check "and it is left alone (not cancelled)" "no" "$([ -e "$T/gr.cancelled" ] && echo yes || echo no)"
+  rm -f "$T/gr.attempt"
+  # a failing step still revokes the root token
+  reset unsealed
+  : > "$T/tokens.log"
+  term "$SH" STUB_ROLE_FAIL=1 OPENBAO_TASK_ROLE=bad OPENBAO_TASK_POLICY_PATH=dcf/x -- approle-issue
+  check "a failing step: exit 1" 1 "$rc"
+  check "a failing step still revokes the root token" "yes" "$(grep -q '^token revoke token=s.GENROOT' "$T/tokens.log" && echo yes)"
+  check "a failing step leaves no attempt open" "no" "$([ -e "$T/gr.attempt" ] && echo yes || echo no)"
+  : > "$LOG"
+  # preflight: sealed, no login, unreachable
+  reset sealed
+  mkrole x dcf/x
+  check "approle:issue on a sealed server: exit 11" 11 "$rc"
+  check "and asks for no share" 0 "$(grep -c 'generate-root' "$LOG")"
+  reset unsealed
+  term "$SH" STUB_LOOKUP_RC=2 OPENBAO_TASK_ROLE=x OPENBAO_TASK_POLICY_PATH=dcf/x -- approle-issue
+  check "approle:issue without a login: exit 12" 12 "$rc"
+  check "approle:issue without a login writes nothing" 0 "$(grep -c '^write\|^policy' "$LOG")"
+  reset down
+  mkrole x dcf/x
+  check "approle:issue with the server unreachable: exit 10" 10 "$rc"
+  # revoke
+  reset unsealed
+  mkrole scribe dcf/register/scribe
+  : > "$LOG"; : > "$T/tokens.log"
+  term "$SH" OPENBAO_TASK_ROLE=scribe -- approle-revoke
+  check "approle:revoke: exit 0" 0 "$rc"
+  check "approle:revoke deletes the role (OpenBao ends its secret ids with it)" 1 "$(grep -c '^delete auth/approle/role/scribe' "$LOG")"
+  check "approle:revoke deletes the role's policy" 1 "$(grep -c '^policy delete approle-scribe' "$LOG")"
+  check "approle:revoke used the generated root token for the role" 1 "$(grep -c '^delete auth/approle/role/scribe token=s.GENROOT' "$T/tokens.log")"
+  check "and for the policy" 1 "$(grep -c '^policy delete token=s.GENROOT' "$T/tokens.log")"
+  check "approle:revoke revoked the root token after" "yes" "$(grep -q '^token revoke token=s.GENROOT' "$T/tokens.log" && echo yes)"
+  check "approle:revoke removes the files" "no" "$([ -e "$T/state/approle/scribe" ] && echo yes || echo no)"
+  lacks "approle:revoke: no share on the screen" "SHARE-" "$out"
+  : > "$LOG"
+  term "$SH" OPENBAO_TASK_ROLE=scribe -- approle-revoke
+  check "approle:revoke of an unknown role: exit 14" 14 "$rc"
+  check "and asks for no share" 0 "$(grep -c 'generate-root' "$LOG")"
+else
+  echo "skip - the AppRole role tasks (no script(1) for a terminal)"
+fi
+OPTOK=
 
 echo
 echo "server_test: $pass passed, $fail failed"

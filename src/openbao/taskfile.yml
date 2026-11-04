@@ -44,7 +44,7 @@ tasks:
 
   approle:issue:
     dir: '{{.USER_WORKING_DIR}}'
-    desc: 'Server mode: ROLE=<name> POLICY_PATH=<mount/path> makes (or updates) an AppRole role that may read that one secret, bound to the container''s loopback, with 5 minute tokens (at most 15) and secret ids that do not expire; ROLE=<name> alone reissues an existing role; ALL=1 reissues every role in the store. Each role ends with exactly one valid secret id, written with its role id under the state dir (mode 600, never printed).'
+    desc: 'Server mode: ROLE=<name> POLICY_PATH=<mount/path> makes (or updates) an AppRole role that may read that one secret (this step asks for two unseal shares at a hidden prompt, to make a root token used for it alone and revoked after; the Operator only, in a plain terminal, refused inside an agent''s job), bound to the container''s loopback, with 5 minute tokens (at most 15) and secret ids that do not expire; ROLE=<name> alone reissues an existing role; ALL=1 reissues every role in the store (both with your login, no shares). Each role ends with exactly one valid secret id, written with its role id under the state dir (mode 600, never printed).'
     env:
       OPENBAO_TASK_ROLE: '{{.ROLE | default ""}}'
       OPENBAO_TASK_POLICY_PATH: '{{.POLICY_PATH | default ""}}'
@@ -54,7 +54,7 @@ tasks:
 
   approle:revoke:
     dir: '{{.USER_WORKING_DIR}}'
-    desc: 'Server mode: ROLE=<name> deletes the role, which destroys its secret ids, with its policy and its files under the state dir. A token it already made lives at most 15 minutes.'
+    desc: 'Server mode: ROLE=<name> deletes the role, which destroys its secret ids, with its policy and its files under the state dir. Asks for two unseal shares at a hidden prompt (a root token for this step alone, revoked after): the Operator only, in a plain terminal, refused inside an agent''s job. A token it already made lives at most 15 minutes.'
     requires:
       vars: [ROLE]
     env:
