@@ -70,8 +70,7 @@ Nothing to migrate. It lost: the Operator ruled against it, and ADR-0043 already
 - The backlog and costs are no longer reviewed in pull requests; the pre-push backlog-id check is
   skipped when the share is unmounted, and should warn.
 - The two machines writing one mirror at once are not protected from each other; one writer is assumed.
-- The merge driver for `TODO.md` and `.github/scripts/merge_todo.py` become unused and are to be removed.
-- A purge of the records from git history stays separate and later (ADR-0043).
+- The merge driver for `TODO.md` and `.github/scripts/merge_todo.py` become unused and are removed with the records.
 - Backlog items `records-out-of-git`, `devhost-ledger-register` and steps 5 and 6 of
   `aof-apply-plan` are ticked by the secretary after the cut-over.
 
@@ -80,3 +79,4 @@ Nothing to migrate. It lost: the Operator ruled against it, and ADR-0043 already
 | Date | Change |
 |---|---|
 | 2026-11-04 | First draft, accepted on the Operator's ruling of the same day; the three recommendations named in the Decision await confirmation. |
+| 2026-11-04 | Confirmed by the Operator: the live store stays in the volume with the share as mirror; the superseded local branch is deleted. The cost history is not kept as loose files: it is consolidated into one write-once cost archive on the share plus one signed register entry naming its path, size, hashes and period (the 6.8 MB history cannot fit the 64 KiB entry limit). The deletions of the ledger, cost and backlog files are a second pull request committed after the rebuild, so the devhost version that permits them judges them; the first pull request carries the code, settings and this record with every file still in git. The Operator would approve an override of the commit check only if no fix existed, with a follow-up fix; none was needed. |
