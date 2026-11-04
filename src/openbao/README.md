@@ -17,6 +17,10 @@ Installs the OpenBao CLI (https://openbao.org), the open-source Vault fork, as a
 |-----|-----|-----|-----|
 | installTaskfile | Also install this Feature's Taskfile into /usr/local/share/go-task/includes.d so its tasks appear under the <id>: namespace of a root Taskfile that includes /usr/local/share/go-task/features.yml (see the go-task Feature). | boolean | true |
 | mode | How the Feature is used. 'client' (default): the bao CLI and dcf-secret against a server outside the container (BAO_ADDR). 'server': also run a server in the container (raft storage on the Feature's volume, loopback only, started at post-start, sealed until `task openbao:unseal`; needs OpenBao 2.4.0 or newer). Override per container with OPENBAO_SETUP_MODE in containerEnv. | string | client |
+| backupDest | Server mode: the folder (an absolute path inside the container, e.g. a bind-mounted cloud folder or a USB disk) that `task openbao:backup` and the backup timer write to when no DEST is given. Empty (the default): no default destination, so nothing is backed up unless you run `task openbao:backup DEST=<folder>`; `task openbao:init` also records a destination. Override per container with OPENBAO_SETUP_BACKUP_DEST. | string | - |
+| backupKeep | Server mode: how many backups of this machine to keep in the destination (the newest N); older ones named openbao-<machine>-<UTC time>.snap are removed after each backup, nothing else ever is. 0 keeps every backup. Every backup holds every secret (encrypted; the unseal shares open it), so they should not pile up. Override with OPENBAO_SETUP_BACKUP_KEEP. | string | 30 |
+| backupInterval | Server mode: run a backup into the default destination every so often (5m, 6h, 1d; at least 5 minutes) from a timer the start hook starts inside the container. Empty (the default): off; backups are then yours to run, or to schedule from the host with its own scheduler (see the NOTES). A sealed server is skipped until the next tick. Override with OPENBAO_SETUP_BACKUP_INTERVAL. | string | - |
+| backupWarnAfter | Server mode: `task openbao:server:status` warns when the last backup is older than this (30m, 12h, 7d). Override with OPENBAO_SETUP_BACKUP_WARN_AFTER. | string | 7d |
 | version | OpenBao release to install (e.g. '2.7.1', with or without a leading 'v'), or 'latest'. Match your OpenBao server's version. | string | latest |
 
 ## What it installs
@@ -60,6 +64,11 @@ hook reads to `/usr/local/share/openbao-feature/options.env`.
 - `installTaskfile` (default `true`): set it to `false` when you do not use
   the go-task registry and do not want
   `/usr/local/share/go-task/includes.d/openbao.yml` in the image.
+
+- `backupDest` (default empty), `backupKeep` (default `30`), `backupInterval` (default empty: off),
+  `backupWarnAfter` (default `7d`): server mode's backups, see "Backup and restore". Each has the
+  run-time twin `OPENBAO_SETUP_BACKUP_DEST`, `_KEEP`, `_INTERVAL`, `_WARN_AFTER` in `containerEnv`.
+  A malformed value fails the build.
 
 `version` and `installTaskfile` are fixed at build. `mode` has the run-time twin
 `OPENBAO_SETUP_MODE`. The server address is a run-time setting: see State. In server mode it
@@ -184,7 +193,7 @@ of every request, with secrets hashed, names each identity that read a key.
   night shift that must sign overnight starts with a login made for it. These lifetimes are set on
   the server this Feature runs; against another server they are its owner's.
 - **The Operator's policy**: read and write everything under the `dcf` mount, the snapshot read
-  (`sys/storage/raft/snapshot`, for the backup of a later version), `update` and `sudo` on
+  (`sys/storage/raft/snapshot`), `update` and `sudo` on
   `sys/seal`, and the **reissue of secret ids for roles that already exist** (list the roles, read a
   role's role id, list a role's secret-id accessors, destroy a secret id by accessor, make a new one).
   It may also start and cancel a root-token generation (`sys/generate-root-token/*`), which only the
@@ -194,8 +203,7 @@ of every request, with secrets hashed, names each identity that read a key.
   sidestep the rule that restore needs the shares. Making and deleting a role therefore take a root
   token made from the shares, for that step only (below).
 
-**Agents.** `init`, `unseal`, `seal`, and the two steps that ask for the shares (making a role,
-deleting a role) **refuse inside an agent's job**: when `DEVHOST_JOB_CHILD`
+**Agents.** `init`, `unseal`, `seal`, `restore` and the steps that ask for the shares (making a role, deleting a role, `backup:role`) **refuse inside an agent's job**: when `DEVHOST_JOB_CHILD`
 (the devhost's backs and its test run) or `CLAUDECODE` (set by Claude Code on every process it
 starts) is set, or a variable named in `OPENBAO_AGENT_JOB_VARS` (space separated, for another agent
 CLI), each saying why and exiting 3: the shares and the token must never land in a transcript, which
@@ -234,11 +242,143 @@ storage, the audit log, the backup choice and whether the login is valid.
 place and under a lock, which no `cloud-folder` mode promises a database. So a lost machine loses
 what was written since the last backup, a **bounded-loss exception to ADR 0045 for server mode**
 (ADR 0048); it is a choice, never a silent default: `init` asks, records the answer in the volume
-(`backup-choice`), and `server:status` shows the destination, or a standing `WARNING no backup`.
-**This version has no `openbao:backup` yet** (the next minor adds it, with restore): until then a
-destination is only recorded, and a backup is `bao operator raft snapshot save` by hand. The unseal
-shares, the other thing a machine loss must not take, are kept off the machine by `init`'s
-instructions. A snapshot is ciphertext, useless without the shares and everything with them.
+(`backup-choice`), and `server:status` shows the last backup, or a standing `WARNING`. Backups are
+**optional and off by default**: nothing runs unless you run it or turn the timer on. See "Backup and
+restore" below. The unseal shares, the other thing a machine loss must not take, are kept off the
+machine by `init`'s instructions. A snapshot is ciphertext, useless without the shares and everything
+with them.
+
+## Backup and restore
+
+**`task openbao:backup [DEST=<folder>] [KEEP=<n>]`** (server mode; non-interactive, so a scheduler
+can run it). `DEST` is any absolute folder (the cloud folder is one choice, a USB disk another); when
+it is not given the `backupDest` option is used, then the folder recorded at `init`, and with none
+of the three the task stops (exit 2). It logs in with the `backup` role that `init` made (a role
+that may **read the snapshot path and nothing else**, loopback only, 5 minute tokens; its secret id
+is in the volume under `approle/backup`, passed to `bao` as a file, never an argument), takes
+`bao operator raft snapshot save` into a private folder on tmpfs (`/dev/shm`; `OPENBAO_BACKUP_TMP`
+names another), copies it whole into `DEST` as `openbao-<machine>-<YYYYMMDDTHHMMSSZ>.snap`
+(`<machine>` is `OPENBAO_MACHINE`, else the hostname) under a temporary name, checks the copy's
+sha256 and moves it into place **without overwriting** (a name that exists waits for the next
+second, and after five tries the task stops with exit 1). The temporary snapshot is removed on every
+way out. It records the time, place and sha256 in the volume (`last-backup`), keeps only the newest
+`KEEP` (else `backupKeep`, default 30, `0` keeps all) of **this machine's own files in `DEST`**
+(a name that is exactly `openbao-<machine>-<time>.snap`: another machine's backups, notes and
+anything else are never touched) and prints the path and the sha256. The unseal shares never travel
+with a snapshot. A server made before 1.3.0 has no backup role: the task then uses your login and
+says so, and `task openbao:backup:role` makes the role.
+
+| Exit | Meaning |
+|---|---|
+| 0 | written |
+| 10 | the server is unreachable |
+| 11 | sealed or not initialised (what a scheduled run shows after a container start) |
+| 12 | cannot log in (the role's secret id, or no login) |
+| 13 | the token may not read the snapshot |
+| 20 | `DEST` is missing or not writable |
+| 2 / 1 | no destination or a wrong `KEEP` / a step failed (the snapshot, the copy, no free name) |
+
+Client mode runs the same task with the token of the sitting (a role or token the server's owner
+provides; granting read on `sys/storage/raft/snapshot` on a shared server lets the holder copy every
+tenant's store, so it is the owner's call).
+
+**After a write.** A task that writes a secret ends with `openbao-server after-write`: with no
+default destination a one-line reminder (`not backed up since <time>; task openbao:backup DEST=...`),
+with one it runs the backup, and **it always exits 0**: the write stands whatever the backup does,
+and a failure prints its exit code and meaning.
+
+**Scheduled backups, and the check that decided how.** Before building a timer the question was
+whether OpenBao already has one. Checked on 2026-11-04 against the OpenBao tree and docs
+(`website/content/docs/api/system/storage/raft.mdx`, `commands/operator/raft.mdx`, the file list of
+`github.com/openbao/openbao`) and against `github.com/openbao/openbao-snapshot-agent`: **OpenBao has
+no scheduled or automatic raft snapshots** (the API is `GET`/`POST sys/storage/raft/snapshot` and
+`snapshot-force`; the Vault feature of that name is Enterprise and has no counterpart). The
+snapshot agent (v0.4.5, MPL-2.0) is a recipe, not a daemon of its own: an OpenBao Agent for
+authentication, a systemd timer or cron job running `bao operator raft snapshot save` to a name made
+with `date`, and `find -mtime` for retention. It does not fit: it needs systemd or cron (a
+devcontainer has neither by default), names files by date with no machine and never checks for an
+overwrite, prunes everything in the folder by age rather than its own pattern, and has no sealed
+case. So the Feature builds the optional pieces itself, on the same `backup` command:
+
+- **`backupInterval`** (`5m`, `6h`, `1d`; at least 5 minutes; empty = off) makes the start hook start
+  one background loop in the container (`backup-timer.pid` in the volume; a live one is reused; it
+  never fails the start) that runs the backup into the default destination every interval. A sealed
+  server, a missing folder or a failed login is skipped with one line in `backup.log` (with the
+  exit code and its meaning) and tried again at the next tick, never in a retry loop. The timer needs
+  a `backupDest` (or the folder recorded at `init`) and an unsealed server, which after a container
+  restart means the Operator has unsealed it. It dies with the container and the next start brings it
+  back.
+- **The host's own scheduler** (the choice that survives the container being down, and tells you
+  when it was): a Windows Task Scheduler entry that runs the task through the launcher, for example
+  once a day at 02:00 from the repository's folder on the workstation:
+
+  ```text
+  schtasks /Create /SC DAILY /ST 02:00 /TN "openbao backup" /TR "cmd /c cd /d C:\path\to\repo && task devcontainer:exec CMD=\"task openbao:backup DEST=/backups\""
+  ```
+
+  (`/backups` is a folder inside the container, such as a bind-mounted cloud folder.) The launcher
+  never registers it for you (ADR 0024 rules out a background process of ours on the host); a run
+  against a stopped container or a sealed server fails with a clear line in the scheduler's history
+  (exit 11 for sealed). Without the cloud folder or any other destination, a scheduled backup
+  has nowhere to go, which is why both ways need a destination.
+
+**`task openbao:restore FROM=<file>`** (interactive: the Operator, in a plain terminal; refuses
+inside an agent's job and without a terminal). The restore installs the snapshot with
+`bao operator raft snapshot restore -force`; the check that decided the `-force` is below.
+
+- **On an empty server** (not initialised) it first initialises it with **one throwaway share**, in
+  its own memory only (the key goes to `bao operator unseal` as an argument for an instant: it
+  guards an empty store about to be replaced, and is never printed or written), installs the snapshot
+  with the throwaway root token, and discards both. A marker `restore.pending` in the volume is
+  written before the init and removed after the install: a restore that stopped in between leaves a
+  store whose only share nobody has, so the next run clears `raft/`, starts the server again and
+  begins from empty.
+- **On a store in use** it says the snapshot **replaces** everything and asks you to type `restore`,
+  unseals first if the server is sealed, and makes a **root token from two of the current shares**
+  (`bao operator generate-root`), used once and revoked, the same way as making or deleting a role
+  (a one-time password in a variable, the shares typed at a hidden prompt, the token only in the
+  step's subshell, revoked on every way out, an attempt this task started cancelled if abandoned).
+  In OpenBao 2.6.0 and later that call is authenticated, so it starts with the Operator's login,
+  whose policy holds exactly two paths for it (`sys/generate-root-token/attempt` and `/update`): the
+  shares are the authority, the login only opens the door. A login without those paths (a server
+  initialised by an unreleased 1.2.0 build) is refused by the server, and the task stops before any
+  share is typed.
+- Either way the restored store is **sealed under the shares of the store the snapshot came from**
+  (a few seconds after the install the node seals itself). The task asks for two of those shares, then
+  for the Operator's password (the restored store's) at `bao login`'s hidden prompt, which leaves you
+  logged in, and reissues every AppRole's secret id (the secret ids' files in the volume are not in
+  the snapshot) so the backs and the `backup` role work again. If the login fails the task says to
+  log in and run `task openbao:approle:issue ALL=1`.
+- It is safe to run twice (the second run takes the "store in use" route). A snapshot whose file name
+  says another machine wrote it is warned about, and you confirm: restoring your own backup restores
+  your own access, someone else's is onboarding (`task openbao:onboard:claim`).
+
+**`task openbao:backup:role`** makes the `backup` role on a server made before 1.3.0 (a root token
+from two shares, used once and revoked, as for making a role).
+
+**What was confirmed** (OpenBao docs and source, and a real 2.7.2 server, 2026-11-04):
+
+- `bao operator raft snapshot save` needs only `read` on `sys/storage/raft/snapshot`: a role with that
+  one capability saves a snapshot, `token capabilities` reports `read`, and the same role is denied
+  `snapshot-force` (403). Restore is `POST sys/storage/raft/snapshot` (`update`) or
+  `snapshot-force`; the CLI's `restore -force` calls `snapshot-force`.
+- **A restore needs the snapshot's own shares afterwards, and `-force` on a different server.** A
+  plain restore into a server with other shares is refused ("could not verify hash file, possibly the
+  snapshot is using a different set of unseal keys; use the snapshot-force API to bypass this
+  check"), so the throwaway init needs `-force`. After a forced restore the node seals itself and
+  opens only with the shares of the store the snapshot came from; the throwaway share no longer opens
+  it. So no share ever travels with a snapshot, and a restore needs the shares that went with it.
+- `bao operator unseal` and `generate-root` need a terminal to read a share (a pipe is refused);
+  `bao operator generate-root` prints its prompt on stdout, so the task prints its own prompt line.
+- A root token generation needs a token from 2.6.0 on (an unauthenticated one is a 403); a token with
+  create/read/update/delete on `sys/generate-root-token/attempt` and update on
+  `sys/generate-root-token/update` runs it and the result is a `root` token.
+
+**Not checked here:** the throwaway init and restore of the Feature's own tasks against a real
+server, and restore run twice, run only in CI's Docker run (`test/openbao/backup_restore.sh`): the
+tasks refuse inside an agent's job, and the pieces were run one by one against a real server instead
+(save and retention, the role's capabilities, the forced restore across different shares, the
+generate-root flow).
 
 **What was confirmed in OpenBao's own documentation and source** (github.com/openbao/openbao,
 checked on the tree of 2026-11-03): OpenBao has used **no `mlock` since 2.0.0** (the RFC
@@ -255,7 +395,9 @@ reads a share at a hidden prompt that needs a terminal. The container test `serv
 of it against a real server.
 
 Files in the volume for server mode: `server.hcl`, `server.pid`, `server.log`, `raft/`,
-`audit.log`, `backup-choice`, `approle/<role>/{secret_id,role_id}`, and the login `token`.
+`audit.log`, `backup-choice`, `last-backup`, `last-restore`, `restore.pending` (only while a restore is
+half done), `backup.log` and `backup-timer.pid` (the timer), `approle/<role>/{secret_id,role_id}`, and
+the login `token`.
 
 ## `dcf-secret`
 
@@ -394,6 +536,14 @@ registry, these appear under `openbao:`:
   `ROLE=<name>` or `ALL=1` reissues with your login, no shares; one valid secret id each.
 - `openbao:approle:revoke`: server mode: `ROLE=<name>` deletes the role, its secret ids, its policy
   and its files (asks for two unseal shares; refuses inside an agent's job).
+- `openbao:backup`: server mode: `DEST=<folder>` `KEEP=<n>`: a snapshot into a new file
+  `openbao-<machine>-<UTC time>.snap`, never overwriting, only its own files pruned; exit 0, 10, 11,
+  12, 13, 20 (see "Backup and restore").
+- `openbao:backup:role`: server mode: make the backup role on a server made before 1.3.0 (root token
+  from shares). Refuses inside an agent's job.
+- `openbao:restore`: server mode: `FROM=<file>`: install a snapshot (a throwaway init on an empty
+  server, a root token from shares on a store in use), unseal with the snapshot's shares, reissue the
+  roles. Refuses inside an agent's job.
 - `openbao:setup`: re-run the post-create hook (`openbao-setup`): make the state directory usable,
   move a token left in `~/.vault-token` into it, report the token helper, the address and the saved login; in
   server mode also the start hook.
@@ -469,6 +619,22 @@ through `openbao-run` (the same `bao` call; in client mode nothing is added) and
 
 ## Changes
 
+### [1.3.0] - 2026-11-04
+
+#### Added
+
+- **`task openbao:backup`** (server mode): a raft snapshot into `DEST=<folder>` (else the new `backupDest` option, else the folder recorded at `init`) as `openbao-<machine>-<UTC time>.snap`, **never over a file that exists**, from a private tmpfs folder that is removed on every way out; it prints the path and sha256, records them for `server:status`, and keeps only the newest `KEEP` (the `backupKeep` option, default 30; 0 keeps all) of **this machine's own** files in `DEST`. It logs in with a new **`backup` AppRole** that `init` makes (read on the snapshot path only, loopback only). Exit codes: 0 written, 10 unreachable, 11 sealed or not initialised, 12 cannot log in, 13 snapshot read denied, 20 `DEST` missing or not writable. **Backups are optional and off by default.** The unseal shares never go with a snapshot.
+- **`task openbao:restore FROM=<file>`**: installs a snapshot. On an empty server it initialises with one throwaway share and installs the snapshot over it; on a store in use it asks you to type `restore` and uses a root token made from two of the current shares (used once, revoked). The restored store is sealed under the shares it came from: you enter two of them and the restored Operator's password, and every AppRole gets a new secret id. Safe to run twice; a half-done restore starts again from empty. Warns when the file is from another machine. Refuses inside an agent's job and without a terminal.
+- **`task openbao:backup:role`** makes the backup role on a server initialised before 1.3.0.
+- Options `backupDest`, `backupKeep`, `backupInterval` (a timer in the container the start hook starts: `5m`, `6h`, `1d`; empty = off) and `backupWarnAfter` (default `7d`), each with an `OPENBAO_SETUP_BACKUP_*` twin. OpenBao has no scheduled snapshots of its own and its snapshot agent needs systemd or cron and names and prunes files differently, so the timer is the Feature's own; the NOTES give the Windows Task Scheduler line for a host-side schedule.
+- `task openbao:server:status` shows the last backup's age, place and sha256, and warns past `backupWarnAfter`, with no backup taken yet, or with the explicit "no backup".
+- `openbao-server after-write`: what a task that writes a secret ends with (a "not backed up since" reminder, or the backup when a destination is set); it always exits 0, so the write stands whatever the backup does.
+
+#### Changed
+
+- **Action if you initialised a server with an unreleased 1.2.0 build:** it lacks the `backup` role and the two paths that let your login start a root token generation. Run `task openbao:backup:role` once (it asks for two unseal shares); until then `openbao:backup` uses your login, with a line saying so, and `openbao:restore` on a store in use stops before any share is typed. Servers initialised by the released 1.2.0 or by this version need nothing.
+- Restore on a store in use and the backup role make their root token the same way making or deleting a role does: two shares typed at a hidden prompt, used for that step only, revoked on every way out.
+
 ### [1.2.0] - 2026-11-03
 
 #### Added
@@ -495,12 +661,6 @@ through `openbao-run` (the same `bao` call; in client mode nothing is added) and
 - **The `mode` option**, with the one value `client` (the default, what the Feature always did: the CLI against a server outside the container). A later version adds `server`. `OPENBAO_SETUP_MODE` in `containerEnv` overrides it per container. Nothing to do.
 - `task openbao:logout`: revokes your token on the server and erases the saved one, so no login is left behind (`bao token revoke -self` alone leaves the dead token stored, and `dcf-secret` then says to log in). Nothing to do unless you log out.
 - `task openbao:setup`: re-runs the post-create hook.
-
-### [1.0.4] - 2026-11-03
-
-#### Added
-
-- This changelog: every release of this Feature now has an entry here, written for its users, and the Feature's README shows the latest three under "Changes". Nothing to do.
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/openbao/CHANGELOG.md).
 

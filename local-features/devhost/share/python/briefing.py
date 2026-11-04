@@ -115,9 +115,9 @@ def _age(seconds: float) -> str:
 def last_backup_age(state: Path, now: float | None = None) -> str:
     """How old the openbao server's last backup is, or "unknown".
 
-    Assumed (slice 2b of secrets-master-split builds it in parallel): `<state>/last-backup` is a small
-    text file the backup task writes with the time (an ISO UTC stamp like 2026-11-04T10:00:00Z), the
-    place and the sha256. The stamp is read from the file's text; when the file has no stamp its
+    `<state>/last-backup` is the small text file `task openbao:backup` writes atomically, one `key=value`
+    per line, the first being `time=` with an ISO UTC stamp like 2026-11-04T10:00:00Z (then the epoch, the
+    file and its sha256). The stamp is read from the file's text; when the file has no stamp its
     modification time is used (it is rewritten by each backup). Absent or unreadable: "unknown"."""
     now = time.time() if now is None else now
     path = state / "last-backup"

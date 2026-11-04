@@ -128,6 +128,12 @@ class Briefing(h.RepoCase):
         self.assertEqual(self.b.last_backup_age(state, now=1793664000 + 30), "1 min ago")  # 2026-11-03T00:00:00Z + 30 s
         self.assertEqual(self.b.last_backup_age(self.base / "missing"), "unknown")
 
+    def test_openbao_last_backup_age_reads_the_record_openbao_backup_writes(self):
+        # the exact shape `openbao-server backup` writes (src/openbao/openbao-server.sh; its test checks the first line)
+        state = self.base / "openbao-state"
+        h.write(state / "last-backup", "time=2026-11-03T00:00:00Z\nepoch=1793664000\nfile=/dest/openbao-box-20261103T000000Z.snap\nsha256=ab12\n")
+        self.assertEqual(self.b.last_backup_age(state, now=1793664000 + 2 * 86400), "2 days ago")
+
     def test_openbao_line_is_quiet_when_unsealed_without_a_server_or_without_bao(self):
         self._bao(0)
         self.assertNotIn("OpenBao", self.b.briefing(self.root, refresh=False))  # unsealed

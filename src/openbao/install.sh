@@ -3,7 +3,7 @@
 # verified against the release's checksums.txt, plus the pieces that make it part of this
 # collection's ecosystem: dcf-secret, dcf-persist, the post-create setup (openbao-setup) and the
 # Feature Taskfile. Feature options arrive as upper-cased environment variables (see
-# devcontainer-feature.json): VERSION, MODE.
+# devcontainer-feature.json): VERSION, MODE, BACKUPDEST, BACKUPKEEP, BACKUPINTERVAL, BACKUPWARNAFTER.
 set -euo pipefail
 
 # Every download goes through dcf_curl (dcf-curl.sh, the collection's retry helper, vendored from
@@ -13,6 +13,10 @@ set -euo pipefail
 
 VERSION="${VERSION:-latest}"
 MODE="${MODE:-client}"
+BACKUPDEST="${BACKUPDEST:-}"
+BACKUPKEEP="${BACKUPKEEP:-30}"
+BACKUPINTERVAL="${BACKUPINTERVAL:-}"
+BACKUPWARNAFTER="${BACKUPWARNAFTER:-7d}"
 repo="openbao/openbao"
 
 if [ "$(id -u)" -ne 0 ]; then
@@ -22,6 +26,24 @@ fi
 
 if [ "$MODE" != "client" ] && [ "$MODE" != "server" ]; then
   echo "openbao: mode '$MODE' is not known (client or server)." >&2
+  exit 1
+fi
+
+# The backup options (server mode; they are written down whatever the mode, and read only by it).
+if [[ ! "$BACKUPKEEP" =~ ^[0-9]+$ ]]; then
+  echo "openbao: backupKeep '$BACKUPKEEP' is not a whole number (0 keeps every backup)." >&2
+  exit 1
+fi
+if [ -n "$BACKUPINTERVAL" ] && [[ ! "$BACKUPINTERVAL" =~ ^[1-9][0-9]*[mhd]$ ]]; then
+  echo "openbao: backupInterval '$BACKUPINTERVAL' is not a number and m, h or d (5m, 6h, 1d), or empty for no timer." >&2
+  exit 1
+fi
+if [[ ! "$BACKUPWARNAFTER" =~ ^[1-9][0-9]*[mhd]$ ]]; then
+  echo "openbao: backupWarnAfter '$BACKUPWARNAFTER' is not a number and m, h or d (12h, 7d)." >&2
+  exit 1
+fi
+if [ -n "$BACKUPDEST" ] && [[ "$BACKUPDEST" != /* ]]; then
+  echo "openbao: backupDest '$BACKUPDEST' is not an absolute path (the folder inside the container)." >&2
   exit 1
 fi
 
@@ -97,6 +119,10 @@ mkdir -p "$share"
 {
   echo "# Written by the openbao Feature's install.sh from its options; sourced by openbao-setup."
   printf 'MODE=%q\n' "$MODE"
+  printf 'BACKUPDEST=%q\n' "$BACKUPDEST"
+  printf 'BACKUPKEEP=%q\n' "$BACKUPKEEP"
+  printf 'BACKUPINTERVAL=%q\n' "$BACKUPINTERVAL"
+  printf 'BACKUPWARNAFTER=%q\n' "$BACKUPWARNAFTER"
 } > "$share/options.env"
 chmod 0644 "$share/options.env"
 install -m 0755 "$feature_dir/dcf-secret.sh" /usr/local/bin/dcf-secret
