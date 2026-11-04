@@ -68,6 +68,17 @@ A repo's `mounts` entry on the same target wins over the Feature's volume.
 Alternatively point `GH_CONFIG_DIR` in the repo's `containerEnv` at any
 other mounted path; `gh-setup` follows the variable.
 
+## Registering a signing key
+
+`task gh:ssh-key:add` registers a public key at GitHub as a **signing** key (`gh ssh-key add
+--type signing`), never an authentication key: a signing-only key logs in to nothing if it leaks.
+The key comes from `FILE=<.pub>`, from OpenBao with `KEY=ssh/<name>` (the `openbao` Feature's
+`dcf-secret`, field `public_key`), or on stdin; `TITLE=` defaults to the record's name or the key's
+comment. A key already registered as a signing key is left alone (exit 0); a private key is
+refused. The login needs the `admin:ssh_signing_key` scope: `gh auth refresh -s
+admin:ssh_signing_key`. The `ssh-agent` Feature's `key:rotate` calls it (as `gh-ssh-key-add`) for
+its GitHub step.
+
 ## Pairs with
 
 - `ghcr.io/devcontainers/features/github-cli` for the apt-installed gh.
