@@ -15,6 +15,10 @@ Usage:
   ledger.py carry-reviews FILE...          copy the `## Review` sections of monthly files into the reviews folder
                                            (the cut-over to register mode); a review already there is skipped
   ledger.py mirror                         bring the register's mirror level, only when its folder is there
+  ledger.py archive-costs --as P [--key K] --out ARCHIVE [--dry-run] FILE...
+                                           the cost history (the .jsonl stores and .md reports) as one archive
+                                           file, created once, and one signed `work` entry recording it
+  ledger.py restore-costs ARCHIVE DIR      give the archived source files back, byte for byte, into DIR
   ledger.py back-runs --as P [--key K] RUNS CURSOR
                                            the backs' metrics lines of RUNS (runs.jsonl) after the line
                                            number kept in CURSOR, as `run` entries; CURSOR moves on
@@ -407,6 +411,94 @@ def mirror() -> str:
     return line
 
 
+ARCHIVE_TITLE = "Cost history archived to cold storage"
+_TS = re.compile(r'"ts":\s*"(\d{4}-\d{2}-\d{2}T[^"]*)"')
+
+
+def _sha256(data: bytes) -> str:
+    import hashlib
+    return hashlib.sha256(data).hexdigest()
+
+
+def build_cost_archive(files: list[Path]) -> tuple[bytes, dict]:
+    """The cost history of `files` (the cost stores `.jsonl` and the reports `.md`) as one cold-storage archive:
+    one JSON line per line of each source, `{"source", "line", "raw"}`, sources in name order, so every source
+    comes back byte for byte (`restore_cost_archive`). Returns the archive's bytes and what the register entry
+    says of it: records, the period (the first and last `ts` of the stores), each source's name, size, lines and
+    sha256."""
+    out: list[str] = []
+    sources, stamps, records = [], [], 0
+    for f in sorted(files, key=lambda x: Path(x).name):
+        data = Path(f).read_bytes()
+        name = backfill_source(Path(f))
+        lines = data.decode("utf-8").split("\n")
+        if lines and lines[-1] == "":
+            lines.pop()
+        for n, raw in enumerate(lines, 1):
+            out.append(json.dumps({"source": name, "line": n, "raw": raw}, ensure_ascii=False, separators=(",", ":")))
+        if name.endswith(".jsonl"):
+            records += len(lines)
+            stamps += [m.group(1) for raw in lines for m in [_TS.search(raw)] if m]
+        sources.append({"source": name, "bytes": len(data), "lines": len(lines), "sha256": _sha256(data),
+                        "ends_with_newline": data.endswith(b"\n")})
+    archive = ("\n".join(out) + "\n").encode("utf-8")
+    return archive, {"sha256": _sha256(archive), "bytes": len(archive), "records": records, "lines": len(out),
+                     "from": min(stamps)[:10] if stamps else None, "to": max(stamps)[:10] if stamps else None,
+                     "sources": sources}
+
+
+def restore_cost_archive(archive: bytes) -> dict[str, bytes]:
+    """The source files of an archive, byte for byte (the check that it lost nothing)."""
+    parts: dict[str, list[str]] = {}
+    for line in archive.decode("utf-8").splitlines():
+        r = json.loads(line)
+        parts.setdefault(r["source"], []).append(r["raw"])
+    return {s: ("\n".join(lines) + "\n").encode("utf-8") for s, lines in parts.items()}
+
+
+def archive_costs(files: list[Path], out: Path, who: str, key: str | None = None, dry_run: bool = False) -> str:
+    """Archive the cost history into `out` (created once, never replaced: an archive already there must have the
+    same bytes) and record it in the register as one signed `work` entry holding its path, size, sha256, period
+    and record count and each source's hash; the history itself is too large for an entry (agentic-register's
+    MAX_BODY, 64 KiB). Running it again adds nothing: an entry with the same archive sha256 is found first."""
+    name = ledger_register()
+    if not name:
+        raise RegisterError("DEVHOST_LEDGER_REGISTER is not set: no register to record the archive in")
+    archive, info = build_cost_archive(files)
+    for source in info["sources"]:   # lost nothing: every source comes back byte for byte
+        back = restore_cost_archive(archive).get(source["source"], b"")
+        if _sha256(back if source["ends_with_newline"] else back[:-1]) != source["sha256"]:
+            raise RegisterError(f"the archive does not give back {source['source']} byte for byte; nothing written")
+    info["path"] = str(out)
+    summary = (f"{info['records']} cost records and {len(info['sources'])} files, {info['from']} to {info['to']}, "
+               f"in {out} ({info['bytes']:,} bytes, sha256 {info['sha256'][:12]})")
+    have = [e for e in register_entries(name) if e["kind"] == "work"
+            and isinstance(e["data"].get("archive"), dict) and e["data"]["archive"].get("sha256") == info["sha256"]]
+    if dry_run:
+        return ("already recorded: " if have else "would archive: ") + summary
+    if have:
+        return f"already recorded in entry {have[0]['id'][:12]}: {summary}"
+    out = Path(out)
+    if out.exists():
+        if _sha256(out.read_bytes()) != info["sha256"]:
+            raise RegisterError(f"{out} exists with other contents; it is never replaced")
+    else:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(out, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        with os.fdopen(fd, "wb") as h:
+            h.write(archive)
+        if _sha256(out.read_bytes()) != info["sha256"]:
+            raise RegisterError(f"{out} reads back different from what was written; no entry recorded")
+    data = {"title": f"{ARCHIVE_TITLE} ({info['from']} to {info['to']})",
+            "came_out": [summary, "The cost stores (.jsonl) and reports (.md) leave git with the records (records-out-of-git); "
+                         "each source's sha256 is in `archive`, and `devhost-ledger restore-costs <archive> <dir>` "
+                         "gives them back byte for byte."],
+            "archive": info}
+    _CACHE.clear()
+    i = _add(name, who, key, "work", data)
+    return f"recorded in entry {i[:12]}: {summary}"
+
+
 def back_run_record(r: dict) -> dict | None:
     """One back's metrics line (runs.jsonl, written by the runner) in the register's `run` shape."""
     if not isinstance(r, dict) or not r.get("job"):
@@ -467,6 +559,15 @@ def main(argv: list[str]) -> int:
     r = sub.add_parser("review")
     r.add_argument("file")
     sub.add_parser("mirror")
+    ac = sub.add_parser("archive-costs")
+    ac.add_argument("--as", dest="who", required=True)
+    ac.add_argument("--key")
+    ac.add_argument("--out", required=True)
+    ac.add_argument("--dry-run", action="store_true")
+    ac.add_argument("files", nargs="+")
+    rc = sub.add_parser("restore-costs")
+    rc.add_argument("archive")
+    rc.add_argument("dir")
     c = sub.add_parser("carry-reviews")
     c.add_argument("files", nargs="+")
     b = sub.add_parser("back-runs")
@@ -493,6 +594,14 @@ def main(argv: list[str]) -> int:
             if not ledger_register():
                 raise RegisterError("in file mode a review is appended to the monthly file, as before")
             print(add_review(root, Path(a.file).read_text(encoding="utf-8"), time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())))
+        elif a.cmd == "archive-costs":
+            print(archive_costs([Path(f) for f in a.files], Path(a.out), a.who, a.key, a.dry_run))
+        elif a.cmd == "restore-costs":
+            for name, data in restore_cost_archive(Path(a.archive).read_bytes()).items():
+                target = Path(a.dir) / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(data)
+                print(target)
         elif a.cmd == "mirror":
             print(mirror())
         elif a.cmd == "carry-reviews":

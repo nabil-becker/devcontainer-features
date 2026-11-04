@@ -257,6 +257,86 @@ class Readers(h.RepoCase):
         self.assertIn("## Review 2026-10-03", done.stdout)
 
 
+class CostArchive(h.RepoCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.ledger = h.load("ledger")
+        self.ledger._CACHE.clear()
+        self.fake = h.fake_register(self.base, [])
+        led = self.root / "docs" / "ledger"
+        h.write(led / "costs-2026-10-a.jsonl", '{"run": {"ts": "2026-10-20T01:00:00Z"}}\n{"reply": {"ts": "2026-10-31T02:00:00Z"}}\n')
+        h.write(led / "costs-2026-11-a.jsonl", '{"run": {"ts": "2026-11-03T01:00:00Z"}}\n')
+        h.write(led / "costs-2026-10-a.md", "# Agent costs, 2026-10, a\n\nTotal: $1.00.\n")
+        self.files = sorted(led.glob("costs-*"))
+        self.out = self.base / "share" / "costs" / "archive" / "costs-history.jsonl"
+
+    def entries(self) -> list[dict]:
+        return json.loads((self.fake / "entries.json").read_text(encoding="utf-8"))
+
+    def test_one_archive_and_one_entry_with_hashes_once(self):
+        dry = self.ledger.archive_costs(self.files, self.out, "host", dry_run=True)
+        self.assertTrue(dry.startswith("would archive: 3 cost records and 3 files, 2026-10-20 to 2026-11-03"))
+        self.assertFalse(self.out.exists())
+        done = self.ledger.archive_costs(self.files, self.out, "host", "/tmp/host.pub")
+        self.assertIn("recorded in entry", done)
+        [e] = self.entries()
+        self.assertEqual((e["principal"], e["kind"]), ("host", "work"))
+        a = e["data"]["archive"]
+        self.assertEqual((a["records"], a["from"], a["to"], a["path"]), (3, "2026-10-20", "2026-11-03", str(self.out)))
+        self.assertEqual(a["sha256"], self.ledger._sha256(self.out.read_bytes()))
+        self.assertEqual([s["source"] for s in a["sources"]],
+                         ["docs/ledger/costs-2026-10-a.jsonl", "docs/ledger/costs-2026-10-a.md", "docs/ledger/costs-2026-11-a.jsonl"])
+        back = self.ledger.restore_cost_archive(self.out.read_bytes())
+        for f in self.files:
+            self.assertEqual(back[f"docs/ledger/{f.name}"], f.read_bytes())
+        again = self.ledger.archive_costs(self.files, self.out, "host")
+        self.assertTrue(again.startswith("already recorded"))
+        self.assertEqual(len(self.entries()), 1)
+
+    def test_an_archive_with_other_contents_is_never_replaced(self):
+        h.write(self.out, "something else\n")
+        with self.assertRaises(self.ledger.RegisterError):
+            self.ledger.archive_costs(self.files, self.out, "host")
+        self.assertEqual(self.out.read_text(encoding="utf-8"), "something else\n")
+        self.assertEqual(self.entries(), [])
+
+
+class DeletionsUnderRegisterMode(h.RepoCase):
+    """The second pull request of records-out-of-git: the monthly files, the cost reports and TODO.md deleted from
+    the tree. devhost 1.12's verify in register mode, with the records folder set, must accept it; file mode must not."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        h.load("ledger")._CACHE.clear()
+        h.write(self.root / "TODO.md", "# To do\n\n## Now\n\n- [ ] **an-item A** (host). x.\n")
+        h.write(self.root / "docs" / "ledger" / "costs-2026-10-tester.md", "# Agent costs, 2026-10, tester\n")
+        h.write(self.root / "docs" / "ledger" / "costs-2026-10-tester.jsonl", "{}\n")
+        h.write(self.root / "docs" / "ledger" / "README.md", "# The ledger\n")
+        h.git(self.root, "add", "-A")
+        h.git(self.root, "commit", "-q", "-m", "records")
+        h.git(self.root, "branch", "-f", "main", "HEAD")   # the base has the records
+        for f in ("TODO.md", "docs/ledger/2026-10.md", "docs/ledger/costs-2026-10-tester.md", "docs/ledger/costs-2026-10-tester.jsonl"):
+            h.git(self.root, "rm", "-q", f)
+        h.write(self.root / "docs" / "ledger" / "README.md", "# The ledger\n\nNow in the register.\n")
+        h.git(self.root, "add", "-A")
+        os.environ["DEVHOST_BASE_REF"] = "main"
+
+    def findings(self) -> dict[str, list[str]]:
+        results, notes = h.load("verify").run(self.root)
+        return {k: v for k, v in results.items() if v and k in ("ledger_append_only", "ledger_shape", "backlog_ids")}
+
+    def test_file_mode_refuses_the_deletion(self):
+        self.assertIn("ledger_append_only", self.findings())
+
+    def test_register_mode_with_the_records_folder_accepts_it(self):
+        h.fake_register(self.base, [h.work("A")])
+        os.environ["DEVHOST_RECORDS_DIR"] = str(self.base / "share")
+        h.write(self.base / "share" / "TODO.md", "# To do\n\n## Now\n\n- [ ] **an-item A** (host). x.\n")
+        self.assertEqual(self.findings(), {})
+        results, notes = h.load("verify").run(self.root)
+        self.assertFalse([n for n in notes if "NOT RUN" in n])
+
+
 FAKE_CLAUDE = r"""#!/usr/bin/env bash
 # fake claude: the scribe's reply, as claude -p --output-format json prints it.
 cat >/dev/null
