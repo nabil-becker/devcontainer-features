@@ -832,6 +832,13 @@ secret ids; making or deleting a role asks for two shares). A server initialised
 
 ## Changes
 
+### [1.3.1] - 2026-11-04
+
+#### Fixed
+
+- **The unseal-share prompts now say what they want.** A password typed at "Unseal share 1 of 2 (hidden):" made bao answer "'key' must be a valid hex or base64 string". Every share prompt (`init`'s follow-ups, `unseal`, `restore`, the root-token step of `approle:issue` and `approle:revoke`, `backup:role`, and `onboard:claim`) now says it wants one of the three shares `task openbao:init` printed, a long base64 string, not your Operator password; and when bao refuses a share the message names both likely causes (a password typed instead of a share, a mistyped share). No action needed. The share is still read by bao itself at its hidden prompt and never passes through the script (bao's `operator unseal` does not read a key from stdin), so the script cannot check its shape first or ask for the same share again; run the task again.
+- Hardening: the tasks that ask for a share, token or password switch bracketed paste off on the terminal first (`ESC[?2004l`, only to a terminal; the shell sets it again at its next prompt), also `task openbao:login`, so a paste in a shell that leaves the mode on (pwsh) cannot carry `ESC[200~ ... ESC[201~` into bao's hidden prompt. A terminal that ignores the switch can still add the markers.
+
 ### [1.3.0] - 2026-11-04
 
 #### Added
@@ -869,12 +876,6 @@ secret ids; making or deleting a role asks for two shares). A server initialised
 - **`init`, `unseal`, `seal` and the two steps that ask for shares (making and deleting a role) refuse inside an agent's job** (when `DEVHOST_JOB_CHILD` or `CLAUDECODE` is set, or a variable you name in `OPENBAO_AGENT_JOB_VARS`), and `init`, `unseal` and those two steps refuse without a terminal: the shares and the token must never land in a transcript. Run them yourself in a plain terminal.
 - `dcf-secret`'s failure lines now name the tasks: sealed points to `task openbao:unseal`, not initialised to `task openbao:init`, unreachable to `task openbao:server:status`, each adding what to do against a server elsewhere. The exit codes are unchanged.
 - In server mode `BAO_ADDR` defaults to the local server for `dcf-secret` and every task when you have not set it (a bare `bao` still needs `BAO_ADDR`). The tasks `status`, `login`, `logout`, `kv:get` and `setup` run the same `bao` call through `openbao-run`, which adds only that default; client mode is unchanged. `task openbao:setup` now also runs the start hook.
-
-### [1.1.1] - 2026-11-03
-
-#### Changed
-
-- The README now has a "How it fits" section with a small diagram of how the Feature sits in a devcontainer, a table of the data it keeps and the storage tier of each, and "Used in" links to the reference architectures that use it. Documentation only: the Feature itself is unchanged. Nothing to do.
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/openbao/CHANGELOG.md).
 

@@ -173,6 +173,7 @@ run() {
   out="$(env -i $(envs) "${e[@]}" bash "$T/bin/openbao-server" "$@" 2>&1)"
   rc=$?
 }
+off=$'\033[?2004l' # bracketed paste off
 have_script=0
 command -v script >/dev/null 2>&1 && have_script=1
 # script -e returns the child's exit status, but through a pipeline only the last command's status
@@ -354,6 +355,9 @@ if [ "$have_script" -eq 1 ]; then
   check "unseal: exit 0" 0 "$rc"
   check "unseal: two prompts' worth of bao operator unseal" 2 "$(grep -c '^operator unseal' "$LOG")"
   check "unseal: no share is an argument" "operator unseal|operator unseal" "$(grep '^operator unseal' "$LOG" | paste -sd'|')"
+  # a paste must not carry bracketed-paste markers into bao's hidden prompt (pwsh leaves the mode on)
+  has "unseal: bracketed paste is switched off on the terminal" "$off" "$out"
+  has "unseal: the prompt says it is a share, not the password" "NOT your Operator password" "$out"
   reset unsealed
   term "" -- unseal
   check "unseal on an unsealed server: exit 0, nothing asked" "0 0" "$rc $(grep -c '^operator unseal' "$LOG")"
@@ -368,6 +372,7 @@ if [ "$have_script" -eq 1 ]; then
   term "" STUB_UNSEAL_FAIL=1 -- unseal
   check "unseal with a share bao refuses: exit 1" 1 "$rc"
   has "unseal: says how to reset" "-reset" "$out"
+  has "unseal: a refused share names a password typed by mistake" "a password typed instead of a share" "$out"
 else
   echo "skip - init and unseal under a terminal (no script(1))"
 fi
@@ -512,6 +517,11 @@ if [ "$have_script" -eq 1 ]; then
   check "the root token is revoked with itself, after the step" "yes" "$(grep -q '^token revoke token=s.GENROOT' "$T/tokens.log" && echo yes)"
   order="$(grep -nE '^(operator generate-root|policy write|write auth/approle/role/scribe token_policies|token revoke)' "$LOG" | sed 's/^[0-9]*://' | awk '{print $1" "$2}' | paste -sd'|')"
   check "the order: one-time password, init, two shares, decode, the step, the revoke" "operator generate-root|operator generate-root|operator generate-root|operator generate-root|operator generate-root|policy write|write auth/approle/role/scribe|token revoke" "$order"
+  # the disable sequence is on the terminal before the first share prompt, and before every one
+  before="${out%%Unseal share 1 of 2*}"
+  has "approle:issue: bracketed paste is switched off before the first share prompt" "$off" "$before"
+  has "approle:issue: the share prompt says it is not the password" "not your password) (hidden): " "$out"
+  check "and before each of the two share prompts" 2 "$(grep -c "${off//\[/\\[}Unseal share\|^Unseal share" <<<"$out" || true)"
   lacks "no share is in the log of calls" "SHARE-" "$(calls)"
   lacks "no share is echoed to the screen" "SHARE-" "$out"
   lacks "the root token is not on the screen" "GENROOT" "$out"
@@ -550,6 +560,7 @@ if [ "$have_script" -eq 1 ]; then
   rm -f "$T/gr.cancelled"
   term "BADSHARE;SHARE-TWO" OPENBAO_TASK_ROLE=bad OPENBAO_TASK_POLICY_PATH=dcf/x -- approle-issue
   check "a refused share: exit 1" 1 "$rc"
+  has "a refused share names a password typed by mistake" "a password typed instead of a share" "$out"
   check "the attempt is cancelled" "cancelled" "$(cat "$T/gr.cancelled" 2>/dev/null | head -n 1)"
   check "no role was made" 0 "$(grep -c '^write auth/approle/role/bad' "$LOG")"
   check "no policy was written" 0 "$(grep -c '^policy write' "$LOG")"

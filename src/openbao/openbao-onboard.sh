@@ -319,7 +319,7 @@ cmd_claim() {
   else
     local old=() s i
     for i in 1 2; do
-      ask_secret "Unseal share $i of 2 (one the sender handed over):"
+      ask_secret "Unseal share $i of 2 (one the sender handed over; a long base64 string, not a password):"
       old+=("$REPLY")
     done
     local init nonce out vnonce keys=()
