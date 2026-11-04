@@ -8,6 +8,18 @@ here; `task lint` fails when the entry is missing.
 
 Entries from 1.0.0 to 1.3.0 were generated from the commit history (`.github/scripts/changelog.py backfill`) and the "Changes in x.y.z" sections that NOTES.md used to hold; most list commit subjects as written then; the newest of them is in wording for users.
 
+## [1.4.0] - 2026-11-04
+
+### Added
+
+- **`task ssh-agent:key:load NAME=ssh/<key> [MINUTES=]` loads a key from OpenBao** (the openbao Feature 1.3.0, unsealed, after `task openbao:login`): the key is piped into `ssh-add -t <life> -`, so it is in agent memory only and never in a file, for as long as your OpenBao login has left (at most 8 hours; `MINUTES` shortens it), and it says when it drops out. In socket mode it loads into the workstation's agent and says so. `task ssh-agent:key:lock NAME=ssh/<key>` takes it out, also while OpenBao is sealed. OpenBao's own exit codes come through (11 sealed, 12 log in, 14 no such key).
+- **`task ssh-agent:key:rotate NAME=ssh/<key>` rotates on OpenBao records**: the same four steps and order (a new record, registered at GitHub as a signing key through the gh Feature's `gh:ssh-key:add`, git pointed at it and verified, only then the old record retired), and `.devcontainer/allowed_signers` keeps both keys with valid-after and valid-before stamps, so old commits still verify. The host commits the file.
+- `task ssh-agent:git:signing` adds the key to `.devcontainer/allowed_signers` and sets `gpg.ssh.allowedSignersFile` in the repository's config to that relative path, but only where the repository has the file (or `ALLOWED_SIGNERS=<file>` names one). git reads it from the top of the work tree, from any folder.
+
+### Deprecated
+
+- **The key volume and its tasks**: `key:new`, `key:add`, `key:unlock`, `key:retire`, `key:age`, `key:remove DELETE=1`, `key:load` with no `NAME`, `key:lock` and `key:rotate` of a volume key, and the old workstation import (`devcontainer:ssh-key-import`) still work as before and print one line naming what replaces them; the start hook says so once in key mode when the volume holds keys. They are removed in ssh-agent 2.0, where `keyMode` becomes `localAgent`. **Nothing breaks now**; to move, add the openbao Feature and run `task openbao:ssh:import FROM=ssh-agent` once, then `key:unlock NAME=<file>` becomes `key:load NAME=ssh/<file>`. A setup in socket mode that never used key mode changes nothing.
+
 ## [1.3.1] - 2026-11-03
 
 ### Added
