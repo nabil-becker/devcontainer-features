@@ -47,7 +47,18 @@
       }
     }
   },
-  "backup_restore": {
+"backup_restore": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "remoteUser": "vscode",
+    "features": {
+      "go-task": {},
+      "openbao": {
+        "version": "2.7.1",
+        "mode": "server"
+      }
+    }
+  },
+  "onboarding": {
     "image": "mcr.microsoft.com/devcontainers/base:debian",
     "remoteUser": "vscode",
     "features": {

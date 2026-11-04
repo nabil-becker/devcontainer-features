@@ -388,6 +388,23 @@ cmd_status() {
   esac
 }
 
+# ------------------------------------------------------------------------------- configure ----
+# What init sets up (the mounts, the Operator's policy and login), for a token that already exists:
+# openbao-onboard claim runs it with the claim token and the receiver's password on stdin, after the
+# sender's users are deleted. Not a task: the Operator never runs it by hand.
+cmd_configure() {
+  guard configure "it takes the Operator's new password and a root token"
+  need_server_mode configure
+  # shellcheck disable=SC2031  # init's subshell sets its own BAO_TOKEN; here it is the caller's
+  [ -n "${BAO_TOKEN:-}" ] || die 2 "configure takes the token in BAO_TOKEN and the Operator's password on stdin"
+  IFS= read -r op_pw || die 2 "configure takes the Operator's password on stdin"
+  [ "${#op_pw}" -ge 12 ] || die 2 "the password is shorter than 12 characters"
+  server_state
+  state_exit
+  configure_store || die 1 "a configuration step failed (bao's message is above)"
+  op_pw=""
+}
+
 # --------------------------------------------------------------------------------- approle ----
 # A root token from the unseal shares, for one step. `bao operator generate-root` (OTP flow): the
 # attempt is started with a one-time password kept in a variable, the Operator types the shares at
@@ -968,6 +985,7 @@ case "$cmd" in
   unseal) cmd_unseal ;;
   seal) cmd_seal ;;
   status) cmd_status ;;
+  configure) cmd_configure ;;
   approle-issue) cmd_approle_issue ;;
   approle-revoke) cmd_approle_revoke ;;
   backup) cmd_backup ;;
