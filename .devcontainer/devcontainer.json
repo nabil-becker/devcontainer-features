@@ -62,6 +62,12 @@
     // (task devcontainer:ssh-key-import FILE=...); the start hook skips a protected key, so it is
     // loaded only for an operator act (task ssh-agent:key:load) and removed after (ssh-add -d).
     "./features/ssh-agent": {},
+    // OpenBao in server mode (ADR 0048): a local server in this container, raft storage in the
+    // Feature's volume, started sealed at post-start. The Operator runs task openbao:init once
+    // and task openbao:unseal after each restart, in a plain terminal (task dc:shell), never
+    // through an agent. Backups are off until a destination is chosen; an external server
+    // (client mode, BAO_ADDR) comes later.
+    "./features/openbao": { "mode": "server" },
     // The AOF seed's agentic-register (0.14.4), vendored in local-features/agentic-register
     // (VENDORED.md: replace with the GHCR package once access exists). One register, ledger,
     // with its live store in the Feature's volume and no mirror yet (the import and the mirror
