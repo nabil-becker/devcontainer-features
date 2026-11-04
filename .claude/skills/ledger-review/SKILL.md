@@ -1,6 +1,6 @@
 ---
 name: ledger-review
-description: Review the ledger (docs/ledger/YYYY-MM.md, written by the scribe back) every 25 entries, reading the month's agent-cost report first, and turn what the entries recorded (friction, learnings, measures, questions) into one concrete change per group - a TODO.md item, a decision for the Operator, a change made now with its test, or no action with a reason - starting by checking whether the last review's friction came back. Use it when the briefing says a review is due, or when the Operator asks what keeps going wrong, what the agents cost, or whether a model is the right size.
+description: Review the ledger (docs/ledger/YYYY-MM.md, or the register DEVHOST_LEDGER_REGISTER names; written by the scribe back) every 25 entries, reading the month's agent-cost report first, and turn what the entries recorded (friction, learnings, measures, questions) into one concrete change per group - a TODO.md item, a decision for the Operator, a change made now with its test, or no action with a reason - starting by checking whether the last review's friction came back. Use it when the briefing says a review is due, or when the Operator asks what keeps going wrong, what the agents cost, or whether a model is the right size.
 ---
 
 # Review the ledger
@@ -13,15 +13,16 @@ unapplied; and it starts from the numbers, so the models can be right-sized.
 ## Steps
 
 0. **Read the cost report first.** `task devhost:report` (or `devhost-report`) rebuilds
-   `docs/ledger/costs-YYYY-MM-<engineer>.md` for this machine; read the other engineers' beside
+   `costs-YYYY-MM-<engineer>.md` for this machine (in `docs/ledger/`, or in `<DEVHOST_RECORDS_DIR>/costs/`
+   when the records are outside git); read the other engineers' beside
    it. Its "What to look for" list turns cost into friction: a con type on a large model at a
    low cost per run, inter cost per session rising, a back's cost per change rising, many
    "nothing" runs, guard undos, ledger corrections, frequent stakes, errors
    (`devhost-report --log`). Backs are improved through this loop like any skill: their briefs,
    thresholds and models.
 
-1. **Find the entries to review.** The last `## Review YYYY-MM-DD` section in the monthly files
-   closes the previous review; the entries after it are the input (the briefing counts them).
+1. **Find the entries to review.** Read the ledger with `devhost-ledger show` (the monthly files, or
+   the register rendered in the same shape). The last `## Review YYYY-MM-DD` section closes the previous review; the entries after it are the input (the briefing counts them).
    Skip an entry that a later entry `Corrects:`; read the correcting one instead. Fewer than four
    entries: say so and stop, unless the Operator asked anyway.
 
@@ -43,7 +44,9 @@ unapplied; and it starts from the numbers, so the models can be right-sized.
    with the reason written down. Prefer the smallest change that removes the cause.
 
 5. **Append the review section.** Put the proposed actions to the Operator in a few lines; on
-   agreement, append to the current monthly file a `## Review YYYY-MM-DD` section: the entries
+   agreement, write a `## Review YYYY-MM-DD` section: appended to the current monthly file, or,
+   with the ledger in a register, saved to a file and kept with `devhost-ledger review <file>` (it lands in
+   the reviews folder, never replaced, and shows between the entries in `devhost-ledger show`). The section holds the entries
    reviewed (first and last date and title), the cost report's headline numbers, each group with
    its action and id, what the review itself lacked, and what is deferred. The review is never
    edited afterwards; the next one starts from it.

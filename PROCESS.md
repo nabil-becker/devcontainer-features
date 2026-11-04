@@ -3,7 +3,9 @@
 The way of working of devcontainer-features: how a piece of work travels from a note to a merged change,
 who does what, and how the way of working improves itself. This file says *what happens and
 why*; the repository's own contributing guide says *how*: setup, the commands, the conventions.
-The words are defined in [LEXICON.md](LEXICON.md). What is open is in [TODO.md](TODO.md).
+The words are defined in [LEXICON.md](LEXICON.md). What is open is in the backlog, `TODO.md` in the
+shared records folder (`/mnt/cloud-folder/TODO.md`; out of git since 2026-11-04, `docs/ledger/README.md`
+says where each record is now).
 
 ## The happy path
 
@@ -32,8 +34,9 @@ sequenceDiagram
    open backlog items and decisions, the month's agent spend.
 2. **Three modes with the host.** *Ideate*: talk a direction out and break it down. *Discuss*:
    ask, decide, hear a recommendation. *Work*: the host does the slice, the document or the change.
-3. **What happens without a turn being spent.** The scribe records each unit of work in
-   `docs/ledger/`, the secretary turns the open items into `TODO.md`, the librarian keeps
+3. **What happens without a turn being spent.** The scribe signs each unit of work into the
+   ledger (the agentic-register register `ledger`, mirrored to the shared folder; `devhost-ledger
+   show` reads it), the secretary turns the open items into `TODO.md` (in the shared folder), the librarian keeps
    `LEXICON.md` and the ADRs, the tester runs the suite. Anyone may leave a stake when something
    might be missed. What a back changed arrives as a quiet notice, and the host checks their
    writes before each commit.

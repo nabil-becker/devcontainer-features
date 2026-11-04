@@ -1,15 +1,16 @@
 # The way of working (devhost)
 
 Included from CLAUDE.md. The words are in [LEXICON.md](../LEXICON.md), the process in
-[PROCESS.md](../PROCESS.md), what is open in [TODO.md](../TODO.md); the ledger is
-`docs/ledger/`, the ADRs `docs/adr/`.
+[PROCESS.md](../PROCESS.md), what is open in the backlog (`TODO.md`: at the root, or in the shared
+records folder when `DEVHOST_RECORDS_DIR` is set); the ledger is `docs/ledger/` (or the register named
+by `DEVHOST_LEDGER_REGISTER`; read either with `devhost-ledger show`), the ADRs `docs/adr/`.
 
 ## How work flows
 
 1. **Start:** the briefing arrives on its own at session start (`devhost-briefing` on a
    workstation): the ledger entries since the last review and whether a review is due, what the
    backs left pending, the open backlog items and decisions, the month's agent spend. Read
-   `TODO.md`, then branch; never commit to the base branch directly.
+   the backlog (the briefing names its path), then branch; never commit to the base branch directly.
 2. **Work:** commands through the Taskfile (`task --list`); propose rather than decide where the
    Operator's confirmation is needed; brief subagents (cons) with the hand-off shape (its Friction
    includes problems the con worked around, such as a command it retried another way, not only
@@ -23,8 +24,10 @@ Included from CLAUDE.md. The words are in [LEXICON.md](../LEXICON.md), the proce
 
 ## The ledger
 
-`docs/ledger/YYYY-MM.md` is append-only: one entry per unit of work, written by the scribe back
-after each turn and each con's job, with its measured cost. A wrong entry is never edited; a
+The ledger is append-only: one entry per unit of work, written by the scribe back after each turn
+and each con's job, with its measured cost; in `docs/ledger/YYYY-MM.md`, or, with
+`DEVHOST_LEDGER_REGISTER` set, signed by the scribe into that agentic-register register (outside git,
+mirrored to the shared folder). `devhost-ledger show` prints it either way. A wrong entry is never edited; a
 new entry with a `Corrects:` line replaces it. Every 25 entries (the setting; the entry rate in the cost report shows whether that is too often or too rarely) the briefing asks for a
 review (`/ledger-review`), which reads the cost report first and turns each group of friction
 into one action.
@@ -57,7 +60,8 @@ a superseded status), the **tester** runs the suite when code changed.
 
 - Topic branches off the base branch, named `<type>/<backlog-id>/<n>` (`task devhost:branch -- <id>`; `task devhost:branches PRUNE=1` after a merge); never commit to it directly; Conventional Commits naming
   the backlog ids; the co-author trailer when an agent wrote the commit, at an unclaimable `@noreply.invalid` address (never `noreply@anthropic.com`, which links to a stranger's GitHub account).
-- The pre-commit hook runs `devhost-verify`: the ledger append-only and well-formed, no secrets,
+- The pre-commit hook runs `devhost-verify`: the ledger append-only and well-formed (or the register's
+  own check), no secrets,
   no forbidden words, the ADR shape, every task described, every skill named. A refused commit is
   fixed, never bypassed (`--no-verify` only on the Operator's say-so, with the reason in the
   message and in the ledger entry).

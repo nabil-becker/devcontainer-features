@@ -210,11 +210,13 @@ The domain words of the project itself are not here; they live with the project'
 ## Records
 
 - **Backlog** (`TODO.md`): the engineering items and the decisions for the Operator; kept by the
-  secretary.
+  secretary. Out of git since 2026-11-04: in the shared records folder (`DEVHOST_RECORDS_DIR`).
 - **Lexicon** (`LEXICON.md`): this file, the words of the way of working; kept by the librarian.
 - **Journal**: the record of the project's iterations in `docs/journal/`, in plain words, add-only.
 - **Night-shift report**: the morning report of a night shift, in `docs/night-shift/`.
-- **Ledger**: the append-only record of what agents did, in monthly files under `docs/ledger/`.
+- **Ledger**: the append-only record of what agents did. Here, since 2026-11-04, the agentic-register
+  register `ledger` (signed entries, mirrored to the shared folder; `devhost-ledger show` renders it);
+  before that, monthly files under `docs/ledger/` (in git history).
 - **Entry**: one ledger record, one per unit of work: asked, came out, friction, learned,
   decisions, for the repository, decisions needed, measures. A wrong entry is corrected by a new
   one with a `Corrects:` line.
@@ -224,16 +226,16 @@ The domain words of the project itself are not here; they live with the project'
   filled in by the scribe's script from the transcripts, never by a model. A stretch's cost goes on
   its first entry only; the stretch's other entries point to it, so summing the ledger counts it once.
 - **Review**: reading the cost report and the entries since the last review, checking whether the
-  last review's friction came back, and turning each group into one action; appended to the
-  ledger as a `## Review` section, every 25 entries by default (`DEVHOST_REVIEW_EVERY`). Run with `/ledger-review`.
+  last review's friction came back, and turning each group into one action; kept as a `## Review`
+  section (a file in the shared folder's `reviews/`, shown between the ledger's entries), every 25 entries by default (`DEVHOST_REVIEW_EVERY`). Run with `/ledger-review`.
 - **Architecture review**: a subagent's check of a proposal's design against the non-functional
   requirements, the ADRs, the CLI capability matrix, the lexicon and where each element is placed,
   written into the proposal before the Operator rules; run with `/architecture-review`.
-- **Cost report**: `docs/ledger/costs-YYYY-MM-<engineer>.md`, the monthly agent costs on one
+- **Cost report**: `costs-YYYY-MM-<engineer>.md` (in the shared folder's `costs/`), the monthly agent costs on one
   engineer's machine (inters, cons, backs, by model), rebuilt by `devhost-report` with no model
   from the cost store and this machine's new records, with the month's entry rate and, when `DEVHOST_MONTHLY_TARGET` is set, the spend against that tracking point. Read first by the review.
-- **Cost store**: `docs/ledger/costs-YYYY-MM-<engineer>.jsonl`, the committed ids-and-numbers
-  record beside the cost report. `devhost-report` adds this machine's new records to it and never
+- **Cost store**: `costs-YYYY-MM-<engineer>.jsonl`, the ids-and-numbers record beside the cost
+  report (committed until 2026-11-04, now in the shared folder). `devhost-report` adds this machine's new records to it and never
   drops committed rows, so a rebuilt machine cannot empty the month; figures from before the store
   existed enter once as a baseline taken from the committed report.
 - **List-price estimate**: every cost figure here: tokens priced at the published list price,
