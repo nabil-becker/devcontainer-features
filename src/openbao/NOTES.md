@@ -5,11 +5,18 @@
   bao CLI --BAO_ADDR (set in containerEnv)--> OpenBao server      dcf-secret --> bao
     |
     `--> token helper --> volume openbao-config-<id>/token  (or BAO_TOKEN from the environment)
+
+  mode server: post-start --> bao server (127.0.0.1:8200, raft) --> volume openbao-config-<id>/
+                              sealed until task openbao:unseal       raft/, audit.log, approle/
 ```
 
 | Data | Where it lives | Storage tier |
 | --- | --- | --- |
 | Login token | `token` in the Feature's volume `openbao-config-${devcontainerId}`, kept by a token helper (`BAO_CONFIG_PATH`), so a rebuild keeps the login; or `BAO_TOKEN` in the environment | 4 working set |
+| Server storage (mode server) | `raft/` in the same volume: every secret, policy and role of the local server | 4 working set, with ADR 0048's bounded-loss exception: not rebuildable, so a lost machine loses what came after the last backup (backups arrive in 1.3.0; until then a snapshot by hand) |
+| Audit log (mode server) | `audit.log` in the same volume | 4 working set |
+| AppRole secret ids (mode server) | `approle/<role>/` in the same volume, mode 600 | 4 working set (reissued with `task openbao:approle:issue ALL=1`) |
+| Unseal shares | never in the container: printed once by `task openbao:init` | custody, outside the tiers (ADR 0049) |
 
 Tiers are the four of ADR 0045: 1 git, 2 shared folder, 3 personal folder, 4 working set (rebuildable only).
 
@@ -45,17 +52,21 @@ hook reads to `/usr/local/share/openbao-feature/options.env`.
 - `version` (default `latest`): set it to the version of the OpenBao server
   you talk to, so the CLI and the server agree. A value that does not start
   with an `x.y.z` number fails the build.
-- `mode` (default `client`, the only value in this version): the CLI and `dcf-secret` against a
-  server outside the container, whose address is `BAO_ADDR`. Any other value fails the build. A
-  later version adds `server`; a consumer that changes nothing keeps `client`. Override per
-  container with `OPENBAO_SETUP_MODE` in `containerEnv` (the hook reads it; an unknown value is
-  reported and the hook runs as `client`).
+- `mode` (`client`, the default, or `server`): `client` is the CLI and `dcf-secret` against a
+  server outside the container, whose address is `BAO_ADDR`; a consumer that changes nothing keeps
+  it. `server` also runs a server in the container (see "Server mode"); it needs OpenBao 2.4.0 or
+  newer, and a build with an older pinned `version` fails with that said. Any other value fails the
+  build. Override per container with `OPENBAO_SETUP_MODE` in `containerEnv` (the hooks read it, no
+  rebuild; an unknown value is reported and the hooks run as `client`). A container built as `client`
+  and switched to `server` this way works, because the binary is the same; only the build-time
+  version check is skipped.
 - `installTaskfile` (default `true`): set it to `false` when you do not use
   the go-task registry and do not want
   `/usr/local/share/go-task/includes.d/openbao.yml` in the image.
 
 `version` and `installTaskfile` are fixed at build. `mode` has the run-time twin
-`OPENBAO_SETUP_MODE`. The server address is a run-time setting: see State.
+`OPENBAO_SETUP_MODE`. The server address is a run-time setting: see State. In server mode it
+defaults to the local server.
 
 ## State
 
@@ -74,7 +85,7 @@ Owned by the Feature (NFR-1), like `gh` and `az`:
 - The post-create hook `openbao-setup` (also `task openbao:setup`) runs `dcf-persist`, so the
   folder belongs to the remote user and the log says what backs it, and says whether the token
   helper is in effect. A token already in `~/.vault-token` (a login from before this Feature) is
-  moved into the volume once, when the volume has none. The hook never contacts the server and
+  moved into the volume once, when the volume has none. The post-create hook never contacts the server and
   never fails the rest of post-create.
 
 How `bao` finds the helper, confirmed in OpenBao's source (`internal/command/config` and
@@ -86,7 +97,11 @@ to the volume at that path is replaced by the first `bao login`, which is why th
 not use one. The helper is a few lines of `sh` (`openbao-token-helper`) and the token is written
 atomically.
 
-- **The server address** is `BAO_ADDR`, which the Feature does not set. Put it in `containerEnv`.
+- **The server address** is `BAO_ADDR`, which the Feature does not set in `containerEnv`: its
+  metadata is static, so an option cannot change it, and client mode keeps the CLI's own default.
+  Put it in `containerEnv`. In server mode, when it is unset, `dcf-secret`, `openbao-setup` and
+  every task of this Feature use `http://127.0.0.1:8200` (the local server); a bare `bao` does not,
+  so give it `BAO_ADDR` (export it, or put it in `containerEnv`) or go through the tasks.
 - **A repo that sets its own `BAO_CONFIG_PATH`** (or whose `containerEnv` leaves this one out)
   replaces the Feature's config; the hook says so. Add `token_helper =
   "/usr/local/bin/openbao-token-helper"` to that config to keep the login in the volume. A repo
@@ -107,6 +122,143 @@ atomically.
 
 Upgrading from 1.0.x: the volume starts empty, so log in once after the rebuild; a login made
 before it, in `~/.vault-token` of the old container, is gone with that container.
+
+## Server mode
+
+`mode: server` runs an OpenBao server inside the container: one node, **raft** storage on the
+Feature's volume, one listener on `127.0.0.1:8200` with no TLS (it never leaves the container's
+loopback; another container cannot reach it), started at post-start and **sealed until the Operator
+unseals it**. Client mode stays the default and is unchanged. Why a local server and what a machine
+loss costs: ADR 0048 and the "Backup" paragraph below.
+
+```json
+"features": {
+  "ghcr.io/nabil-becker/devcontainer-features/openbao:1": { "mode": "server", "version": "2.7.1" },
+  "ghcr.io/nabil-becker/devcontainer-features/go-task:1": {}
+}
+```
+
+**The start hook** (`postStartCommand`, `openbao-setup start`, also run by `task openbao:setup`)
+writes the server's config into the volume, starts `bao server` in the background (its pid in
+`server.pid`, its log in `server.log`; a live server is reused), waits only for the listener to
+answer (at most 20 seconds), and prints one line: `not initialised; the Operator runs task
+openbao:init`, `sealed; the Operator runs task openbao:unseal`, or `running and unsealed`. It never
+waits for an unseal and never prompts (a start hook that waits holds every Feature's start), and it
+never fails the start. The config is `server.hcl` in the volume; while its first line is the
+Feature's marker it is rewritten on every start, so an upgrade reaches it; delete the marker line to
+keep your own edits. It holds: `storage "raft"` at `raft/` with `node_id = "devhost"`, one `tcp`
+listener on `127.0.0.1:8200` with `tls_disable`, `api_addr` and `cluster_addr` on loopback (raft
+requires `cluster_addr`), no UI, and the file **audit device** `audit.log`, declared in the config
+(OpenBao 2.4.0 and later: a server refuses an audit device made through the API unless
+`unsafe_allow_api_audit_creation` is set, and the declarative stanza is the supported way). The log
+of every request, with secrets hashed, names each identity that read a key.
+
+**The gate.** Two steps, both the Operator's:
+
+```text
+ container start       task openbao:unseal            task openbao:login -- -method=userpass username=operator
+      |                (2 of the 3 shares)             (per sitting)
+      v                        |                                 |
+  [ sealed ] ----------------> [ unsealed ] ------------> [ the Operator's token: 4 hours, at most 8 ]
+   dcf-secret: exit 11         AppRoles can log in            dcf-secret reads and writes (exit 12 when it ends)
+```
+
+- **`task openbao:init`** (once). Interactive, in a plain terminal only. It asks for a **backup
+  destination** (an absolute folder path that exists and is writable, or the words `no backup`; an
+  empty answer is asked again: the choice is never defaulted) and for the **Operator's password**
+  (twice, 12 characters at least); initialises with **3 unseal shares and a threshold of 2**; prints
+  the shares to the terminal, once, and says to keep one in a password manager, one on paper
+  offline and one with a second trusted person or on a hardware key, never in git, the container or
+  where backups go; waits for Enter and then asks for two of them at `bao`'s own hidden prompt (so
+  the unseal proves they were stored correctly); enables the `dcf` KV v2 mount, `userpass` and
+  `approle`, writes the Operator's policy and the user `operator`; records the backup choice; and
+  **revokes the root token**. The root token and the shares live in the task's memory only, never
+  in a file or an argument. `-pgp-keys=...` after `--` encrypts the shares to your keys (you decrypt
+  them yourself before the unseal step; not covered by a test). A failed configuration step revokes
+  the root token as well and says how to start over: the store holds nothing yet, so stop the
+  server, delete `raft/` in the volume and run the start hook and `init` again (new shares). Run
+  twice it refuses: the server is initialised.
+- **`task openbao:unseal`**: asks for shares at `bao`'s hidden prompt until the server is unsealed
+  (needed after every server start, so after a container restart). `task openbao:seal` seals it
+  with the saved login (`bao operator seal`; the Operator's policy has `update` and `sudo` on
+  `sys/seal`).
+- **The login**: `userpass`, user `operator`, token `ttl` **4 hours**, `max_ttl` **8 hours**; a
+  renewal past 8 hours is capped (`bao token renew` says so). `task openbao:logout` ends it early. A
+  night shift that must sign overnight starts with a login made for it. These lifetimes are set on
+  the server this Feature runs; against another server they are its owner's.
+- **The Operator's policy**: read and write everything under the `dcf` mount, the snapshot read
+  (`sys/storage/raft/snapshot`, for the backup of a later version), `update` and `sudo` on
+  `sys/seal`, and the **reissue of secret ids for roles that already exist** (list the roles, read a
+  role's role id, list a role's secret-id accessors, destroy a secret id by accessor, make a new one).
+  It may also start and cancel a root-token generation (`sys/generate-root-token/*`), which only the
+  shares can complete. **Not** any policy (`sys/policies/acl/*`), not making, changing or deleting a
+  role, not `snapshot-force`, audit devices, or any other `sys/` path: a token that could write a
+  policy could write one with `snapshot-force` and log in through a role holding it, which would
+  sidestep the rule that restore needs the shares. Making and deleting a role therefore take a root
+  token made from the shares, for that step only (below).
+
+**Agents.** `init`, `unseal`, `seal`, and the two steps that ask for the shares (making a role,
+deleting a role) **refuse inside an agent's job**: when `DEVHOST_JOB_CHILD`
+(the devhost's backs and its test run) or `CLAUDECODE` (set by Claude Code on every process it
+starts) is set, or a variable named in `OPENBAO_AGENT_JOB_VARS` (space separated, for another agent
+CLI), each saying why and exiting 3: the shares and the token must never land in a transcript, which
+the scribe reads. `init`, `unseal` and those two steps also refuse without a terminal on stdin and stdout (they ask
+for secrets and print them only to a terminal), and all server-mode tasks refuse in client mode.
+Run them yourself in a plain terminal in the devcontainer (a terminal opened from inside a Claude
+Code session inherits `CLAUDECODE` and is refused too: open a fresh one). A refusal is no call to `bao`.
+
+**AppRole** (`task openbao:approle:issue`, `:revoke`; server mode). One role per machine identity,
+generic: the Feature never calls a task of another Feature. `ROLE=<name> POLICY_PATH=<mount/path>`
+**asks for the unseal shares** (it writes a policy): it makes a root token with `bao operator
+generate-root` (a one-time password held in a variable, two shares typed at a hidden prompt, the
+token decoded in memory), runs that step with it, and revokes it straight after, also when the step
+fails or is interrupted (an abandoned generation is cancelled). No share, password or token is
+printed, logged, put in a file or passed as an argument but the one-time password, which is useless
+without the encoded token (that goes over stdin). It makes the role (lower case name) with a policy `approle-<name>` that lets it read that one secret
+and nothing else, **bound to loopback**: `secret_id_bound_cidrs` and `token_bound_cidrs` of
+`127.0.0.1/32`, so a stolen secret id or token works only from inside this container, and only while
+the server is unsealed; tokens last 5 minutes, at most 15; secret ids do not expire (an expiring one
+would stop the backs on a date nobody is watching). `ROLE=<name>` alone reissues an existing role,
+and `ALL=1` every role in the store (after a restore or on suspicion); both use the Operator's login
+only and ask for no share. A reissue leaves **exactly one
+valid secret id**: the others of the role are destroyed by their accessors first (issuing a new one
+does not end the old). The secret id and the role id are written to `approle/<role>/secret_id` and
+`role_id` in the volume (mode 600, folder 700), never printed. `approle:revoke ROLE=<name>` deletes
+the role (OpenBao's role deletion destroys its secret ids) and its policy with a root token from the
+shares, as above, and then its files; a token it
+already made lives at most 15 minutes. There is no `DCF_SECRET_AS` yet: nothing logs in as a role in
+this version except by hand, the backs are wired in a later slice.
+
+**`task openbao:server:status`** (both modes; exit 0 unsealed, 10 unreachable, 11 sealed or not
+initialised): the mode, the address, the server's state, and in server mode the process, the
+storage, the audit log, the backup choice and whether the login is valid.
+
+**Backup, and ADR 0045.** The live store stays in the volume (tier 4): raft's database is written in
+place and under a lock, which no `cloud-folder` mode promises a database. So a lost machine loses
+what was written since the last backup, a **bounded-loss exception to ADR 0045 for server mode**
+(ADR 0048); it is a choice, never a silent default: `init` asks, records the answer in the volume
+(`backup-choice`), and `server:status` shows the destination, or a standing `WARNING no backup`.
+**This version has no `openbao:backup` yet** (the next minor adds it, with restore): until then a
+destination is only recorded, and a backup is `bao operator raft snapshot save` by hand. The unseal
+shares, the other thing a machine loss must not take, are kept off the machine by `init`'s
+instructions. A snapshot is ciphertext, useless without the shares and everything with them.
+
+**What was confirmed in OpenBao's own documentation and source** (github.com/openbao/openbao,
+checked on the tree of 2026-11-03): OpenBao has used **no `mlock` since 2.0.0** (the RFC
+"mlock removal"; the migration guide says to remove `disable_mlock`, and it is an unknown field in
+the config), so a container without `IPC_LOCK` needs nothing and the Feature writes no
+`disable_mlock`; raft needs `cluster_addr` (and `api_addr` is set so the server does not guess); the
+declarative `audit` stanza exists from 2.4.0, hence the version floor; self-initialisation
+(`initialize` stanza) needs an auto-unseal seal and returns no shares, so it does not fit the Shamir
+gate and `init` is the CLI's own `bao operator init`; AppRole's `secret_id_ttl` defaults to 0 (no
+expiry), `secret_id_bound_cidrs` is checked at login and `token_bound_cidrs` on every use of the
+token, deleting a role destroys its secret ids, and a secret id can be destroyed by its accessor;
+`bao operator init` prints `Unseal Key N:` and `Initial Root Token:`, and `bao operator unseal`
+reads a share at a hidden prompt that needs a terminal. The container test `server_mode` runs all
+of it against a real server.
+
+Files in the volume for server mode: `server.hcl`, `server.pid`, `server.log`, `raft/`,
+`audit.log`, `backup-choice`, `approle/<role>/{secret_id,role_id}`, and the login `token`.
 
 ## `dcf-secret`
 
@@ -137,7 +289,10 @@ dcf-secret status [<name>]                 one word on stdout, the fix on stderr
 - **No fallback, ever.** On a non-zero exit nothing is read from a file, a volume or the
   environment instead. A second source would be a second master.
 
-Exit codes, the same for every caller, each with one plain line on stderr naming the fix:
+Exit codes, the same for every caller, each with one plain line on stderr naming the fix (the
+sealed line names `task openbao:unseal`, not initialised names `task openbao:init`, unreachable
+names `task openbao:server:status`, each adding what to do against a server that is not this
+container's):
 
 | Exit | Meaning | `status` prints |
 | --- | --- | --- |
@@ -188,6 +343,7 @@ bao version          # prints the installed version
 task openbao:version
 openbao-setup        # the post-create report, any time
 dcf-secret status    # needs BAO_ADDR; prints ready, or why not (exit codes above)
+task openbao:server:status   # server mode: the state, the storage, the backup choice
 ```
 
 The build log carries the first line (`openbao: downloading OpenBao
@@ -204,6 +360,8 @@ login across rebuilds; `image` means the mount is missing.
   the Taskfile registry exists and is refreshed) and the official
   `common-utils`.
 - It augments no official Feature and replaces none.
+- Server mode is what the later slices of `docs/proposals/secrets-master-split.md` build on: backup
+  and restore, onboarding, the `openbao:ssh:*` records and `ssh-agent`'s `key:load` from the store.
 - `dcf-secret` is what later Features (`ssh-agent`, `gh`, `az`, `cloud-folder`) are to call for
   their secrets; none does yet, and none names this Feature in `installsAfter` (the Features stay
   independent at build time).
@@ -226,8 +384,22 @@ registry, these appear under `openbao:`:
   flags go after `--`, e.g.
   `task openbao:kv:get KEY=secret/app -- -format=json`.
 
+- `openbao:server:status`: mode, address, the server's state, and in server mode the process, the
+  storage, the audit log, the backup choice (a standing warning when there is none) and the login.
+- `openbao:init`: server mode, once, in a plain terminal: the backup choice, the Operator's
+  password, the unseal shares (printed once to the terminal), the first unseal and the setup;
+  revokes the root token. Refuses inside an agent's job.
+- `openbao:unseal`: server mode: shares at the hidden prompt until unsealed. Refuses inside an
+  agent's job.
+- `openbao:seal`: server mode: seal the server with the saved login. Refuses inside an agent's job.
+- `openbao:approle:issue`: server mode: `ROLE=<name> POLICY_PATH=<mount/path>` makes a loopback-bound
+  role that reads one secret (asks for two unseal shares; refuses inside an agent's job);
+  `ROLE=<name>` or `ALL=1` reissues with your login, no shares; one valid secret id each.
+- `openbao:approle:revoke`: server mode: `ROLE=<name>` deletes the role, its secret ids, its policy
+  and its files (asks for two unseal shares; refuses inside an agent's job).
 - `openbao:setup`: re-run the post-create hook (`openbao-setup`): make the state directory usable,
-  move a token left in `~/.vault-token` into it, report the token helper, the address and the saved login.
+  move a token left in `~/.vault-token` into it, report the token helper, the address and the saved login; in
+  server mode also the start hook.
 
 No task reads a variable besides `KEY`; the address and token come from
 `BAO_ADDR` and `BAO_TOKEN` in the container's environment, as for `bao`
@@ -247,7 +419,16 @@ itself.
   engine) or the hook's first line says `image` instead of `volume`. Log in again.
 - `put` without `--replace` needs the `patch` capability on the secret's path; a policy that has
   only `create` and `update` must use `--replace`, which drops the secret's other fields.
-- Client mode only: there is no server, backup, onboarding or `DCF_SECRET_AS` in this version.
+- No `openbao:backup`, restore, onboarding or `DCF_SECRET_AS` yet (later versions); in server mode a
+  destination is recorded, not used. No task changes the Operator's password or a policy: both need a
+  root token made from the shares (`bao operator generate-root`, used once and revoked); then `bao
+  write auth/userpass/users/operator/password password=-` changes the password.
+- Server mode: the shares are the keys to everything; losing two of three loses every secret. The
+  loopback listener has no TLS: any process of the container can reach it and read the Operator's
+  saved token (mode 600, the remote user's), as with any login kept in a volume; the token's 4 hour
+  lifetime is the bound. `server.log` and `audit.log` grow without rotation. The server stops with
+  the container and comes back sealed (the start hook says so); a server that does not answer is
+  reported with the end of its log. Pinning `version` below 2.4.0 fails the build in server mode.
 - `dcf-secret` asks `bao` up to three questions after a failure, so a failure costs a few round
   trips; a success costs one. It assumes a KV v2 mount (the data lives under `<mount>/data/`).
 - The login is kept by a token helper `bao` runs as a shell command on every call that needs the
@@ -282,4 +463,9 @@ elsewhere (`devcontainers-extra`, `postfinance`, `roul`) install HashiCorp's `va
 it to your server's version. The Feature's own version is the tag you reference
 (`openbao:1` follows 1.x; see Changes). **1.1.0** adds the volume, `openbao-setup`, `dcf-secret`
 and `mode`, all additive: rebuild to get them, and log in once, because the volume starts empty.
-Nothing is removed; `mode` stays `client`.
+Nothing is removed; `mode` stays `client`. **1.2.0** adds `mode: server` (the `server` value, the
+start hook, `openbao:init`, `:unseal`, `:seal`, `:server:status`, `:approle:issue`, `:approle:revoke`,
+`openbao-server`, `openbao-run`), all additive: rebuild to get them, and nothing changes for a
+container that stays `client`, except that the tasks `status`, `login`, `logout` and `kv:get` now go
+through `openbao-run` (the same `bao` call; in client mode nothing is added) and the
+`dcf-secret` failure lines name the new tasks.

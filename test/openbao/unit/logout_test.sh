@@ -2,7 +2,8 @@
 # Docker-free tests of `task openbao:logout` (src/openbao/taskfile.yml) with a stub bao and the real
 # token helper: the token revoked on the server (bao token revoke -self) and then erased from the
 # state dir, the erase done when the revoke fails (a token that is already dead), and no error
-# when nothing is stored. Part of `task lint` (`task test:openbao-unit`). Needs task.
+# when nothing is stored. The task goes through openbao-run (the real one: it applies server mode's
+# BAO_ADDR default and changes nothing else). Part of `task lint` (`task test:openbao-unit`). Needs task.
 set -u
 exec </dev/null
 
@@ -14,6 +15,7 @@ T="$(mktemp -d /tmp/oblogout.XXXXXX)"
 trap 'rm -rf "$T"' EXIT
 mkdir -p "$T/bin" "$T/state"
 install -m 0755 "$root/src/openbao/openbao-token-helper.sh" "$T/bin/openbao-token-helper"
+install -m 0755 "$root/src/openbao/openbao-run.sh" "$T/bin/openbao-run"
 cat > "$T/bin/bao" <<'STUB'
 #!/usr/bin/env bash
 echo "$*" >> "$STUB_LOG"

@@ -1,5 +1,6 @@
-# Tasks contributed by the openbao Feature (namespace: openbao). BAO_ADDR
-# must point at your server (set it in containerEnv).
+# Tasks contributed by the openbao Feature (namespace: openbao). BAO_ADDR must point at your
+# server (set it in containerEnv); in server mode it defaults to the local server (openbao-run).
+# The tasks that talk to bao go through openbao-run, which applies that default and nothing else.
 version: '3'
 
 tasks:
@@ -11,22 +12,68 @@ tasks:
 
   status:
     dir: '{{.USER_WORKING_DIR}}'
-    desc: 'Show the server status (seal state, HA, version) at BAO_ADDR.'
+    desc: 'Show the server status (seal state, HA, version) at BAO_ADDR (bao status).'
     cmds:
-      - bao status {{.CLI_ARGS}}
+      - openbao-run bao status {{.CLI_ARGS}}
+
+  server:status:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Show the mode, the address, the server''s state (unsealed, sealed, not initialised, unreachable), and in server mode the process, the storage, the audit log, the backup choice (a standing warning when there is none) and whether the login is valid. Exit 0 unsealed, 10 unreachable, 11 sealed or not initialised.'
+    cmds:
+      - openbao-server status
+
+  init:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Server mode, once, the Operator only, in a plain terminal (refuses inside an agent''s job and without a terminal): ask for a backup destination or an explicit "no backup" and for the Operator''s password, initialise the server (3 unseal shares, threshold 2, printed once to the terminal), unseal it with two of them, enable the dcf KV mount, userpass (login 4 hours, at most 8) and approle, write the Operator''s policy, record the backup choice, revoke the root token. -pgp-keys=... after -- encrypts the shares.'
+    interactive: true
+    cmds:
+      - openbao-server init {{.CLI_ARGS}}
+
+  unseal:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Server mode, the Operator only, in a plain terminal (refuses inside an agent''s job and without a terminal): enter unseal shares at bao''s own hidden prompt until the server is unsealed. Needed after every server start.'
+    interactive: true
+    cmds:
+      - openbao-server unseal
+
+  seal:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Server mode: seal the server with the saved login (refuses inside an agent''s job). Everything that reads a secret then fails with exit 11 until task openbao:unseal.'
+    cmds:
+      - openbao-server seal
+
+  approle:issue:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Server mode: ROLE=<name> POLICY_PATH=<mount/path> makes (or updates) an AppRole role that may read that one secret (this step asks for two unseal shares at a hidden prompt, to make a root token used for it alone and revoked after; the Operator only, in a plain terminal, refused inside an agent''s job), bound to the container''s loopback, with 5 minute tokens (at most 15) and secret ids that do not expire; ROLE=<name> alone reissues an existing role; ALL=1 reissues every role in the store (both with your login, no shares). Each role ends with exactly one valid secret id, written with its role id under the state dir (mode 600, never printed).'
+    env:
+      OPENBAO_TASK_ROLE: '{{.ROLE | default ""}}'
+      OPENBAO_TASK_POLICY_PATH: '{{.POLICY_PATH | default ""}}'
+      OPENBAO_TASK_ALL: '{{.ALL | default ""}}'
+    cmds:
+      - openbao-server approle-issue
+
+  approle:revoke:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Server mode: ROLE=<name> deletes the role, which destroys its secret ids, with its policy and its files under the state dir. Asks for two unseal shares at a hidden prompt (a root token for this step alone, revoked after): the Operator only, in a plain terminal, refused inside an agent''s job. A token it already made lives at most 15 minutes.'
+    requires:
+      vars: [ROLE]
+    env:
+      OPENBAO_TASK_ROLE: '{{.ROLE}}'
+    cmds:
+      - openbao-server approle-revoke
 
   login:
     dir: '{{.USER_WORKING_DIR}}'
-    desc: 'Log in to BAO_ADDR. Auth method and flags after --, e.g. task openbao:login -- -method=oidc'
+    desc: 'Log in to BAO_ADDR. Auth method and flags after --, e.g. task openbao:login -- -method=oidc; against the server this Feature runs: task openbao:login -- -method=userpass username=operator'
     interactive: true
     cmds:
-      - bao login {{.CLI_ARGS}}
+      - openbao-run bao login {{.CLI_ARGS}}
 
   logout:
     dir: '{{.USER_WORKING_DIR}}'
     desc: 'Log out: revoke the current token on the server (bao token revoke -self; ignored if it is already dead) and erase the saved token in the state dir, so nothing is left behind. bao token revoke alone leaves the dead token stored.'
     cmds:
-      - bao token revoke -self || true
+      - openbao-run bao token revoke -self || true
       - openbao-token-helper erase
 
   kv:get:
@@ -35,10 +82,11 @@ tasks:
     requires:
       vars: [KEY]
     cmds:
-      - bao kv get {{.CLI_ARGS}} '{{.KEY}}'
+      - openbao-run bao kv get {{.CLI_ARGS}} '{{.KEY}}'
 
   setup:
     dir: '{{.USER_WORKING_DIR}}'
-    desc: 'Re-run the post-create setup: make OPENBAO_STATE_DIR usable by the current user, move a token left in ~/.vault-token into it, report the token helper, the address and whether a login is saved (idempotent; OPENBAO_SETUP_MODE overrides the Feature option).'
+    desc: 'Re-run the post-create setup: make OPENBAO_STATE_DIR usable by the current user, move a token left in ~/.vault-token into it, report the token helper, the address and whether a login is saved; in server mode also run the start hook (write the server config, start the server if it is not running, say whether it is sealed). Idempotent; OPENBAO_SETUP_MODE overrides the Feature option.'
     cmds:
       - openbao-setup
+      - openbao-setup start

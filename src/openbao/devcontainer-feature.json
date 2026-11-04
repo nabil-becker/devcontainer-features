@@ -1,8 +1,8 @@
 {
   "id": "openbao",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "name": "OpenBao CLI",
-  "description": "Installs the OpenBao CLI (https://openbao.org), the open-source Vault fork, as a release binary at /usr/local/bin/bao, verified against the release's checksums.txt. Owns the login state as a named volume at OPENBAO_STATE_DIR=/var/lib/devcontainer-features/openbao (bao's token helper, set through BAO_CONFIG_PATH, keeps the token in it) so `bao login` survives rebuilds, with the post-create hook openbao-setup, and installs dcf-secret, the one command the collection's Features use to read and write secrets (get, put, status, with fixed exit codes). Set BAO_ADDR in containerEnv to point it at your server.",
+  "description": "Installs the OpenBao CLI (https://openbao.org), the open-source Vault fork, as a release binary at /usr/local/bin/bao, verified against the release's checksums.txt. Owns the login state as a named volume at OPENBAO_STATE_DIR=/var/lib/devcontainer-features/openbao (bao's token helper, set through BAO_CONFIG_PATH, keeps the token in it) so `bao login` survives rebuilds, with the post-create hook openbao-setup, and installs dcf-secret, the one command the collection's Features use to read and write secrets (get, put, status, with fixed exit codes). Mode client (the default) is the CLI against a server of yours (set BAO_ADDR in containerEnv). Mode server also runs a server inside the container, started at post-start with raft storage on the same volume and sealed until the Operator unseals it: tasks openbao:init (unseal shares printed only to a terminal, a backup choice asked for), openbao:unseal, openbao:seal, userpass login for the Operator, loopback-bound AppRole roles (openbao:approle:issue) and openbao:server:status.",
   "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/openbao",
   "licenseURL": "https://github.com/nabil-becker/devcontainer-features/blob/main/LICENSE",
   "options": {
@@ -14,10 +14,11 @@
     "mode": {
       "type": "string",
       "enum": [
-        "client"
+        "client",
+        "server"
       ],
       "default": "client",
-      "description": "How the Feature is used. Only 'client' exists in this version: the bao CLI and dcf-secret against a server outside the container (BAO_ADDR). Override per container with OPENBAO_SETUP_MODE in containerEnv."
+      "description": "How the Feature is used. 'client' (default): the bao CLI and dcf-secret against a server outside the container (BAO_ADDR). 'server': also run a server in the container (raft storage on the Feature's volume, loopback only, started at post-start, sealed until `task openbao:unseal`; needs OpenBao 2.4.0 or newer). Override per container with OPENBAO_SETUP_MODE in containerEnv."
     },
     "version": {
       "type": "string",
@@ -37,6 +38,7 @@
     }
   ],
   "postCreateCommand": "openbao-setup",
+  "postStartCommand": "openbao-setup start",
   "installsAfter": [
     "ghcr.io/nabil-becker/devcontainer-features/go-task",
     "ghcr.io/devcontainers/features/common-utils"
