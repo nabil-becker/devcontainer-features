@@ -879,6 +879,12 @@ Slices, each one pull request with its version bump and `task docs` (the ADR is 
    consumers.
 6. **gh, az, cloud-folder**: credentials from `dcf-secret` (section 11). The last slice.
 
+**Packaging (the Operator, 2026-11-04):** after 2a (openbao 1.2.0, its own pull request), slices
+2b, 2c, 3 and 4 are built in parallel and ship as **one** pull request and one release, each
+Feature bumped once: openbao 1.3.0 (2b, 2c and slice 3's records and import), ssh-agent 1.4.0,
+gh, devcontainer-cli, agentic-register and devhost a minor each. The table's 1.4.0 and 1.5.0 rows
+for openbao fold into 1.3.0. Slices 5 and 6 are unchanged.
+
 Tests are Docker-free where they can be: `dcf-secret` against a fake `bao` (each exit code, no
 fallback when sealed), the import against a key volume made in a temp folder, the key piped to
 `ssh-add -` never touching a file (checked by the folder staying empty), the backup naming (never
