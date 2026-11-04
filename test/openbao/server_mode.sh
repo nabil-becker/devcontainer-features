@@ -8,8 +8,10 @@
 #     recorded; the login lifetime of 4 hours and at most 8 (a renewal is capped); the root token gone;
 #   - a restart comes back sealed and keeps what was written; task openbao:unseal and :seal;
 #   - dcf-secret's lines for each state; the audit device;
-#   - the AppRole tasks: loopback binding honoured (secret id and token), one valid secret id after
-#     a reissue, revoke;
+#   - the AppRole tasks: the Operator's token cannot write a policy or make or delete a role;
+#     making and deleting a role go through a root token made from two shares (typed at a
+#     terminal, never echoed, revoked after); loopback binding honoured (secret id and token), one
+#     valid secret id after a reissue (the Operator's token only);
 #   - the refusals inside an agent's job and without a terminal, for init, unseal and seal.
 set -e
 # shellcheck disable=SC1091  # provided by the devcontainer CLI at test time
@@ -74,6 +76,19 @@ unseal_again() { # type the two saved shares at task openbao:unseal's prompts
   term "task -t $tf unseal" "$s1" "$s2"
 }
 
+# A root token made from the saved shares by hand (the test's own use, to inspect and tamper with
+# a role, which the Operator's token may not): $rootok, to be dropped with drop_root.
+make_root() {
+  local otp out enc
+  otp="$(bao operator generate-root -generate-otp)"
+  bao operator generate-root -init -otp="$otp" > /dev/null || return 1
+  out="$(sed -n 1p "$work/shares" | bao operator generate-root -otp="$otp" -format=json -)" || return 1
+  out="$(sed -n 2p "$work/shares" | bao operator generate-root -otp="$otp" -format=json -)" || return 1
+  enc="$(sed -n 's/.*"encoded_token": *"\([^"]*\)".*/\1/p' <<<"$out" | head -n 1)"
+  rootok="$(printf '%s' "$enc" | bao operator generate-root -decode=- -otp="$otp")" && [ -n "$rootok" ]
+}
+drop_root() { BAO_TOKEN="$rootok" bao token revoke -self > /dev/null 2>&1; rootok=""; }
+
 # --- the start hook ------------------------------------------------------------------------
 # post-create (hands the volume to the remote user) and post-start, as the lifecycle runs them
 openbao-setup > /dev/null
@@ -134,10 +149,32 @@ check "server:status shows unsealed" contains "$out" 'server:   unsealed'
 check "and the standing no-backup warning" contains "$out" 'WARNING no backup'
 
 # --- AppRole ---------------------------------------------------------------------------------------
-t approle:issue ROLE=scribe POLICY_PATH=dcf/register/scribe > /dev/null 2>&1
+# the Operator's token cannot write a policy, make or change a role, or delete one
+rc=0; echo 'path "sys/storage/raft/snapshot-force" { capabilities = ["update"] }' | bao policy write approle-evil - > /dev/null 2>&1 || rc=$?
+check "the Operator's token cannot write a policy (permission denied)" [ "$rc" != 0 ]
+rc=0; out="$(echo 'path "x" { capabilities = ["read"] }' | bao policy write approle-evil - 2>&1)" || rc=$?
+check "and the refusal is the policy's" contains "$out" 'permission denied'
+rc=0; out="$(bao write auth/approle/role/evil token_policies=operator 2>&1)" || rc=$?
+check "it cannot create a role" [ "$rc" != 0 ]
+check "the refusal is the policy's" contains "$out" 'permission denied'
+rc=0; bao read sys/policies/acl/operator > /dev/null 2>&1 || rc=$?
+check "it cannot read policies either" [ "$rc" != 0 ]
+# making a role asks for the shares (no terminal: refused, nothing made)
+rc=0; out="$(t approle:issue ROLE=scribe POLICY_PATH=dcf/register/scribe 2>&1 < /dev/null)" || rc=$?
+check "making a role without a terminal is refused" [ "$rc" != 0 ]
+check "and the refusal says it needs a terminal" contains "$out" 'needs a terminal'
+# making a role: the shares make a root token for that step only
+term "task -t $tf approle:issue ROLE=scribe POLICY_PATH=dcf/register/scribe" "$(sed -n 1p "$work/shares")" "$(sed -n 2p "$work/shares")"
+check "approle:issue of a new role through the shares exits 0" [ "$term_rc" = 0 ]
+check "it said it asks for the shares" contains "$(cat "$work/screen.txt")" 'unseal shares typed at the prompt'
+check "no share was echoed on the screen" excludes "$(cat "$work/screen.txt")" "$(sed -n 1p "$work/shares")"
+check "the role exists" bao read auth/approle/role/scribe/role-id
+check "and the root token generation is not left open" contains "$(bao operator generate-root -status 2>&1)" 'Started       false'
 check "approle:issue wrote the secret id (mode 600)" [ "$(stat -c %a "$state/approle/scribe/secret_id")" = 600 ]
 check "and the role id" test -s "$state/approle/scribe/role_id"
-role="$(bao read -format=json auth/approle/role/scribe)"
+make_root
+role="$(BAO_TOKEN="$rootok" bao read -format=json auth/approle/role/scribe)"
+drop_root
 check "the role's secret ids are bound to loopback" contains "$role" '"secret_id_bound_cidrs": ['
 check "and its tokens" contains "$role" '"token_bound_cidrs": ['
 check "the binding is 127.0.0.1 (twice)" [ "$(grep -c '"127.0.0.1' <<<"$role")" -ge 2 ]
@@ -154,16 +191,26 @@ rc=0; bao write auth/approle/login role_id="$(cat "$state/approle/scribe/role_id
 check "the earlier secret id no longer logs in" [ "$rc" != 0 ]
 check "the new one does" login_scribe
 # the CIDR bindings are enforced: the container's loopback is in them, so show the converse
-bao write auth/approle/role/scribe secret_id_bound_cidrs=10.0.0.0/8 > /dev/null
+make_root
+BAO_TOKEN="$rootok" bao write auth/approle/role/scribe secret_id_bound_cidrs=10.0.0.0/8 > /dev/null
 rc=0; out="$(login_scribe 2>&1)" || rc=$?
 check "a secret id bound to another network cannot log in from loopback" [ "$rc" != 0 ]
 check "and the refusal is the CIDR's" contains "$out" 'CIDR'
-bao write auth/approle/role/scribe secret_id_bound_cidrs=127.0.0.1/32 token_bound_cidrs=10.0.0.0/8 > /dev/null
+BAO_TOKEN="$rootok" bao write auth/approle/role/scribe secret_id_bound_cidrs=127.0.0.1/32 token_bound_cidrs=10.0.0.0/8 > /dev/null
+drop_root
 tok="$(login_scribe)"
 rc=0; BAO_TOKEN="$tok" bao token lookup > /dev/null 2>&1 || rc=$?
 check "a token bound to another network is refused from loopback" [ "$rc" != 0 ]
-t approle:revoke ROLE=scribe > /dev/null 2>&1
+rc=0; bao delete auth/approle/role/scribe > /dev/null 2>&1 || rc=$?
+check "the Operator's token cannot delete a role" [ "$rc" != 0 ]
+term "task -t $tf approle:revoke ROLE=scribe" "$(sed -n 1p "$work/shares")" "$(sed -n 2p "$work/shares")"
+check "approle:revoke through the shares exits 0" [ "$term_rc" = 0 ]
 check "approle:revoke removed the files" test ! -e "$state/approle/scribe"
+make_root
+check "approle:revoke removed the role's policy" not env BAO_TOKEN="$rootok" bao read sys/policies/acl/approle-scribe
+drop_root
+check "the Operator's own login is still the Operator's (no root policy on it)" not contains "$(bao token lookup 2>&1)" 'root'
+check "no share was echoed on the screen by revoke" excludes "$(cat "$work/screen.txt")" "$(sed -n 1p "$work/shares")"
 rc=0; bao write auth/approle/login role_id=x secret_id=y > /dev/null 2>&1 || rc=$?
 check "and the role no longer logs in" [ "$rc" != 0 ]
 
