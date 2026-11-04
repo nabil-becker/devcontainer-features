@@ -235,6 +235,7 @@ dcf-secret get <name> [--field <field>]    the value on stdout, nothing else (fi
 dcf-secret put <name> --field <field> [--replace]
                                            the value on stdin, never an argument
 dcf-secret status [<name>]                 one word on stdout, the fix on stderr
+dcf-secret ttl                             the seconds the token has left (0: it does not expire)
 ```
 
 - **Names are logical** (`ssh/<key>`, `register/<principal>`, `token/<name>`; letters, digits,
@@ -281,6 +282,64 @@ therefore needs the default policy (every token has it unless removed) besides `
 
 A caller without this Feature finds no `dcf-secret` and says so; the Features stay independent at
 build time.
+
+`dcf-secret ttl` (from `bao token lookup`'s `ttl`) is how a caller lives no longer than the login:
+ssh-agent's `key:load` gives a key that lifetime in the agent. It exits like `status` (10, 11, 12).
+
+## SSH key records
+
+OpenBao keeps the collection's SSH private keys; the `ssh-agent` Feature only loads them into an
+agent for a sitting, and the `gh` Feature registers their public keys at GitHub (ADR 0048). This
+Feature keeps the records and their lifecycle, and knows nothing of agents, git or GitHub.
+
+A record is the KV v2 secret `dcf/ssh/<name>` with the fields `private_key`, `public_key` and
+`purpose` (`git-signing` by default), and custom metadata `created` (the date), `source`
+(`generated`, `import`, `ssh-agent`, `agentic-register`) and, once retired, `retired`. The
+register's keys use `register/<principal>`.
+
+- `task openbao:ssh:new [NAME=] [COMMENT=] [PURPOSE=]`: an ed25519 key (default name
+  `<repo>-<container>-sign`), made by `ssh-keygen` in a private folder on tmpfs (`/dev/shm`) that is
+  removed at once; with no writable tmpfs it refuses rather than write a key to disk. **No
+  passphrase**: the gate is the unseal and the login, and a second passphrase per load would bring
+  back the prompt ADR 0046 had. Prints the public key and the next steps.
+- `task openbao:ssh:put NAME=`: a key you pipe in, from stdin only.
+- `task openbao:ssh:retire NAME= [-- --plan]`: writes a version with only the public key, the
+  purpose and the date, then destroys every version that held the private key (`bao kv destroy`,
+  not recoverable). The metadata stays, so the record still lists and its public key can still
+  verify old signatures.
+- `task openbao:ssh:age`: each record's creation date, age (or retirement date) and fingerprint;
+  a live key older than `SSH_KEY_MAX_AGE_DAYS` (default 365) is warned about.
+
+A record is created only if absent (`bao kv put -cas=0`) and a name is never reused, also after a
+retire. The private key is held in memory and handed to `bao` on stdin; it is never an argument
+and never printed. Reads go through `dcf-secret`; list, metadata and destroy are `bao kv`'s own,
+so the Operator's policy needs `create`, `read`, `update`, `patch` and `list` on `dcf/*` (which
+covers `dcf/metadata/ssh/*` and `dcf/destroy/ssh/*`). The exit codes are `dcf-secret`'s; 3 is a
+refusal (the name exists).
+
+### Import
+
+`task openbao:ssh:import FROM=...` brings keys kept elsewhere into OpenBao; run it again at any
+time: a record that holds the same key is skipped, one that holds another key is refused.
+
+- `FROM=ssh-agent [DIR=]`: every private key of the `ssh-agent` Feature's key volume becomes
+  `ssh/<file name>`, dated from its `.meta` sidecar (else the file's date). A key with a
+  passphrase is asked for **once, at ssh-keygen's own prompt**, on a tmpfs copy that is removed
+  (without a terminal it is skipped and named). What OpenBao returns is compared, by fingerprint,
+  with what was read. The volume's `allowed_signers.history` lines and a line per imported key go
+  into the repository's `.devcontainer/allowed_signers` (`ALLOWED_SIGNERS=` names another file; a
+  key the collection generated gets `valid-after` its creation date, an imported one none, since it
+  may have signed earlier); **the host commits it**. Then one key (the one git signs with, if
+  any) is loaded for 5 minutes through `ssh-agent-setup` and `git:verify` runs. Only then is
+  deleting the volume's copy offered, per key, on a terminal, never by default, so a key is in two
+  masters no longer than the import.
+- `FROM=file FILE=<path> [NAME=]`, or the key on stdin with `NAME=`: one key, its line added to
+  `.devcontainer/allowed_signers`; the source file is left alone. From the workstation, `task
+  devcontainer:openbao-ssh-import FILE=<key>` (the `devcontainer-cli` launcher) streams a key into
+  this through `devcontainer exec` on stdin.
+- `FROM=agentic-register [DIR=]`: the register's `keys/<principal>` (in `AGENTIC_REGISTER_HOME`)
+  become `register/<principal>` with purpose `register`; each back then reads its own through its
+  AppRole.
 
 ## Minimal `devcontainer.json`
 
@@ -360,11 +419,14 @@ registry, these appear under `openbao:`:
   role that reads one secret; `ROLE=<name>` or `ALL=1` reissues; one valid secret id each.
 - `openbao:approle:revoke`: server mode: `ROLE=<name>` deletes the role, its secret ids, its policy
   and its files.
+- `openbao:ssh:new`, `openbao:ssh:put`, `openbao:ssh:import`, `openbao:ssh:retire`,
+  `openbao:ssh:age`: the SSH key records and the import (above).
 - `openbao:setup`: re-run the post-create hook (`openbao-setup`): make the state directory usable,
   move a token left in `~/.vault-token` into it, report the token helper, the address and the saved login; in
   server mode also the start hook.
 
-No task reads a variable besides `KEY`; the address and token come from
+No task reads a variable besides `KEY` (and the `openbao:ssh:*`, approle and init tasks' own
+`NAME`, `FROM`, `ROLE` and the like); the address and token come from
 `BAO_ADDR` and `BAO_TOKEN` in the container's environment, as for `bao`
 itself.
 

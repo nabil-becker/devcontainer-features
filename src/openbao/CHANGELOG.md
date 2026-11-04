@@ -8,6 +8,14 @@ here; `task lint` fails when the entry is missing.
 
 Entries from 1.0.0 to 1.0.3 were generated from the commit history (`.github/scripts/changelog.py backfill`) and the "Changes in x.y.z" sections that NOTES.md used to hold; most list commit subjects as written then; the newest of them is in wording for users.
 
+## [1.3.0] - 2026-11-04
+
+### Added
+
+- **SSH key records in OpenBao**: `task openbao:ssh:new` makes an ed25519 key at `dcf/ssh/<name>` (the fields `private_key`, `public_key`, `purpose`, and its creation date in the metadata), generated on tmpfs and removed at once, with no passphrase: the unseal and your login are the gate. `task openbao:ssh:put NAME=` stores a key you pipe in, `task openbao:ssh:retire NAME=` destroys a record's private key and keeps its public key and dates (`-- --plan` shows the steps), `task openbao:ssh:age` lists each record with its age. A record is never overwritten and a name never reused. Nothing to do unless you want them; ssh-agent 1.4.0's `key:load NAME=ssh/<key>` reads them.
+- **`task openbao:ssh:import`**: `FROM=ssh-agent` moves every key of the ssh-agent Feature's key volume into OpenBao (the creation dates from the volume, the fingerprints compared, a passphrase asked once at ssh-keygen's prompt), writes the volume's `allowed_signers.history` and a line per key into `.devcontainer/allowed_signers` for the host to commit, proves one key through ssh-agent, and only then asks, per key, whether to delete the volume's copy. `FROM=file FILE=<path>` (or the key on stdin with `NAME=`, which the workstation's `task devcontainer:openbao-ssh-import` streams in) and `FROM=agentic-register` (the register's `keys/<principal>` as `register/<principal>`) do the same for one key or the register's. It can run again: what is there is skipped. **If you use ssh-agent's key mode, run `task openbao:ssh:import FROM=ssh-agent` once** (server mode unsealed, logged in); the key volume goes with ssh-agent 2.0.
+- `dcf-secret ttl` prints the seconds the token has left (0: it does not expire), so a caller lives no longer than the login.
+
 ## [1.2.0] - 2026-11-03
 
 ### Added
