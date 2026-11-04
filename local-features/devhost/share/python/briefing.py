@@ -5,7 +5,8 @@ Usage: briefing.py [--json] [--no-refresh]
 
 Says, in a few sentences: the ledger entries since the last review and whether a review is due
 (`DEVHOST_REVIEW_EVERY`, 25 by default), what the backs left pending, how many backlog items and decisions for the
-Operator are open, a warning when `gh` is not logged in or git has no GitHub credential helper (silent without gh),
+Operator are open, a line when this devhost's OpenBao server (server mode) is sealed (with the last backup's age), not
+initialised or not running, a warning when `gh` is not logged in or git has no GitHub credential helper (silent without gh),
 a warning when local-features/devhost (or src/devhost) is newer than the installed devhost
 (`$DEVHOST_SHARE/VERSION`), any night-shift report not yet reviewed, and the month-to-date agent spend
 on this machine. Refreshes this month's cost report (`costs-YYYY-MM-<engineer>.md` in the ledger
@@ -14,12 +15,14 @@ inter's context and a one-line message; the entrypoint prints the text when stdi
 """
 from __future__ import annotations
 
+import calendar
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -97,6 +100,65 @@ def branch_status(root: Path) -> list[str]:
     return [line] if line else []
 
 
+OPENBAO_STATE_DEFAULT = "/var/lib/devcontainer-features/openbao"
+BACKUP_STAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
+
+
+def _age(seconds: float) -> str:
+    minutes = int(max(seconds, 0) // 60)
+    if minutes < 90:
+        return f"{max(minutes, 1)} min ago"
+    hours = minutes // 60
+    return f"{hours} h ago" if hours < 48 else f"{hours // 24} days ago"
+
+
+def last_backup_age(state: Path, now: float | None = None) -> str:
+    """How old the openbao server's last backup is, or "unknown".
+
+    Assumed (slice 2b of secrets-master-split builds it in parallel): `<state>/last-backup` is a small
+    text file the backup task writes with the time (an ISO UTC stamp like 2026-11-04T10:00:00Z), the
+    place and the sha256. The stamp is read from the file's text; when the file has no stamp its
+    modification time is used (it is rewritten by each backup). Absent or unreadable: "unknown"."""
+    now = time.time() if now is None else now
+    path = state / "last-backup"
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+        m = BACKUP_STAMP.search(text)
+        when = calendar.timegm(time.strptime(m.group(0), "%Y-%m-%dT%H:%M:%SZ")) if m else path.stat().st_mtime
+    except (OSError, ValueError, OverflowError):
+        return "unknown"
+    return _age(now - when)
+
+
+def openbao_status(root: Path) -> list[str]:
+    """One line when this devhost's OpenBao server (server mode) cannot be used: sealed, not initialised or not running.
+
+    Silent without a server: no `bao`, or no server's state in `OPENBAO_STATE_DIR` (client mode, or
+    the Feature absent), so the backs and the briefing behave as before. The state is `bao status`'s own
+    exit code (0 unsealed, 2 sealed; the JSON says whether it is initialised), never parsed words.
+    `DEVHOST_BAO` names another command, as `DEVHOST_GH` does, so tests point it at a fake."""
+    state = Path(os.environ.get("OPENBAO_STATE_DIR", "").strip() or OPENBAO_STATE_DEFAULT)
+    if not (state / "raft").is_dir() and not (state / "server.pid").exists():
+        return []
+    exe = shutil.which(os.environ.get("DEVHOST_BAO", "").strip() or "bao")
+    if not exe:
+        return []
+    env = dict(os.environ)
+    env.setdefault("BAO_ADDR", "http://127.0.0.1:8200")  # server mode's own default (openbao env.sh)
+    try:
+        done = subprocess.run([exe, "status", "-format=json"], cwd=str(root), capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=10, env=env)
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if done.returncode == 0:
+        return []
+    if done.returncode == 2:
+        if re.search(r'"initialized"\s*:\s*false', done.stdout):
+            return ["OpenBao is not initialised: the backs cannot sign; the Operator runs task openbao:init."]
+        return [f"OpenBao sealed: the backs cannot sign; last backup {last_backup_age(state)}; task openbao:unseal."]
+    return ["OpenBao is not reachable: the backs cannot sign; task openbao:server:status says whether it runs."]
+
+
 GH_FIX = ("In a container terminal run `gh auth login --web --git-protocol https`, then `gh auth setup-git`.")
 
 
@@ -154,7 +216,7 @@ def stale_install(root: Path) -> list[str]:
 
 def briefing(root: Path, refresh: bool = True) -> str:
     this_month = month()
-    lines = ledger_status(root) + stale_install(root) + pending(root) + backlog_status(root) + branch_status(root) + gh_auth(root) + night_shift_status(root)
+    lines = ledger_status(root) + stale_install(root) + pending(root) + backlog_status(root) + branch_status(root) + gh_auth(root) + night_shift_status(root) + openbao_status(root)
     try:
         if refresh:
             report.write_report(root, this_month)

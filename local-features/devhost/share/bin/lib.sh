@@ -109,3 +109,67 @@ hk_measures() {
   # shellcheck disable=SC2086
   "${cmd[@]}" --measures "$@" --main "$main" ${since:+--since "$since"} 2>/dev/null || echo "not measured"
 }
+
+# hk_fetch_key <job>: the back's own key from OpenBao, for a back that signs (secrets-master-split,
+# section 7). Runs in the runner, around the back's claude run, never as a tool call.
+#   - the AppRole is the back's own: role id and secret id under $OPENBAO_STATE_DIR/approle/<job>/
+#     (written by `task devhost:approles:setup`, mode 600), the role reads dcf/register/<job> only;
+#   - the login (`bao write auth/approle/login`, the two ids read from the files with @, never as
+#     arguments) gives a token of 5 minutes that exists only in this function and in the environment
+#     of the one `dcf-secret get` it is passed to; it is never exported, so the back's job, its
+#     claude run and everything they start do not inherit it;
+#   - the key is written to a fresh folder on tmpfs (DEVHOST_KEY_TMPFS, /dev/shm; never the disk), mode
+#     700 and 600; the runner removes the folder on exit, success or failure.
+# Sets HK_KEY_DIR and HK_KEY_FILE on success. Returns 0 (fetched), 1 (nothing to fetch: no bao or
+# dcf-secret, or no role for this job; the back runs as before, HK_KEY_ERR says why when asked) or
+# 2 (failed: HK_KEY_ERR is one plain line naming the fix; HK_KEY_RC the dcf-secret exit code when it
+# ran: 10 unreachable, 11 sealed, 12 login refused, 13 denied, 14 no such secret).
+# JOB_KEY_NAME (default register/<job>) and JOB_KEY_FIELD (default private_key) come from the job file.
+# _hk_bao <args>: bao (DEVHOST_BAO), with the openbao Feature's env.sh applied (the server mode's default BAO_ADDR).
+_hk_bao() (
+  f="${OPENBAO_FEATURE_DIR:-/usr/local/share/openbao-feature}/env.sh"
+  # shellcheck disable=SC1090  # installed by the openbao Feature
+  [ -f "$f" ] && . "$f"
+  "${DEVHOST_BAO:-bao}" "$@"
+)
+
+# shellcheck disable=SC2034  # HK_* are read by the runner
+hk_fetch_key() {
+  local job="$1" od rid sid name field tok st rc err tfs
+  HK_KEY_DIR=""; HK_KEY_FILE=""; HK_KEY_ERR=""; HK_KEY_RC=0
+  od="${OPENBAO_STATE_DIR:-/var/lib/devcontainer-features/openbao}"
+  name="${JOB_KEY_NAME:-register/$job}"; field="${JOB_KEY_FIELD:-private_key}"
+  rid="$od/approle/$job/role_id"; sid="$od/approle/$job/secret_id"
+  if ! command -v "${DEVHOST_BAO:-bao}" >/dev/null 2>&1 || ! command -v dcf-secret >/dev/null 2>&1; then
+    HK_KEY_ERR="the openbao Feature is not installed here (no bao or dcf-secret)"; return 1
+  fi
+  if [ ! -r "$rid" ] || [ ! -r "$sid" ]; then
+    HK_KEY_ERR="no AppRole for the $job back under $od/approle/$job: the Operator runs task devhost:approles:setup in a terminal (a role is made once, with the unseal shares)"; return 1
+  fi
+  tfs="${DEVHOST_KEY_TMPFS:-/dev/shm}"
+  HK_KEY_DIR="$(umask 077; mktemp -d "$tfs/devhost-key.XXXXXX" 2>/dev/null)" \
+    || { HK_KEY_DIR=""; HK_KEY_ERR="no tmpfs folder at $tfs for the key (it is never written to disk)"; return 2; }
+  err="$HK_KEY_DIR/err"
+  # The server's own default address in server mode comes from the openbao Feature's env.sh, as for dcf-secret.
+  tok="$(_hk_bao write -field=token auth/approle/login role_id=@"$rid" secret_id=@"$sid" 2>"$err")"
+  if [ -z "$tok" ]; then
+    # What the server says is read from its own exit code, never from the words of the error.
+    _hk_bao status >/dev/null 2>&1; st=$?
+    case "$st" in
+      2) HK_KEY_RC=11; HK_KEY_ERR="OpenBao is sealed: the Operator runs task openbao:unseal" ;;
+      0) HK_KEY_RC=12; HK_KEY_ERR="the AppRole login of the $job back was refused (role revoked or its secret id reissued elsewhere): task devhost:approles:setup, or task openbao:approle:issue ROLE=$job" ;;
+      *) HK_KEY_RC=10; HK_KEY_ERR="OpenBao is unreachable: task openbao:server:status says whether it runs" ;;
+    esac
+    rm -f "$err"; return 2
+  fi
+  HK_KEY_FILE="$HK_KEY_DIR/key"
+  rc=0
+  ( umask 077; BAO_TOKEN="$tok" dcf-secret get "$name" --field "$field" >"$HK_KEY_FILE" 2>"$err" ) || rc=$?
+  tok=""
+  if [ "$rc" -ne 0 ]; then
+    HK_KEY_RC="$rc"; HK_KEY_ERR="$(tail -n1 "$err" | head -c 300)"; [ -n "$HK_KEY_ERR" ] || HK_KEY_ERR="dcf-secret get $name failed ($rc)"
+    rm -f "$HK_KEY_FILE" "$err"; HK_KEY_FILE=""; return 2
+  fi
+  rm -f "$err"
+  return 0
+}

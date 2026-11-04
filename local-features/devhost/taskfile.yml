@@ -118,6 +118,26 @@ tasks:
     cmds:
       - devhost-init {{.CLI_ARGS}}
 
+  approles:setup:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'One-time step for the Operator, in a plain terminal (refuses inside an agent''s job and without a terminal): make one OpenBao AppRole per back (DEVHOST_BACKS, default scribe secretary librarian tester), each allowed to read only dcf/register/<back>, through task openbao:approle:issue. Making a role needs the unseal shares, which that task asks for at its own hidden prompt (once per role); the openbao Feature must run in server mode and be unsealed. Without a role a back runs as before; with one, a back that signs gets its key in the runner.'
+    interactive: true
+    cmds:
+      - |
+        if [ -n "${DEVHOST_JOB_CHILD:-}" ] || [ -n "${CLAUDECODE:-}" ]; then
+          echo "task devhost:approles:setup refuses to run inside an agent's job: it needs the unseal shares. Run it yourself in a plain terminal in the devcontainer." >&2
+          exit 3
+        fi
+        if [ ! -t 0 ] || [ ! -t 1 ]; then
+          echo "task devhost:approles:setup needs a terminal (it asks for unseal shares): run it in a plain terminal, not through a pipe or a script." >&2
+          exit 3
+        fi
+        for back in ${DEVHOST_BACKS:-scribe secretary librarian tester}; do
+          echo "== role for the $back back (reads dcf/register/$back only)"
+          task openbao:approle:issue ROLE="$back" POLICY_PATH="dcf/register/$back" || { echo "task devhost:approles:setup stopped at the $back back" >&2; exit 1; }
+        done
+        echo "done: each back now has a role id and a secret id under \$OPENBAO_STATE_DIR/approle/<back>/ (task openbao:approle:issue ALL=1 reissues them after a restore)"
+
   site:
     dir: '{{.USER_WORKING_DIR}}'
     desc: 'Build the repository''s homepage: one self-contained HTML page of the backlog, ledger, Features, records and every tracked doc, into OUT (default .devhost/site/index.html); PRS=1 adds the open pull requests. Publishing it is the publish-site skill.'
