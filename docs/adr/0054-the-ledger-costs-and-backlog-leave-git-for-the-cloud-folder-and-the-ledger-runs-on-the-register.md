@@ -70,8 +70,7 @@ Nothing to migrate. It lost: the Operator ruled against it, and ADR-0043 already
 - The backlog and costs are no longer reviewed in pull requests; the pre-push backlog-id check is
   skipped when the share is unmounted, and should warn.
 - The two machines writing one mirror at once are not protected from each other; one writer is assumed.
-- The merge driver for `TODO.md` and `.github/scripts/merge_todo.py` become unused and are to be removed.
-- A purge of the records from git history stays separate and later (ADR-0043).
+- The merge driver for `TODO.md` and `.github/scripts/merge_todo.py` become unused and are removed with the records.
 - Backlog items `records-out-of-git`, `devhost-ledger-register` and steps 5 and 6 of
   `aof-apply-plan` are ticked by the secretary after the cut-over.
 

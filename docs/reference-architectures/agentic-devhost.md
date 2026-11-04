@@ -254,8 +254,8 @@ The records are the point of this architecture, so where each lives matters most
 - **Don't:** merge `TODO.md` or a ledger file with a plain union, or rely on GitHub's server-side merge for them.
 - **Why:** 2026-10-30 "PRs #118 and #119 merged to main": three ticked items doubled; 2026-10-30 "PR #135 merged to main
   with main merged in": GitHub could not merge `TODO.md`.
-- **Instead:** the `devhost-todo` merge driver (loaded by `task repo:setup`), and merge `main` into a branch that
-  touches `TODO.md` before it merges.
+- **Instead:** keep the backlog and the ledger out of git (ADR 0054): the backlog in the shared folder, the
+  ledger in the register. Until 2026-11-04 this repository used the `devhost-todo` merge driver instead.
 - **Caught by:** the `backlog_ids` guard in `devhost-verify`, and the driver (#121, #123).
 
 ### A7. Branches and records that do not line up
