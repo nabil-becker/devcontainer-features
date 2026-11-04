@@ -8,6 +8,18 @@ here; `task lint` fails when the entry is missing.
 
 Entries from 1.0.0 to 1.0.3 were generated from the commit history (`.github/scripts/changelog.py backfill`) and the "Changes in x.y.z" sections that NOTES.md used to hold; most list commit subjects as written then; the newest of them is in wording for users.
 
+## [1.3.0] - 2026-11-04
+
+### Added
+
+- **Onboarding by a starter instance:** `task openbao:onboard:export NAMES=<name>,... DEST=<folder>` (the sender, in a plain terminal) starts a short-lived second server in the container (its own raft folder and port 8210), copies the named secrets into it from your own store (every field), writes the onboarding marker, takes a raft snapshot into `DEST` (`onboarding-<machine>-<time>.snap`, mode 600, never overwritten), stops the instance and deletes it, and prints its fresh unseal shares and a claim token once, to the terminal. Your own store is never snapshotted and your own shares are not involved. After `openbao:restore`, `task openbao:onboard:claim` (the receiver) rotates the unseal shares with `bao operator rotate-keys` (new shares, committed only when two are typed back), revokes everything the sender held (every token, user and extra auth method; every AppRole role rebuilt so every secret id is gone), sets up the receiver's own Operator, reissues the secret ids (`approle:issue ALL=1`), rotates the data key (`ROTATE=0` skips it), replaces the marker and lists the names that came as the sender's knowledge. It resumes after a failure.
+- **Response wrapping for a few keys:** `task openbao:wrap NAMES=<name>,... [TTL=15m]` makes one one-use wrapping token per secret (default TTL 15 minutes, capped at 1 hour) into a mode 600 file on tmpfs; `task openbao:unwrap FROM=<file> [ISSUER_ADDR=<server>]` looks every token up first and refuses, unwrapping nothing, unless each was made by a read of its own secret's path and has not run out, then unwraps each once into your own store. Works against a central server in client mode.
+- All four refuse inside an agent's job (the rule that covers `init`, `unseal` and `seal`); the claim token, the shares and the wrapping tokens are never an argument, never in a file but the ones named above, and printed only to a terminal.
+
+### Changed
+
+- `jq` is installed at build time (the onboarding scripts read `bao`'s JSON with it). Rebuild the devcontainer to get the new tasks.
+
 ## [1.2.0] - 2026-11-03
 
 ### Added

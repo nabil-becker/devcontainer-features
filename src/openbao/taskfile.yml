@@ -62,6 +62,50 @@ tasks:
     cmds:
       - openbao-server approle-revoke
 
+  onboard:export:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Onboarding, the sender, in a plain terminal (refuses inside an agent''s job and without a terminal): NAMES=<name>,... DEST=<folder>. Starts a short-lived second server in this container, copies the named secrets (every field, from your own store, with your login) into it, writes the onboarding marker, takes a raft snapshot into DEST as onboarding-<machine>-<UTC time>.snap (mode 600, never overwritten), stops the instance and deletes its folder. Prints once, to the terminal, the instance''s fresh unseal shares (3, threshold 2) and the claim token: hand them over separately from the file. The receiver runs openbao:restore, then openbao:onboard:claim. Never your own store''s shares.'
+    interactive: true
+    requires:
+      vars: [NAMES, DEST]
+    env:
+      OPENBAO_TASK_NAMES: '{{.NAMES}}'
+      OPENBAO_TASK_DEST: '{{.DEST}}'
+    cmds:
+      - openbao-onboard export
+
+  onboard:claim:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Onboarding, the receiver, server mode, after openbao:restore of an onboarding snapshot, in a plain terminal (refuses inside an agent''s job and without a terminal): asks for the claim token, your own Operator password and two of the sender''s shares, runs bao operator rotate-keys (new unseal shares, printed once, committed only after you type two back), revokes everything the sender held (every token, every user, every auth method but token, userpass and approle, any other audit device, the AppRole roles written again so every secret id is gone), sets up your Operator, reissues the AppRole secret ids (openbao:approle:issue ALL=1), rotates the data key (ROTATE=0 skips it), replaces the onboarding marker, revokes the claim token, and lists the names that came with the snapshot as the sender''s knowledge. Safe to run again after a failure (it resumes after the rotation).'
+    interactive: true
+    env:
+      OPENBAO_TASK_ROTATE: '{{.ROTATE | default ""}}'
+    cmds:
+      - openbao-onboard claim
+
+  wrap:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Response wrapping, the sender, against a central server in client mode (refuses inside an agent''s job): NAMES=<name>,... [TTL=15m] [OUT=<file>] [SHOW=1]. One one-use wrapping token per secret (bao kv get -wrap-ttl), TTL default 15 minutes and capped at 1 hour. The tokens go to a file (mode 600, on tmpfs, default /dev/shm), whose path and expiry are printed; SHOW=1 also prints them, to a terminal only. The receiver runs openbao:unwrap.'
+    requires:
+      vars: [NAMES]
+    env:
+      OPENBAO_TASK_NAMES: '{{.NAMES}}'
+      OPENBAO_TASK_TTL: '{{.TTL | default ""}}'
+      OPENBAO_TASK_OUT: '{{.OUT | default ""}}'
+      OPENBAO_TASK_SHOW: '{{.SHOW | default ""}}'
+    cmds:
+      - openbao-onboard wrap
+
+  unwrap:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Response wrapping, the receiver (refuses inside an agent''s job): FROM=<file of "<name> <token>" lines> [ISSUER_ADDR=<the server that made them, default BAO_ADDR>], or with no FROM the name and the token at prompts (the token is never an argument and not echoed). Looks every token up first (sys/wrapping/lookup) and refuses, unwrapping nothing, unless each was made by a read of its own secret''s path and has not run out; then unwraps each once and puts it with dcf-secret put into your own store (BAO_ADDR).'
+    interactive: true
+    env:
+      OPENBAO_TASK_FROM: '{{.FROM | default ""}}'
+      OPENBAO_TASK_ISSUER_ADDR: '{{.ISSUER_ADDR | default ""}}'
+    cmds:
+      - openbao-onboard unwrap
+
   login:
     dir: '{{.USER_WORKING_DIR}}'
     desc: 'Log in to BAO_ADDR. Auth method and flags after --, e.g. task openbao:login -- -method=oidc; against the server this Feature runs: task openbao:login -- -method=userpass username=operator'

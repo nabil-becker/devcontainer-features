@@ -28,6 +28,7 @@ fi
 missing=()
 command -v curl >/dev/null 2>&1 || missing+=(curl ca-certificates)
 command -v tar >/dev/null 2>&1 || missing+=(tar)
+command -v jq >/dev/null 2>&1 || missing+=(jq)
 if [ "${#missing[@]}" -gt 0 ]; then
   if command -v apt-get >/dev/null 2>&1; then
     apt-get update -qq
@@ -88,6 +89,7 @@ install -m 0755 "$tmp/x/bao" /usr/local/bin/bao
 # postCreateCommand and, as `openbao-setup start`, its postStartCommand (see
 # devcontainer-feature.json) and reads its option defaults from options.env, so the hooks and
 # `task openbao:setup` behave the same; openbao-server is what the server-mode tasks run,
+# openbao-onboard what the onboarding tasks (export, claim, wrap, unwrap) run,
 # openbao-run what the others run so that server mode's BAO_ADDR default applies, and env.sh is the
 # snippet they all source (the mode, that default). Nothing is written into
 # OPENBAO_STATE_DIR here: the volume is not mounted at image build.
@@ -102,6 +104,7 @@ chmod 0644 "$share/options.env"
 install -m 0755 "$feature_dir/dcf-secret.sh" /usr/local/bin/dcf-secret
 install -m 0755 "$feature_dir/openbao-setup.sh" /usr/local/bin/openbao-setup
 install -m 0755 "$feature_dir/openbao-server.sh" /usr/local/bin/openbao-server
+install -m 0755 "$feature_dir/openbao-onboard.sh" /usr/local/bin/openbao-onboard
 install -m 0755 "$feature_dir/openbao-run.sh" /usr/local/bin/openbao-run
 install -m 0644 "$feature_dir/env.sh" "$share/env.sh"
 install -m 0755 "$feature_dir/dcf-persist.sh" /usr/local/bin/dcf-persist

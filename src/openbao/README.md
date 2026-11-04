@@ -1,7 +1,7 @@
 
 # OpenBao CLI (openbao)
 
-Installs the OpenBao CLI (https://openbao.org), the open-source Vault fork, as a release binary at /usr/local/bin/bao, verified against the release's checksums.txt. Owns the login state as a named volume at OPENBAO_STATE_DIR=/var/lib/devcontainer-features/openbao (bao's token helper, set through BAO_CONFIG_PATH, keeps the token in it) so `bao login` survives rebuilds, with the post-create hook openbao-setup, and installs dcf-secret, the one command the collection's Features use to read and write secrets (get, put, status, with fixed exit codes). Mode client (the default) is the CLI against a server of yours (set BAO_ADDR in containerEnv). Mode server also runs a server inside the container, started at post-start with raft storage on the same volume and sealed until the Operator unseals it: tasks openbao:init (unseal shares printed only to a terminal, a backup choice asked for), openbao:unseal, openbao:seal, userpass login for the Operator, loopback-bound AppRole roles (openbao:approle:issue) and openbao:server:status.
+Installs the OpenBao CLI (https://openbao.org), the open-source Vault fork, as a release binary at /usr/local/bin/bao, verified against the release's checksums.txt. Owns the login state as a named volume at OPENBAO_STATE_DIR=/var/lib/devcontainer-features/openbao (bao's token helper, set through BAO_CONFIG_PATH, keeps the token in it) so `bao login` survives rebuilds, with the post-create hook openbao-setup, and installs dcf-secret, the one command the collection's Features use to read and write secrets (get, put, status, with fixed exit codes). Mode client (the default) is the CLI against a server of yours (set BAO_ADDR in containerEnv). Mode server also runs a server inside the container, started at post-start with raft storage on the same volume and sealed until the Operator unseals it: tasks openbao:init (unseal shares printed only to a terminal, a backup choice asked for), openbao:unseal, openbao:seal, userpass login for the Operator, loopback-bound AppRole roles (openbao:approle:issue) and openbao:server:status. Onboarding: openbao:onboard:export and :onboard:claim (a starter instance restored, then rotate-keys and every access the sender held revoked) and openbao:wrap and :unwrap (one-use response-wrapping tokens for a few keys against a central server).
 
 ## Example Usage
 
@@ -245,6 +245,102 @@ of it against a real server.
 Files in the volume for server mode: `server.hcl`, `server.pid`, `server.log`, `raft/`,
 `audit.log`, `backup-choice`, `approle/<role>/{secret_id,role_id}`, and the login `token`.
 
+## Onboarding: a new devhost starts from shared keys
+
+Two routes, for two needs. **The receiver trusts the sender only for what was put in:** the sender
+knows those values for good, and nothing here changes that. For anything stricter, use a fresh
+instance and put new values in.
+
+```
+ (a) a starter instance, for many keys                  (b) response wrapping, for a few keys
+
+ sender                         receiver                sender                       receiver
+ openbao:onboard:export ------> openbao:restore         openbao:wrap NAMES=a,b       openbao:unwrap
+   snapshot file                openbao:onboard:claim     one one-use token each ---> look up, check the
+   3 shares + claim token         rotate-keys, revoke       (a file, TTL <= 1 hour)     creation path, unwrap
+   (handed over separately)       everything the sender                                 once, dcf-secret put
+                                  held, reissue, rotate    needs a central server
+                                                           the receiver can reach
+```
+
+**Route (a).** `task openbao:onboard:export NAMES=ssh/key,register/x DEST=<folder>` (the sender, in
+a plain terminal; refuses inside an agent's job) starts a second `bao` server of the same binary
+under `OPENBAO_STATE_DIR/onboarding` (its own raft folder, a loopback listener on port 8210, or
+`OPENBAO_ONBOARD_PORT`), initialises it with **fresh** shares (3, threshold 2: never the sender's
+own), copies the named secrets in from the sender's store with the sender's login (every field),
+writes the **onboarding marker** (`onboarding/marker`: the sender's machine name, from
+`OPENBAO_MACHINE` or the hostname, and the time), takes a raft snapshot into `DEST` as
+`onboarding-<machine>-<UTC time>.snap` (mode 600, never overwritten), then stops the instance and
+deletes its folder. It prints the fresh shares and the **claim token** (the instance's root token)
+once, to the terminal. The sender's own store is never snapshotted. The shares are not PGP
+encrypted in this version (the instance has to be unsealed to be filled). The file name is the
+marker a restore can read before it has a token (`onboarding-`); the record inside is the one
+`claim` reads.
+
+The receiver runs `openbao:restore FROM=<file>` (the backup and restore tasks), unseals with the
+sender's fresh shares, then `task openbao:onboard:claim` (server mode, a plain terminal). It asks for
+the claim token, the receiver's own Operator password and two of the sender's shares (all hidden),
+and then:
+
+1. `bao operator rotate-keys -verify`: three new unseal shares, printed once; bao commits them only
+   when two are typed back, so a share that was never stored cannot lock the receiver out.
+2. Revokes everything the sender held: every token (the accessor list, each revoked but the claim
+   token's own, then the login paths by prefix), every `userpass` user, every auth method but
+   `token`, `userpass` and `approle`, any audit device but the server's own file device; every
+   AppRole role is deleted (which destroys its secret ids) and written again with the Feature's
+   settings and the same policy. A policy that is not the Feature's own and not a role's is
+   listed for the receiver to read; none is deleted blind.
+3. Sets up the receiver's Operator (the mounts, the policy and the login, as `init` does) and runs
+   the generic `openbao:approle:issue ALL=1`.
+4. `bao operator rotate` (`ROTATE=0` skips it): new writes use a new data key.
+5. Replaces the marker with `onboarding/claimed`, revokes the claim token, and lists the names that
+   came with the snapshot as the sender's knowledge.
+
+A claim that fails midway leaves the claim token valid and a resume file in the volume: run it again
+(it skips the rotation, whose new shares are already in force).
+
+**Why a claim token, and not a root token made from the shares.** OpenBao's `bao operator
+generate-root` uses the authenticated `/sys/generate-root-token` endpoint since 2.6.0, and the
+unauthenticated one is off by default (the listener option
+`disable_unauthed_generate_root_endpoints`). A restored store holds only the sender's tokens, so
+the receiver has no token that may start a generation. The claim token is a root token that
+was in the snapshot: the sender holds it already, so it adds no trust, and the claim revokes it.
+`rotate-keys` itself needs a token too (`sys/rotate/root`), which is the same token.
+
+**What was confirmed against OpenBao 2.7.2** (a real server, the container test `onboarding`, and
+the source): `rotate-keys` changes the **unseal shares and the key that protects the keyring**: a
+snapshot taken after it does not open with the old shares (the unseal is refused), a snapshot
+taken before still does. It does **not** change the **data key** (the key term stays 1): that is
+what `bao operator rotate` does, for writes after it. So the sender, holding the old snapshot and
+the old shares, reads for good what was in it, cannot unseal a later backup of the receiver's store
+with the old shares, and cannot read what the receiver writes after `rotate` (a new key, in a
+keyring under the new shares). What was written under the old data key stays readable to anyone who
+kept the old keyring: the data that came with the snapshot is the sender's for good. A
+wrapping token is read with `-wrap-ttl` on a `kv get` (its creation path is `<mount>/data/<name>`),
+`sys/wrapping/lookup` returns the creation path, time and TTL, the unwrap takes the wrapping token as
+the call's own token, and a second unwrap or lookup fails (`wrapping token is not valid or does not
+exist`). `-wrap-ttl` is not capped by the server: the cap is this task's.
+
+**Route (b).** `task openbao:wrap NAMES=a,b [TTL=15m] [OUT=<file>] [SHOW=1]` makes one one-use
+wrapping token per secret (not one for a bundle: a bundle would pass the plaintext through the task
+and lose the creation-path check). `TTL` defaults to 15 minutes and is capped at 1 hour. The tokens
+go to a file (mode 600, `/dev/shm` unless `OUT=`), and the task prints its path and the expiry;
+`SHOW=1` also prints them, to a terminal only. `task openbao:unwrap FROM=<file> [ISSUER_ADDR=<the
+issuing server>]` (or the name and the token at prompts, never an argument) looks **every** token
+up first, unauthenticated, with the wrapping token as the call's token so no saved login reaches the
+issuer, and refuses ("do not unwrap; ask the sender") unless each was made by a read of its own
+secret's path and has not run out; only then does it unwrap each once and put the value into the
+receiver's own store (`BAO_ADDR`) with `dcf-secret put`, field by field. A token that was read by
+anyone else first is already spent, and the receiver learns it only then: a token that fails as
+used or expired is an event to investigate. **The channel matters**: the token file is not the
+channel. Route (b) works only against a central server the receiver reaches in client mode: in server
+mode the issuer is a loopback listener in the sender's container.
+
+**Two servers in one container** (the export): the second runs beside the main one on its own
+ports (8210 and 8211, or `OPENBAO_ONBOARD_PORT` and the next) and was run against a real server in
+the container test. If the ports are taken, the export says the instance did not answer and
+points at its log; the fallback is the same export in a second devcontainer in server mode.
+
 ## `dcf-secret`
 
 The interface every Feature and script of this collection uses to read and write a secret, so
@@ -381,6 +477,13 @@ registry, these appear under `openbao:`:
   role that reads one secret; `ROLE=<name>` or `ALL=1` reissues; one valid secret id each.
 - `openbao:approle:revoke`: server mode: `ROLE=<name>` deletes the role, its secret ids, its policy
   and its files.
+- `openbao:onboard:export`: `NAMES=<name>,... DEST=<folder>`: a starter instance with the named
+  keys, snapshot into DEST, fresh shares and a claim token printed once. A plain terminal.
+- `openbao:onboard:claim`: server mode, after `openbao:restore`: rotate-keys, revoke everything the
+  sender held, reissue, rotate; `ROTATE=0` skips the data key rotation. A plain terminal.
+- `openbao:wrap`: `NAMES=<name>,... [TTL=15m] [OUT=<file>] [SHOW=1]`: one one-use token per secret.
+- `openbao:unwrap`: `FROM=<file> [ISSUER_ADDR=<server>]`: look up, check, unwrap once, `dcf-secret put`.
+  The four refuse inside an agent's job.
 - `openbao:setup`: re-run the post-create hook (`openbao-setup`): make the state directory usable,
   move a token left in `~/.vault-token` into it, report the token helper, the address and the saved login; in
   server mode also the start hook.
@@ -454,7 +557,23 @@ container that stays `client`, except that the tasks `status`, `login`, `logout`
 through `openbao-run` (the same `bao` call; in client mode nothing is added) and the
 `dcf-secret` failure lines name the new tasks.
 
+**1.3.0** adds onboarding (`openbao:onboard:export`, `:onboard:claim`, `openbao:wrap`, `:unwrap`,
+`openbao-onboard`) and installs `jq` at build (a dependency the onboarding scripts read bao's JSON
+with): additive, rebuild to get them.
+
 ## Changes
+
+### [1.3.0] - 2026-11-04
+
+#### Added
+
+- **Onboarding by a starter instance:** `task openbao:onboard:export NAMES=<name>,... DEST=<folder>` (the sender, in a plain terminal) starts a short-lived second server in the container (its own raft folder and port 8210), copies the named secrets into it from your own store (every field), writes the onboarding marker, takes a raft snapshot into `DEST` (`onboarding-<machine>-<time>.snap`, mode 600, never overwritten), stops the instance and deletes it, and prints its fresh unseal shares and a claim token once, to the terminal. Your own store is never snapshotted and your own shares are not involved. After `openbao:restore`, `task openbao:onboard:claim` (the receiver) rotates the unseal shares with `bao operator rotate-keys` (new shares, committed only when two are typed back), revokes everything the sender held (every token, user and extra auth method; every AppRole role rebuilt so every secret id is gone), sets up the receiver's own Operator, reissues the secret ids (`approle:issue ALL=1`), rotates the data key (`ROTATE=0` skips it), replaces the marker and lists the names that came as the sender's knowledge. It resumes after a failure.
+- **Response wrapping for a few keys:** `task openbao:wrap NAMES=<name>,... [TTL=15m]` makes one one-use wrapping token per secret (default TTL 15 minutes, capped at 1 hour) into a mode 600 file on tmpfs; `task openbao:unwrap FROM=<file> [ISSUER_ADDR=<server>]` looks every token up first and refuses, unwrapping nothing, unless each was made by a read of its own secret's path and has not run out, then unwraps each once into your own store. Works against a central server in client mode.
+- All four refuse inside an agent's job (the rule that covers `init`, `unseal` and `seal`); the claim token, the shares and the wrapping tokens are never an argument, never in a file but the ones named above, and printed only to a terminal.
+
+#### Changed
+
+- `jq` is installed at build time (the onboarding scripts read `bao`'s JSON with it). Rebuild the devcontainer to get the new tasks.
 
 ### [1.2.0] - 2026-11-03
 
@@ -482,12 +601,6 @@ through `openbao-run` (the same `bao` call; in client mode nothing is added) and
 - **The `mode` option**, with the one value `client` (the default, what the Feature always did: the CLI against a server outside the container). A later version adds `server`. `OPENBAO_SETUP_MODE` in `containerEnv` overrides it per container. Nothing to do.
 - `task openbao:logout`: revokes your token on the server and erases the saved one, so no login is left behind (`bao token revoke -self` alone leaves the dead token stored, and `dcf-secret` then says to log in). Nothing to do unless you log out.
 - `task openbao:setup`: re-runs the post-create hook.
-
-### [1.0.4] - 2026-11-03
-
-#### Added
-
-- This changelog: every release of this Feature now has an entry here, written for its users, and the Feature's README shows the latest three under "Changes". Nothing to do.
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/openbao/CHANGELOG.md).
 
