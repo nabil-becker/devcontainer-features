@@ -97,6 +97,59 @@ class Briefing(h.RepoCase):
         self.addCleanup(patch.stop)
         return self.b.briefing(self.root, refresh=False)
 
+    def _bao(self, rc: int, initialized: bool = True, server_dir: bool = True):
+        """A fake bao whose `status -format=json` exits `rc`; a server's state dir unless `server_dir` is False."""
+        import stat
+        import sys
+        fake = self.base / "fake-bao"
+        fake.write_text(f"#!{sys.executable}\nimport sys\nprint('{{\"initialized\": {str(initialized).lower()}}}')\nsys.exit({rc})\n", encoding="utf-8")
+        fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
+        os.environ["DEVHOST_BAO"] = str(fake)
+        if server_dir:
+            (self.base / "openbao-state" / "raft").mkdir(parents=True)
+
+    def test_openbao_line_sealed_with_the_last_backups_age(self):
+        import time
+        self._bao(2)
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 3 * 3600))
+        h.write(self.base / "openbao-state" / "last-backup", f"time={stamp}\nplace=/x/y.snap\nsha256=0\n")
+        self.assertIn("OpenBao sealed: the backs cannot sign; last backup 3 h ago; task openbao:unseal.", self.b.briefing(self.root, refresh=False))
+
+    def test_openbao_line_says_unknown_when_no_backup_is_recorded(self):
+        self._bao(2)
+        self.assertIn("last backup unknown; task openbao:unseal.", self.b.briefing(self.root, refresh=False))
+
+    def test_openbao_last_backup_age_reads_the_stamp_or_the_file_time(self):
+        state = self.base / "openbao-state"
+        h.write(state / "last-backup", "no stamp here\n")
+        os.utime(state / "last-backup", (1_000_000, 1_000_000))
+        self.assertEqual(self.b.last_backup_age(state, now=1_000_000 + 5 * 86400), "5 days ago")
+        h.write(state / "last-backup", "2026-11-03T00:00:00Z /x\n")
+        self.assertEqual(self.b.last_backup_age(state, now=1793664000 + 30), "1 min ago")  # 2026-11-03T00:00:00Z + 30 s
+        self.assertEqual(self.b.last_backup_age(self.base / "missing"), "unknown")
+
+    def test_openbao_last_backup_age_reads_the_record_openbao_backup_writes(self):
+        # the exact shape `openbao-server backup` writes (src/openbao/openbao-server.sh; its test checks the first line)
+        state = self.base / "openbao-state"
+        h.write(state / "last-backup", "time=2026-11-03T00:00:00Z\nepoch=1793664000\nfile=/dest/openbao-box-20261103T000000Z.snap\nsha256=ab12\n")
+        self.assertEqual(self.b.last_backup_age(state, now=1793664000 + 2 * 86400), "2 days ago")
+
+    def test_openbao_line_is_quiet_when_unsealed_without_a_server_or_without_bao(self):
+        self._bao(0)
+        self.assertNotIn("OpenBao", self.b.briefing(self.root, refresh=False))  # unsealed
+        self._bao(2, server_dir=False)
+        (self.base / "openbao-state" / "raft").rmdir()
+        self.assertNotIn("OpenBao", self.b.briefing(self.root, refresh=False))  # client mode or no Feature: no server state
+        os.environ["DEVHOST_BAO"] = "devhost-test-no-bao"
+        (self.base / "openbao-state" / "raft").mkdir()
+        self.assertNotIn("OpenBao", self.b.briefing(self.root, refresh=False))  # no bao on PATH
+
+    def test_openbao_line_for_an_uninitialised_or_unreachable_server(self):
+        self._bao(2, initialized=False)
+        self.assertIn("OpenBao is not initialised", self.b.briefing(self.root, refresh=False))
+        self._bao(1, server_dir=False)
+        self.assertIn("OpenBao is not reachable", self.b.briefing(self.root, refresh=False))
+
     def test_gh_auth_line_is_quiet_when_all_is_well_or_gh_is_absent(self):
         self.assertNotIn("GitHub writes", self.b.briefing(self.root, refresh=False))  # no gh: the test default
         self.assertNotIn("GitHub writes", self._gh(auth_ok=True, helper=True))

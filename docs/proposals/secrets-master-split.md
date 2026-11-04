@@ -509,6 +509,42 @@ protected by the unseal shares. A snapshot without the shares is useless; with t
 everything. So the shares never go where the backups go (section 9). Old snapshots keep keys
 retired since; `backupKeep` bounds how long.
 
+### Slice 2b findings (2026-11-04): the check of scheduled snapshots, and what restore needs
+
+Recorded by the backup and restore build (openbao 1.3.0), from OpenBao's tree and documentation and
+from a real 2.7.2 server.
+
+- **Scheduled snapshots (second-review ruling 4): nothing fits, so the Feature builds `backupInterval`
+  and `backupKeep` itself.** OpenBao has no scheduled or automatic raft snapshots (the API page lists
+  only the snapshot read, the restore and `snapshot-force`; the Vault feature of that name is
+  Enterprise). `openbao/openbao-snapshot-agent` (v0.4.5, MPL-2.0) is a recipe: an OpenBao Agent for
+  authentication plus a systemd timer or cron job running `bao operator raft snapshot save` to a
+  date-named file and `find -mtime` for retention. It needs systemd or cron (a devcontainer has
+  neither), names files by date with no machine and no overwrite check, prunes by age over everything
+  in the folder, and has no sealed case. The Feature's own timer (started by the start hook, off by
+  default) and pruning (only its own name pattern) are built, and the NOTES give the Task Scheduler
+  line.
+- **Capabilities:** `read` on `sys/storage/raft/snapshot` is all a snapshot save needs (a role with
+  only that saves one and is denied `snapshot-force`); a restore is `update` on `snapshot` or
+  `snapshot-force`.
+- **A restore needs the snapshot's own shares, and `-force` across different shares.** A plain restore
+  into a server with other shares is refused ("could not verify hash file ... use the snapshot-force
+  API"), so the throwaway init uses `restore -force`; the node then seals itself and opens only with
+  the shares of the store the snapshot came from.
+- **Finding that changes section 5's "root token from the shares": from OpenBao 2.6.0 `bao operator
+  generate-root` is authenticated** (`sys/generate-root-token`; the unauthenticated `sys/generate-root`
+  is deprecated and off by default: an unauthenticated call is a 403). A root token cannot be made from
+  the shares alone: it needs a login that may call the endpoint. This is handled by the two paths the
+  Operator's policy already holds (`sys/generate-root-token/attempt` and `/update`, accepted by the
+  Operator on 2026-11-04), and by one way to make the token, `as_root` in `openbao-server.sh`: the
+  shares are typed at a hidden prompt, the token lives only in the step's subshell and is revoked on
+  every way out, an attempt it started is cancelled if abandoned. Making or deleting a role, the
+  backup role and restore of a store in use all use it. The throwaway-init path needs no
+  root-from-shares step at all (the throwaway root token is the token), and the restore ends with the
+  Operator's own login (a password prompt) to reissue the secret ids instead of a second root token,
+  which saves two share entries. A server initialised by an unreleased 1.2.0 build lacks the backup
+  role and the two paths.
+
 ## 5. The gate: unseal, login, and what each step opens
 
 ```
@@ -879,6 +915,12 @@ Slices, each one pull request with its version bump and `task docs` (the ADR is 
    consumers.
 6. **gh, az, cloud-folder**: credentials from `dcf-secret` (section 11). The last slice.
 
+**Packaging (the Operator, 2026-11-04):** after 2a (openbao 1.2.0, its own pull request), slices
+2b, 2c, 3 and 4 are built in parallel and ship as **one** pull request and one release, each
+Feature bumped once: openbao 1.3.0 (2b, 2c and slice 3's records and import), ssh-agent 1.4.0,
+gh, devcontainer-cli, agentic-register and devhost a minor each. The table's 1.4.0 and 1.5.0 rows
+for openbao fold into 1.3.0. Slices 5 and 6 are unchanged.
+
 Tests are Docker-free where they can be: `dcf-secret` against a fake `bao` (each exit code, no
 fallback when sealed), the import against a key volume made in a temp folder, the key piped to
 `ssh-add -` never touching a file (checked by the folder staying empty), the backup naming (never
@@ -966,7 +1008,9 @@ folder under the volume and its own loopback port, initialises it with fresh sha
 the named secrets in with `dcf-secret get` and `put`, writes the **onboarding marker** (a record in
 it with the sender's machine name and the time), takes the snapshot into `DEST` as `openbao:backup`
 does, then stops the instance and deletes its folder. The marker is what lets `openbao:restore`
-say "onboarding" instead of its other-machine warning (section 4). Whether two servers can run in
+say "onboarding" instead of its other-machine warning (section 4): the snapshot's **file name**
+starts with `onboarding-` (readable before any token exists), and the record `onboarding/marker`
+inside it is what `claim` reads, then replaces with `onboarding/claimed`. Whether two servers can run in
 one container is not confirmed (section 16); if not, the same is done in a second devcontainer in
 server mode with its own volume, and the NOTES carry that procedure.
 
@@ -975,27 +1019,45 @@ the server unsealed under the sender's shares). Its old name was `openbao:rekey`
 deprecated name of the command, so the task uses `bao operator rotate-keys` and a name for what
 the receiver does with a store that was someone else's.
 
-1. **`bao operator rotate-keys`**, given a quorum of the sender's shares: 3 new shares, threshold 2,
-   printed once (or `-pgp-keys`), for the custody of section 9.
-2. A new root token from the new shares (`bao operator generate-root`), used for the next steps and
-   revoked at the end.
+0. **The claim token** (built in 2c; confirmed 2026-11-04 against OpenBao 2.7.2). `bao operator
+   generate-root` uses the authenticated `/sys/generate-root-token` endpoint since 2.6.0 and the
+   unauthenticated `/sys/generate-root` one is off by default (the listener option
+   `disable_unauthed_generate_root_endpoints`), and `rotate-keys` needs a token with the root
+   policy as well. A restored store holds only the sender's tokens, so the receiver has none that
+   may start a generation. `openbao:onboard:export` therefore keeps the onboarding instance's root
+   token and prints it once, beside the fresh shares, as the **claim token**: the sender holds it
+   already (it is in the snapshot), so it adds no trust, and the claim revokes it. The claim asks for
+   it at a hidden prompt, checks that its policy is `root`, and uses it for every step below.
+1. **`bao operator rotate-keys -verify`**, given a quorum of the sender's shares (two, typed at
+   hidden prompts and passed to `bao` on stdin, never an argument): 3 new shares, threshold 2, printed
+   once. `-verify` makes `bao` commit them only when two are typed back, so a share that was never
+   stored cannot lock the receiver out. (`-pgp-keys` is not offered in 2c: the new shares have to be
+   typed back to be verified, and the export's instance has to be unsealed to be filled.)
+2. *(was: a new root token from the new shares. Not needed: the claim token stays valid across the
+   rotation, and is revoked at the end.)*
 3. **Revokes everything the sender held** (the second review's finding 3: a restored store carries
    the sender's tokens, users, roles, secret ids, policies and audit settings). The mechanism, by
-   kind; every call is **unconfirmed** in the pages read, so the build checks each with a test
-   that a token and a secret id taken from the snapshot fail after the task (sections 12, 16):
+   kind; the container test `onboarding` checks each, with a token and a secret id from the
+   restored store failing after the task (sections 12, 16):
    - **tokens**: list the token accessors (`auth/token/accessors`) and revoke each one but the
      task's own (`bao token revoke -accessor`), which reaches a root token that no prefix does; then
      revoke by prefix on `auth/token/create` and on each auth mount's login path. If no call reaches
      every token, the fallback is to disable and re-enable each auth mount (which revokes what it
-     issued) and to rebuild what was on it from step 4's reissue;
+     issued) and to rebuild what was on it from step 4's reissue (not needed: the accessor list
+   reached every token in the test);
    - **AppRole secret ids**: every role is deleted and written again (the reissue of
      `openbao:approle:issue ALL=1`, section 7), because a new secret id does not end the old ones;
    - **users**: every `userpass` user but the receiver's is deleted, and the receiver's password set;
    - **audit devices**: any not the receiver's own file device in the volume is disabled;
    - **policies**: any not in the Feature's own set or referenced by a role are listed in the
      output, for the receiver to read; none is deleted blind.
-4. `openbao:approle:issue ALL=1` (generic; the roles and their policies came back in the snapshot,
-   so the devhost needs nothing extra).
+   Built so: every token but the claim token's own by accessor, then the prefixes of the login
+   paths; every `userpass` user; every auth method but `token`, `userpass` and `approle`; any audit
+   device but `file/`; every AppRole role is read for its policies, deleted (which destroys its secret
+   ids) and written again with the Feature's settings and the same policies.
+4. The Operator is made again for the receiver (`openbao-server configure`, the same function `init`
+   calls, with the receiver's own password), then `openbao:approle:issue ALL=1` (generic; the roles
+   and their policies came back in the snapshot, so the devhost needs nothing extra).
 5. **`bao operator rotate` by default** (`ROTATE=0` skips it): new writes use a new data key.
 6. Prints the names that came with the snapshot, as **the sender's knowledge**, with the line "put
    new values for these where you want them to be yours alone", and the "not backed up since" line.
@@ -1004,9 +1066,10 @@ the receiver does with a store that was someone else's.
 sender can read for good every value that was in it. Later backups of the receiver's store stay
 unreadable to the sender only if they never reach the sender (a shared folder the sender sees
 defeats it for anything still under the old key), because `rotate` protects only new writes and an
-old entry stays under the old key. The review's reading that a rekey may leave the data key
-unchanged (Vault's documented behaviour) is not confirmed for OpenBao and the design assumes the
-worse case (section 16). That is why the onboarding instance holds only the shared keys and never
+old entry stays under the old key. Confirmed against OpenBao 2.7.2 (section 16): `rotate-keys` leaves
+the data key at term 1 and changes the unseal shares and the key over the keyring, so the old shares
+cannot unseal a later backup, but data under the old data key stays readable to anyone who kept the
+old keyring. That is why the onboarding instance holds only the shared keys and never
 the Operator's own store.
 
 **(b) Response wrapping: a few keys into an existing instance, against a central server in client
@@ -1045,15 +1108,16 @@ checks it and what the design does if the answer is no.
 
 | Unconfirmed | Checked by | If it is no |
 |---|---|---|
-| Whether `rotate-keys` or `rotate` changes the key that encrypts the data, or only the key that protects it (the pages read do not say; Vault's documentation, from memory, says `rotate` is what changes it) | 2c: documentation, then a test of what the sender's old shares open in a later snapshot | the design already assumes the worse case (section 15a); the NOTES say so |
-| That an accessor listing and revoke, revocation by prefix, and deleting a role reach every token and every secret id the sender held (no single call that revokes everything is confirmed) | 2c: a test that a token and a secret id from the snapshot fail after `claim` | disable and re-enable each auth mount and rebuild from the reissue (section 15a) |
-| The capabilities needed for `sys/storage/raft/snapshot` and `snapshot-force` (the fetched pages do not list them) | 2a and 2b: Feature tests | the `backup` role's policy and exit 13 are adjusted |
-| That a restore needs a token on a fresh server (the throwaway init) and the snapshot's own shares (taken from Vault's flow) | 2b: a Feature test of restore on a fresh server, run twice | the throwaway init is changed; nothing else depends on it |
+| Whether `rotate-keys` or `rotate` changes the key that encrypts the data, or only the key that protects it | 2c: **confirmed 2026-11-04** (OpenBao 2.7.2, a real server): `rotate-keys` changes the unseal shares and the key over the keyring (a snapshot taken after it is refused by the old shares; one taken before still opens) and leaves the data key at term 1; `bao operator rotate` is what installs a new data key | the guarantee is as section 15a states it: only writes after `rotate` are protected from the sender; the data in the snapshot is the sender's for good |
+| That an accessor listing and revoke, revocation by prefix, and deleting a role reach every token and every secret id the sender held (no single call that revokes everything is confirmed) | 2c: **checked** by the container test `onboarding` (a token from the sender's login, a token made with the claim token, the claim token, a secret id and a user's login all fail after `claim`; the accessor list (`auth/token/accessors`) reaches them, and `lease revoke -prefix` on the login paths did not end the claim token's own session) | disable and re-enable each auth mount and rebuild from the reissue (section 15a) |
+| The capabilities needed for `sys/storage/raft/snapshot` and `snapshot-force` (the fetched pages do not list them) | 2a and 2b: Feature tests (answered 2026-11-04: `read` saves, `snapshot-force` is a separate path; see "Slice 2b findings") | the `backup` role's policy and exit 13 are adjusted |
+| That a restore needs a token on a fresh server (the throwaway init) and the snapshot's own shares (taken from Vault's flow) | 2b: a Feature test of restore on a fresh server, run twice (answered against a real 2.7.2 for the shares and `-force`; the task run is the CI scenario `backup_restore`) | the throwaway init is changed; nothing else depends on it |
 | AppRole: that `token_bound_cidrs` is honoured, the default of `secret_id_ttl`, destroying a secret id by accessor, and that deleting a role ends its secret ids | 2a: tests | the reissue and the revocation use the call that does |
-| OpenBao's own scheduled snapshots and the `openbao/openbao-snapshot-agent` (the API page returned 404; a search found Vault's, which is Enterprise, and the agent repository) | 2b, first step (section 4) | the Feature's own timer and pruning, with the NOTES saying why |
+| OpenBao's own scheduled snapshots and the `openbao/openbao-snapshot-agent` (the API page returned 404; a search found Vault's, which is Enterprise, and the agent repository) | 2b, first step (section 4): answered 2026-11-04, nothing fits | the Feature's own timer and pruning, with the NOTES saying why |
 | `disable_mlock` with raft, and raft's needs (bbolt, `fsync`, the lock) in a container (the configuration page does not mention `disable_mlock`) | 2a | the config or the NOTES change |
-| Wrapping: `-wrap-ttl` per secret, the policy's minimum and maximum wrapping TTL, and what `sys/wrapping/lookup` returns (creation path, TTL) | 2c: a Feature test against a server | the check or the token per secret is redesigned; route (a) is unaffected |
-| Two servers (the sender's and the onboarding instance) running in one container | 2c | a second devcontainer does it (section 15a) |
+| Wrapping: `-wrap-ttl` per secret, the policy's minimum and maximum wrapping TTL, and what `sys/wrapping/lookup` returns (creation path, TTL) | 2c: **confirmed 2026-11-04** (OpenBao 2.7.2): `bao kv get -wrap-ttl=<n>s -format=json` returns `wrap_info` with `creation_path` `<mount>/data/<name>` (and `-field` does not work on a wrapped response); `sys/wrapping/lookup` returns `creation_path`, `creation_time` and `creation_ttl` and accepts the wrapping token as the call's own token; unwrapping needs the wrapping token as the call's token (`bao unwrap`); a second unwrap or lookup fails with "wrapping token is not valid or does not exist"; the server does **not** cap `-wrap-ttl` (a 2 hour one was made), so the 1 hour cap is the task's. The policy minimum and maximum (owner-enforced) are not tested | none: the task enforces the cap itself |
+| Two servers (the sender's and the onboarding instance) running in one container | 2c: **ran** side by side in one container (this devhost, OpenBao 2.7.2, instance on its own port and raft folder, main server untouched); the Docker run of the container test rechecks it | a second devcontainer does it (section 15a) |
+| (new, found in 2c) `generate-root` and `rotate-keys` need an authenticated token on OpenBao 2.6+, so a restored store has no way in without a token the sender made | 2c: **confirmed**: the unauthenticated endpoints are off by default (listener option `disable_unauthed_generate_root_endpoints`) | the claim token of section 15a step 0; if the Operator would rather not hand a root token over, the alternatives are a `userpass` bootstrap user with a policy limited to `sys/generate-root-token` (a code to hand over instead of a token), or the listener option turned on for the claim |
 | Whether a published OpenBao Feature exists (NFR-9) | slice 1 writes the paragraph, or "none" | |
 
 Phase 2's own unknowns (restoring a Shamir-sealed backup into a transit-sealed copy, unsealing a

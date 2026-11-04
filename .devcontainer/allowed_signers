@@ -1,0 +1,5 @@
+# Who may sign this repository's commits and tags: one line per SSH signing key, in ssh-keygen's
+# ALLOWED SIGNERS format (principal, options, key type, public key), with namespaces="git" and,
+# where known, valid-after / valid-before dates (YYYYMMDD). Public keys only, never a private key.
+# Written by task openbao:ssh:import, ssh-agent:git:signing and ssh-agent:key:rotate; the host
+# commits it. git reads it through gpg.ssh.allowedSignersFile (task ssh-agent:git:signing sets it).

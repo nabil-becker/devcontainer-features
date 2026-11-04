@@ -37,6 +37,15 @@ term() { # <command> <answer>...
   local spid=$!
   exec 3> "$work/fifo"
   sleep 1
+  # the first prompt must be up before anything is typed (a tty echoes what arrives before a hidden
+  # read turns the echo off, and a loaded machine is slow to get there): wait until the screen is quiet
+  local sz0=-1 sz1=0 _w
+  for _w in $(seq 1 30); do
+    sz1="$(stat -c %s "$work/screen" 2>/dev/null || echo 0)"
+    [ "$sz1" = "$sz0" ] && [ "$sz1" -gt 0 ] && break
+    sz0="$sz1"
+    sleep 1
+  done
   for a in "$@"; do
     case "$a" in
       SHARES)

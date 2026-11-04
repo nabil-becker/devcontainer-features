@@ -21,8 +21,14 @@ check "openbao-setup on PATH" command -v openbao-setup
 check "dcf-secret on PATH" command -v dcf-secret
 check "openbao-server on PATH" command -v openbao-server
 check "openbao-run on PATH" command -v openbao-run
+check "openbao-onboard on PATH" command -v openbao-onboard
+check "openbao-lib.sh is installed next to env.sh (the two scripts source it)" test -f /usr/local/share/openbao-feature/openbao-lib.sh
+check "jq is installed (the onboarding scripts read bao's JSON with it)" command -v jq
+check "openbao-ssh on PATH" command -v openbao-ssh
+check "the ssh record tasks are in the Taskfile" bash -c "grep -q '^  ssh:new:' /usr/local/share/go-task/includes.d/openbao.yml && grep -q '^  ssh:import:' /usr/local/share/go-task/includes.d/openbao.yml && grep -q '^  ssh:retire:' /usr/local/share/go-task/includes.d/openbao.yml && grep -q '^  ssh:age:' /usr/local/share/go-task/includes.d/openbao.yml"
 check "env.sh is installed for them" test -f /usr/local/share/openbao-feature/env.sh
 check "the server-mode tasks are in the Taskfile" bash -c "grep -q '^  init:' /usr/local/share/go-task/includes.d/openbao.yml && grep -q '^  unseal:' /usr/local/share/go-task/includes.d/openbao.yml && grep -q '^  seal:' /usr/local/share/go-task/includes.d/openbao.yml && grep -q '^  server:status:' /usr/local/share/go-task/includes.d/openbao.yml && grep -q '^  approle:issue:' /usr/local/share/go-task/includes.d/openbao.yml && grep -q '^  approle:revoke:' /usr/local/share/go-task/includes.d/openbao.yml"
+check "the onboarding tasks are in the Taskfile" bash -c "grep -q '^  onboard:export:' /usr/local/share/go-task/includes.d/openbao.yml && grep -q '^  onboard:claim:' /usr/local/share/go-task/includes.d/openbao.yml && grep -q '^  wrap:' /usr/local/share/go-task/includes.d/openbao.yml && grep -q '^  unwrap:' /usr/local/share/go-task/includes.d/openbao.yml"
 check "client mode (the default) runs no server" bash -c "openbao-setup start; ! pgrep -x bao"
 check "mode baked for openbao-setup" grep -q '^MODE=client$' /usr/local/share/openbao-feature/options.env
 check "openbao-setup reports the state dir" bash -c "openbao-setup | grep -E '^openbao: /var/lib/devcontainer-features/openbao \((volume|bind|image), writable\)$'"

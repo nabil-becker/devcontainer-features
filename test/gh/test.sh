@@ -15,6 +15,11 @@ check "GH_CONFIG_DIR set" bash -c "[ \"\$GH_CONFIG_DIR\" = /var/lib/devcontainer
 
 check "dcf-persist on PATH" command -v dcf-persist
 check "gh-setup on PATH" command -v gh-setup
+check "gh-ssh-key-add on PATH" command -v gh-ssh-key-add
+check "task gh:ssh-key:add is in the Taskfile" grep -q '^  ssh-key:add:' /usr/local/share/go-task/includes.d/gh.yml
+# The marker is built, so no private-key-looking line sits in the repository (the secrets guard).
+pk_marker='-----BEGIN OPENSSH '"PRIVATE KEY-----"
+check "gh-ssh-key-add refuses a private key without calling GitHub" bash -c "printf '%s\\n' '$pk_marker' | gh-ssh-key-add; [ \$? = 2 ]"
 check "options baked for gh-setup" grep -q '^GITCREDENTIALHELPER=true$' /usr/local/share/gh-feature/options.env
 check "gh-setup reports the state dir" bash -c "gh-setup | grep -E '^gh: /var/lib/devcontainer-features/gh \((volume|bind|image), writable\)$'"
 check "gh-setup reports the login state" bash -c "gh-setup | grep -E '^gh: (logged in|no login yet)'"

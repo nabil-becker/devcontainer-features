@@ -7,8 +7,8 @@
 
 .PARAMETER Subcommand
     @devcontainers/cli subcommand: up, build, exec, read-configuration,
-    features, ...; or stop, prepshutdown, running, host, ssh-key-import and
-    cloud-folder-login (the cloud-folder Feature's sign-in from the workstation),
+    features, ...; or stop, prepshutdown, running, host, ssh-key-import (deprecated),
+    openbao-ssh-import and cloud-folder-login (the cloud-folder Feature's sign-in from the workstation),
     which are not CLI subcommands (see DevcontainerCli.psm1).
 
 .PARAMETER WorkspaceFolder

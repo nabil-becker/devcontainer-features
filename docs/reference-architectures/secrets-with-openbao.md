@@ -111,10 +111,10 @@ Log in with `task openbao:login` (`-- -method=oidc` where the server offers it).
 helper, so a rebuild keeps it; `task openbao:logout` revokes the token and erases it. `BAO_TOKEN` in the environment
 still beats the saved login, so a stale value there makes `permission denied` appear after a fresh login.
 
-The planned server mode adds the options below, from the proposal's section 3. They do not exist yet, so the block is
-fenced `jsonc planned`; `task architectures:check` fails the day it would pass and tells you to move it up.
+Server mode (openbao 1.2.0, backups from 1.3.0) runs the server inside the container instead, with the options
+below; `backupInterval` (off by default) adds a schedule.
 
-```jsonc planned
+```jsonc
 {
   "features": {
     "ghcr.io/nabil-becker/devcontainer-features/openbao:1": {

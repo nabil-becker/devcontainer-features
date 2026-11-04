@@ -8,6 +8,12 @@ here; `task lint` fails when the entry is missing.
 
 Entries from 1.0.0 to 1.0.2 were generated from the commit history (`.github/scripts/changelog.py backfill`) and the "Changes in x.y.z" sections that NOTES.md used to hold; most list commit subjects as written then; the newest of them is in wording for users.
 
+## [1.1.0] - 2026-11-04
+
+### Added
+
+- `task gh:ssh-key:add` registers a public key at GitHub as a **signing** key (never an authentication key): `FILE=<.pub>`, `KEY=ssh/<name>` to read it from OpenBao (the openbao Feature), or the key on stdin; a key already registered as a signing key is left alone, and a private key is refused. Your gh login needs the `admin:ssh_signing_key` scope (`gh auth refresh -s admin:ssh_signing_key`). ssh-agent 1.4.0's `key:rotate` uses it. Nothing to do otherwise.
+
 ## [1.0.4] - 2026-11-03
 
 ### Changed

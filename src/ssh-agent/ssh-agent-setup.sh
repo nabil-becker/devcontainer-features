@@ -25,8 +25,17 @@
 #   ssh-agent-setup key-retire --name KEY [--revoke 1] [--plan]  the last step of a rotation alone
 #   ssh-agent-setup key-age          each key of the volume: creation date, age, fingerprint
 # Any mode (needs only the public key the agent lists):
-#   ssh-agent-setup git-signing [KEY] [SCOPE]  configure git to sign with the agent
+#   ssh-agent-setup git-signing [KEY] [SCOPE] [ALLOWED_SIGNERS]  configure git to sign with the agent
+#                                    (and, where the file is, add the key to .devcontainer/allowed_signers)
 #   ssh-agent-setup git-verify       sign and verify a throwaway message, without committing
+# From OpenBao (the openbao Feature's dcf-secret; any mode with an agent, key mode starts one):
+#   ssh-agent-setup key-load ssh/<key> [MINUTES]  dcf-secret get ... | ssh-add -t <life> -: the key
+#                                    in agent memory only, never a file, for at most what is left
+#                                    of the login (and 480 minutes); MINUTES shortens it
+#   ssh-agent-setup key-lock ssh/<key>  take it out of the agent now (ssh-add -d -)
+#   ssh-agent-setup key-rotate --name ssh/<key> ...  the same four steps on OpenBao records
+# The key volume's commands above (key mode) are deprecated: each prints one line naming what
+# replaces it, and they go in ssh-agent 2.0 (task openbao:ssh:import FROM=ssh-agent moves the keys).
 #
 # Everything here concerns the one fixed path, SSH_SOCK. The launcher mounts the host's
 # agent socket onto it (DCF_HOST_SSH_AGENT=socket); in key mode this script starts an
@@ -35,7 +44,9 @@
 # never touched: this script stands down from anything but the fixed path.
 # No key material is ever printed; a key is generated only by key-new and key-rotate.
 # Test hooks (not options): DCF_GH names the gh binary (default gh), DCF_SSH_KEY_TODAY fixes
-# today's date (YYYY-MM-DD).
+# today's date (YYYY-MM-DD), DCF_SSH_KEY_NOW the time stamp of allowed_signers lines
+# (YYYYMMDDHHMMSS); DCF_SECRET_BIN, DCF_OPENBAO_SSH and DCF_GH_SSH_KEY_ADD name the openbao and gh
+# Features' commands; DCF_SSH_AGENT_LOADED_DIR is where the public keys of loaded keys are noted.
 set -u
 
 # Defaults baked by install.sh from the Feature options; SSH_AGENT_SETUP_* in the
@@ -50,6 +61,12 @@ SSH_SOCK="${DCF_SSH_AGENT_SOCK:-/var/lib/devcontainer-features/ssh-agent/agent.s
 KEY_DIR="${DCF_SSH_AGENT_KEY_DIR:-/var/lib/devcontainer-features/ssh-agent-key}"
 gh_bin="${DCF_GH:-gh}"
 KEY_HISTORY="allowed_signers.history"
+dcf_secret="${DCF_SECRET_BIN:-dcf-secret}"
+openbao_ssh="${DCF_OPENBAO_SSH:-openbao-ssh}"
+gh_key_add="${DCF_GH_SSH_KEY_ADD:-gh-ssh-key-add}"
+# The public key of each key loaded from OpenBao, so key:lock works while the server is sealed.
+# Public keys only; never a private key.
+LOADED_DIR="${DCF_SSH_AGENT_LOADED_DIR:-${XDG_RUNTIME_DIR:-/tmp}/ssh-agent-feature-$(id -u 2>/dev/null || echo 0)}"
 default_key_names="id_ed25519 id_ecdsa id_rsa id_dsa id_ed25519_sk id_ecdsa_sk"
 host_type="${DCF_HOST_TYPE:-}"
 mode="${DCF_HOST_SSH_AGENT:-}"
@@ -193,6 +210,7 @@ do_key_mode() {
   probe "$SSH_SOCK"
   report_reachable "key mode: the container's own agent"
   say "key mode keeps a private key in this container's volume (the opt-in that breaks 'the key never enters the container'; temporary, until a host-side answer exists)."
+  [ -z "$(list_keys)" ] || warn "deprecated: the key volume ($KEY_DIR) goes in ssh-agent 2.0; move its keys into OpenBao with task openbao:ssh:import FROM=ssh-agent, then load one for a sitting with task ssh-agent:key:load NAME=ssh/<key>"
 }
 
 # --- the verdicts --------------------------------------------------------------
@@ -490,8 +508,59 @@ default_scope() { # sets DEFAULT_SCOPE and DEFAULT_WHY
   esac
 }
 
-cmd_git_signing() { # [key] [scope]
-  local key="${1:-}" scope="${2:-}" lines n pub line fp want cfg
+# --- allowed_signers: .devcontainer/allowed_signers in the repository -----------------
+# Who may sign the history (proposal section 8): one line per key, namespaces="git", valid-after
+# and valid-before stamps; public keys only; the host commits it. git finds it through
+# gpg.ssh.allowedSignersFile in the repository's config as the work-tree-relative path, which git
+# resolves against the top of the work tree from any folder (and so does Windows git on the same
+# repository config, ADR 0020); ALLOWED_SIGNERS=<file> names another file.
+AS_REL=".devcontainer/allowed_signers"
+stamp_now() { echo "${DCF_SSH_KEY_NOW:-$(date +%Y%m%d%H%M%S)}"; }
+as_path() { # [given]: sets AS_FILE (to write) and AS_CFG (what gpg.ssh.allowedSignersFile says); 1 when none
+  local top
+  AS_FILE='' AS_CFG=''
+  if [ -n "${1:-}" ]; then AS_FILE="$1"; AS_CFG="$1"; return 0; fi
+  top="$(git rev-parse --show-toplevel 2>/dev/null)" || return 1
+  AS_FILE="$top/$AS_REL"
+  AS_CFG="$AS_REL"
+}
+as_header() { # <file>
+  [ -f "$1" ] && return 0
+  mkdir -p "$(dirname "$1")" 2>/dev/null || return 1
+  cat >"$1" <<'EOF_AS'
+# Who may sign this repository's commits and tags: one line per SSH signing key, in ssh-keygen's
+# ALLOWED SIGNERS format (principal, options, key type, public key), with namespaces="git" and,
+# where known, valid-after / valid-before dates (YYYYMMDD). Public keys only, never a private key.
+# Written by task openbao:ssh:import, ssh-agent:git:signing and ssh-agent:key:rotate; the host
+# commits it. git reads it through gpg.ssh.allowedSignersFile (task ssh-agent:git:signing sets it).
+EOF_AS
+}
+as_has() { # <file> <blob>
+  [ -f "$1" ] && awk -v b="$2" '!/^#/ { for (i = 1; i <= NF; i++) if ($i == b) f = 1 } END { exit !f }' "$1"
+}
+as_principal() { # <comment>: a plain name (no @, so no address lands in the repository), else signer
+  case "$1" in '' | *@* | *[!A-Za-z0-9._-]*) echo signer ;; *) echo "$1" ;; esac
+}
+as_add() { # <file> <principal> <type blob> [valid-after stamp]
+  local opts='namespaces="git"' blob
+  blob="$(awk '{print $2}' <<<"$3")"
+  [ -n "$blob" ] || return 1
+  if as_has "$1" "$blob"; then say "allowed_signers: the key is already in $1"; return 0; fi
+  as_header "$1" || { warn "could not write $1"; return 1; }
+  [ -z "${4:-}" ] || opts="$opts,valid-after=\"$4\""
+  printf '%s %s %s\n' "$2" "$opts" "$3" >>"$1"
+  say "allowed_signers: added $2 to $1 (the host commits it)"
+}
+as_retire() { # <file> <blob> <stamp>: valid-before on the key's lines that have none yet
+  local tmpf
+  [ -f "$1" ] && as_has "$1" "$2" || return 0
+  tmpf="$(mktemp "$1.XXXXXX")" || return 1
+  awk -v b="$2" -v t="$3" '!/^#/ { for (i = 3; i <= NF; i++) if ($i == b && $2 !~ /valid-before=/) { $2 = $2 ",valid-before=\"" t "\""; break } } { print }' "$1" >"$tmpf" && mv -f "$tmpf" "$1"
+  say "allowed_signers: the old key is valid before $3 in $1, so its signatures still verify"
+}
+
+cmd_git_signing() { # [key] [scope] [allowed signers file]
+  local key="${1:-}" scope="${2:-}" as_given="${3:-}" lines n pub line fp want cfg comment=''
   command -v git >/dev/null 2>&1 || { warn "git is not installed in this container"; exit 1; }
   active_sock
   probe "$ACTIVE"
@@ -520,6 +589,7 @@ cmd_git_signing() { # [key] [scope]
     done <<<"$lines"
     [ -n "$pub" ] || { warn "no key in the agent has the fingerprint $key; see task ssh-agent:keys"; exit 1; }
   fi
+  comment="$(printf '%s\n' "$pub" | awk '{print $3}')"
   pub="$(printf '%s\n' "$pub" | awk '{print $1 " " $2}')"
   case "$pub" in ssh-* | ecdsa-* | sk-*) ;; *) warn "that does not look like a public key"; exit 1 ;; esac
 
@@ -546,7 +616,19 @@ cmd_git_signing() { # [key] [scope]
     exit 1
   fi
   say "git ($scope) signs commits and tags with the agent's key $(printf '%s\n' "$pub" | ssh-keygen -l -f - 2>/dev/null | awk '{print $2}'): gpg.format ssh, user.signingkey key::<public key>, commit.gpgsign and tag.gpgsign true."
-  say "to verify signatures with git log --show-signature, also set gpg.ssh.allowedSignersFile; task ssh-agent:git:verify tests signing now."
+  # allowed_signers: only where the repository has the file (or one is named, or a rotation asks
+  # for it), so a repository that never chose one gets no new file.
+  if as_path "$as_given" && { [ -f "$AS_FILE" ] || [ -n "$as_given" ] || [ -n "${AS_CREATE:-}" ]; }; then
+    as_add "$AS_FILE" "$(as_principal "$comment")" "$pub" "${AS_VALID_AFTER:-}" || exit 1
+    if git rev-parse --git-dir >/dev/null 2>&1; then
+      git config --local gpg.ssh.allowedSignersFile "$AS_CFG" || { warn "could not set gpg.ssh.allowedSignersFile"; exit 1; }
+      say "git (repo) verifies signatures against $AS_CFG (gpg.ssh.allowedSignersFile; a relative path is read from the top of the work tree)"
+    else
+      git config "${cfg[@]}" gpg.ssh.allowedSignersFile "$AS_CFG" || { warn "could not set gpg.ssh.allowedSignersFile"; exit 1; }
+    fi
+  else
+    say "to verify signatures with git log --show-signature, also set gpg.ssh.allowedSignersFile (a repository with $AS_REL gets it here; ALLOWED_SIGNERS=<file> names one); task ssh-agent:git:verify tests signing now."
+  fi
 }
 
 cmd_git_verify() {
@@ -588,8 +670,10 @@ gh_ready() { command -v "$gh_bin" >/dev/null 2>&1 && "$gh_bin" auth status </dev
 pub_blob() { awk '{print $2}' "$1" 2>/dev/null | head -n 1; }
 
 gh_key_ids() { # <pub file>: the GitHub ids of the keys registered with that public key
-  local blob
-  blob="$(pub_blob "$1")"
+  gh_key_ids_blob "$(pub_blob "$1")"
+}
+gh_key_ids_blob() { # <public key blob>
+  local blob="$1"
   [ -n "$blob" ] || return 0
   "$gh_bin" ssh-key list </dev/null 2>/dev/null | awk -F'\t' -v b="$blob" 'index($0, b) { for (i = 1; i <= NF; i++) if ($i ~ /^[0-9]+$/) { print $i; break } }'
 }
@@ -671,7 +755,7 @@ do_retire() { # <name> <revoke>: the last step; any failure stops before somethi
 }
 
 parse_rotation_args() { # sets A_NAME A_NEW A_REVOKE A_SCOPE A_EMPTY A_PLAN
-  A_NAME='' A_NEW='' A_REVOKE='' A_SCOPE='' A_EMPTY='' A_PLAN=''
+  A_NAME='' A_NEW='' A_REVOKE='' A_SCOPE='' A_EMPTY='' A_PLAN='' A_AS=''
   while [ $# -gt 0 ]; do
     case "$1" in
       --plan) A_PLAN=1; shift ;;
@@ -680,6 +764,7 @@ parse_rotation_args() { # sets A_NAME A_NEW A_REVOKE A_SCOPE A_EMPTY A_PLAN
       --revoke) A_REVOKE="${2:-}"; shift 2 || shift ;;
       --scope) A_SCOPE="${2:-}"; shift 2 || shift ;;
       --empty) A_EMPTY="${2:-}"; shift 2 || shift ;;
+      --allowed-signers) A_AS="${2:-}"; shift 2 || shift ;;
       '') shift ;;
       *) warn "unknown argument '$1' (use -- --plan to only print the steps)"; exit 1 ;;
     esac
@@ -821,6 +906,213 @@ cmd_key_rotate() {
   say "rotated: $old is retired, git signs with $new ($fp_new). Old signatures verify with gpg.ssh.allowedSignersFile set to $KEY_DIR/$KEY_HISTORY."
 }
 
+# --- keys from OpenBao ----------------------------------------------------------------
+# The key comes from the openbao Feature's dcf-secret on a pipe into `ssh-add -`: it is in agent
+# memory only, never in a file, and the agent drops it after the lifetime (ssh-add -t). The
+# lifetime is at most what is left of the OpenBao login (dcf-secret ttl) and at most 480 minutes;
+# MINUTES shortens it. Its public key is noted in LOADED_DIR so key:lock works while sealed.
+is_bao_name() { case "$1" in */*) return 0 ;; *) return 1 ;; esac; }
+bao_name_ok() { [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)+$ ]] || { warn "'$1' is not an OpenBao name (ssh/<key> or register/<principal>)"; return 1; }; }
+need_cmd() { # <command> <Feature>: refuse plainly when another Feature's command is missing
+  command -v "$1" >/dev/null 2>&1 || { warn "$1 is not installed: add the $2 Feature to the devcontainer (OpenBao keeps the keys)"; exit 1; }
+}
+loaded_note() { echo "$LOADED_DIR/${1//\//__}.pub"; }
+
+deprecated() { # <what> <instead>: one line, the volume's command still runs
+  warn "deprecated: $1 uses the key volume, which goes in ssh-agent 2.0; use $2 (task openbao:ssh:import FROM=ssh-agent moves the volume's keys into OpenBao)"
+}
+
+# bao_agent: sets ACTIVE (the agent to load into) and WHERE (container, workstation, forwarded);
+# in key mode with no agent yet it starts the in-container one; otherwise refuses with the verdict.
+bao_agent() {
+  effective_mode
+  active_sock
+  probe "$ACTIVE"
+  if [ "$PROBE_RC" -le 1 ]; then
+    if [ "$ACTIVE" != "$SSH_SOCK" ]; then WHERE=forwarded
+    elif [ "$EFF" = socket ]; then WHERE=workstation
+    else WHERE=container; fi
+    return 0
+  fi
+  if [ "$EFF" = key ]; then
+    start_agent
+    [ "$AGENT_STATE" != failed ] || exit 1
+    ACTIVE="$SSH_SOCK" WHERE=container
+    return 0
+  fi
+  verdict
+  exit 1
+}
+
+cmd_bao_load() { # <name> [minutes]
+  local name="$1" minutes="${2:-}" ttl cap life out rcs pub until note
+  bao_name_ok "$name" || exit 1
+  need_cmd "$dcf_secret" openbao
+  if [ -n "$minutes" ]; then
+    case "$minutes" in *[!0-9]* | 0 | 0[0-9]*) warn "MINUTES must be a positive whole number (got '$minutes'); nothing was loaded"; exit 1 ;; esac
+    [ "${#minutes}" -le 4 ] && [ "$minutes" -le "$max_unlock_minutes" ] || { warn "MINUTES $minutes is over the limit of $max_unlock_minutes (8 hours); nothing was loaded"; exit 1; }
+  fi
+  ttl="$("$dcf_secret" ttl)" || exit $?
+  cap=$((max_unlock_minutes * 60))
+  if [ "$ttl" -gt 0 ] && [ "$ttl" -lt "$cap" ]; then cap="$ttl"; fi
+  life="$cap"
+  if [ -n "$minutes" ]; then
+    life=$((minutes * 60))
+    if [ "$life" -gt "$cap" ]; then
+      life="$cap"
+      say "MINUTES=$minutes is longer than the OpenBao login has left; the key lives $((cap / 60)) minute(s), as long as the login"
+    fi
+  fi
+  [ "$life" -ge 60 ] || { warn "the OpenBao login has less than a minute left: log in again (task openbao:login), then load; nothing was loaded"; exit 12; }
+  bao_agent
+  # dcf-secret's own line goes to stderr as it is; ssh-add's is kept for the message. The key
+  # passes on the pipe only.
+  out="$({ "$dcf_secret" get "$name" --field private_key 2>&3 | SSH_ASKPASS_REQUIRE=never SSH_AUTH_SOCK="$ACTIVE" ssh-add -t "$life" - 2>&1 >/dev/null; echo "rcs=${PIPESTATUS[0]},${PIPESTATUS[1]}"; } 3>&2)"
+  rcs="${out##*rcs=}"
+  out="${out%rcs=*}"
+  [ "${rcs%,*}" -eq 0 ] || exit "${rcs%,*}"
+  if [ "${rcs#*,}" -ne 0 ]; then
+    warn "ssh-add did not take $name from OpenBao${out:+: ${out%$'\n'}}; nothing was loaded"
+    exit 1
+  fi
+  pub="$("$dcf_secret" get "$name" --field public_key 2>/dev/null)" || pub=''
+  note="$(loaded_note "$name")"
+  if [ -n "$pub" ] && (umask 077 && mkdir -p "$LOADED_DIR") 2>/dev/null; then printf '%s\n' "$pub" >"$note" 2>/dev/null || true; fi
+  until="$(date -d "+$life seconds" +%H:%M 2>/dev/null || echo "$((life / 60)) minutes from now")"
+  case "$WHERE" in
+    workstation) say "loaded $name into the workstation's agent until $until ($((life / 60)) minute(s)); it lives in the workstation's agent, not in the container. task ssh-agent:key:lock NAME=$name drops it sooner." ;;
+    forwarded) say "loaded $name into the agent this shell forwards ($ACTIVE, the workstation's) until $until ($((life / 60)) minute(s)); task ssh-agent:key:lock NAME=$name drops it sooner." ;;
+    *) say "$name is in the container's agent until $until ($((life / 60)) minute(s)), in memory only; task ssh-agent:key:lock NAME=$name drops it sooner." ;;
+  esac
+}
+
+cmd_bao_lock() { # <name>
+  local name="$1" note pub
+  bao_name_ok "$name" || exit 1
+  note="$(loaded_note "$name")"
+  if [ -f "$note" ]; then pub="$(head -n 1 "$note")"
+  else
+    need_cmd "$dcf_secret" openbao
+    pub="$("$dcf_secret" get "$name" --field public_key)" || { warn "which key $name is cannot be told without OpenBao (above); ssh-add -D drops every key"; exit 1; }
+  fi
+  active_sock
+  if printf '%s\n' "$pub" | SSH_AUTH_SOCK="$ACTIVE" ssh-add -d - >/dev/null 2>&1; then say "removed $name from the agent"
+  else say "$name was not in the agent (or no agent answers on $ACTIVE)"; fi
+  rm -f "$note"
+}
+
+bao_fp() { printf '%s\n' "$1" | ssh-keygen -l -f - 2>/dev/null | awk '{print $2}'; }
+
+cmd_bao_rotate() { # after parse_rotation_args; A_NAME is ssh/<key> or empty (exactly one record)
+  local old new base resume='' scope pub_old pub_new fp_new eff cands count stamp ids id regdir
+  need_cmd "$openbao_ssh" openbao
+  need_cmd "$dcf_secret" openbao
+  if [ -n "$A_NAME" ]; then old="${A_NAME#ssh/}"
+  else
+    cands="$("$openbao_ssh" list --active)" || exit $?
+    count="$(printf '%s\n' "$cands" | grep -c .)"
+    [ "$count" -eq 1 ] || { warn "$count active SSH key records in OpenBao; say which with NAME=ssh/<key> (task openbao:ssh:age lists them)"; exit 1; }
+    old="${cands#ssh/}"
+  fi
+  "$openbao_ssh" exists "ssh/$old" || { warn "no record ssh/$old in OpenBao (task openbao:ssh:age lists them)"; exit 1; }
+  base="${old%-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]}"
+  if [ -n "$A_NEW" ]; then new="${A_NEW#ssh/}"; else new="$base-$(today | tr -d -)"; fi
+  [ "$new" != "$old" ] || { warn "the new name $new is the old key's own; pass NEW=<another name>"; exit 1; }
+  if "$openbao_ssh" exists "ssh/$new"; then
+    [ -n "$A_NEW" ] || { warn "ssh/$new already exists (an earlier rotation stopped?). Resume it with task ssh-agent:key:rotate NAME=ssh/$old NEW=ssh/$new, or pick another NEW."; exit 1; }
+    resume=1
+  fi
+  scope="$A_SCOPE"
+  if [ -z "$scope" ]; then default_scope; scope="$DEFAULT_SCOPE"; fi
+  case "$scope" in global | repo) ;; *) warn "SCOPE is repo or global, not '$scope'"; exit 1 ;; esac
+  pub_old="$("$dcf_secret" get "ssh/$old" --field public_key)" || exit $?
+  if [ -n "$A_PLAN" ]; then
+    say "plan, rotating ssh/$old ($(bao_fp "$pub_old")) into ssh/$new$([ -n "$resume" ] && echo ' (already made, resuming)'):"
+    if [ -z "$resume" ]; then say "  1. make the record ssh/$new (task openbao:ssh:new) and load it from OpenBao for the login's time; ssh/$old stays loaded"
+    else say "  1. ssh/$new exists: load it from OpenBao; ssh/$old stays loaded"; fi
+    say "  2. register it at GitHub as a SIGNING key (the gh Feature's task gh:ssh-key:add, else gh, else print it and STOP)"
+    say "  3. point git ($scope scope) at it, add it to $AS_REL (valid after now), and run git:verify; a failure puts git back"
+    if is_true "$A_REVOKE"; then say "  4. only then retire ssh/$old (task openbao:ssh:retire: its private key destroyed), mark it valid-before now in $AS_REL, unload it, and remove it from GitHub (REVOKE=1)"
+    else say "  4. only then retire ssh/$old (task openbao:ssh:retire: its private key destroyed), mark it valid-before now in $AS_REL, unload it; it stays registered at GitHub (REVOKE=1 would remove it)"; fi
+    say "nothing was changed."
+    exit 0
+  fi
+
+  # step 1: the new record, loaded; the old one stays
+  if [ -z "$resume" ]; then
+    say "step 1/4: making ssh/$new in OpenBao"
+    "$openbao_ssh" new --name "$new" --purpose git-signing >/dev/null || stop_rotation 1 "ssh/$old" "ssh/$new" "openbao:ssh:new failed (above)"
+  else say "step 1/4: ssh/$new exists, resuming"; fi
+  (cmd_bao_load "ssh/$new") || stop_rotation 1 "ssh/$old" "ssh/$new" "ssh/$new could not be loaded from OpenBao (above)"
+  pub_new="$("$dcf_secret" get "ssh/$new" --field public_key)" || stop_rotation 1 "ssh/$old" "ssh/$new" "its public key could not be read"
+  fp_new="$(bao_fp "$pub_new")"
+  say "step 1/4 done: ssh/$new ($fp_new) is loaded next to ssh/$old"
+
+  # step 2: a signing key at GitHub, through the gh Feature's task when it is there
+  if command -v "$gh_key_add" >/dev/null 2>&1; then
+    say "step 2/4: registering ssh/$new at GitHub as a signing key (gh:ssh-key:add)"
+    printf '%s\n' "$pub_new" | "$gh_key_add" --title "$new" || stop_rotation 2 "ssh/$old" "ssh/$new" "gh:ssh-key:add failed (above)"
+  elif gh_ready; then
+    if [ -n "$(gh_key_ids_blob "$(awk '{print $2}' <<<"$pub_new")")" ]; then say "step 2/4: ssh/$new is already registered at GitHub"
+    else
+      say "step 2/4: registering ssh/$new at GitHub as a signing key"
+      regdir="$(mktemp -d)" || stop_rotation 2 "ssh/$old" "ssh/$new" "no temporary folder for the public key"
+      printf '%s\n' "$pub_new" >"$regdir/$new.pub"
+      if ! "$gh_bin" ssh-key add "$regdir/$new.pub" --type signing --title "$new" </dev/null >/dev/null 2>&1; then
+        rm -rf "$regdir"
+        stop_rotation 2 "ssh/$old" "ssh/$new" "gh ssh-key add failed (does the gh login have the admin:ssh_signing_key scope? gh auth refresh -s admin:ssh_signing_key)"
+      fi
+      rm -rf "$regdir"
+    fi
+  elif [ -n "$resume" ]; then
+    say "step 2/4: gh is not available here; taking your word that ssh/$new is registered at GitHub as a SIGNING key"
+  else
+    warn "step 2/4: gh is not installed or not logged in here, so ssh/$new cannot be registered from this container. Register this public key at GitHub (Settings > SSH and GPG keys > New SSH key, key type Signing Key, title $new), a SIGNING key and not an authentication key:"
+    printf '%s\n' "$pub_new"
+    warn "finish by registering it, then run key:rotate again: task ssh-agent:key:rotate NAME=ssh/$old NEW=ssh/$new. Nothing of ssh/$old was removed; ssh/$new stays loaded until its lifetime ends."
+    exit 1
+  fi
+
+  # step 3: git signs with it, it is an allowed signer from now, and it is proven
+  stamp="$(stamp_now)"
+  save_cfg "$scope"
+  say "step 3/4: pointing git ($scope scope) at ssh/$new and verifying"
+  if ! (AS_CREATE=1 AS_VALID_AFTER="$stamp" cmd_git_signing "$fp_new" "$scope" "${A_AS:-}"); then restore_cfg "$scope"; stop_rotation 3 "ssh/$old" "ssh/$new" "git:signing failed; git's settings are back as they were"; fi
+  eff="$(git config --get user.signingkey 2>/dev/null || true)"
+  case "$eff" in
+    *"$(awk '{print $2}' <<<"$pub_new")"*) ;;
+    *) restore_cfg "$scope"; stop_rotation 3 "ssh/$old" "ssh/$new" "another git config level still names a different signing key (see git config --show-origin --get user.signingkey); git's settings are back as they were" ;;
+  esac
+  if ! (cmd_git_verify); then restore_cfg "$scope"; stop_rotation 3 "ssh/$old" "ssh/$new" "git:verify did not pass; git's settings are back as they were"; fi
+
+  # step 4: only now the old record goes
+  say "step 4/4: retiring ssh/$old"
+  "$openbao_ssh" retire --name "$old" || stop_rotation 4 "ssh/$old" "ssh/$new" "openbao:ssh:retire failed (git already signs with ssh/$new; task openbao:ssh:retire NAME=ssh/$old finishes it)"
+  # The old key signed the history up to now: it gets its line if it had none, then its end.
+  if as_path "${A_AS:-}"; then
+    as_has "$AS_FILE" "$(awk '{print $2}' <<<"$pub_old")" || as_add "$AS_FILE" "$(as_principal "$(awk '{print $3}' <<<"$pub_old")")" "$(awk '{print $1, $2}' <<<"$pub_old")" || true
+    as_retire "$AS_FILE" "$(awk '{print $2}' <<<"$pub_old")" "$stamp" || warn "could not mark ssh/$old in $AS_FILE"
+  fi
+  if is_true "$A_REVOKE"; then
+    if gh_ready; then
+      ids="$(gh_key_ids_blob "$(awk '{print $2}' <<<"$pub_old")")"
+      if [ -z "$ids" ]; then warn "ssh/$old is not in gh ssh-key list; remove it at GitHub by hand if it is registered"
+      else
+        for id in $ids; do
+          if "$gh_bin" ssh-key delete "$id" --yes </dev/null >/dev/null 2>&1; then say "removed ssh/$old from GitHub (key id $id)"
+          else warn "gh ssh-key delete $id failed; remove it at GitHub by hand"; fi
+        done
+      fi
+    else warn "REVOKE needs gh installed and logged in (gh auth login); ssh/$old stays registered at GitHub"; fi
+  else
+    say "ssh/$old stays registered at GitHub; commits GitHub verified stay verified either way (GitHub keeps a verified commit verified in its repository's network)."
+  fi
+  active_sock
+  printf '%s\n' "$pub_old" | SSH_AUTH_SOCK="$ACTIVE" ssh-add -d - >/dev/null 2>&1 && say "unloaded ssh/$old from the agent"
+  rm -f "$(loaded_note "ssh/$old")"
+  say "rotated: ssh/$old is retired, git signs with ssh/$new ($fp_new). The host commits $AS_REL."
+}
+
 cmd="${1:-setup}"
 # Only an explicit command may ask for a passphrase; the start hook (no arguments) never does.
 case "$cmd" in
@@ -830,17 +1122,38 @@ esac
 case "$cmd" in
   check) verdict; rc=$?; key_hygiene; [ "$EFF" = socket ] && host_rotation_guidance; exit "$rc" ;;
   keys) cmd_keys; exit 0 ;;
-  key-load) cmd_key_load; exit 0 ;;
-  key-add) cmd_key_add "${2:-}"; exit 0 ;;
-  key-stdin) cmd_key_stdin "${2:-}"; exit 0 ;;
-  key-new) cmd_key_new "${2:-}" "${3:-}" "${4:-}"; exit 0 ;;
-  key-unlock) cmd_key_unlock "${2:-}" "${3:-}"; exit 0 ;;
-  key-lock) cmd_key_lock "${2:-}"; exit 0 ;;
-  key-remove) cmd_key_remove "${2:-}" "${3:-}"; exit 0 ;;
-  key-rotate) cmd_key_rotate "${@:2}"; exit 0 ;;
-  key-retire) cmd_key_retire "${@:2}"; exit 0 ;;
-  key-age) cmd_key_age; exit 0 ;;
-  git-signing) cmd_git_signing "${2:-}" "${3:-}"; exit 0 ;;
+  key-load)
+    if [ -n "${2:-}" ]; then
+      is_bao_name "$2" || { warn "NAME is an OpenBao name (ssh/<key>, register/<principal>); a key of the key volume is loaded with task ssh-agent:key:unlock NAME=$2 (deprecated) or by key:load with no NAME"; exit 1; }
+      cmd_bao_load "$2" "${3:-}"; exit 0
+    fi
+    deprecated "task ssh-agent:key:load with no NAME" "task ssh-agent:key:load NAME=ssh/<key> [MINUTES=]"
+    cmd_key_load; exit 0 ;;
+  key-add) deprecated "task ssh-agent:key:add" "task openbao:ssh:import FROM=file FILE=<path>"; cmd_key_add "${2:-}"; exit 0 ;;
+  key-stdin) deprecated "task devcontainer:ssh-key-import" "task devcontainer:openbao-ssh-import FILE=<path> on the workstation"; cmd_key_stdin "${2:-}"; exit 0 ;;
+  key-new) deprecated "task ssh-agent:key:new" "task openbao:ssh:new"; cmd_key_new "${2:-}" "${3:-}" "${4:-}"; exit 0 ;;
+  key-unlock)
+    if is_bao_name "${2:-}"; then cmd_bao_load "$2" "${3:-}"; exit 0; fi
+    deprecated "task ssh-agent:key:unlock" "task ssh-agent:key:load NAME=ssh/<key> [MINUTES=]"
+    cmd_key_unlock "${2:-}" "${3:-}"; exit 0 ;;
+  key-lock)
+    if is_bao_name "${2:-}"; then cmd_bao_lock "$2"; exit 0; fi
+    deprecated "task ssh-agent:key:lock NAME=<file>" "task ssh-agent:key:lock NAME=ssh/<key>"
+    cmd_key_lock "${2:-}"; exit 0 ;;
+  key-remove)
+    is_true "${3:-}" && deprecated "task ssh-agent:key:remove DELETE=1" "task openbao:ssh:retire NAME=ssh/<key>"
+    cmd_key_remove "${2:-}" "${3:-}"; exit 0 ;;
+  key-rotate)
+    parse_rotation_args "${@:2}"
+    effective_mode
+    if is_bao_name "$A_NAME" || { [ -z "$A_NAME" ] && [ "$EFF" != key ] && command -v "$openbao_ssh" >/dev/null 2>&1; }; then
+      cmd_bao_rotate; exit 0
+    fi
+    deprecated "task ssh-agent:key:rotate on the key volume" "task ssh-agent:key:rotate NAME=ssh/<key>"
+    cmd_key_rotate "${@:2}"; exit 0 ;;
+  key-retire) deprecated "task ssh-agent:key:retire" "task openbao:ssh:retire NAME=ssh/<key> (or key:rotate NAME=ssh/<key>)"; cmd_key_retire "${@:2}"; exit 0 ;;
+  key-age) deprecated "task ssh-agent:key:age" "task openbao:ssh:age"; cmd_key_age; exit 0 ;;
+  git-signing) cmd_git_signing "${2:-}" "${3:-}" "${4:-}"; exit 0 ;;
   git-verify) cmd_git_verify; exit 0 ;;
   setup) ;;
   *) warn "unknown command '$cmd' (see the header of $0)"; exit 0 ;;
