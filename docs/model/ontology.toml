@@ -520,6 +520,11 @@ type = "mechanism"
 term = "Claim"
 summary = "openbao:onboard:claim: makes a restored store the receiver's own, with new shares and the sender's access revoked."
 
+[claim-token]
+type = "concept"
+term = "Claim token"
+summary = "The onboarding instance's root token, printed once at export and revoked by the claim, since rotate-keys needs a token."
+
 [response-wrapping]
 type = "mechanism"
 term = "Response wrapping"
