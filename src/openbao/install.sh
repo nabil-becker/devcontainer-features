@@ -135,6 +135,7 @@ install -m 0755 "$feature_dir/openbao-run.sh" /usr/local/bin/openbao-run
 # openbao-ssh: the SSH key records (task openbao:ssh:*) and the import of keys kept elsewhere.
 install -m 0755 "$feature_dir/openbao-ssh.sh" /usr/local/bin/openbao-ssh
 install -m 0644 "$feature_dir/env.sh" "$share/env.sh"
+install -m 0644 "$feature_dir/openbao-lib.sh" "$share/openbao-lib.sh"
 install -m 0755 "$feature_dir/dcf-persist.sh" /usr/local/bin/dcf-persist
 # bao's token helper: the CLI's own way to keep its token elsewhere than ~/.vault-token. bao finds
 # the config through BAO_CONFIG_PATH (containerEnv of this Feature, so it holds for every process,

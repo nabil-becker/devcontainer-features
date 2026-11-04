@@ -36,7 +36,9 @@ T="$(mktemp -d /tmp/obbak.XXXXXX)"
 trap 'rm -rf "$T"' EXIT
 mkdir -p "$T/bin" "$T/feat-server" "$T/feat-client" "$T/state" "$T/dest" "$T/tmpfs" "$T/src"
 cp "$root/src/openbao/env.sh" "$T/feat-server/env.sh"
+cp "$root/src/openbao/openbao-lib.sh" "$T/feat-server/openbao-lib.sh"
 cp "$root/src/openbao/env.sh" "$T/feat-client/env.sh"
+cp "$root/src/openbao/openbao-lib.sh" "$T/feat-client/openbao-lib.sh"
 printf 'MODE=server\n' > "$T/feat-server/options.env"
 printf 'MODE=client\n' > "$T/feat-client/options.env"
 install -m 0755 "$script" "$T/bin/openbao-server"
@@ -388,6 +390,21 @@ check "backup in client mode: the token of the sitting is used, no role login" "
 MODE_FEAT=server
 
 # ============================================================================ after-write ====
+# a client has no store of its own: nothing printed, nothing run, exit 0
+MODE_FEAT=client
+reset unsealed
+printf 'MODE=client\nBACKUPDEST=%q\n' "$T/dest" > "$T/feat-client/options.env"
+run -- after-write
+check "after-write in client mode: exit 0, silent, no backup" "0  0" "$rc $out $(grep -c 'snapshot save' "$LOG")"
+printf 'MODE=client\n' > "$T/feat-client/options.env"
+MODE_FEAT=server
+# the write tasks end with it (go-task stops at a failing first command, so a failed write never
+# reaches it): the order in the Taskfile
+for tk in ssh:new ssh:put ssh:import ssh:retire onboard:claim; do
+  last="$(awk -v t="  $tk:" '$0 == t { f = 1; next } f && /^  [a-z]/ { f = 0 } f && /^      - / { l = $0 } f && /^      - / { n++; if (n > 0) prev2 = prev; prev = l } END { print l }' "$root/src/openbao/taskfile.yml")"
+  check "task $tk ends with openbao-server after-write" "      - openbao-server after-write" "$last"
+done
+check "task ssh:age (a read) does not" 0 "$(awk '$0 == "  ssh:age:" { f = 1; next } f && /^  [a-z]/ { f = 0 } f && /after-write/' "$root/src/openbao/taskfile.yml" | wc -l | tr -d ' ')"
 reset unsealed
 run -- after-write
 check "after-write with no destination: exit 0" 0 "$rc"
@@ -630,7 +647,7 @@ if [ "$have_script" -eq 1 ]; then
   term "no" OPENBAO_TASK_FROM="$other" -- restore
   check "restore of another machine's file, not confirmed: exit 3" 3 "$rc"
   has "restore: the warning names the machine and onboarding" "written on 'otherbox'" "$out"
-  has "restore: and the claim task" "task openbao:onboard:claim" "$out"
+  has "restore: and says what an onboarding hand-over is" "onboarding-<machine>-<time>.snap" "$out"
   check "restore: nothing was done" 0 "$(grep -c -E 'operator init|snapshot restore' "$LOG")"
   reset uninit
   term "restore;;secret-pw" OPENBAO_TASK_FROM="$other" -- restore
@@ -641,6 +658,28 @@ if [ "$have_script" -eq 1 ]; then
   term ";;secret-pw" OPENBAO_TASK_FROM="$T/src/raft.snap" -- restore
   check "restore of a file with another name: no warning, exit 0" 0 "$rc"
   lacks "restore: no warning for it" "written on" "$out"
+
+  # an onboarding snapshot (the file name prefix): said so, no other-machine warning or confirmation,
+  # unsealed under its own shares, and none of the token-needing tail (no login, no reissue)
+  reset uninit
+  rm -rf "$T/state/approle"
+  onb="$T/src/onboarding-otherbox-20260101T000000Z.snap"
+  echo "SNAPSHOT-ONB" > "$onb"
+  term ";;" OPENBAO_TASK_FROM="$onb" -- restore
+  check "restore of an onboarding snapshot: exit 0" 0 "$rc"
+  has "restore onboarding: says it is an onboarding snapshot from the machine" "onboarding snapshot, made on 'otherbox'" "$out"
+  has "restore onboarding: points to the claim" "task openbao:onboard:claim" "$out"
+  lacks "restore onboarding: not the other-machine warning" "WARNING" "$out"
+  has "restore onboarding: installed with -force" "operator raft snapshot restore -force $onb" "$(calls)"
+  check "restore onboarding: the server is left unsealed" unsealed "$(cat "$T/stubstate")"
+  check "restore onboarding: no login and no root token from shares" 0 "$(grep -c -E '^login|generate-root' "$LOG")"
+  check "restore onboarding: no role reissued, no secret id written" "" "$(find "$T/state/approle" -type f 2>/dev/null)"
+  lacks "restore onboarding: nothing asked about the Operator's login" "log in as the Operator" "$out"
+  check "restore onboarding: last-restore is recorded" 1 "$(grep -c "^from=$onb" "$T/state/last-restore")"
+  # the same file name on a store in use still asks before it replaces anything
+  reset unsealed
+  term "no" OPENBAO_TASK_FROM="$onb" -- restore
+  check "restore of an onboarding snapshot on a store in use asks first: exit 3" 3 "$rc"
 
   # backup:role
   reset unsealed

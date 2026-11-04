@@ -22,6 +22,7 @@ check "dcf-secret on PATH" command -v dcf-secret
 check "openbao-server on PATH" command -v openbao-server
 check "openbao-run on PATH" command -v openbao-run
 check "openbao-onboard on PATH" command -v openbao-onboard
+check "openbao-lib.sh is installed next to env.sh (the two scripts source it)" test -f /usr/local/share/openbao-feature/openbao-lib.sh
 check "jq is installed (the onboarding scripts read bao's JSON with it)" command -v jq
 check "openbao-ssh on PATH" command -v openbao-ssh
 check "the ssh record tasks are in the Taskfile" bash -c "grep -q '^  ssh:new:' /usr/local/share/go-task/includes.d/openbao.yml && grep -q '^  ssh:import:' /usr/local/share/go-task/includes.d/openbao.yml && grep -q '^  ssh:retire:' /usr/local/share/go-task/includes.d/openbao.yml && grep -q '^  ssh:age:' /usr/local/share/go-task/includes.d/openbao.yml"

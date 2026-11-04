@@ -31,19 +31,14 @@ prog=openbao-onboard
 ob_dir="${OPENBAO_FEATURE_DIR:-/usr/local/share/openbao-feature}"
 # shellcheck disable=SC1091  # installed by install.sh
 [ -f "$ob_dir/env.sh" ] && . "$ob_dir/env.sh"
+# shellcheck disable=SC1091  # installed by install.sh next to env.sh
+. "$ob_dir/openbao-lib.sh" || { echo "$prog: $ob_dir/openbao-lib.sh is missing: rebuild the devcontainer" >&2; exit 10; }
 dir="${OPENBAO_STATE_DIR:-/var/lib/devcontainer-features/openbao}"
 mount="${DCF_SECRET_MOUNT:-dcf}"
 st_rc=0
 st_json=""
 own_addr="${BAO_ADDR:-}"
 
-say() { echo "$prog: $*" >&2; }
-die() { # <exit code> <line>
-  local code="$1"
-  shift
-  say "$*"
-  exit "$code"
-}
 usage() {
   say "usage: openbao-onboard export|claim|wrap|unwrap (the tasks of the openbao Feature run it)"
   exit 2
@@ -54,36 +49,10 @@ command -v bao >/dev/null 2>&1 || die 10 "bao is not installed: add the openbao 
 mode_now="$(openbao_mode 2>/dev/null || echo client)"
 
 # ---------------------------------------------------------------------------- refusals ----
-# The same rule as openbao-server's (a copy: that script runs its dispatch when sourced). An
-# agent's job: the devhost's backs run their CLI with DEVHOST_JOB_CHILD, and Claude Code sets
-# CLAUDECODE on every process it starts. OPENBAO_AGENT_JOB_VARS names more variables for another
-# agent CLI.
-guard() { # <task> <why>
-  local v
-  # shellcheck disable=SC2086  # a list of names
-  for v in DEVHOST_JOB_CHILD CLAUDECODE ${OPENBAO_AGENT_JOB_VARS:-}; do
-    if [ -n "${!v:-}" ]; then
-      die 3 "task openbao:$1 refuses to run inside an agent's job ($v is set): $2. Run it yourself in a plain terminal in the devcontainer"
-    fi
-  done
-}
-need_tty() { # <task>
-  { [ -t 0 ] && [ -t 1 ]; } || die 3 "task openbao:$1 needs a terminal on stdin and stdout (it asks for secrets and prints them only to a terminal); run it in a plain terminal, not through a pipe or a script"
-}
 need_server_mode() { # <task>
   [ "$mode_now" = server ] || die 3 "task openbao:$1 is for server mode: this container runs no server (mode $mode_now)"
 }
 need_jq() { command -v jq >/dev/null 2>&1 || die 1 "jq is not installed: rebuild the devcontainer (the openbao Feature installs it)"; }
-
-ask() { # <prompt> -> $REPLY, echoed input
-  printf '%s ' "$1" >&2
-  IFS= read -r REPLY || die 3 "no answer (the input ended)"
-}
-ask_secret() { # <prompt> -> $REPLY, input hidden
-  printf '%s ' "$1" >&2
-  IFS= read -rs REPLY || die 3 "no answer (the input ended)"
-  printf '\n' >&2
-}
 
 name_ok() { [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)*$ ]]; }
 field_ok() { [[ "$1" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]*$ ]]; }
@@ -432,7 +401,7 @@ EOF
   done < <(cl read -format=json sys/auth 2>/dev/null | jq -r '(.data // .) | keys[]' 2>/dev/null | grep '/$')
 
   # roles: read the policies, delete the role (that destroys its secret ids), write it again as
-  # the Feature writes it (a copy of openbao-server's approle-issue settings)
+  # the Feature writes it (role_write, the one definition in openbao-lib.sh)
   local r pols n_role=0
   while IFS= read -r r; do
     [ -n "$r" ] || continue
@@ -440,8 +409,7 @@ EOF
     pols="$(cl read -format=json "auth/approle/role/$r" 2>/dev/null | jq -r '(.data.token_policies // []) | join(",")')"
     cl delete "auth/approle/role/$r" >/dev/null 2>&1 || { say "could not delete the role $r"; failed=1; continue; }
     if [ -n "$pols" ]; then
-      cl write "auth/approle/role/$r" token_policies="$pols" token_ttl=5m token_max_ttl=15m \
-        secret_id_ttl=0 secret_id_num_uses=0 secret_id_bound_cidrs=127.0.0.1/32 token_bound_cidrs=127.0.0.1/32 >/dev/null || { say "could not write the role $r again"; failed=1; continue; }
+      BAO_TOKEN="$claim_tok" role_write "$r" "$pols" || { say "could not write the role $r again"; failed=1; continue; }
       n_role=$((n_role + 1))
     fi
   done < <(cl_list auth/approle/role)

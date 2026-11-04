@@ -232,7 +232,7 @@ does not end the old). The secret id and the role id are written to `approle/<ro
 the role (OpenBao's role deletion destroys its secret ids) and its policy with a root token from the
 shares, as above, and then its files; a token it
 already made lives at most 15 minutes. There is no `DCF_SECRET_AS` yet: nothing logs in as a role in
-this version except by hand, the backs are wired in a later slice.
+this version except by hand (the devhost's backs log in through the key fetch of the devhost Feature).
 
 **`task openbao:server:status`** (both modes; exit 0 unsealed, 10 unreachable, 11 sealed or not
 initialised): the mode, the address, the server's state, and in server mode the process, the
@@ -285,7 +285,13 @@ tenant's store, so it is the owner's call).
 **After a write.** A task that writes a secret ends with `openbao-server after-write`: with no
 default destination a one-line reminder (`not backed up since <time>; task openbao:backup DEST=...`),
 with one it runs the backup, and **it always exits 0**: the write stands whatever the backup does,
-and a failure prints its exit code and meaning.
+and a failure prints its exit code and meaning. In client mode it does nothing (a central server's
+owner takes its backups). It ends `openbao:ssh:new`, `:put`, `:import`, `:retire` and
+`openbao:onboard:claim`, and **not `dcf-secret put`**: `dcf-secret` is the collection's one command for
+every Feature and stays free of the server's own tasks, its callers here (`openbao-ssh`) write in
+batches (one backup per key of an import would be wrong), and its exit codes are the contract the
+consumers script against. A write made by hand with `dcf-secret put` is not followed by a reminder;
+`task openbao:server:status` shows the age of the last backup and warns past `backupWarnAfter`.
 
 **Scheduled backups, and the check that decided how.** Before building a timer the question was
 whether OpenBao already has one. Checked on 2026-11-04 against the OpenBao tree and docs
@@ -342,16 +348,26 @@ inside an agent's job and without a terminal). The restore installs the snapshot
   whose policy holds exactly two paths for it (`sys/generate-root-token/attempt` and `/update`): the
   shares are the authority, the login only opens the door. A login without those paths (a server
   initialised by an unreleased 1.2.0 build) is refused by the server, and the task stops before any
-  share is typed.
-- Either way the restored store is **sealed under the shares of the store the snapshot came from**
-  (a few seconds after the install the node seals itself). The task asks for two of those shares, then
+  share is typed. The root token is made in the store the snapshot replaces, so it goes with it:
+  the task tries to revoke it and does not complain when the restored store no longer knows it.
+- The restored store is **sealed under the shares of the store the snapshot came from** (a few
+  seconds after the install the node seals itself; a snapshot of the very store it is restored onto
+  holds the same unseal key and leaves the node unsealed, which the task says and waits out). The
+  task asks for two of those shares when it is sealed, then
   for the Operator's password (the restored store's) at `bao login`'s hidden prompt, which leaves you
   logged in, and reissues every AppRole's secret id (the secret ids' files in the volume are not in
   the snapshot) so the backs and the `backup` role work again. If the login fails the task says to
   log in and run `task openbao:approle:issue ALL=1`.
 - It is safe to run twice (the second run takes the "store in use" route). A snapshot whose file name
   says another machine wrote it is warned about, and you confirm: restoring your own backup restores
-  your own access, someone else's is onboarding (`task openbao:onboard:claim`).
+  your own access, and someone else's backup is not an onboarding hand-over.
+- **An onboarding snapshot** (a file named `onboarding-<machine>-<UTC time>.snap`, from
+  `task openbao:onboard:export`) is recognised by that name, since a restore has no token to read the
+  marker inside. The task says it is an onboarding snapshot, gives no other-machine warning, unseals
+  the server with the shares the sender handed over, and **stops there**: no login, no reissue of the
+  roles, no password asked, because nothing of the sender's is trusted yet. The server is left running
+  and unsealed under the sender's shares; `task openbao:onboard:claim` does the rest (it takes the
+  claim token). A store in use still asks you to type `restore` first.
 
 **`task openbao:backup:role`** makes the `backup` role on a server made before 1.3.0 (a root token
 from two shares, used once and revoked, as for making a role).

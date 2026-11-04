@@ -39,18 +39,13 @@ prog=openbao-server
 ob_dir="${OPENBAO_FEATURE_DIR:-/usr/local/share/openbao-feature}"
 # shellcheck disable=SC1091  # installed by install.sh
 [ -f "$ob_dir/env.sh" ] && . "$ob_dir/env.sh"
+# shellcheck disable=SC1091  # installed by install.sh next to env.sh
+. "$ob_dir/openbao-lib.sh" || { echo "$prog: $ob_dir/openbao-lib.sh is missing: rebuild the devcontainer" >&2; exit 10; }
 dir="${OPENBAO_STATE_DIR:-/var/lib/devcontainer-features/openbao}"
 mount="${DCF_SECRET_MOUNT:-dcf}"
 st_rc=0
 st_json=""
 
-say() { echo "$prog: $*" >&2; }
-die() { # <exit code> <line>
-  local code="$1"
-  shift
-  say "$*"
-  exit "$code"
-}
 usage() {
   say "usage: openbao-server init|unseal|seal|status|approle-issue|approle-revoke|backup|backup-role|restore|after-write (the tasks of the openbao Feature run it)"
   exit 2
@@ -61,21 +56,6 @@ command -v bao >/dev/null 2>&1 || die 10 "bao is not installed: add the openbao 
 mode_now="$(openbao_mode 2>/dev/null || echo client)"
 
 # ---------------------------------------------------------------------------- refusals ----
-# An agent's job: the devhost's backs run their CLI with DEVHOST_JOB_CHILD, and Claude Code sets
-# CLAUDECODE on every process it starts (its tool calls, subagents and headless runs).
-# OPENBAO_AGENT_JOB_VARS names more variables (space separated) for another agent CLI.
-guard() { # <task> <why>
-  local v
-  # shellcheck disable=SC2086  # a list of names
-  for v in DEVHOST_JOB_CHILD CLAUDECODE ${OPENBAO_AGENT_JOB_VARS:-}; do
-    if [ -n "${!v:-}" ]; then
-      die 3 "task openbao:$1 refuses to run inside an agent's job ($v is set): $2. Run it yourself in a plain terminal in the devcontainer"
-    fi
-  done
-}
-need_tty() { # <task>
-  { [ -t 0 ] && [ -t 1 ]; } || die 3 "task openbao:$1 needs a terminal on stdin and stdout (it asks for secrets and prints them only to a terminal); run it in a plain terminal, not through a pipe or a script"
-}
 need_server_mode() { # <task>
   [ "$mode_now" = server ] || die 3 "task openbao:$1 is for server mode: this container runs no server (mode $mode_now); the server's owner does this, or set the Feature option mode to server"
 }
@@ -184,16 +164,6 @@ configure_store() {
   # with, since the Operator's token ends after at most 8 hours.
   ensure_backup_role || return 1
   reissue_role backup || return 1
-}
-
-ask() { # <prompt> -> $REPLY, echoed input
-  printf '%s ' "$1" >&2
-  IFS= read -r REPLY || die 3 "no answer (the input ended)"
-}
-ask_secret() { # <prompt> -> $REPLY, input hidden
-  printf '%s ' "$1" >&2
-  IFS= read -rs REPLY || die 3 "no answer (the input ended)"
-  printf '\n' >&2
 }
 
 cmd_init() {
@@ -414,7 +384,13 @@ cmd_configure() {
 # or token is printed, logged or put in a file; the OTP is the one argument (useless without the
 # encoded token, which goes over stdin).
 root_otp="" root_tok="" root_started=0 root_done=0
+root_replaced=0 # set by a restore: the store the token was made in is replaced, so a failed revoke is expected
 root_cleanup() {
+  if [ -n "$root_tok" ] && [ "$root_replaced" -eq 1 ]; then
+    # try, silently: when the snapshot went in, the token is gone with the store it was made in
+    BAO_TOKEN="$root_tok" bao token revoke -self >/dev/null 2>&1 || true
+    root_tok=""
+  fi
   if [ -n "$root_tok" ]; then
     BAO_TOKEN="$root_tok" bao token revoke -self >/dev/null 2>&1 || echo "$prog: THE ROOT TOKEN COULD NOT BE REVOKED: revoke it now (bao token revoke -self with it), or seal the server" >&2
     root_tok=""
@@ -470,11 +446,8 @@ as_root() { # <task> <what it is for> <command> [args]: the command runs with a 
 create_role() { # <role> <policy> <ppath>
   # The role may read this one secret and nothing else (not even a listing).
   printf 'path "%s/data/%s" {\n  capabilities = ["read"]\n}\n' "${3%%/*}" "${3#*/}" | bao policy write "$2" - >/dev/null || { say "could not write the policy $2"; return 1; }
-  # Loopback only: a stolen secret id works from inside this container, and the token it gives
-  # too. Short tokens (5 minutes, at most 15); secret ids that do not expire, so the backs do
-  # not stop on a date nobody watches (they are reissued instead).
-  bao write "auth/approle/role/$1" token_policies="$2" token_ttl=5m token_max_ttl=15m \
-    secret_id_ttl=0 secret_id_num_uses=0 secret_id_bound_cidrs=127.0.0.1/32 token_bound_cidrs=127.0.0.1/32 >/dev/null || { say "could not write the role $1"; return 1; }
+  # Loopback only, short tokens, secret ids that do not expire (openbao-lib.sh: one definition)
+  role_write "$1" "$2" || { say "could not write the role $1"; return 1; }
 }
 delete_role() { # <role>
   # Deleting a role destroys the secret ids issued under it (OpenBao's role deletion flushes them).
@@ -726,6 +699,8 @@ cmd_backup() {
 # does (the folder missing, the server sealed), and the backup's own line and meaning are printed.
 cmd_after_write() {
   local d rc=0 t
+  # A client has no store of its own to back up (a central server's owner does that)
+  [ "$mode_now" = server ] || exit 0
   d="$(default_dest)"
   t="$(last_field time)"
   if [ -z "$d" ]; then
@@ -878,18 +853,27 @@ cmd_restore() {
   guard restore "it takes the unseal shares, which must never land in a transcript"
   need_server_mode restore
   need_tty restore
-  local from="${OPENBAO_TASK_FROM:-}" marker="$dir/restore.pending" machine other base tkey troot json fresh=0
+  local from="${OPENBAO_TASK_FROM:-}" marker="$dir/restore.pending" machine other onboarding base tkey troot json fresh=0
   [ -n "$from" ] || die 2 "name the snapshot: FROM=<file> (a file written by task openbao:backup)"
   [ -f "$from" ] && [ -r "$from" ] || die 2 "FROM '$from' is not a readable file"
   [ -s "$from" ] || die 2 "FROM '$from' is empty"
   machine="$(machine_name)"
   base="${from##*/}"
   other=""
-  if [[ "$base" =~ ^openbao-(.+)-[0-9]{8}T[0-9]{6}Z\.snap$ ]] && [ "${BASH_REMATCH[1]}" != "$machine" ]; then
+  onboarding=""
+  # An onboarding snapshot (task openbao:onboard:export) is named onboarding-<machine>-<time>.snap:
+  # the file name is what a restore can read before it has a token. It is a starter store to claim,
+  # not another machine's backup; the claim token is what lets openbao:onboard:claim take it over.
+  if [[ "$base" =~ ^onboarding-(.+)-[0-9]{8}T[0-9]{6}Z\.snap$ ]]; then
+    onboarding="${BASH_REMATCH[1]}"
+  elif [[ "$base" =~ ^openbao-(.+)-[0-9]{8}T[0-9]{6}Z\.snap$ ]] && [ "${BASH_REMATCH[1]}" != "$machine" ]; then
     other="${BASH_REMATCH[1]}"
   fi
+  if [ -n "$onboarding" ]; then
+    echo "openbao: this is an onboarding snapshot, made on '$onboarding' by task openbao:onboard:export: a starter store with the keys that machine chose to hand over. It is unsealed with the shares that machine gave you and finished by task openbao:onboard:claim, which rotates them and revokes everything it held." >&2
+  fi
   if [ -n "$other" ]; then
-    echo "openbao: WARNING this snapshot was written on '$other', not on this machine ('$machine'). Restoring your own backup restores your own access; restoring someone else's snapshot is onboarding, and the next task is task openbao:onboard:claim." >&2
+    echo "openbao: WARNING this snapshot was written on '$other', not on this machine ('$machine'). Restoring your own backup restores your own access; someone else's backup is not an onboarding hand-over (that is a file named onboarding-<machine>-<time>.snap, made by task openbao:onboard:export, finished by task openbao:onboard:claim)." >&2
     ask "Type: restore  to go on, anything else stops:"
     [ "$REPLY" = restore ] || die 3 "stopped; nothing was changed"
   fi
@@ -940,12 +924,19 @@ cmd_restore() {
       unseal_loop
     fi
     need_token
+    root_replaced=1 # the snapshot replaces the store the root token lives in: nothing is left to revoke
     as_root restore "installing the snapshot" bao operator raft snapshot restore -force "$from" || die 1 "bao could not install the snapshot (its message is above); the current store is unchanged"
   fi
 
   # the restored store is sealed under the snapshot's own shares
-  wait_sealed || say "the server did not seal itself after the restore; sealing it"
-  if [ "$st_rc" -eq 0 ]; then bao operator seal >/dev/null 2>&1 || true; fi
+  if ! wait_sealed; then
+    # A snapshot of a store with the same shares (a restore of your own backup onto the store it came
+    # from) leaves the node unsealed: it still has to finish loading the restored mounts and users
+    # before a login can work, so give it a moment instead of sealing it (no token to do that with).
+    echo "openbao: the server stayed unsealed (the snapshot holds the same unseal key); letting it finish loading the restored store" >&2
+    wait_active || true
+    sleep 5
+  fi
   {
     umask 077
     { echo "from=$from"; echo "time=$(date -u +%Y-%m-%dT%H:%M:%SZ)"; } > "$dir/last-restore"
@@ -953,6 +944,13 @@ cmd_restore() {
   echo "openbao: the snapshot is installed. The store is sealed under the shares of the store it came from: enter two of them (not the throwaway one)." >&2
   bao operator unseal -reset >/dev/null 2>&1 || true
   unseal_loop
+
+  if [ -n "$onboarding" ]; then
+    # The server stays up and unsealed under the sender's shares. No login, no reissue: nothing of
+    # the sender's is trusted yet, and the claim does it all (it takes the claim token).
+    echo "openbao: restored from $from; the server is unsealed under the sender's shares and nothing of the sender's has been trusted or reissued. Next: task openbao:onboard:claim (it asks for the claim token, your own Operator password and two of the sender's shares)." >&2
+    exit 0
+  fi
 
   # The backs and the backup role must work again: the secret ids' files in the volume are not in
   # the snapshot and the ids in the store are the old ones, so every role is reissued. That needs

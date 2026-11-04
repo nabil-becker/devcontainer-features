@@ -17,6 +17,7 @@
 #     screen after the prompts;
 #   - the refusals for restore and backup:role inside an agent's job and without a terminal.
 set -e
+trap '' PIPE # a command that ended before its answers were typed is a failed check, not a silent kill
 # shellcheck disable=SC1091  # provided by the devcontainer CLI at test time
 source dev-container-features-test-lib
 
@@ -35,7 +36,8 @@ export OPENBAO_MACHINE=testbox
 # one (ENTER is an empty line, SHARES reads shares 1 and 2 off the screen when init asks to press
 # Enter); the screen is $work/screen.txt and the exit code $term_rc.
 term() {
-  local cmd="$1" a s1 s2
+  local cmd="$1" a s1 s2 n_seen shares_typed
+  local -A seen=()
   shift
   rm -f "$work/fifo" "$work/screen" "$work/rc"
   mkfifo "$work/fifo"
@@ -43,6 +45,15 @@ term() {
   local spid=$!
   exec 3> "$work/fifo"
   sleep 1
+  # the first prompt must be up before anything is typed (a tty echoes what arrives before a hidden
+  # read turns the echo off, and a loaded machine is slow to get there): wait until the screen is quiet
+  local sz0=-1 sz1=0 _w
+  for _w in $(seq 1 30); do
+    sz1="$(stat -c %s "$work/screen" 2>/dev/null || echo 0)"
+    [ "$sz1" = "$sz0" ] && [ "$sz1" -gt 0 ] && break
+    sz0="$sz1"
+    sleep 1
+  done
   for a in "$@"; do
     case "$a" in
       SHARES)
@@ -50,14 +61,42 @@ term() {
         s1="$(grep -a -m1 '^Unseal Key 1: ' "$work/screen" | sed 's/^Unseal Key 1: //' | tr -d '\r')"
         s2="$(grep -a -m1 '^Unseal Key 2: ' "$work/screen" | sed 's/^Unseal Key 2: //' | tr -d '\r')"
         printf '%s\n' "$s1" "$s2" > "$work/shares"
-        printf '\n' >&3
+        printf '\n' >&3 2>/dev/null || true
         sleep 1
-        printf '%s\n' "$s1" >&3
+        printf '%s\n' "$s1" >&3 2>/dev/null || true
         sleep 1
-        printf '%s\n' "$s2" >&3
+        printf '%s\n' "$s2" >&3 2>/dev/null || true
         ;;
-      ENTER) printf '\n' >&3 ;;
-      *) printf '%s\n' "$a" >&3 ;;
+      ENTER) printf '\n' >&3 2>/dev/null || true ;;
+      UNSEAL_THEN_PASSWORD)
+        # The restored store is sealed when the snapshot came from another store, and stays unsealed
+        # when it holds the same unseal key (restoring a store onto itself): type the two shares at
+        # each "Unseal Key" prompt that comes, until the password prompt shows
+        shares_typed=0
+        for _ in $(seq 1 240); do
+          grep -aq 'Password (will' "$work/screen" 2>/dev/null && break
+          if [ "$(grep -ac 'Unseal Key (will' "$work/screen" 2>/dev/null || true)" -gt "$shares_typed" ]; then
+            sleep 0.5
+            shares_typed=$((shares_typed + 1))
+            if [ "$shares_typed" = 1 ]; then printf '%s\n' "$(s1)" >&3 2>/dev/null || true; else printf '%s\n' "$(s2)" >&3 2>/dev/null || true; fi
+          fi
+          sleep 0.5
+        done
+        sleep 0.5
+        continue
+        ;;
+      @*) # @<text>: wait until the screen shows <text> once more than at the last wait for it, then a
+          # moment for the prompt to turn echo off (what is typed earlier is echoed on the screen)
+        n_seen="${seen[$a]:-0}"
+        for _ in $(seq 1 120); do
+          [ "$(grep -ac -- "${a#@}" "$work/screen" 2>/dev/null || true)" -gt "$n_seen" ] && break
+          sleep 0.5
+        done
+        seen[$a]="$(grep -ac -- "${a#@}" "$work/screen" 2>/dev/null || true)"
+        sleep 0.5
+        continue
+        ;;
+      *) printf '%s\n' "$a" >&3 2>/dev/null || true ;;
     esac
     sleep "${TERM_DELAY:-1.2}"
   done
@@ -74,7 +113,7 @@ in_files() { grep -rlaF -- "$1" "$2" > /dev/null 2>&1; } # <needle> <folder>: fo
 unsealed() { [ "$(openbao-run bao status -format=json | grep -c '"sealed": false')" = 1 ]; }
 s1() { sed -n 1p "$work/shares"; }
 s2() { sed -n 2p "$work/shares"; }
-snaps() { find "$1" -maxdepth 1 -name 'openbao-testbox-*.snap' | sort; } # <folder>
+snaps() { find "$1" -maxdepth 1 -name 'openbao-testbox-[0-9]*Z.snap' | sort; } # <folder>
 nsnaps() { snaps "$1" | wc -l | tr -d ' '; }
 login() { term "task -t $tf login -- -method=userpass username=operator" "$pw"; }
 
@@ -123,24 +162,24 @@ echo x > "$work/dest/openbao-otherbox-20200101T000000Z.snap"
 echo x > "$work/dest/openbao-testbox-notatime.snap"
 echo x > "$work/dest/notes.txt"
 out="$(t backup KEEP=2 2>&1)"
-check "KEEP=2 leaves this machine's two newest" [ "$(nsnaps "$work/dest")" = 3 ] # two newest + the non-time name
+check "KEEP=2 leaves this machine's two newest" [ "$(nsnaps "$work/dest")" = 2 ] # the two newest (the non-time name is not counted by snaps)
 check "the first file is gone" test ! -e "$f1"
 check "it says what it removed" contains "$out" 'removed'
 check "another file is untouched" test -e "$work/dest/other.snap"
 check "another machine's backup is untouched" test -e "$work/dest/openbao-otherbox-20200101T000000Z.snap"
 check "a name that is not the pattern is untouched" test -e "$work/dest/openbao-testbox-notatime.snap"
 check "a note is untouched" test -e "$work/dest/notes.txt"
-rc=0; t backup DEST="$work/nonexistent" > /dev/null 2>&1 || rc=$?
+rc=0; t -x backup DEST="$work/nonexistent" > /dev/null 2>&1 || rc=$?
 check "DEST missing: exit 20" [ "$rc" = 20 ]
 check "and no temporary snapshot is left after the failure" [ -z "$(ls -A "$OPENBAO_BACKUP_TMP")" ]
 chmod 500 "$work/dest2"
 if [ "$(id -u)" != 0 ]; then
-  rc=0; t backup DEST="$work/dest2" > /dev/null 2>&1 || rc=$?
+  rc=0; t -x backup DEST="$work/dest2" > /dev/null 2>&1 || rc=$?
   check "DEST not writable: exit 20" [ "$rc" = 20 ]
 fi
 chmod 700 "$work/dest2"
 t seal > /dev/null 2>&1
-rc=0; t backup DEST="$work/dest2" > /dev/null 2>&1 || rc=$?
+rc=0; t -x backup DEST="$work/dest2" > /dev/null 2>&1 || rc=$?
 check "a sealed server: exit 11" [ "$rc" = 11 ]
 check "and nothing was written" [ "$(nsnaps "$work/dest2")" = 0 ]
 st="$(t server:status)" || true
@@ -179,15 +218,25 @@ check "restore of a file that is not there is refused" [ "$rc" != 0 ]
 old_sid="$(cat "$state/approle/backup/secret_id")"
 restore_in_use() {
   # the confirmation, two shares for the root token, two to unseal the restored store, the password
-  term "task -t $tf restore FROM=$snap" restore "$(s1)" "$(s2)" "$(s1)" "$(s2)" "$pw"
+  term "task -t $tf restore FROM=$snap" @'Type: restore' restore @'Unseal share 1 of' "$(s1)" @'Unseal share 2 of' "$(s2)" UNSEAL_THEN_PASSWORD "$pw"
+}
+show_if_failed() { # the screen of a command that did not exit 0, shares and password masked
+  [ "$term_rc" = 0 ] && return 0
+  echo "--- the screen (shares and password masked):" >&2
+  sed "s|$(s1)|<SHARE-1>|g; s|$(s2)|<SHARE-2>|g; s|$pw|<PASSWORD>|g" "$work/screen.txt" | head -c 3500 >&2
 }
 restore_fresh() { # no confirmation; two shares to unseal, the password
-  term "task -t $tf restore FROM=$snap" "$(s1)" "$(s2)" "$pw"
+  term "task -t $tf restore FROM=$snap" UNSEAL_THEN_PASSWORD "$pw"
 }
 restore_in_use
+show_if_failed
 check "task openbao:restore on a store in use exits 0" [ "$term_rc" = 0 ]
 check "it asked for the confirmation first" grep -q 'REPLACES every secret' "$work/screen.txt"
 check "the server is unsealed again" unsealed
+if grep -qF -- "$(s1)" "$work/screen.txt"; then
+  echo "--- the screen of the restore, share 1 masked:" >&2
+  sed "s|$(s1)|<SHARE-1>|g; s|$(s2)|<SHARE-2>|g" "$work/screen.txt" | head -c 3500 >&2
+fi
 check "the screen shows no share" bash -c "! grep -qF '$(s1)' $work/screen.txt"
 check "the screen shows no password" bash -c "! grep -qF '$pw' $work/screen.txt"
 check "the Operator is logged in by the restore" [ "$(dcf-secret status)" = ready ]
@@ -201,7 +250,7 @@ check "last-restore is recorded" test -s "$state/last-restore"
 t backup DEST="$work/dest2" > /dev/null 2>&1
 check "a backup after the restore works (the role was reissued)" [ "$(nsnaps "$work/dest2")" -ge 2 ]
 printf 'again after' | dcf-secret put ssh/key --field private_key
-restore_in_use
+restore_in_use; show_if_failed
 check "restore run a second time exits 0" [ "$term_rc" = 0 ]
 check "and the data is the backup's again" [ "$(dcf-secret get ssh/key --field private_key)" = 'before the backup' ]
 

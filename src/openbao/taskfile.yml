@@ -82,6 +82,7 @@ tasks:
       OPENBAO_TASK_ROTATE: '{{.ROTATE | default ""}}'
     cmds:
       - openbao-onboard claim
+      - openbao-server after-write
 
   wrap:
     dir: '{{.USER_WORKING_DIR}}'
@@ -171,6 +172,7 @@ tasks:
       PURPOSE: '{{.PURPOSE | default ""}}'
     cmds:
       - openbao-run openbao-ssh new --name '{{.NAME}}' --comment '{{.COMMENT}}' --purpose '{{.PURPOSE}}'
+      - openbao-server after-write
 
   ssh:put:
     dir: '{{.USER_WORKING_DIR}}'
@@ -181,6 +183,7 @@ tasks:
       PURPOSE: '{{.PURPOSE | default ""}}'
     cmds:
       - openbao-run openbao-ssh put --name '{{.NAME}}' --purpose '{{.PURPOSE}}'
+      - openbao-server after-write
 
   ssh:import:
     dir: '{{.USER_WORKING_DIR}}'
@@ -196,6 +199,7 @@ tasks:
       ALLOWED_SIGNERS: '{{.ALLOWED_SIGNERS | default ""}}'
     cmds:
       - openbao-run openbao-ssh import --from '{{.FROM}}' --file '{{.FILE}}' --name '{{.NAME}}' --dir '{{.DIR}}'
+      - openbao-server after-write
 
   ssh:retire:
     dir: '{{.USER_WORKING_DIR}}'
@@ -204,6 +208,7 @@ tasks:
       vars: [NAME]
     cmds:
       - openbao-run openbao-ssh retire --name '{{.NAME}}' {{.CLI_ARGS}}
+      - openbao-server after-write
 
   ssh:age:
     dir: '{{.USER_WORKING_DIR}}'

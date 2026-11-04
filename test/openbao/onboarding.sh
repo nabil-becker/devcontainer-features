@@ -5,8 +5,8 @@
 #   - export: a second server in the same container, the named secrets copied (every field), the
 #     snapshot in DEST (mode 600, never overwritten), the instance stopped and its folder gone, the
 #     fresh shares and the claim token on the screen only;
-#   - the receiver: the server wiped, a throwaway init, the snapshot restored by hand (the restore
-#     task is the backup-and-restore slice's), unsealed with the sender's fresh shares;
+#   - the receiver: the server wiped, the snapshot installed by the real task openbao:restore (it
+#     recognises the onboarding file, unseals it with the sender's fresh shares, logs nobody in);
 #   - claim: with things the sender held (a user, an AppRole role and secret id, a token, another
 #     auth method) put into the restored store first: every one fails afterwards, the roles are
 #     rebuilt with one new secret id, the Operator is the receiver's, the marker is replaced, the
@@ -65,6 +65,15 @@ term() {
   local spid=$!
   exec 3> "$work/fifo"
   sleep 1
+  # the first prompt must be up before anything is typed (a tty echoes what arrives before a hidden
+  # read turns the echo off, and a loaded machine is slow to get there): wait until the screen is quiet
+  local sz0=-1 sz1=0 _w
+  for _w in $(seq 1 30); do
+    sz1="$(stat -c %s "$work/screen" 2>/dev/null || echo 0)"
+    [ "$sz1" = "$sz0" ] && [ "$sz1" -gt 0 ] && break
+    sz0="$sz1"
+    sleep 1
+  done
   for a in "$@"; do
     case "$a" in
       SHARES)
@@ -166,18 +175,21 @@ term "task -t $tf onboard:export NAMES=ssh/key DEST=$dest" ENTER
 check "a second export writes a second file, the first is not overwritten" ev '[ "$(ls "$dest"/onboarding-*.snap | wc -l)" = 2 ] && [ -f "$snap" ]'
 check "the temporary folder of the export is empty or gone" [ ! -e "$state/onboarding" ]
 
-# --- the receiver: a fresh server with the snapshot restored (by hand) ---------------------------------
+# --- the receiver: a fresh server, the snapshot installed by the real task openbao:restore -----------------
 stop_main
 rm -rf "$state/raft" "$state/token" "$state/approle"
 openbao-setup start
-init="$(bao operator init -key-shares=1 -key-threshold=1 -format=json)"
-printf '%s' "$init" | jq -r '.unseal_keys_b64[0]' | bao write sys/unseal key=- > /dev/null
 sleep 3
-BAO_TOKEN="$(printf '%s' "$init" | jq -r .root_token)" bao operator raft snapshot restore -force "$snap"
-sleep 6
-check "a restored server is sealed (it needs the snapshot's shares)" [ "$(dcf-secret status 2>/dev/null)" = sealed ]
-term "task -t $tf unseal" "$(sed -n 1p "$work/export.shares")" "$(sed -n 2p "$work/export.shares")"
-check "the fresh shares unseal it" ev '[ "$term_rc" = 0 ] && unsealed'
+# an onboarding file is recognised by its name: no other-machine warning, no confirmation, the sender's
+# shares unseal it (two typed at the prompt), and no login and no reissue (the claim does those)
+term "task -t $tf restore FROM=$snap" "$(sed -n 1p "$work/export.shares")" "$(sed -n 2p "$work/export.shares")"
+rscreen="$(cat "$work/screen.txt")"
+check "restore of an onboarding snapshot exits 0" [ "$term_rc" = 0 ]
+check "restore says it is an onboarding snapshot and points to the claim" ev 'contains "$rscreen" "onboarding snapshot" && contains "$rscreen" "task openbao:onboard:claim"'
+check "restore does not give the other-machine warning" excludes "$rscreen" "written on"
+check "the server is left unsealed under the sender's shares" unsealed
+check "restore did not log anyone in and did not reissue a role" ev '[ ! -s "$state/token" ] && [ ! -e "$state/approle" ]'
+check "restore did not ask to log in (the claim sets the receiver's Operator)" excludes "$rscreen" "log in as the Operator"
 sleep 2
 
 # what the sender held in the store, made with the claim token (a token that came in the snapshot)
