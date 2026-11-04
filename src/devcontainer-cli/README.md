@@ -394,7 +394,14 @@ the host type needs; ADR 0024 decides it, `docs/proposals/host-profile.md` is th
   a default name (`id_ed25519` and the like) or its public key (`FILE.pub`, or derived with `ssh-keygen -y` only when the key
   has no passphrase) is also in `~/.ssh/authorized_keys` or the same as another `~/.ssh/*.pub`: such a key is
   general-purpose and should not live in a container volume (it prints fingerprints, never key material).
-  Both are one-shot commands; nothing stays running on the host.
+  **Since 1.19.0 `devcontainer:ssh-key-import` is deprecated** (it says so; it goes with ssh-agent 2.0) in favour of
+  `task devcontainer:openbao-ssh-import FILE=<private key on the host> [NAME=]`: the same stream on stdin, the same
+  host-side warnings, into the `openbao` Feature's `task openbao:ssh:import FROM=file` in the running container, which
+  stores the key in OpenBao as `ssh/<NAME>` (default the file name) and adds its public key to the repository's
+  `.devcontainer/allowed_signers`; the container must have the openbao Feature 1.3.0 or later, its server unsealed and a
+  login (`task openbao:login`), and a key with a passphrase is imported inside the container instead, where ssh-keygen can
+  ask for it. Then `task ssh-agent:key:load NAME=ssh/<NAME>` loads it for a sitting (ADR 0048, ADR 0026).
+  All three are one-shot commands; nothing stays running on the host.
   Not verified on a real host: `devcontainer exec` forwarding its stdin on every platform (the tests use a stub).
 - **The cloud folder (1.12.0).** When `DCF_HOST_CLOUD_FOLDER` names a host folder (one a sync client keeps, such as a
   SharePoint or OneDrive folder), `up` bind-mounts it at one fixed path, `/mnt/cloud-folder-host`, the `cloud-folder`
@@ -485,6 +492,16 @@ so the same script serves the container and the host-side tasks.
 
 ## Changes
 
+### [1.19.0] - 2026-11-04
+
+#### Added
+
+- **`task devcontainer:openbao-ssh-import FILE=<key> [NAME=]`** (both launchers): streams a private key of the workstation into OpenBao in the running container (the openbao Feature 1.3.0, unsealed, logged in there), through `devcontainer exec` on stdin, never as an argument; it is stored as `ssh/<name>` and its public key goes into the repository's `.devcontainer/allowed_signers`. A one-shot, as before: nothing is left running on the workstation. A key with a passphrase is imported inside the container instead (`task openbao:ssh:import FROM=file FILE=<path>`), where ssh-keygen can ask for it. Re-vendor the bootstrap to get the task.
+
+#### Deprecated
+
+- `task devcontainer:ssh-key-import` (the key into ssh-agent's key volume) still works and says it is deprecated; it goes with ssh-agent 2.0. Use `devcontainer:openbao-ssh-import`.
+
 ### [1.18.2] - 2026-11-03
 
 #### Added
@@ -500,28 +517,6 @@ so the same script serves the container and the host-side tasks.
   is every live waiter but this one, whenever it arrived; the holder is not one, and there is no
   count when there is no other waiter: `waiting for alpha's up --build-no-cache (started 14:02, 2
   waiting)...`. Both launchers.
-
-### [1.18.0] - 2026-11-03
-
-#### Changed
-
-- **The build lock says who holds it** (#154). A waiting `up` printed only `waiting for another
-  devcontainer build to finish...` and could sit there behind long rebuilds of other repositories
-  with no way to tell. Now the holder writes a small file beside the lock (its repository's folder
-  name, the subcommand with its flags, its start time) and each waiter registers too, so the line
-  reads `waiting for alpha's up --remove-existing-container --build-no-cache (started 14:02, 2
-  waiting)...` and is printed again when the holder or the count changes. A file whose process is
-  gone is ignored. The count is every other waiter (not the holder, not this one), whenever it
-  arrived: the lock is not first-come, so there is no place in a queue to show.
-- **No build lock with BuildKit build contexts.** The lock is for one collision only: without
-  BuildKit build contexts (wslc), `@devcontainers/cli` tags every repository's Feature content
-  image `dev_container_feature_content_temp`. When `<engine> buildx version` reports 0.8.0 or later
-  (the check the CLI itself makes; Docker Desktop and Docker Engine with buildx), the CLI uses
-  build contexts and makes no such image, so the launcher now skips the lock with one line:
-  `build lock skipped: docker builds with BuildKit build contexts (buildx 0.35.0), so builds of
-  different repositories cannot collide (DEVCONTAINER_BUILD_LOCK=1 keeps it).` wslc always keeps
-  it. `DEVCONTAINER_BUILD_LOCK=1` (new) keeps the lock on every engine; `=0` still turns it off.
-  Both launchers (PowerShell and bash).
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/devcontainer-cli/CHANGELOG.md).
 

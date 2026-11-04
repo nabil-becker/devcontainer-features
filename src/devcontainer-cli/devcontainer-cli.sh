@@ -1042,12 +1042,12 @@ explain_exec_failure() { # <exit code> <workspace> <command text>
 # public half is FILE.pub, or derived with `ssh-keygen -y` only for a key with no passphrase (an empty
 # passphrase is given, so it never prompts; a protected key is skipped). Prints fingerprints, never key
 # material.
-warn_general_purpose_key() {
-  local file="$1" name d pub='' blob fp='' p hit=''
+warn_general_purpose_key() { # <key file> [label]
+  local file="$1" label="${2:-ssh-key-import}" name d pub='' blob fp='' p hit=''
   name="$(basename "$file")"
   for d in id_ed25519 id_ecdsa id_rsa id_dsa id_ed25519_sk id_ecdsa_sk; do
     if [ "$name" = "$d" ]; then
-      echo "ssh-key-import: warning: $name is the default name of a general-purpose key. Import only a dedicated signing key (one key per purpose and per container, named <repo>-<container>-sign) that opens nothing else; task ssh-agent:key:new inside the container makes one that never leaves it." >&2
+      echo "$label: warning: $name is the default name of a general-purpose key. Import only a dedicated signing key (one key per purpose and per container, named <repo>-<container>-sign) that opens nothing else; task ssh-agent:key:new inside the container makes one that never leaves it." >&2
     fi
   done
   if [ -f "$file.pub" ]; then read -r pub < "$file.pub" || true
@@ -1066,7 +1066,7 @@ warn_general_purpose_key() {
     done
   fi
   if [ -n "$hit" ]; then
-    echo "ssh-key-import: warning: the public key of $name${fp:+ ($fp)} $hit, so it is a general-purpose key. A key that also opens GitHub, servers or other repos must not live in a container volume: import a dedicated signing key instead (registered at GitHub as a signing key only)." >&2
+    echo "$label: warning: the public key of $name${fp:+ ($fp)} $hit, so it is a general-purpose key. A key that also opens GitHub, servers or other repos must not live in a container volume: import a dedicated signing key instead (registered at GitHub as a signing key only)." >&2
   fi
   return 0
 }
@@ -1083,6 +1083,7 @@ mode_ssh_key_import() {
     die "ssh-key-import: FILE=<path of a private key on this host> is required, and '${file}' is not a file."
   fi
   name="$(basename "$file")"
+  echo "ssh-key-import: deprecated: it puts the key in the ssh-agent Feature's key volume, which goes in ssh-agent 2.0; use task devcontainer:openbao-ssh-import FILE=<key> (the key goes into OpenBao; the openbao Feature in the container, unsealed and logged in)." >&2
   warn_general_purpose_key "$file"
   ids="$(running_ids "$workspace")" || { engine_unreachable; exit 2; }
   if [ -z "$ids" ]; then
@@ -1098,6 +1099,32 @@ mode_ssh_key_import() {
     run_cli exec "$workspace" '' ssh-agent-setup key-stdin "$name.pub" < "$file.pub" || { echo "ssh-key-import: the .pub could not be stored (the private key was)." >&2; }
   fi
   run_cli exec "$workspace" '' ssh-agent-setup key-load || exit $?
+}
+
+# openbao-ssh-import <workspace> <key file on this host> [name]: the one-shot import of a key of this
+# host into OpenBao (task devcontainer:openbao-ssh-import), which replaces ssh-key-import. The key
+# bytes go to the running container through `devcontainer exec` on stdin, never as an argument,
+# into the openbao Feature's `openbao-ssh import --from file` (task openbao:ssh:import FROM=file),
+# which stores it as ssh/<name> and adds its line to the repository's .devcontainer/allowed_signers.
+# The container refuses when the server is sealed or nobody is logged in, before storing anything.
+# Prints the container's lines (a fingerprint), never the key. Nothing is left running on the host.
+mode_openbao_ssh_import() {
+  local workspace="$1" file="${2:-}" name="${3:-}" ids rc=0
+  if [ -z "$file" ] || [ ! -f "$file" ]; then
+    die "openbao-ssh-import: FILE=<path of a private key on this host> is required, and '${file}' is not a file."
+  fi
+  [ -n "$name" ] || name="$(basename "$file")"
+  warn_general_purpose_key "$file" openbao-ssh-import
+  ids="$(running_ids "$workspace")" || { engine_unreachable; exit 2; }
+  if [ -z "$ids" ]; then
+    echo "No running devcontainer for $workspace. Start it with: task dc:start" >&2
+    exit 1
+  fi
+  run_cli exec "$workspace" '' openbao-ssh import --from file --name "$name" < "$file" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "openbao-ssh-import: the container refused or failed (exit $rc, see above). It needs the openbao Feature (1.3.0 or later), its server unsealed and a login (task openbao:login in the container); a key with a passphrase is imported inside the container instead (task openbao:ssh:import FROM=file FILE=<path>), where ssh-keygen can ask for it." >&2
+    exit "$rc"
+  fi
 }
 
 # ---------------------------------------------------- cloud-folder login ----
@@ -1379,6 +1406,12 @@ mode_run() {
   if [ "$subcommand" = cloud-folder-login ]; then
     [ -n "$workspace" ] || die 'run: --workspace-folder is required for cloud-folder-login'
     mode_cloud_folder_login "$(resolve_workspace "$workspace")" "$@"
+    return
+  fi
+
+  if [ "$subcommand" = openbao-ssh-import ]; then
+    [ -n "$workspace" ] || die 'run: --workspace-folder is required for openbao-ssh-import'
+    mode_openbao_ssh_import "$(resolve_workspace "$workspace")" "${1:-}" "${2:-}"
     return
   fi
 

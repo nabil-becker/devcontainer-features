@@ -373,7 +373,14 @@ the host type needs; ADR 0024 decides it, `docs/proposals/host-profile.md` is th
   a default name (`id_ed25519` and the like) or its public key (`FILE.pub`, or derived with `ssh-keygen -y` only when the key
   has no passphrase) is also in `~/.ssh/authorized_keys` or the same as another `~/.ssh/*.pub`: such a key is
   general-purpose and should not live in a container volume (it prints fingerprints, never key material).
-  Both are one-shot commands; nothing stays running on the host.
+  **Since 1.19.0 `devcontainer:ssh-key-import` is deprecated** (it says so; it goes with ssh-agent 2.0) in favour of
+  `task devcontainer:openbao-ssh-import FILE=<private key on the host> [NAME=]`: the same stream on stdin, the same
+  host-side warnings, into the `openbao` Feature's `task openbao:ssh:import FROM=file` in the running container, which
+  stores the key in OpenBao as `ssh/<NAME>` (default the file name) and adds its public key to the repository's
+  `.devcontainer/allowed_signers`; the container must have the openbao Feature 1.3.0 or later, its server unsealed and a
+  login (`task openbao:login`), and a key with a passphrase is imported inside the container instead, where ssh-keygen can
+  ask for it. Then `task ssh-agent:key:load NAME=ssh/<NAME>` loads it for a sitting (ADR 0048, ADR 0026).
+  All three are one-shot commands; nothing stays running on the host.
   Not verified on a real host: `devcontainer exec` forwarding its stdin on every platform (the tests use a stub).
 - **The cloud folder (1.12.0).** When `DCF_HOST_CLOUD_FOLDER` names a host folder (one a sync client keeps, such as a
   SharePoint or OneDrive folder), `up` bind-mounts it at one fixed path, `/mnt/cloud-folder-host`, the `cloud-folder`

@@ -211,16 +211,16 @@ tasks:
           SUBCOMMAND: host
 
   ssh-add:
-    desc: 'Run the HOST''s ssh-add (a one-shot: it runs and exits, nothing is left running) with the arguments after --, no arguments = ssh-add -l: load a key into the host agent that the ssh-agent Feature''s socket mode forwards (linux, macos, windows-wsl-docker from a distro), e.g. task dc:ssh-add -- ~/.ssh/id_ed25519. On Windows it runs the Windows OpenSSH ssh-add and says that the container cannot reach that agent on this host type; use task devcontainer:ssh-key-import (opt-in key mode) there. Runs from the host only.'
+    desc: 'Run the HOST''s ssh-add (a one-shot: it runs and exits, nothing is left running) with the arguments after --, no arguments = ssh-add -l: load a key into the host agent that the ssh-agent Feature''s socket mode forwards (linux, macos, windows-wsl-docker from a distro), e.g. task dc:ssh-add -- ~/.ssh/id_ed25519. On Windows it runs the Windows OpenSSH ssh-add and says that the container cannot reach that agent on this host type; use task devcontainer:openbao-ssh-import (the key into OpenBao) there. Runs from the host only.'
     interactive: true
     cmds:
       - cmd: '{{if ._IN_CONTAINER}}echo "devcontainer:ssh-add runs from the host: this Task is inside the container (use task ssh-agent:keys here)." >&2; exit 1{{else}}:{{end}}'
-      - cmd: 'echo "note: the container cannot reach the Windows OpenSSH agent on this host type (a named pipe, and no process of ours is left running on the host to bridge it). To sign in the container, use task devcontainer:ssh-key-import FILE=<private key> (opt-in key mode), or a VS Code terminal." >&2'
+      - cmd: 'echo "note: the container cannot reach the Windows OpenSSH agent on this host type (a named pipe, and no process of ours is left running on the host to bridge it). To sign in the container, use task devcontainer:openbao-ssh-import FILE=<private key> (into OpenBao in the container), or a VS Code terminal." >&2'
         platforms: [windows]
       - cmd: 'ssh-add {{.CLI_ARGS | default "-l"}}'
 
   ssh-key-import:
-    desc: 'Opt-in key mode (it puts a private key in the container''s key volume, which breaks "the key never enters the container"; mainly for windows-docker and windows-wslc): read the private key file FILE=<path on the host> and stream it into the running container through devcontainer exec on stdin (never as an argument, never into a log or the process list), where the ssh-agent Feature stores it in its key volume with mode 0600 (and the .pub beside it, when there is one), then loads it; prints the fingerprint, never the key. Warns on the host (never blocks) when FILE has a default name or its public key also opens this host (in ~/.ssh/authorized_keys, or the same as another ~/.ssh/*.pub). Refuses when FILE is missing, when no container runs (start it with task dc:start), or when key mode is off in the container (Feature option keyMode: true, or SSH_AGENT_MODE=key at task dc:up). Runs from the host only.'
+    desc: 'Deprecated (goes with ssh-agent 2.0; use task devcontainer:openbao-ssh-import, which puts the key in OpenBao). Opt-in key mode (it puts a private key in the container''s key volume, which breaks "the key never enters the container"; mainly for windows-docker and windows-wslc): read the private key file FILE=<path on the host> and stream it into the running container through devcontainer exec on stdin (never as an argument, never into a log or the process list), where the ssh-agent Feature stores it in its key volume with mode 0600 (and the .pub beside it, when there is one), then loads it; prints the fingerprint, never the key. Warns on the host (never blocks) when FILE has a default name or its public key also opens this host (in ~/.ssh/authorized_keys, or the same as another ~/.ssh/*.pub). Refuses when FILE is missing, when no container runs (start it with task dc:start), or when key mode is off in the container (Feature option keyMode: true, or SSH_AGENT_MODE=key at task dc:up). Runs from the host only.'
     requires:
       vars: [FILE]
     cmds:
@@ -229,6 +229,17 @@ tasks:
         vars:
           SUBCOMMAND: ssh-key-import
           ARGS: '{{.FILE | shellQuote}}'
+
+  openbao-ssh-import:
+    desc: 'Import a private key of this workstation into OpenBao in the running container (the openbao Feature 1.3.0 or later, its server unsealed and you logged in there with task openbao:login): read FILE=<path on the host> and stream it through devcontainer exec on stdin (never as an argument, never into a log or the process list) into task openbao:ssh:import FROM=file, which stores it as ssh/<NAME> (default the file name) and adds its public key to the repository''s .devcontainer/allowed_signers; prints the fingerprint, never the key. A one-shot: nothing is left running on the host. Warns on the host (never blocks) when FILE has a default name or its public key also opens this host. Refuses when FILE is missing, when no container runs (start it with task dc:start), or when the container refuses (sealed, logged out, the name taken, a key with a passphrase: import that one inside the container, where ssh-keygen asks for it). Then load it for a sitting with task ssh-agent:key:load NAME=ssh/<NAME> in the container. Runs from the host only.'
+    requires:
+      vars: [FILE]
+    cmds:
+      - cmd: '{{if ._IN_CONTAINER}}echo "devcontainer:openbao-ssh-import runs from the host: this Task is inside the container (use task openbao:ssh:import FROM=file FILE=<path> here)." >&2; exit 1{{else}}:{{end}}'
+      - task: cli
+        vars:
+          SUBCOMMAND: openbao-ssh-import
+          ARGS: '{{.FILE | shellQuote}} {{.NAME | default "" | shellQuote}}'
 
   cloud-folder-login:
     desc: 'Sign in the cloud-folder Feature''s remote (SharePoint or OneDrive) from the workstation; also task cloud-folder:login when the root Taskfile includes the launcher''s cloud-folder.yml. The devcontainer must run (task devcontainer:start). Default: a listener on this workstation''s 127.0.0.1:53682 (the fixed address rclone''s sign-in returns to), only for the sign-in, relays each request of the browser into the container through `<engine> exec` and bash''s /dev/tcp (no port mapping, nothing in devcontainer.json), the container''s login runs rclone authorize there, and the default browser opens the sign-in; the listener closes when the login ends, fails or after CLOUD_FOLDER_LOGIN_TIMEOUT seconds (default 600). When 53682 is busy here (or, on Linux and macOS, there is no python3 for the listener) it says so and takes the paste route. -- --paste: sign in by pasting the address the browser fails to open afterwards. -- --workstation-rclone: download the pinned rclone (the repository''s cloud-folder rcloneVersion, else the Feature''s default) once into the launcher cache, verified against the release''s SHA256SUMS, run rclone authorize "onedrive" here and hand the token to the container on stdin. Inside the container it runs the Feature''s login directly.'

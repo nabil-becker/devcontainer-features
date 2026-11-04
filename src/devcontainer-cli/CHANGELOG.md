@@ -8,6 +8,16 @@ here; `task lint` fails when the entry is missing.
 
 Entries from 1.0.0 to 1.18.1 were generated from the commit history (`.github/scripts/changelog.py backfill`) and the "Changes in x.y.z" sections that NOTES.md used to hold; most list commit subjects as written then; the newest of them is in wording for users.
 
+## [1.19.0] - 2026-11-04
+
+### Added
+
+- **`task devcontainer:openbao-ssh-import FILE=<key> [NAME=]`** (both launchers): streams a private key of the workstation into OpenBao in the running container (the openbao Feature 1.3.0, unsealed, logged in there), through `devcontainer exec` on stdin, never as an argument; it is stored as `ssh/<name>` and its public key goes into the repository's `.devcontainer/allowed_signers`. A one-shot, as before: nothing is left running on the workstation. A key with a passphrase is imported inside the container instead (`task openbao:ssh:import FROM=file FILE=<path>`), where ssh-keygen can ask for it. Re-vendor the bootstrap to get the task.
+
+### Deprecated
+
+- `task devcontainer:ssh-key-import` (the key into ssh-agent's key volume) still works and says it is deprecated; it goes with ssh-agent 2.0. Use `devcontainer:openbao-ssh-import`.
+
 ## [1.18.2] - 2026-11-03
 
 ### Added
