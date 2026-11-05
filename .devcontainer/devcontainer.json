@@ -67,7 +67,9 @@
     // and task openbao:unseal after each restart, in a plain terminal (task dc:shell), never
     // through an agent. Backups are off until a destination is chosen; an external server
     // (client mode, BAO_ADDR) comes later.
-    "./features/openbao": { "mode": "server" },
+    // unlock: keyfile (devhost 1.13.0): the OpenBao key file the launcher keeps opens the store at
+    // each task dc:* start, nothing typed; task dc:openbao:keyfile:create makes it once (ADR 0056).
+    "./features/openbao": { "mode": "server", "unlock": "keyfile" },
     // The AOF seed's agentic-register (0.14.4), vendored in local-features/agentic-register
     // (VENDORED.md: replace with the GHCR package once access exists). One register, ledger:
     // the ledger itself since the records left git (records-out-of-git; DEVHOST_LEDGER_REGISTER

@@ -132,6 +132,52 @@ def last_backup_age(state: Path, now: float | None = None) -> str:
     return _age(now - when)
 
 
+OPENBAO_SETUP_DEFAULT = "/usr/local/bin/openbao-setup"
+
+
+def _setup_json(args: list[str], root: Path) -> dict | None:
+    """One `openbao-setup` subcommand's JSON line, or None (not installed, failed, not JSON).
+
+    Only the two commands that carry no secret and read no stdin are called (`unlock --status`,
+    `keyfile status`); the answer is parsed, never printed. `DEVHOST_OPENBAO_SETUP` names another
+    command so tests point it at a fake."""
+    exe = os.environ.get("DEVHOST_OPENBAO_SETUP", "").strip() or OPENBAO_SETUP_DEFAULT
+    if not (os.path.isfile(exe) and os.access(exe, os.X_OK)):
+        return None
+    try:
+        done = subprocess.run([exe, *args], cwd=str(root), capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=10, stdin=subprocess.DEVNULL)
+        data = json.loads(done.stdout.strip().splitlines()[-1])
+    except (OSError, subprocess.TimeoutExpired, ValueError, IndexError):
+        return None
+    return data if done.returncode == 0 and isinstance(data, dict) else None
+
+
+def keyfile_unlock_lines(state: Path, root: Path) -> list[str] | None:
+    """The briefing's OpenBao lines under keyfile unlock, or None when the mode is not keyfile (the lines stay as they were).
+
+    Reads `openbao-setup unlock --status` (the mode, sealed, the Operator's token) and, to tell whether
+    the OpenBao key file exists yet, `keyfile status` (the store at 5 shares and the userpass user gone).
+    No key file yet: `task dc:openbao:keyfile:create`, once, on the workstation. A key file but a sealed
+    store or a missing or dead token: `task dc:openbao:unlock`, on the workstation, nothing typed."""
+    st = _setup_json(["unlock", "--status"], root)
+    if not st or st.get("mode") != "keyfile":
+        return None
+    if st.get("initialized") is False:
+        return None  # not initialised: the existing line (task openbao:init) says so
+    kf = _setup_json(["keyfile", "status"], root)
+    if kf is not None and (kf.get("shares") != 5 or kf.get("userpass")):
+        return ["No OpenBao key file yet (keyfile unlock is on): run `task dc:openbao:keyfile:create` once on the workstation "
+                "(it asks for two custody shares); until then the backs cannot sign."]
+    if st.get("sealed"):
+        return [f"OpenBao sealed: the backs cannot sign; last backup {last_backup_age(state)}; "
+                "run `task dc:openbao:unlock` on the workstation (nothing typed)."]
+    if st.get("token") in ("missing", "dead"):
+        return [f"OpenBao is unsealed but the Operator's login is {st.get('token')}: run `task dc:openbao:unlock` on the workstation "
+                "(nothing typed)."]
+    return []
+
+
 def openbao_status(root: Path) -> list[str]:
     """One line when this devhost's OpenBao server (server mode) cannot be used: sealed, not initialised or not running.
 
@@ -142,6 +188,9 @@ def openbao_status(root: Path) -> list[str]:
     state = Path(os.environ.get("OPENBAO_STATE_DIR", "").strip() or OPENBAO_STATE_DEFAULT)
     if not (state / "raft").is_dir() and not (state / "server.pid").exists():
         return []
+    keyfile = keyfile_unlock_lines(state, root)
+    if keyfile is not None:
+        return keyfile
     exe = shutil.which(os.environ.get("DEVHOST_BAO", "").strip() or "bao")
     if not exe:
         return []
