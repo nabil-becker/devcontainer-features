@@ -682,7 +682,7 @@ Describe 'The DPAPI round trip (Windows only)' -Skip:(-not $IsWindows) {
     }
 }
 
-Describe 'The bash launcher refuses the OpenBao key file in one line' -Skip:(-not $script:HasBash) {
+Describe 'The bash launcher refuses the OpenBao key file in one line' -Skip:(-not $script:HasBash -or $IsWindows) {
     It '<sub> exits 1 with one line' -ForEach @(@{ sub = 'openbao-unlock' }, @{ sub = 'openbao-keyfile' }) {
         $cli = Join-Path $script:Root 'src/devcontainer-cli/devcontainer-cli.sh'
         $err = & bash $cli run $sub --workspace-folder $TestDrive -- create 2>&1
