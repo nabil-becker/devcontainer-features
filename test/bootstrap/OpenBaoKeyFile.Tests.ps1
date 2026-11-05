@@ -13,8 +13,9 @@
 # OPENBAO_AGENT_JOB_VARS); create (typed shares, init), rotate (the key file's own shares), the saved
 # key file's shape; the two steps: the key file saved before confirm, confirm's shares read back from
 # it, the custody shares printed only after confirm answers ok, a failed save or confirm cancelling
-# (the previous key file put back), a lost confirm answer retried and then settled by keyfile
-# status, the warnings shown, error then code on failure; export/import round trip, a wrong passphrase,
+# with this run's nonce (the previous key file put back), a lost confirm answer retried and then
+# settled by keyfile status's pending nonce (ours: cancel; empty with five shares: applied, also for
+# rotate where five shares hold both ways; another: never cancelled), the warnings shown, error then code on failure; export/import round trip, a wrong passphrase,
 # the checkout refused; forget; the step wired after `up` only; the bash launcher's one refusal line.
 # The stub engine is a shell script, so the Describes that use it run where bash runs (Linux, macOS,
 # CI); the DPAPI round trip runs only on Windows:
@@ -70,7 +71,7 @@ case "$1 $2" in
     esac
     printf '%s\n' '{"v":1,"ok":true,"server":"clu-1","backup":"b1","warnings":["the backup went to the default destination"]}'; exit 0 ;;
   'keyfile cancel') cat > "$FAKE_STDIN.cancel"; printf '%s\n' '{"v":1,"ok":true}'; exit 0 ;;
-  'keyfile status') printf '%s\n' "${FAKE_KF_STATUS:-{\"v\":1,\"ok\":true,\"server\":\"clu-1\",\"shares\":5,\"threshold\":2,\"approle\":true,\"userpass\":false\}}"; exit 0 ;;
+  'keyfile status') printf '%s\n' "${FAKE_KF_STATUS:-{\"v\":1,\"ok\":true,\"server\":\"clu-1\",\"shares\":5,\"threshold\":2,\"approle\":true,\"userpass\":false,\"pending\":\"\"\}}"; exit 0 ;;
 esac
 echo "usage: openbao-setup ..." >&2; exit 2
 '@
@@ -428,7 +429,7 @@ Describe 'keyfile:create and keyfile:rotate' -Skip:(-not $script:HasBash -or $Is
         $r.Err | Should -Match 'could not be saved \(disk full\); cancelling'
         $r.Err | Should -Match 'cancelled; the old shares still unseal'
         Get-Call | Should -Be @('unlock --status', 'keyfile rotate --stdin', 'keyfile cancel --stdin')
-        (Get-Log "$($script:W.Stdin).cancel") | Should -Be '{"v":1,"server":"clu-1"}'
+        (Get-Log "$($script:W.Stdin).cancel") | Should -Be '{"v":1,"server":"clu-1","nonce":"nonce-1"}'
         Get-KeyFilePlain | Should -Be $before
     }
 
@@ -470,22 +471,57 @@ Describe 'keyfile:create and keyfile:rotate' -Skip:(-not $script:HasBash -or $Is
         Get-KeyFilePlain | Should -Match '"shares":\["NEW-4","NEW-5"\]'
     }
 
-    It 'confirm answers lost twice and keyfile status does not show the new shares: cancel, no custody share' {
-        $script:Typed.Enqueue('a'); $script:Typed.Enqueue('b')
+    It 'rotate, confirm lost twice, status shows five shares and this nonce pending: not applied, cancel with the nonce, previous key file back' {
+        Save-TestKeyFile
+        $before = Get-KeyFilePlain
         $env:FAKE_CONFIRM = 'lost'
-        $env:FAKE_KF_STATUS = '{"v":1,"ok":true,"server":"clu-1","shares":3,"threshold":2,"approle":false,"userpass":true}'
-        $r = Invoke-Captured { Invoke-OpenBaoKeyFileTask -WorkspaceFolder $script:W.Ws -Arguments @('create') }
+        $env:FAKE_KF_STATUS = '{"v":1,"ok":true,"server":"clu-1","shares":5,"threshold":2,"approle":true,"userpass":false,"pending":"nonce-1"}'
+        $r = Invoke-Captured { Invoke-OpenBaoKeyFileTask -WorkspaceFolder $script:W.Ws -Arguments @('rotate') }
         $r.Rc | Should -Be 1
-        Get-Call | Should -Be @('unlock --status', 'keyfile create --stdin', 'keyfile confirm --stdin', 'keyfile confirm --stdin', 'keyfile status', 'keyfile cancel --stdin')
-        InModuleScope DevcontainerCli { Get-OpenBaoKeyFilePath -Repo 'myrepo' -Server 'clu-1' } | Should -Not -Exist
+        $r.Err | Should -Match 'this rotation still pending'
+        Get-Call | Should -Be @('unlock --status', 'keyfile rotate --stdin', 'keyfile confirm --stdin', 'keyfile confirm --stdin', 'keyfile status', 'keyfile cancel --stdin')
+        (Get-Log "$($script:W.Stdin).cancel") | Should -Be '{"v":1,"server":"clu-1","nonce":"nonce-1"}'
+        Get-KeyFilePlain | Should -Be $before
     }
 
-    It 'an answer without a pending rotation saves nothing and cancels' {
+    It 'rotate, confirm lost twice, status shows five shares and nothing pending: applied, custody shares printed' {
+        Save-TestKeyFile
+        $env:FAKE_CONFIRM = 'lost'
+        $r = Invoke-Captured { Invoke-OpenBaoKeyFileTask -WorkspaceFolder $script:W.Ws -Arguments @('rotate') }
+        $r.Rc | Should -Be 0
+        Get-Call | Should -Be @('unlock --status', 'keyfile rotate --stdin', 'keyfile confirm --stdin', 'keyfile confirm --stdin', 'keyfile status', 'CUSTODY PRINTED CUSTODY-1 CUSTODY-2 CUSTODY-3')
+        Get-KeyFilePlain | Should -Match '"shares":\["NEW-4","NEW-5"\]'
+    }
+
+    It 'confirm lost twice and another nonce pending: nothing cancelled, the previous key file kept beside, no custody share' {
+        Save-TestKeyFile
+        $before = Get-KeyFilePlain
+        $env:FAKE_CONFIRM = 'lost'
+        $env:FAKE_KF_STATUS = '{"v":1,"ok":true,"server":"clu-1","shares":5,"threshold":2,"approle":true,"userpass":false,"pending":"someone-else"}'
+        $r = Invoke-Captured { Invoke-OpenBaoKeyFileTask -WorkspaceFolder $script:W.Ws -Arguments @('rotate') }
+        $r.Rc | Should -Be 1
+        $r.Err | Should -Match 'another rotation is pending there'
+        Get-Call | Should -Be @('unlock --status', 'keyfile rotate --stdin', 'keyfile confirm --stdin', 'keyfile confirm --stdin', 'keyfile status')
+        Get-KeyFilePlain | Should -Match '"shares":\["NEW-4","NEW-5"\]'
+        $prev = InModuleScope DevcontainerCli { (Get-OpenBaoKeyFilePath -Repo 'myrepo' -Server 'clu-1') + '.previous' }
+        InModuleScope DevcontainerCli -Parameters @{ P = $prev } { param($P) [Text.Encoding]::UTF8.GetString((Read-OpenBaoKeyFile -Path $P)) } | Should -Be $before
+    }
+
+    It 'create, confirm lost twice, status with three shares and nothing pending: nothing cancelled, no custody share' {
+        $script:Typed.Enqueue('a'); $script:Typed.Enqueue('b')
+        $env:FAKE_CONFIRM = 'lost'
+        $env:FAKE_KF_STATUS = '{"v":1,"ok":true,"server":"clu-1","shares":3,"threshold":2,"approle":false,"userpass":true,"pending":""}'
+        $r = Invoke-Captured { Invoke-OpenBaoKeyFileTask -WorkspaceFolder $script:W.Ws -Arguments @('create') }
+        $r.Rc | Should -Be 1
+        Get-Call | Should -Be @('unlock --status', 'keyfile create --stdin', 'keyfile confirm --stdin', 'keyfile confirm --stdin', 'keyfile status')
+    }
+
+    It 'an answer without a pending rotation saves nothing and cancels nothing (no nonce of its own)' {
         $script:Typed.Enqueue('a'); $script:Typed.Enqueue('b')
         $env:FAKE_MAKE_OUT = '{"v":1,"ok":true,"server":"clu-1","custody":["C1","C2","C3"],"keyfile":{}}'
         $r = Invoke-Captured { Invoke-OpenBaoKeyFileTask -WorkspaceFolder $script:W.Ws -Arguments @('create') }
         $r.Rc | Should -Be 1
-        Get-Call | Should -Be @('unlock --status', 'keyfile create --stdin', 'keyfile cancel --stdin')
+        Get-Call | Should -Be @('unlock --status', 'keyfile create --stdin')
         InModuleScope DevcontainerCli { Get-OpenBaoKeyFilePath -Repo 'myrepo' -Server 'clu-1' } | Should -Not -Exist
     }
 
