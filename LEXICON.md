@@ -345,13 +345,26 @@ The words of the secrets split: OpenBao keeps every secret, `ssh-agent` only use
   storage is the bounded-loss exception to ADR-0045.
 - **Seal and unseal**: a sealed server cannot read its store; unsealing, once per server start,
   needs a quorum of the unseal shares (`openbao:unseal`).
-- **Unseal share**: one of the 3 Shamir shares (threshold 2) the Operator keeps in a password
-  manager, on paper offline, and with a second person or on a hardware key; never in git, the
-  container or the shared folder.
-- **The gate**: the two steps that open the master of secrets: the Operator's unseal once per
-  server start, then the Operator's login once per sitting.
+- **Unseal share**: one of the 5 Shamir shares (threshold 2) of a server with an OpenBao key
+  file, or one of the 3 (threshold 2) of a server without. Shares 1 to 3 are custody shares, kept
+  in a password manager, on paper offline, and with a second person or on a hardware key; never
+  in git, the container or the shared folder. Shares 4 and 5 are in the OpenBao key file. "Never
+  in the container" means never stored there (ADR-0056).
+- **OpenBao key file**: the DPAPI-protected file on the Operator's Windows workstation that holds
+  two unseal shares, the cluster id and the `operator` AppRole's ids, and that the launcher sends
+  to the container after every `up` to unseal OpenBao and log the Operator in (`unlock: keyfile`,
+  ADR-0056). Rebuildable from the custody shares, so tier 4. Not the SSH key files of the
+  launcher: never say "key file" alone for it.
+- **Custody share**: one of unseal shares 1 to 3, held by the Operator outside every tier. Two
+  of them rebuild the OpenBao key file and are typed only to recover or rotate it (ADR-0056).
+- **The gate**: the two steps that open the master of secrets: the unseal once per server start,
+  then the login once per sitting. The Operator types them, or, in a server with an OpenBao key
+  file, the launcher does it from that file after every `up`; recovery and rotation still need
+  two custody shares typed by the Operator.
 - **Sitting**: the span between the Operator's login to OpenBao and the end of that token (4 hours,
-  at most 8, in a server this Feature runs); a key loaded for a sitting lives no longer than it.
+  at most 8, in a server this Feature runs; in a server with an OpenBao key file, the 1-hour
+  periodic token the container renews, so the sitting lasts while the server is up and unsealed);
+  a key loaded for a sitting lives no longer than it.
 - **Secret name**: the path a secret is kept under in OpenBao, as `dcf-secret get <name>` and
   `put` take it (`ssh/<key>`, `register/<principal>`).
 - **Back identity**: the AppRole a back (scribe, secretary, librarian, tester) logs in with, bound
