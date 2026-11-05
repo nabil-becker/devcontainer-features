@@ -21,10 +21,13 @@ this brings the work back to where it was.
    ledger entries since the last review, what the backs left pending, the open items and
    decisions, a night-shift report not yet reviewed, and a warning when the installed devhost is
    older than the source.
-4. **Check where the work stands:** `git status`, the current branch and whether it is the one
+4. **Check the backs and OpenBao:** `dcf-secret status` should say `ready`, and each back's last
+   runs in `/var/lib/devcontainer-features/devhost/<back>/job.log` should not be `status=error`
+   or `key not fetched`. Report one to the Operator with its cause; the fix is theirs.
+5. **Check where the work stands:** `git status`, the current branch and whether it is the one
    the shutdown report named, then `devhost-shutdown-check` as a quick look at what is held or
    unpushed.
-5. **Pick up what the shutdown report left open**: the findings, the stash, the untracked files,
+6. **Pick up what the shutdown report left open**: the findings, the stash, the untracked files,
    the item that was in progress. Say in two or three lines what is open and propose the next
    step; do not start work the Operator has not asked for.
 

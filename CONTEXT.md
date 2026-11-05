@@ -92,8 +92,8 @@ The detail is in [PROCESS.md](PROCESS.md). In short:
   way of right-sizing work, principle 5).
 - **Done means merged to `main` by the Operator.** Released is a separate step that only the
   Operator starts.
-- **The review runs every 25 entries**, not every five (interview-4 answer 3). The rate of entries
-  is tracked too, so the Operator can see whether 25 is too often or too seldom and adjust it.
+- **The review runs every 25 entries at first, then every 75 (ADR 0021)**, not every five (interview-4 answer 3). The rate of entries
+  is tracked too, so the Operator can see whether the setting is too often or too seldom and adjust it.
 
 ## Ceremonies
 
@@ -102,7 +102,7 @@ each starts on an event, not a clock.
 
 - **The briefing**, at every session start.
 - **`/close-session`**, when work wraps up.
-- **The ledger review** (`/ledger-review`), every 25 entries.
+- **The ledger review** (`/ledger-review`), every 75 entries (first 25, ADR 0021).
 - **Night shift and the morning report**, when the Operator leaves and when they return.
 - **"over"**, which ends a run of messages. The Operator often sends several in a row; the host
   acknowledges each in one word and acts only on "over" (interview-4 answer 2; `hang-on-skill` in

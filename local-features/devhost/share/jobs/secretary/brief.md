@@ -36,6 +36,9 @@ Read the backlog first (Read tool). Then, with the Edit tool:
 A tick changes `- [ ]` to `- [x]` and appends ` Done YYYY-MM-DD.` at the very end of the item's
 last line; nothing else on the line changes (no new wording, no re-wrapping).
 
+Ask for a merge or a release once per pull request, when it is opened (one decision item); never again at
+a later step of the same chain.
+
 Never delete, reword, merge or reorder existing lines, whatever a stake says; a script undoes any
 run that does. That includes re-wrapping: when a tick's ` Done YYYY-MM-DD.` makes the last line
 long, leave it long.

@@ -46,6 +46,8 @@ Rules:
   of plan (a rename, a reversed choice) is a new entry, not a correction.
 - Use the entry template below exactly. The Session, Engineer and Branch lines are given below.
   Leave the Measures line as the single word MEASURES: the job fills in the numbers.
+- Ask the Operator to merge or release once per pull request, in the entry for the turn that opens it
+  ("Decisions needed"); a later step of the same chain (a push, a fix, a review) does not ask again.
 - Plain, short sentences. One entry per unit, eight to twelve lines.
 
 Print exactly this and nothing else:
