@@ -1,6 +1,6 @@
 # Proposal: a key file on the workstation opens OpenBao, with no password
 
-Status: Proposed 2026-11-04. Awaits the architecture review and the Operator. Build not started.
+Status: Accepted 2026-11-05 (design B, decisions 1 to 10 as amended by the architecture review, "a, build it now"; recorded in ADR-0056). Build in progress.
 The password-reset task (`task openbao:password`, openbao 1.4.0) stays the stopgap until this ships.
 
 Who this serves: the Operator, as the engineer who runs the `openbao` Feature in server mode in this
