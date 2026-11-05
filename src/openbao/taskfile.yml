@@ -54,7 +54,7 @@ tasks:
 
   password:
     dir: '{{.USER_WORKING_DIR}}'
-    desc: 'Server mode: sets a new password for the Operator (the userpass user operator), for one who forgot it or wants another: no current password and no login are needed, two unseal shares are the authority. Asks for the new password twice (at least 12 characters), then for two unseal shares at a hidden prompt (a root token for this step alone, revoked after): the Operator only, in a plain terminal, refused inside an agent''s job. The password never appears in an argument, file or output. Tokens the Operator already holds stay valid until they expire (at most 8 hours); log in again with task openbao:login -- -method=userpass username=operator.'
+    desc: 'Server mode: sets a new password for the Operator (the userpass user operator), for one who forgot it or wants another: no current password and no login are needed (none saved at all: the server''s loopback listener takes the shares without a token), two unseal shares are the authority. Asks for the new password twice (at least 12 characters), then for two unseal shares at a hidden prompt (a root token for this step alone, revoked after): the Operator only, in a plain terminal, refused inside an agent''s job. The password never appears in an argument, file or output. Tokens the Operator already holds stay valid until they expire (at most 8 hours); log in again with task openbao:login -- -method=userpass username=operator.'
     interactive: true
     cmds:
       - openbao-server password

@@ -17,14 +17,16 @@
 #  - unseal and seal; status in every state with the backup warning; the AppRole tasks (a role's
 #    policy, loopback binding, one valid secret id written 0600 and never printed, ALL=1, revoke): the
 #    Operator's token (the stub refuses it a policy write and a role write or delete) only reissues;
-#    making and deleting a role go through the root token the shares make (generate-root, two shares
-#    typed under a pseudo-terminal, the token used for that step only and revoked after, also after a
-#    failing step, a wrong share cancelling the attempt), refused inside an agent's job and without a
-#    terminal;
+#    making and deleting a role go through the root token the shares make (the unauthenticated
+#    sys/generate-root endpoints through curl, a stub here: two shares typed under a pseudo-terminal
+#    and sent on curl's stdin, never in an argument, no token sent, the token decoded in memory, used
+#    for that step only and revoked after, also after a failing step, a wrong share cancelling the
+#    attempt; with the endpoints off, the CLI's authenticated flow with the login, and without a login
+#    a refusal before any share), refused inside an agent's job and without a terminal;
 #  - password: refused like the others before any prompt or call; the new password asked twice
 #    (mismatch and too short asked again), then two shares for a root token that writes it on bao's
-#    stdin only and is revoked, also when the step fails; a missing userpass mount or user fails
-#    with nothing changed.
+#    stdin only and is revoked, also when the step fails, with no login saved at all; a missing
+#    userpass mount or user fails with nothing changed.
 # Part of `task lint` (`task test:openbao-unit`). SCRIPT points the test at another copy of the
 # script (used to show a test fails when the code it covers is broken). Needs task, and script(1)
 # for the terminal tests (skipped without it).
@@ -144,6 +146,8 @@ echo "stub bao: unexpected call: $*" >&2
 exit 99
 STUB
 chmod +x "$T/bin/bao"
+# the unauthenticated root-token endpoints: a stub curl, so no test reaches a real server
+install -m 0755 "$here/gr_curl_stub.sh" "$T/bin/curl"
 
 pass=0 fail=0
 check() { # <name> <expected> <actual>
@@ -160,7 +164,7 @@ lacks() { # <name> <text> <output>
 }
 
 reset() { # <state>: a fresh stub state and state dir
-  rm -rf "${T:?}/state" "${T:?}"/acc.* "${T:?}"/sid.n "${T:?}"/unseal.n "${T:?}"/policy.* "${T:?}"/userpass.stdin "${T:?}"/newpw.stdin "${T:?}"/have "${T:?}"/tokens.log
+  rm -rf "${T:?}/state" "${T:?}"/acc.* "${T:?}"/sid.n "${T:?}"/unseal.n "${T:?}"/policy.* "${T:?}"/userpass.stdin "${T:?}"/newpw.stdin "${T:?}"/have "${T:?}"/tokens.log "${T:?}"/curl.stdin "${T:?}"/gr.attempt "${T:?}"/gr.cancelled
   mkdir -p "$T/state" "$T/backups"
   echo "${1:-unsealed}" > "$T/stubstate"
   : > "$LOG"
@@ -453,7 +457,7 @@ MODE_FEAT=server
 # "permission denied" to it for a policy write or delete and for writing or deleting a role. Making
 # and deleting a role therefore only works through the root token the shares make (as_root).
 OPTOK=s.OPERATOR
-SH='SHARE-ONE;SHARE-TWO'
+SH='SHAREONE;SHARETWO' # base64 characters, as a real share
 mkrole() { # <role> <mount/path>: through a terminal, typing two shares
   term "$SH" OPENBAO_TASK_ROLE="$1" OPENBAO_TASK_POLICY_PATH="$2" -- approle-issue
 }
@@ -536,18 +540,23 @@ if [ "$have_script" -eq 1 ]; then
   check "the policy and the role were written with the generated root token" 2 "$(grep -cE '^(policy write|write auth/approle/role/scribe) token=s.GENROOT' "$T/tokens.log")"
   check "the secret id was made with the Operator's token, not the root one" "yes" "$(grep -q '^write -f token=s.OPERATOR' "$T/tokens.log" && ! grep -q '^write -f token=s.GENROOT' "$T/tokens.log" && echo yes)"
   check "the root token is revoked with itself, after the step" "yes" "$(grep -q '^token revoke token=s.GENROOT' "$T/tokens.log" && echo yes)"
-  order="$(grep -nE '^(operator generate-root|policy write|write auth/approle/role/scribe token_policies|token revoke)' "$LOG" | sed 's/^[0-9]*://' | awk '{print $1" "$2}' | paste -sd'|')"
-  check "the order: one-time password, init, two shares, decode, the step, the revoke" "operator generate-root|operator generate-root|operator generate-root|operator generate-root|operator generate-root|policy write|write auth/approle/role/scribe|token revoke" "$order"
+  order="$(grep -E '^(curl|operator generate-root|policy write|write auth/approle/role/scribe token_policies|token revoke)' "$LOG" | sed -E 's#^curl .* -X ([A-Z]+) .*/v1/sys/(generate-root/[a-z]+)$#\1 \2#; s/^(policy write|token revoke|operator generate-root).*/\1/; s#^(write auth/approle/role/scribe).*#\1#' | paste -sd'|')"
+  check "the order: start the attempt, two shares, the step, the revoke (no CLI generate-root, no login)" "PUT generate-root/attempt|PUT generate-root/update|PUT generate-root/update|policy write|write auth/approle/role/scribe|token revoke" "$order"
+  check "the shares went to the server on curl's stdin, with the attempt's nonce" 2 "$(grep -cE '^\{"key":"SHARE(ONE|TWO)","nonce":"n1"\}$' "$T/curl.stdin")"
+  lacks "no share is in an argument of curl" "SHARE" "$(grep '^curl' "$LOG")"
+  lacks "no token is sent to the unauthenticated endpoints" "X-Vault-Token" "$(grep '^curl' "$LOG")"
+  lacks "the one-time password is in no argument" "OTPSTUB" "$(calls)"
   # the disable sequence is on the terminal before the first share prompt, and before every one
   before="${out%%Unseal share 1 of 2*}"
   has "approle:issue: bracketed paste is switched off before the first share prompt" "$off" "$before"
   has "approle:issue: the share prompt says it is not the password" "not your password) (hidden): " "$out"
   check "and before each of the two share prompts" 2 "$(grep -c "${off//\[/\\[}Unseal share\|^Unseal share" <<<"$out" || true)"
-  lacks "no share is in the log of calls" "SHARE-" "$(calls)"
-  lacks "no share is echoed to the screen" "SHARE-" "$out"
+  lacks "no share is in the log of calls" "SHAREONE" "$(calls)"
+  lacks "no share is echoed to the screen" "SHAREONE" "$out"
   lacks "the root token is not on the screen" "GENROOT" "$out"
-  lacks "no encoded token is on the screen" "ENCODED-STUB" "$out"
-  check "no share or token is written anywhere in the state dir" "" "$(grep -rl 'SHARE-\|GENROOT\|ENCODED' "$T/state" 2>/dev/null)"
+  lacks "no encoded token is on the screen" "PHoXFhoHDX5m" "$out"
+  lacks "the one-time password is not on the screen" "OTPSTUB" "$out"
+  check "no share or token is written anywhere in the state dir" "" "$(grep -rl 'SHAREONE\|GENROOT\|PHoXFhoHDX5m\|OTPSTUB' "$T/state" 2>/dev/null)"
   check "the attempt is not left open" "no" "$([ -e "$T/gr.attempt" ] && echo yes || echo no)"
   # the Operator's token alone cannot do what the shares do
   rc=0; out="$(BAO_TOKEN=s.OPERATOR bash -c "PATH=$T/bin:\$PATH STUB_LOG=$LOG STUB_DIR=$T bao policy write approle-evil -" 2>&1 </dev/null)" || rc=$?
@@ -579,18 +588,26 @@ if [ "$have_script" -eq 1 ]; then
   # a wrong share: the attempt is cancelled, the role is not made, no root token exists to revoke
   reset unsealed
   rm -f "$T/gr.cancelled"
-  term "BADSHARE;SHARE-TWO" OPENBAO_TASK_ROLE=bad OPENBAO_TASK_POLICY_PATH=dcf/x -- approle-issue
+  term "BADSHARE;SHARETWO" OPENBAO_TASK_ROLE=bad OPENBAO_TASK_POLICY_PATH=dcf/x -- approle-issue
   check "a refused share: exit 1" 1 "$rc"
   has "a refused share names a password typed by mistake" "a password typed instead of a share" "$out"
   check "the attempt is cancelled" "cancelled" "$(cat "$T/gr.cancelled" 2>/dev/null | head -n 1)"
   check "no role was made" 0 "$(grep -c '^write auth/approle/role/bad' "$LOG")"
   check "no policy was written" 0 "$(grep -c '^policy write' "$LOG")"
+  # what is not a share (a password, with a space) is never sent: refused, the attempt cancelled
+  reset unsealed
+  term "my pass word!;SHARETWO" OPENBAO_TASK_ROLE=bad OPENBAO_TASK_POLICY_PATH=dcf/x -- approle-issue
+  check "a typed password as a share: exit 1" 1 "$rc"
+  has "it says it is not a share" "that is not an unseal share" "$out"
+  check "it was never sent to the server" 0 "$(grep -c 'generate-root/update' "$LOG")"
+  check "the attempt is cancelled" "cancelled" "$(cat "$T/gr.cancelled" 2>/dev/null | head -n 1)"
   # an attempt already running (someone else's) is not taken over or cancelled
   reset unsealed
   echo 1 > "$T/gr.attempt"
   rm -f "$T/gr.cancelled"
   mkrole bad dcf/x
   check "an attempt already in progress: exit 3" 3 "$rc"
+  has "and it says how to cancel it" "generate-root/attempt" "$out"
   check "and it is left alone (not cancelled)" "no" "$([ -e "$T/gr.cancelled" ] && echo yes || echo no)"
   rm -f "$T/gr.attempt"
   # a failing step still revokes the root token
@@ -625,7 +642,7 @@ if [ "$have_script" -eq 1 ]; then
   check "and for the policy" 1 "$(grep -c '^policy delete token=s.GENROOT' "$T/tokens.log")"
   check "approle:revoke revoked the root token after" "yes" "$(grep -q '^token revoke token=s.GENROOT' "$T/tokens.log" && echo yes)"
   check "approle:revoke removes the files" "no" "$([ -e "$T/state/approle/scribe" ] && echo yes || echo no)"
-  lacks "approle:revoke: no share on the screen" "SHARE-" "$out"
+  lacks "approle:revoke: no share on the screen" "SHAREONE" "$out"
   : > "$LOG"
   term "$SH" OPENBAO_TASK_ROLE=scribe -- approle-revoke
   check "approle:revoke of an unknown role: exit 14" 14 "$rc"
@@ -653,8 +670,37 @@ if [ "$have_script" -eq 1 ]; then
     check "password revoked the root token after" "yes" "$(grep -q '^token revoke token=s.GENROOT' "$T/tokens.log" && echo yes)"
     has "password says old tokens stay valid until they expire" "stay valid until they expire" "$out"
     has "password says how to log in again" "task openbao:login -- -method=userpass username=operator" "$out"
-    lacks "password: no share on the screen" "SHARE-" "$out"
+    lacks "password: no share on the screen" "SHAREONE" "$out"
     check "password asks for the password before the shares" "yes" "$(awk '/new password/{a=NR} /Unseal share 1/{b=NR} END{print (a && b && a<b) ? "yes" : "no"}' <<<"$out")"
+    # no login saved at all: the shares alone (the point of the unauthenticated endpoints)
+    OPTOK=
+    reset unsealed
+    pwok
+    : > "$T/tokens.log"
+    term "correct horse battery;correct horse battery;$SH" STUB_LOOKUP_RC=2 -- password
+    check "password with no login saved: exit 0" 0 "$rc"
+    check "password with no login: written with the generated root token" 1 "$(grep -c '^write auth/userpass/users/operator/password token=s.GENROOT' "$T/tokens.log")"
+    check "password with no login: no call carried any token but the generated root one" 0 "$(grep -vcE 'token=(unset|s\.GENROOT)$' "$T/tokens.log")"
+    check "password with no login: no CLI generate-root (it needs a login)" 0 "$(grep -c '^operator generate-root' "$LOG")"
+    check "password with no login: the root token revoked after" "yes" "$(grep -q '^token revoke token=s.GENROOT' "$T/tokens.log" && echo yes)"
+    # a listener with the endpoints off (a config of the repo's own): the CLI's flow with the login
+    OPTOK=s.OPERATOR
+    reset unsealed
+    pwok
+    : > "$T/tokens.log"
+    term "correct horse battery;correct horse battery;$SH" STUB_GR_OFF=1 -- password
+    check "password with the endpoints off and a login: exit 0" 0 "$rc"
+    check "it used the CLI's generate-root with the login" "yes" "$(grep -q '^operator generate-root token=s.OPERATOR' "$T/tokens.log" && echo yes)"
+    check "and wrote with the generated root token" 1 "$(grep -c '^write auth/userpass/users/operator/password token=s.GENROOT' "$T/tokens.log")"
+    OPTOK=
+    reset unsealed
+    pwok
+    term "correct horse battery;correct horse battery;$SH" STUB_GR_OFF=1 STUB_LOOKUP_RC=2 -- password
+    check "password with the endpoints off and no login: exit 12" 12 "$rc"
+    has "it names the listener option" "disable_unauthed_generate_root_endpoints = false" "$out"
+    lacks "and asks for no share" "Unseal share" "$out"
+    check "and writes nothing" 0 "$(grep -c 'userpass/users/operator/password' "$LOG")"
+    OPTOK=s.OPERATOR
     # mismatch and too short are asked again
     reset unsealed
     pwok
