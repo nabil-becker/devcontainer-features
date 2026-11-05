@@ -377,6 +377,11 @@ The words of the secrets split: OpenBao keeps every secret, `ssh-agent` only use
   the SSH agent mode `key` (formerly `keyMode: true`); deprecated
   by ADR-0048, and renamed `localAgent` (an in-container agent whose keys live only in memory) in
   `ssh-agent` 2.0.
+- **Host agent mode**: what the workstation offers the `ssh-agent` Feature, worked out by the
+  launcher and passed as `DCF_HOST_SSH_AGENT`: `socket` (the host's own agent is forwarded), `none`
+  (the host engine cannot pass a socket in) or `key` (the Operator set `SSH_AGENT_MODE=key`, so the
+  socket mount is skipped). Not the same as the SSH agent mode, which says what the container may
+  do about it.
 - **SSH agent mode**: the one setting a user touches for the `ssh-agent` Feature, `SSH_AGENT_MODE`
   in the workstation's `.devcontainer/.env`, mapped by `"mode": "${localEnv:SSH_AGENT_MODE:auto}"`;
   values `auto` (follow the host socket), `socket`, `key` and `none`; an empty or unknown value

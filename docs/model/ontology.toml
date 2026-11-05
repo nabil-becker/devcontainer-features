@@ -495,6 +495,11 @@ type = "mechanism"
 term = "Key mode"
 summary = "The ssh-agent Feature's opt-in key volume and key tasks; deprecated, becomes localAgent in 2.0."
 
+[host-agent-mode]
+type = "concept"
+term = "Host agent mode"
+summary = "What the workstation offers the ssh-agent Feature: socket, none or key, passed as DCF_HOST_SSH_AGENT."
+
 [ssh-agent-mode]
 type = "mechanism"
 term = "SSH agent mode"
