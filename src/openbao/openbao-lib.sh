@@ -67,7 +67,8 @@ operator_policy() { # <kv mount>
 # deleting of a role, not snapshot-force, not audit: a token that could write a policy could give a
 # role snapshot-force. Creating and deleting roles use a root token made from the shares for that
 # step only. Its own AppRole (the OpenBao key file's login) is denied outright: a token that could
-# mint an operator secret id would outlive every rotation. Written by openbao:init and by the key
+# mint an operator secret id would outlive every rotation. It may read whether a rekey waits for its
+# verification (the OpenBao key file's keyfile status). Written by openbao:init and by the key
 # file's create and rotate.
 path "$1/*" {
   capabilities = ["create", "read", "update", "patch", "delete", "list"]
@@ -104,6 +105,9 @@ path "auth/approle/role/operator/*" {
 }
 path "auth/userpass/users" {
   capabilities = ["list"]
+}
+path "sys/rotate/root/verify" {
+  capabilities = ["read"]
 }
 EOF
 }

@@ -381,9 +381,11 @@ spoken to; `BAO_ADDR`, `VAULT_ADDR` and `BAO_TOKEN` in the environment are ignor
 |---|---|---|
 | `unlock --status` | nothing | `{"v":1,"mode":"off"\|"operator"\|"keyfile","initialized":bool,"sealed":bool,"token":"live"\|"missing"\|"dead","renewer":bool,"ready":bool,"server":"<cluster id>"}` |
 | `unlock --stdin` | the key file | `{"v":1,"ok":true,"done":"unsealed, logged in"}` |
-| `keyfile create --stdin` | `{"v":1,"shares":["<custody>","<custody>"],"repo":"<name>"}`, or `{"v":1,"init":true,"repo":"<name>"}` on an empty server | `{"v":1,"ok":true,"server":"<id>","custody":[three],"keyfile":{...},"backup":"<file>"\|"none"\|"failed","warnings":[...]}` |
-| `keyfile rotate --stdin` | `{"v":1,"shares":["<any two of the five>"],"repo":"<name>"}` | as create |
-| `keyfile status` | nothing | `{"v":1,"ok":true,"server":"<id>","shares":n,"threshold":t,"approle":bool,"userpass":bool}` (`null` when no live token can tell) |
+| `keyfile create --stdin` (step 1) | `{"v":1,"shares":["<custody>","<custody>"],"repo":"<name>"}`, or `{"v":1,"init":true,"repo":"<name>"}` on an empty server | `{"v":1,"ok":true,"pending":true,"server":"<id>","nonce":"<nonce>","custody":[three],"keyfile":{...},"warnings":[...]}` |
+| `keyfile rotate --stdin` (step 1) | `{"v":1,"shares":["<any two of the five>"],"repo":"<name>"}` | as create |
+| `keyfile confirm --stdin` (step 2) | `{"v":1,"server":"<id>","nonce":"<nonce>","shares":["<share 4>","<share 5>"]}` | `{"v":1,"ok":true,"server":"<id>","backup":"<file>"\|"none"\|"failed","warnings":[...]}` |
+| `keyfile cancel --stdin` | `{"v":1,"server":"<id>"}`, optionally with `"nonce":"<nonce>"` | `{"v":1,"ok":true,"done":"cancelled: ...","warnings":[]}` |
+| `keyfile status` | nothing | `{"v":1,"ok":true,"server":"<id>","shares":n,"threshold":t,"approle":bool,"userpass":bool,"pending":"<verification nonce>"\|"init"\|""}` (`approle` and `userpass` are `null` when no live token can tell) |
 
 The key file: `{"v":1,"server":"<cluster id>","repo":"<name>","created":"<UTC>","shares":["<4>","<5>"],"role_id":"<id>","secret_id":"<id>"}`.
 On a failure the JSON is `{"v":1,"ok":false,"error":"<the plain reason>","code":"<a short word>"}` (the launcher shows `error`). Exit codes: `0`
@@ -391,7 +393,9 @@ ok, `1` failed, `3` refused inside an agent's job (`DEVHOST_JOB_CHILD`, `CLAUDEC
 `OPENBAO_AGENT_JOB_VARS`; `unlock --status` and `keyfile status` carry no secret and are not
 refused), `4` not applicable (not server mode, or `unlock` is not `keyfile`), `2` a wrong call.
 
-- **`unlock --status`**: `ready` is keyfile mode, unsealed and a live token. `token` is `missing`
+- **`unlock --status`**: `ready` is keyfile mode, unsealed, a live token **and the renewer running**
+  (the Operator's ruling of 2026-11-05: a live token nobody renews dies within the hour, so the
+  launcher sends the key file and the unlock restarts the renewer). `token` is `missing`
   (none saved) or `dead` (one the server does not take now: expired, revoked, or the server sealed
   or down). A sealed server cannot say its cluster id (it is in the store), so the last one seen is
   kept in `cluster-id` in the volume (not secret) and reported.
@@ -400,29 +404,60 @@ refused), `4` not applicable (not server mode, or `unlock` is not `keyfile`), `2
   before the login when the running cluster differs; logs in; revokes the previous token with
   itself (`revoke-self`, in the default policy, review finding 6); saves the new one through the
   token helper; restarts the renewer, detached with its stdio closed so the launcher's exec returns.
-- **`keyfile create`**: from two custody shares of a store made the operator way (3 shares, the
-  migration) or on an empty server (`init`, 5 shares from the start). A root token is made from the
-  two shares through the loopback listener's unauthenticated root-token endpoints (ADR 0055: **no
-  login is needed**, so a lost key file with a dead token is recoverable, review finding 1) and
-  revoked at the end, also on a failure. It writes the operator AppRole and the Operator's policy,
-  destroys every earlier operator secret id (review finding 5), makes the key file's one, and then
-  runs **rotate-keys to 5 shares, threshold 2** (`sys/rotate/root/*`), the last step that can fail
-  without loss. After it: the userpass user `operator` is deleted, every token an earlier password or
-  AppRole login made is revoked (the backs log in again at their next run), every other role gets a
-  new secret id in its files, the Operator is logged in, and **a backup** is taken to the recorded
-  destination before the answer (review finding 4; `"backup":"none"` and a warning when there is
-  none). The new shares are printed even when a step after the rotation fails (the warnings say
-  which).
-- **`keyfile rotate`**: the same from any two of the five shares: the key file's own (no typing,
-  after a suspected copy) or two custody shares (after a loss). Every share changes, so the three
-  custody shares are stored again; **keep the previous ones until the backups made under them are
-  pruned** (`backupKeep`): a backup opens only with the shares in force when it was taken.
+- **Create and rotate are two steps** (the Operator's ruling of 2026-11-05, "confirm first"), so
+  that the new shares take effect only after the launcher has saved the OpenBao key file. They use
+  OpenBao's rekey **verification** (`require_verification`): until two of the new shares are given
+  back, the shares in force stay in force (`seal-status` still says 3, the old shares still unseal),
+  and a server start drops the waiting rekey altogether.
+  - **Step 1, `keyfile create`**: from two custody shares of a store made the operator way (3
+    shares, the migration) or on an empty server (`init`, 5 shares from the start). A root token is
+    made from the two shares through the loopback listener's unauthenticated root-token endpoints
+    (ADR 0055: **no login is needed**, so a lost key file with a dead token is recoverable, review
+    finding 1) and revoked before the answer, also on a failure. It writes the operator AppRole and
+    the Operator's policy, makes the key file's secret id (the earlier ones still hold), and runs
+    **rotate-keys to 5 shares, threshold 2, with verification** (`sys/rotate/root/*`). The answer
+    holds the new shares, the key file and a `nonce`. An init has no verification in OpenBao: its
+    shares are in force at once, the nonce is `init`, and a cancel (or a new init) clears the store,
+    which holds nothing yet.
+  - **The nonce carries a narrow token.** Verification answers only to a token, and the root token
+    is gone by then. Step 1 makes an orphan token whose policy (`keyfile-confirm`) may verify or
+    cancel the waiting rekey and revoke itself, nothing else, for 15 minutes and a few uses, and
+    puts it in the nonce (`<verification nonce>:<token>`). It is never written to a file: it goes
+    to the launcher's memory with the shares and comes back on stdin. A launcher that compares
+    `keyfile status`'s `pending` with its nonce compares the part before the colon.
+  - **Step 2, `keyfile confirm`** with the saved key file's two shares: the verification (the new
+    shares take effect), the token revoked, a root token from the new shares, then everything the
+    rotation ends with: every other operator secret id destroyed (review finding 5), the userpass
+    user `operator` deleted, every token an earlier password or AppRole login made revoked (the
+    backs log in again at their next run; the Operator's ruling "keep it"), every other role's
+    secret id reissued into its files, the Operator logged in (with a one-use secret id spent by
+    that login, since the key file's own is not sent back), and **a backup** to the recorded
+    destination before the answer (review finding 4; `"backup":"none"` and a warning when there is
+    none). Run again (its answer was lost), it answers ok and does the end steps again.
+  - **`keyfile cancel`** drops a step 1 that was not confirmed: the shares in force stay. With the
+    nonce of step 1 it cancels only that step (another nonce is refused, `nonce-mismatch`) and,
+    since the nonce carries the token, cancels the waiting rekey on the server at once; without
+    it, the waiting rekey is dropped by the next step 1 (which also destroys the lost step's secret
+    id and revokes its token) or by a server start.
+  - **`keyfile status`**'s `pending` (Amendment 2) is the verification nonce while a rekey waits
+    for its confirmation, `init` for an unconfirmed init, else empty: the shares read 5 before and
+    after a rotation, `pending` tells them apart. It comes from the server when the saved login may
+    read the rekey's status (the Operator's policy may read `sys/rotate/root/verify`), else from the
+    record of step 1 in the volume (`keyfile-pending`: the kind, the server, the accessors and the
+    verification nonce, no secret), which the start hook marks dropped when it starts a server.
+  - **What a lost answer costs**: step 1's lost: nothing (the old shares hold; step 1 again). The
+    confirmation's lost: `keyfile status` says `pending` empty and 5 shares, and confirm again is ok.
+- **`keyfile rotate`**: the same two steps from any two of the five shares: the key file's own (no
+  typing, after a suspected copy) or two custody shares (after a loss). Every share changes, so the
+  three custody shares are stored again; **keep the previous ones until the backups made under them
+  are pruned** (`backupKeep`): a backup opens only with the shares in force when it was taken.
 
 **Lifecycle.**
 
 - *Turning it on*: set `unlock: keyfile` and rebuild, then `task dc:openbao:keyfile:create` on the
-  workstation once: two custody shares typed there (or none, on a new server), three new custody
-  shares printed there once, the key file saved there. From then on nothing is typed.
+  workstation once: two custody shares typed there (or none, on a new server), the key file saved
+  there and confirmed, then the three new custody shares printed there once. From then on nothing
+  is typed.
 - *The key file lost, or the workstation*: the server stays sealed at the next start (the launcher
   says there is no key file for it); `task dc:openbao:keyfile:rotate` with two custody shares makes
   a new one, with no login (the token is dead by then). Two custody shares at `task openbao:unseal`
@@ -465,7 +500,12 @@ workstation or two custody shares in the container.
 ("failed to decrypt keys from storage"); a periodic AppRole token renews with `renew-self` and is
 refused (403) once its period passed without a renewal; the unauthenticated root-token endpoints
 work with two of the five shares; a raft snapshot restored into another server brings the source
-store's cluster id with it.
+store's cluster id with it. Rekey verification (`require_verification`): until two of the new
+shares are verified, `seal-status` keeps the old count and the old shares unseal; a seal or a
+restart drops the waiting rekey ("no rotation configuration found"); `sys/rotate/root/verify` needs a
+token (403 without one), and an orphan token with only verify and cancel on it is enough; the root
+token's `DELETE sys/rotate/root/init` cancels a rekey waiting for verification; a second verify
+answers "no rotation in progress".
 
 ## Backup and restore
 
@@ -1072,13 +1112,13 @@ create and rotate; an existing store keeps its policy until one of those runs).
 
 #### Added
 
-- **The OpenBao key file: option `unlock: keyfile`** (server mode, opt-in; the default `operator` is unchanged, override `OPENBAO_SETUP_UNLOCK`). The workstation's launcher (Windows, `devcontainer-cli` 1.20.0) keeps a key file for the server and sends it at every `task dc:*`, so the server is unsealed and you are logged in with nothing typed. The store gets five unseal shares, threshold two: three custody shares you keep, two in the key file. You log in as the operator AppRole (a 1-hour periodic token, loopback only, renewed in the container while it runs); a key-file server has no password. The container side is `/usr/local/bin/openbao-setup unlock --status|--stdin`, `keyfile create|rotate --stdin` and `keyfile status` (one JSON line on stdout; secrets only on stdin, never in an argument, the environment, a file or a log; `BAO_ADDR`, `VAULT_ADDR` and `BAO_TOKEN` ignored; refused inside an agent's job), installed as `openbao-keyfile`. `create` and `rotate` make a root token from two shares with no login (so a lost key file is recoverable from two custody shares), destroy every earlier operator secret id, delete the userpass user, revoke earlier logins, reissue every role and end with a backup. Action: none unless you opt in; to opt in, set `unlock: keyfile`, rebuild, then run `task dc:openbao:keyfile:create` once on the workstation. Until agents run as their own Linux user, any agent in the container could harvest the key file's shares; rotate (`task dc:openbao:keyfile:rotate`) once they do (see the NOTES).
+- **The OpenBao key file: option `unlock: keyfile`** (server mode, opt-in; the default `operator` is unchanged, override `OPENBAO_SETUP_UNLOCK`). The workstation's launcher (Windows, `devcontainer-cli` 1.20.0) keeps a key file for the server and sends it at every `task dc:*`, so the server is unsealed and you are logged in with nothing typed. The store gets five unseal shares, threshold two: three custody shares you keep, two in the key file. You log in as the operator AppRole (a 1-hour periodic token, loopback only, renewed in the container while it runs); a key-file server has no password. The container side is `/usr/local/bin/openbao-setup unlock --status|--stdin`, `keyfile create|rotate --stdin` and `keyfile status` (one JSON line on stdout; secrets only on stdin, never in an argument, the environment, a file or a log; `BAO_ADDR`, `VAULT_ADDR` and `BAO_TOKEN` ignored; refused inside an agent's job), installed as `openbao-keyfile`. `create` and `rotate` are two steps: step 1 makes a root token from two shares with no login (so a lost key file is recoverable from two custody shares) and rotates to the new shares with OpenBao's verification, so they take effect only when `keyfile confirm --stdin` gives two of them back after the launcher saved the key file; `confirm` then destroys every earlier operator secret id, deletes the userpass user, revokes earlier logins (the backs' included), reissues every role, logs you in and ends with a backup. `keyfile cancel --stdin` drops an unconfirmed step (with an optional nonce, only that one); `keyfile status` says which rekey is `pending`. `unlock --status` reports `ready` only while the token renewer runs. Action: none unless you opt in; to opt in, set `unlock: keyfile`, rebuild, then run `task dc:openbao:keyfile:create` once on the workstation. Until agents run as their own Linux user, any agent in the container could harvest the key file's shares; rotate (`task dc:openbao:keyfile:rotate`) once they do (see the NOTES).
 - `task openbao:server:status` says the unlock mode and, with `keyfile`, whether the token renewer runs.
 
 #### Changed
 
 - With `unlock: keyfile`: `task openbao:password` and `task openbao:init` refuse (exit 3) and name the workstation's task; `task openbao:restore` and `task openbao:onboard:claim` ask for no password and end by naming `task dc:openbao:keyfile:rotate`; the login hints name `task dc:openbao:unlock`. No change with `unlock: operator`.
-- The Operator's policy denies `auth/approle/role/operator` and everything under it (no Operator token can mint a secret id for the key file's login) and may list userpass user names. It is written by `task openbao:init` and by the key file's `create` and `rotate`; an existing store keeps its policy. No action needed.
+- The Operator's policy denies `auth/approle/role/operator` and everything under it (no Operator token can mint a secret id for the key file's login), may list userpass user names and may read whether a rekey waits for its verification. It is written by `task openbao:init` and by the key file's `create` and `rotate`; an existing store keeps its policy. No action needed.
 
 ### [1.4.0] - 2026-11-04
 

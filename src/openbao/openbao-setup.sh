@@ -117,6 +117,11 @@ start_server() {
   if server_alive; then
     echo "openbao: server already running (pid $(cat "$dir/server.pid"))"
   else
+    # a rekey waiting for the OpenBao key file's confirmation lives in the server's memory: a new
+    # server process has none, so the record says it was dropped (keyfile status then answers so)
+    if [ -f "$dir/keyfile-pending" ] && grep -qx 'state=pending' "$dir/keyfile-pending" && grep -qx 'kind=rekey' "$dir/keyfile-pending"; then
+      sed -i 's/^state=pending$/state=dropped/' "$dir/keyfile-pending" 2>/dev/null || true
+    fi
     if command -v setsid >/dev/null 2>&1; then
       (umask 077; setsid bao server -config="$conf" </dev/null >>"$dir/server.log" 2>&1 & echo "$!" > "$dir/server.pid")
     else

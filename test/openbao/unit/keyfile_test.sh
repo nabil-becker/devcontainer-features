@@ -5,7 +5,7 @@
 # test test/openbao/server_keyfile.sh (CI), and was checked against a real bao 2.7.2 server while this
 # was written. Covered:
 #  - unlock --status: the mode (off in client mode, operator, keyfile), initialised, sealed, the token
-#    (missing, live, dead), the renewer, ready, the cluster id (remembered for a sealed server); never
+#    (missing, live, dead), the renewer, ready (which needs the renewer too), the cluster id (remembered for a sealed server); never
 #    refused, exit 0, one JSON line on stdout;
 #  - the refusal inside an agent's job for unlock --stdin, keyfile create and rotate: each of
 #    DEVHOST_JOB_CHILD, CLAUDECODE and a variable named in OPENBAO_AGENT_JOB_VARS, exit 3, a JSON
@@ -23,13 +23,17 @@
 #    loopback listener of server.hcl and none carries the environment's token;
 #  - the renewer: renews every third of the token's period, exits on the first refused renewal, on
 #    a token already dead when it starts, and when the token is erased (task openbao:logout);
-#  - keyfile create and rotate: two shares, a root token from the unauthenticated generate-root
-#    endpoints (revoked after), the operator AppRole (1 hour periodic token, loopback only), its
-#    earlier secret ids destroyed, the Operator's policy with the deny on its own role, rotate-keys
-#    to 5 shares threshold 2, the userpass user deleted, earlier logins' tokens revoked, the other
-#    roles reissued into files, the Operator logged in, the custody shares and the key file on
-#    stdout in one JSON line; init:true on an empty server; a failed rotation leaves nothing
-#    behind (the new secret id destroyed, the root token revoked) and prints no share;
+#  - keyfile create and rotate in two steps (Amendment 1): step 1 makes a root token from two shares
+#    (the unauthenticated generate-root endpoints, revoked after), the operator AppRole (1 hour
+#    periodic token, loopback only), the key file's secret id, the Operator's policy with the deny
+#    on its own role, and rotate-keys to 5 shares threshold 2 with verification, so the old shares
+#    and the old secret id still hold; the answer carries the shares, the key file and a nonce with
+#    a narrow confirmation token (in no file); step 1 again after a lost answer cancels the waiting
+#    rekey and its secret id and token; keyfile confirm verifies with the key file's two shares,
+#    then destroys every other operator secret id, deletes the userpass user, revokes earlier
+#    logins, reissues the other roles and logs in with a one-use secret id; confirm again is ok;
+#    keyfile cancel keeps the shares in force; a dropped rotation is not confirmed; init:true is
+#    two steps too; a failed rotation leaves nothing behind; the refusals for confirm and cancel;
 #  - keyfile status; and openbao-server: task openbao:password and init refused with unlock keyfile,
 #    server:status's unlock and renewer lines.
 # Part of `task lint` (`task test:openbao-unit`). SCRIPT points the test at another copy of the
@@ -93,7 +97,7 @@ reset() {
   echo "$2" > "$S/sealed"
   echo c-1111 > "$S/cluster"
   printf '%s\n' S1AAAAAA S2BBBBBB S3CCCCCC S4DDDDDD S5EEEEEE > "$S/shares"
-  echo SECRETID-0 > "$S/sid"
+  echo "ACC-operator-0 SECRETID-0 0" > "$S/sids"
   : > "$S/live"
 }
 stop_renewer() {
@@ -121,7 +125,7 @@ keyfile_json() { # [server] [share] [share] [secret id]
 one_line() { [ "$(printf '%s\n' "$out" | wc -l)" = 1 ] && jq -e . <<<"$out" >/dev/null 2>&1; }
 no_calls() { [ ! -s "$T/calls.log" ]; }
 secrets_in() { # <file or folder>: any share, secret id or token of the stub found there
-  grep -rlaE 'S[1-5][A-E]{6}|NEW[1-5][A-E]{4}|INIT[1-5][A-E]{3}|SECRETID-[0-9]+|s\.LOGIN[0-9]+|s\.GENROOT|s\.OLDTOKEN|s\.ENVTOKEN' "$1" 2>/dev/null
+  grep -rlaE 'S[1-5][A-E]{6}|NEW[1-5][A-E]{4}|NXT[1-5][A-E]{4}|s\.CONFIRM[0-9]+|INIT[1-5][A-E]{3}|SECRETID-[0-9]+|s\.LOGIN[0-9]+|s\.GENROOT|s\.OLDTOKEN|s\.ENVTOKEN' "$1" 2>/dev/null
 }
 
 # ------------------------------------------------------------------- unlock --status ----
@@ -255,6 +259,8 @@ has "  and says so in renewer.log" "the renewer stops" "$(cat "$T/state/renewer.
 check "  its pid file is removed" no "$([ -e "$T/state/renewer.pid" ] && echo yes || echo no)"
 in='' run -- unlock --status
 jq_is "  status: renewer false" false .renewer
+jq_is "  token still live" live .token
+jq_is "  not ready: a live token nobody renews (Amendment 1)" false .ready
 rm -f "$S/renew_fail"
 
 # a renewer that finds the token dead at its start stops at once (the sleep longer than the period)
@@ -315,68 +321,161 @@ in="$(keyfile_json)" run -- unlock --stdin
 check "unlock of a server not initialised: exit 1" 1 "$rc"
 has "  it names keyfile:create" "dc:openbao:keyfile:create" "$err"
 
-# -------------------------------------------------------------- keyfile create / rotate ----
+# -------------------------------------------------- keyfile create / rotate, two steps ----
 reset true true
 printf '%s\n' S1AAAAAA S2BBBBBB S3CCCCCC > "$S/shares"
 echo 3 > "$S/n"
-echo ACC-operator-old > "$S/acc.operator"
+echo "ACC-operator-old SECRETID-OLD 0" > "$S/sids"
 echo ACC-scribe-old > "$S/acc.scribe"
-in='{"v":1,"shares":["S1AAAAAA","S3CCCCCC"],"repo":"demo"}'
+echo "s.OLDTOKEN 3600" >> "$S/live"
+printf 's.OLDTOKEN' > "$T/state/token"
+create_in='{"v":1,"shares":["S1AAAAAA","S3CCCCCC"],"repo":"demo"}'
+in="$create_in"
 run BAO_ADDR=http://127.0.0.9:8200 BAO_TOKEN=s.ENVTOKEN -- keyfile create --stdin
-check "keyfile create from two custody shares of a sealed 3-share store: exit 0" 0 "$rc"
+check "keyfile create (step 1) from two custody shares of a sealed 3-share store: exit 0" 0 "$rc"
 check "  one JSON line" yes "$(one_line && echo yes)"
 jq_is "  ok" true .ok
+jq_is "  pending" true .pending
 jq_is "  the server" c-1111 .server
+jq_is "  a nonce: the verification nonce and the confirmation token" "v1:s.CONFIRM1" .nonce
 jq_is "  three custody shares (1 to 3 of the five)" "NEW1AAAA NEW2BBBB NEW3CCCC" '.custody | join(" ")'
 jq_is "  the key file holds shares 4 and 5" "NEW4DDDD NEW5EEEE" '.keyfile.shares | join(" ")'
 jq_is "  the key file's server" c-1111 .keyfile.server
 jq_is "  its repo" demo .keyfile.repo
 jq_is "  its version" 1 .keyfile.v
 jq_is "  the operator AppRole's role id" ROLEID-op1 .keyfile.role_id
-jq_is "  its new secret id" "$(cat "$S/sid")" .keyfile.secret_id
-check "  rotate-keys asked for 5 shares, threshold 2" yes "$(grep -q '"secret_shares":5,"secret_threshold":2' "$S/bodies.log" && echo yes)"
+jq_is "  its new secret id" SECRETID-1 .keyfile.secret_id
+step1="$out"
+check "  rotate-keys asked for 5 shares, threshold 2, with verification" yes "$(grep -q '"secret_shares":5,"secret_threshold":2,"require_verification":true' "$S/bodies.log" && echo yes)"
+check "  NOT in force yet: the old shares still hold" S1AAAAAA "$(head -n 1 "$S/shares")"
+has "  the confirmation token may only verify and cancel" 'sys/rotate/root/verify' "$(jq -r .policy "$S/policy.keyfile-confirm")"
+lacks "  and nothing else" '"sys/seal"' "$(jq -r .policy "$S/policy.keyfile-confirm")"
 has "  the operator role: a 1 hour periodic token" '"token_period":"1h"' "$(cat "$S/role.operator")"
 has "  bound to loopback" '"token_bound_cidrs":"127.0.0.1/32"' "$(cat "$S/role.operator")"
 has "  secret ids bound to loopback" '"secret_id_bound_cidrs":"127.0.0.1/32"' "$(cat "$S/role.operator")"
 has "  the Operator's policy denies its own role" 'auth/approle/role/operator/*' "$(jq -r .policy "$S/policy.operator")"
-lacks "  every earlier operator secret id destroyed" ACC-operator-old "$(cat "$S/acc.operator")"
+has "  the earlier operator secret id still holds until the confirmation" ACC-operator-old "$(cat "$S/sids")"
+check "  nothing after the rotation was done yet (no userpass delete, no revocation)" no "$([ -e "$S/userpass.deleted" ] || [ -e "$S/revoked.prefix" ] && echo yes || echo no)"
+check "  the root token revoked" yes "$(grep -qx root "$S/revoked" && echo yes)"
+check "  the pending step recorded, with no secret" "rekey pending" "$(sed -n 's/^kind=//p;s/^state=//p' "$T/state/keyfile-pending" | paste -sd' ')"
+check "  no share, secret id or token in any request's arguments" "" "$(secrets_in "$T/calls.log")"
+check "  none in the state folder (but the token helper's file)" "$T/state/token" "$(secrets_in "$T/state")"
+lacks "  no confirmation token in the state folder" s.CONFIRM "$(cat "$T"/state/* 2>/dev/null)"
+lacks "  the environment's token was never sent" s.ENVTOKEN "$(cat "$S/tokens.log")"
+run -- keyfile status
+jq_is "keyfile status: pending is the verification nonce (Amendment 2)" v1 .pending
+jq_is "  and the shares in force (3)" 3 .shares
+
+# step 1 again (the first answer was lost): the waiting rekey is cancelled first
+in="$create_in" run -- keyfile create --stdin
+check "step 1 again after a lost answer: exit 0" 0 "$rc"
+check "  the earlier waiting rekey was cancelled" yes "$([ -s "$S/rot.cancelled" ] && echo yes)"
+lacks "  the lost step's secret id destroyed" "ACC-operator-1 " "$(cat "$S/sids")"
+has "  the lost step's confirmation token revoked" cacc1 "$(cat "$S/revoked.accessor" 2>/dev/null)"
+step1="$out"
+confirm_in() { jq -c '{v: 1, server: .server, nonce: .nonce, shares: .keyfile.shares}' <<<"$1"; } # <step 1 answer>
+# the confirmation
+in="$(confirm_in "$step1")"
+run -- keyfile confirm --stdin
+check "keyfile confirm (step 2) with the key file's two shares: exit 0" 0 "$rc"
+check "  one JSON line" yes "$(one_line && echo yes)"
+jq_is "  ok" true .ok
+jq_is "  the server" c-1111 .server
+lacks "  no share in the answer" NEW "$out"
+check "  the new shares are in force" NEW1AAAA "$(head -n 1 "$S/shares")"
+check "  the confirmation token revoked itself" yes "$(grep -qx confirm "$S/revoked" && echo yes)"
+check "  every other operator secret id destroyed: only the key file's stays" ACC-operator-2 "$(cut -d' ' -f1 "$S/sids" | paste -sd' ')"
 has "  the userpass user operator deleted" deleted "$(cat "$S/userpass.deleted" 2>/dev/null)"
 has "  earlier password logins' tokens revoked" auth/userpass/login "$(cat "$S/revoked.prefix")"
 has "  earlier AppRole logins' tokens revoked" auth/approle/login "$(cat "$S/revoked.prefix")"
 check "  the scribe role reissued into its files" yes "$(grep -qxE 'SECRETID-[0-9]+' "$T/state/approle/scribe/secret_id" 2>/dev/null && echo yes)"
 lacks "  its earlier secret id destroyed" ACC-scribe-old "$(cat "$S/acc.scribe")"
-check "  the root token revoked" yes "$(grep -qx root "$S/revoked" && echo yes)"
-check "  the Operator logged in with the new key file" s.LOGIN1 "$(cat "$T/state/token")"
-lacks "  no share, secret id or token in any request's arguments" NEW "$(secrets_in "$T/calls.log")"
-check "  none of them in the state folder (but the tokens' and the backs' files)" "" "$(secrets_in "$T/state" | grep -v -e "/token$" -e "/approle/")"
-lacks "  the environment's token was never sent" s.ENVTOKEN "$(cat "$S/tokens.log")"
+check "  the Operator logged in (with a one-use secret id, spent)" yes "$(grep -q '^s.LOGIN' "$T/state/token" && ! grep -q ' 1$' "$S/sids" && echo yes)"
+has "  the previous token revoked with itself" "POST auth/token/revoke-self s.OLDTOKEN" "$(cat "$S/tokens.log")"
+check "  the pending step marked confirmed" confirmed "$(sed -n 's/^state=//p' "$T/state/keyfile-pending")"
 jq_is "  no backup destination: said" none .backup
 has "  the warning names a backup" "backup" "$(jq -r '.warnings | join(" ")' <<<"$out")"
 has "  the human lines say to keep the previous custody shares" "keep the previous ones" "$err"
-
-# rotate from the key file's own shares, then init and a failing rotation
-in='{"v":1,"shares":["NEW4DDDD","NEW5EEEE"],"repo":"demo"}'
-run -- keyfile rotate --stdin
-check "keyfile rotate from the key file's two shares: exit 0" 0 "$rc"
+check "  no share, secret id or token in any request's arguments" "" "$(secrets_in "$T/calls.log")"
+check "  none in the state folder (but the tokens' and the backs' files)" "" "$(secrets_in "$T/state" | grep -v -e "/token$" -e "/approle/")"
+sleep 0.3
+in='' run -- unlock --status
+jq_is "  ready after the confirmation" true .ready
+run -- keyfile status
+jq_is "  keyfile status: pending empty once confirmed" "" .pending
+jq_is "  and 5 shares" 5 .shares
+# the confirmation's answer was lost: confirm again answers ok
+in="$(confirm_in "$step1")" run -- keyfile confirm --stdin
+check "confirm again (its answer was lost): exit 0, idempotent" 0 "$rc"
 jq_is "  ok" true .ok
+check "  the key file's secret id still stands" ACC-operator-2 "$(cut -d' ' -f1 "$S/sids" | grep -v -e '^$' | head -n 1)"
+in='{"v":1,"server":"c-1111"}' run -- keyfile cancel --stdin
+check "cancel after the confirmation: refused" 1 "$rc"
+jq_is "  code already-confirmed" already-confirmed .code
+
+# rotate from the key file's own shares, then cancel: the shares in force stay
+in='{"v":1,"shares":["NEW4DDDD","NEW5EEEE"],"repo":"demo"}' run -- keyfile rotate --stdin
+check "keyfile rotate (step 1) from the key file's two shares: exit 0" 0 "$rc"
+jq_is "  pending" true .pending
+step1="$out"
+run -- keyfile status
+jq_is "  keyfile status: pending v1 (shares still 5: a rotation, not yet applied)" "v1 5" '"\(.pending) \(.shares)"'
+in='{"v":1,"server":"c-1111","nonce":"v9"}' run -- keyfile cancel --stdin
+check "keyfile cancel naming another nonce: refused" nonce-mismatch "$(jq -r .code <<<"$out")"
+check "  the step still waits" pending "$(sed -n 's/^state=//p' "$T/state/keyfile-pending")"
+in="$(jq -c '{v: 1, server: .server, nonce: .nonce}' <<<"$step1")" run -- keyfile cancel --stdin
+check "keyfile cancel with step 1's nonce: exit 0" 0 "$rc"
+has "  the rekey cancelled on the server with the confirmation token" cancelled-by-confirm-token "$(cat "$S/rot.cancelled")"
+run -- keyfile status
+jq_is "  keyfile status: pending empty after the cancel" "" .pending
+in="$(jq -c '{v: 1, server: .server}' <<<"$step1")" run -- keyfile cancel --stdin
+check "keyfile cancel without a nonce (again): exit 0" 0 "$rc"
+jq_is "  ok" true .ok
+check "  the shares in force still hold" NEW1AAAA "$(head -n 1 "$S/shares")"
+check "  the pending step marked cancelled" cancelled "$(sed -n 's/^state=//p' "$T/state/keyfile-pending")"
+# a confirmation after the rekey was dropped (a server restart: the start hook records it) fails
+in='{"v":1,"shares":["NEW4DDDD","NEW5EEEE"],"repo":"demo"}' run -- keyfile rotate --stdin
+step1="$out"
+rm -f "$S/rot.pending"
+env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T" OPENBAO_STATE_DIR="$T/state" OPENBAO_FEATURE_DIR="$T/feat" OPENBAO_START_TRIES=1 "$T/bin/openbao-setup" start >/dev/null 2>&1
+check "a server start records the waiting rekey as dropped" dropped "$(sed -n 's/^state=//p' "$T/state/keyfile-pending")"
+: > "$S/live"
+run -- keyfile status
+jq_is "  keyfile status: pending empty (no login to ask the server: the record)" "" .pending
+in="$(confirm_in "$step1")" run -- keyfile confirm --stdin
+check "a confirmation of a dropped rotation: exit 1" 1 "$rc"
+jq_is "  code not-confirmed" not-confirmed .code
+check "  the shares in force still hold" NEW1AAAA "$(head -n 1 "$S/shares")"
+in='{"v":1,"server":"c-1111","nonce":"v1:s.CONFIRM9","shares":["NEW4DDDD","NEW5EEEE"]}' run DEVHOST_JOB_CHILD=1 -- keyfile confirm --stdin
+check "confirm is refused inside an agent's job" 3 "$rc"
+in='{"v":1,"server":"c-1111"}' run CLAUDECODE=1 -- keyfile cancel --stdin
+check "cancel is refused inside an agent's job" 3 "$rc"
+in='{"v":1,"server":"c-1111","nonce":"v1 s.X","shares":["NEW4DDDD","NEW5EEEE"]}' run -- keyfile confirm --stdin
+check "a confirmation whose nonce is not step 1's: exit 1, input" input "$(jq -r .code <<<"$out")"
 in='{"v":1,"init":true,"repo":"demo"}' run -- keyfile rotate --stdin
 check "keyfile rotate refuses init: exit 1" 1 "$rc"
+
+# init on an empty server: two steps too (no verification exists for an init)
 reset false true
 in='{"v":1,"init":true,"repo":"demo"}' run -- keyfile create --stdin
-check "keyfile create with init on an empty server: exit 0" 0 "$rc"
+check "keyfile create with init on an empty server (step 1): exit 0" 0 "$rc"
+jq_is "  pending" true .pending
+jq_is "  nonce init" init .nonce
 jq_is "  five shares made by init: custody 1 to 3" "INIT1AAA INIT2BBB INIT3CCC" '.custody | join(" ")'
 jq_is "  key file 4 and 5" "INIT4DDD INIT5EEE" '.keyfile.shares | join(" ")'
 check "  sys/init asked for 5 shares, threshold 2" yes "$(grep -q '"secret_shares":5,"secret_threshold":2' "$S/bodies.log" && echo yes)"
 check "  the root token revoked" yes "$(grep -qx root "$S/revoked" && echo yes)"
+in="$(confirm_in "$out")" run -- keyfile confirm --stdin
+check "  confirm of an init: exit 0" 0 "$rc"
 in='{"v":1,"init":true,"repo":"demo"}' run -- keyfile create --stdin
-check "init on a server already initialised: exit 1" 1 "$rc"
+check "init on a server already initialised and confirmed: exit 1" 1 "$rc"
 reset true false
 in='{"v":1,"shares":["S1AAAAAA","S2BBBBBB"],"repo":"demo"}'
 run STUB_ROTATE_FAIL=1 -- keyfile rotate --stdin
 check "a failing rotation: exit 1" 1 "$rc"
 jq_is "  ok false" false .ok
 lacks "  no share printed" S1AAAAAA "$out"
-check "  the new secret id destroyed again" "" "$(grep -v -e ACC-operator-old "$S/acc.operator" 2>/dev/null)"
+check "  the new secret id destroyed again (only the one in force stays)" ACC-operator-0 "$(cut -d' ' -f1 "$S/sids" 2>/dev/null | paste -sd' ')"
 check "  the root token revoked" yes "$(grep -qx root "$S/revoked" && echo yes)"
 check "  the shares in force still hold" S1AAAAAA "$(head -n 1 "$S/shares")"
 in='{"v":1,"shares":["X1AAAAAA","X2BBBBBB"],"repo":"demo"}' run -- keyfile rotate --stdin
