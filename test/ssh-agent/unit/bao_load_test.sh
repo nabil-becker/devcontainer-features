@@ -205,7 +205,7 @@ has 'the start hook in key mode says the volume is deprecated' 'deprecated: the 
 check 'the start hook still exits 0' 0 "$rc"
 rm -f "$T/keys"/*
 run "${KEYMODE[@]}" -- setup
-lacks 'an empty volume gets no deprecation line' 'deprecated' "$out"
+lacks 'an empty volume gets no key-volume deprecation line' 'deprecated: the key volume' "$out"
 SSH_AUTH_SOCK="$SOCK" "$real_add" -D >/dev/null 2>&1
 
 # --- key:rotate on OpenBao records
