@@ -8,6 +8,13 @@ here; `task lint` fails when the entry is missing.
 
 Entries from 1.0.0 to 1.18.1 were generated from the commit history (`.github/scripts/changelog.py backfill`) and the "Changes in x.y.z" sections that NOTES.md used to hold; most list commit subjects as written then; the newest of them is in wording for users.
 
+## [1.20.0] - 2026-11-05
+
+### Added
+
+- **The OpenBao key file (Windows launcher)**: with the openbao Feature 1.5.0 or later set to `unlock: keyfile`, every `task dc:up` (so `start`, `shell`, `exec`, `agent`, `claude`, `rebuild`) unseals OpenBao and logs you in with nothing typed, from a DPAPI-protected key file in `%LOCALAPPDATA%\devcontainer-features-keys\openbao\` (it also opens with a domain's DPAPI backup key). It is streamed into the container on stdin through the engine's `exec`, never as an argument, an environment variable or a file. New tasks: `dc:openbao:unlock`, `dc:openbao:keyfile:create`, `:rotate`, `:export`, `:import`, `:forget`; the four that handle shares or the file refuse inside an agent's job (`CLAUDECODE`, `DEVHOST_JOB_CHILD`, `OPENBAO_AGENT_JOB_VARS`). Nothing changes for a repository whose openbao Feature is not in keyfile mode (one silent status call after `up`). To use it: re-vendor the bootstrap, set `unlock: keyfile`, rebuild, then run `task dc:openbao:keyfile:create` once in a plain terminal and store the three custody shares it prints.
+- The bash launcher (Linux, macOS, a WSL distro) refuses those tasks in one line: the OpenBao key file is Windows-only for now.
+
 ## [1.19.0] - 2026-11-04
 
 ### Added
