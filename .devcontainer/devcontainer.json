@@ -57,11 +57,14 @@
     },
     "./features/devhost": {},
     // An SSH agent for the register's operator key. The Windows engines cannot forward the
-    // host's agent, so the Operator turns on key mode per machine (SSH_AGENT_MODE=key in
-    // .devcontainer/.env on the workstation) and imports a dedicated, passphrase-protected key
+    // host's agent, so the Operator turns on key mode per machine (SSH_AGENT_KEY_MODE=true in
+    // .devcontainer/.env on the workstation, which Task's dotenv puts in ${localEnv}; unset is
+    // false; a rebuild applies a change) and imports a dedicated, passphrase-protected key
     // (task devcontainer:ssh-key-import FILE=...); the start hook skips a protected key, so it is
     // loaded only for an operator act (task ssh-agent:key:load) and removed after (ssh-add -d).
-    "./features/ssh-agent": {},
+    "./features/ssh-agent": {
+      "keyMode": "${localEnv:SSH_AGENT_KEY_MODE:false}"
+    },
     // OpenBao in server mode (ADR 0048): a local server in this container, raft storage in the
     // Feature's volume, started sealed at post-start. The Operator runs task openbao:init once
     // and task openbao:unseal after each restart, in a plain terminal (task dc:shell), never
@@ -136,9 +139,6 @@
     "DEVHOST_LEDGER_REGISTER": "ledger",
     // The workstation's machine name, set by the launcher (devcontainer-cli 1.16.2).
     "DCF_HOST_MACHINE": "${localEnv:DCF_HOST_MACHINE}",
-    // socket, key or none, set by the launcher (SSH_AGENT_MODE=key in .devcontainer/.env turns
-    // on the ssh-agent Feature's key mode); as in bootstrap/devcontainer.json
-    "DCF_HOST_SSH_AGENT": "${localEnv:DCF_HOST_SSH_AGENT}",
     // 1 when DCF_HOST_FUSE=1 in .devcontainer/.env asked the launcher for FUSE
     "DCF_HOST_FUSE": "${localEnv:DCF_HOST_FUSE}"
   },
