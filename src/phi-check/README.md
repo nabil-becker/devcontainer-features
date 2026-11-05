@@ -259,6 +259,12 @@ A new pattern is a minor version, since it can refuse files that passed.
 
 ## Changes
 
+### [1.0.3] - 2026-11-05
+
+#### Security
+
+- `phi-check` now starts Python in isolated mode (`-I` on its first line), so a module or `.pth` file in the user's own Python folders, or a `PYTHON*` environment variable, can no longer change what it does or make it pass every file. Nothing to do: rebuild to take it. It needs an `env` that understands `-S` (GNU coreutils 8.30 or later, in every supported base image).
+
 ### [1.0.2] - 2026-11-03
 
 #### Changed
@@ -270,12 +276,6 @@ A new pattern is a minor version, since it can refuse files that passed.
 #### Added
 
 - This changelog: every release of this Feature now has an entry here, written for its users, and the Feature's README shows the latest three under "Changes". Nothing to do.
-
-### [1.0.0] - 2026-10-29
-
-#### Added
-
-- First release: `phi-check <path>...`, a linter-style command that refuses files holding protected health information (US Social Security numbers, Medicare Beneficiary Identifiers, X12, HL7 v2 and FHIR Patient data, and a record id or date of birth next to a diagnosis, a name label or another id). It never prints the matched text and knows nothing of git or hooks: your repository wires it into its own checks. ([#99](https://github.com/nabil-becker/devcontainer-features/pull/99))
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/phi-check/CHANGELOG.md).
 

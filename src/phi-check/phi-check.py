@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S python3 -I
 """phi-check: refuse files that hold protected health information.
 
 A linter-style command: it checks the paths it is given and knows nothing of
