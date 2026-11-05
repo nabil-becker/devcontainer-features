@@ -372,12 +372,16 @@ the custody shares printed. When the key file cannot be saved, or confirm fails,
 the previous key file back (or removes the new one) and cancels the pending rotation (`keyfile
 cancel`, always with this run's nonce): the old shares and the old key file stay in force, and no
 custody share is shown. When confirm's answer is lost it asks once more (confirm is idempotent),
-then `keyfile status`: `pending` equal to this run's nonce means not applied (cancel, previous key
+then `keyfile status`: `pending` equal to this run's verification nonce means not applied (cancel, previous key
 file back); `pending` empty with five shares means applied (the custody shares are printed; this is
 how a rotate, five shares before and after, is told apart). Anything else (another rotation
 pending, or no answer) cannot be told: nothing is cancelled, since the launcher never cancels a
 rotation it did not start, the new key file stays with the previous one beside it as
-`<file>.previous`, and no custody share is shown. Warnings the container returns are shown as
+`<file>.previous`, and no custody share is shown. The nonce step 1 returns is
+`<verification nonce>:<narrow confirm token>` (`init` for an initialisation); it is a secret: the
+launcher sends it whole on confirm and on every cancel (so the container can cancel the rekey on
+the server at once), compares only the part before the first colon with `pending`, and never prints
+or logs it. Warnings the container returns are shown as
 `openbao: warning: ...` lines; a failure shows the container's `error` (else its `code`).
 
 Each time custody shares are printed, store them again, each in its own place, and **keep the

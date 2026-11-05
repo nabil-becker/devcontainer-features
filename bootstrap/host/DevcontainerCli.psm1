@@ -2317,7 +2317,7 @@ function Invoke-OpenBaoKeyFileMake {
         fails, puts the previous key file back and runs `keyfile cancel --stdin` with this run's
         nonce (the old shares stay in force); a rekey with another nonce is never cancelled. A lost
         confirm answer is retried once (confirm is idempotent), then `keyfile status` decides: its
-        `pending` equal to this nonce = not applied (cancel, restore); empty with five shares =
+        `pending` equal to this nonce's verification part (before its first colon) = not applied (cancel, restore); empty with five shares =
         applied (custody shares printed); anything else = unknown (nothing cancelled, the previous
         key file kept as <path>.previous, no custody share). Warnings the container returns are shown. Returns the
         exit code.
@@ -2359,7 +2359,11 @@ function Invoke-OpenBaoKeyFileMake {
         return $(if ($r.Code -ne 0) { $r.Code } else { 1 })
     }
     $server = [string]$(if ($j.server) { $j.server } else { $j.keyfile.server })
+    # The nonce is `<verification nonce>:<narrow confirm token>` (just `init` for an init): a secret,
+    # never printed or logged; sent whole on confirm and every cancel. keyfile status's `pending` is
+    # the verification nonce only, the part before the first colon.
     $nonce = [string]$j.nonce
+    $verification = ($nonce -split ':', 2)[0]
     # Cancels this run's own pending rekey only: always with its nonce, never one it did not start.
     $cancel = {
         $cb = [System.Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -Compress -InputObject ([ordered]@{ v = 1; server = $server; nonce = $nonce })))
@@ -2425,7 +2429,7 @@ function Invoke-OpenBaoKeyFileMake {
             Write-OpenBaoLine "the confirm's answer was lost ($reason), but keyfile status shows no pending rotation and five shares in force: the rotation took effect. Check the backup with task openbao:server:status in the container."
             $outcome = 'ok'
         }
-        elseif ($known -and [string]$sj.pending -eq $nonce) {
+        elseif ($known -and [string]$sj.pending -eq $verification) {
             $reason = "no answer to the confirm ($reason), and keyfile status shows this rotation still pending"
         }
         else {
