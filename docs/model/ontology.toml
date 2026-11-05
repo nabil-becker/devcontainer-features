@@ -495,6 +495,11 @@ type = "mechanism"
 term = "Key mode"
 summary = "The ssh-agent Feature's opt-in key volume and key tasks; deprecated, becomes localAgent in 2.0."
 
+[ssh-agent-mode]
+type = "mechanism"
+term = "SSH agent mode"
+summary = "SSH_AGENT_MODE in the workstation's .env, read into the ssh-agent Feature's mode option: auto, socket, key or none."
+
 [central-server]
 type = "place"
 term = "Central server"
