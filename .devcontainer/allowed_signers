@@ -3,3 +3,4 @@
 # where known, valid-after / valid-before dates (YYYYMMDD). Public keys only, never a private key.
 # Written by task openbao:ssh:import, ssh-agent:git:signing and ssh-agent:key:rotate; the host
 # commits it. git reads it through gpg.ssh.allowedSignersFile (task ssh-agent:git:signing sets it).
+dcf-ledger namespaces="git" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHVYOf6tZA+T1aXN0tyvKPMMJByeakaFpqMg0Tj9CySd
