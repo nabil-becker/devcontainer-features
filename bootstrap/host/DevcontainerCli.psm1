@@ -2163,12 +2163,13 @@ function ConvertFrom-OpenBaoSetupOutput {
 }
 
 function Get-OpenBaoSetupReason {
-    <# .SYNOPSIS Why an openbao-setup call failed, in a few words: the JSON's reason, else stderr's last line, else the exit code. #>
+    <# .SYNOPSIS Why an openbao-setup call failed, in a few words: the JSON's error, else its code, else stderr's last line, else the exit code. #>
     [CmdletBinding()]
     param($Result, $Json)
     if ($Result.Code -eq 3) { return "the container refused inside an agent's job (exit 3); run it yourself in a plain terminal" }
     if ($Result.Code -eq 4) { return 'not applicable in this container (exit 4: no server mode, or unlock is not keyfile)' }
-    foreach ($f in 'error', 'why', 'reason', 'message') { if ($Json -and $Json.$f) { return [string]$Json.$f } }
+    if ($Json -and $Json.error) { return [string]$Json.error }
+    if ($Json -and $Json.code) { return [string]$Json.code }
     $last = @("$($Result.Err)" -split "`r?`n" | Where-Object { $_.Trim() }) | Select-Object -Last 1
     if ($last) { return $last.Trim() }
     return "exit $($Result.Code)"
@@ -2194,6 +2195,12 @@ function Get-OpenBaoUnlockStatus {
     $s = ConvertFrom-OpenBaoSetupOutput -Text $r.Out
     if (-not $s -or -not $s.mode) { return $null }
     return $s
+}
+
+function Write-OpenBaoWarning {
+    <# .SYNOPSIS One line per entry of the "warnings" list an openbao-setup answer carries. #>
+    param($Json)
+    if ($Json -and $Json.warnings) { foreach ($w in @($Json.warnings)) { if ($w) { Write-OpenBaoLine "warning: $w" } } }
 }
 
 function Write-OpenBaoLine {
@@ -2303,8 +2310,14 @@ function Invoke-OpenBaoKeyFileMake {
         task devcontainer:openbao:keyfile:create and :rotate. Create: on an uninitialised server
         {"init":true}, else two custody shares typed here; rotate: the key file's own two shares when
         this workstation has it (nothing typed), else any two of the five typed. The shares go to
-        `openbao-setup keyfile <action> --stdin`; the answer's key file is saved (DPAPI) and its three
-        custody shares printed once. Returns the exit code.
+        `openbao-setup keyfile <action> --stdin`, which answers with a pending rotation (OpenBao's
+        rekey verification). Then, in this order: the answer's key file is saved (DPAPI); `keyfile
+        confirm --stdin` gets the nonce and shares 4 and 5 read back from the saved file; only after
+        it answers ok are the three custody shares printed, once. A failed save, or a confirm that
+        fails, puts the previous key file back and runs `keyfile cancel --stdin` (the old shares stay
+        in force). A lost confirm answer is retried once (confirm is idempotent), then `keyfile
+        status` decides (five shares in force). Warnings the container returns are shown. Returns the
+        exit code.
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$WorkspaceFolder, [Parameter(Mandatory)][ValidateSet('create', 'rotate')][string]$Action, [string]$DockerPath)
@@ -2337,28 +2350,85 @@ function Invoke-OpenBaoKeyFileMake {
     try { $r = Invoke-OpenBaoSetup -Engine $c.Engine -ContainerId $c.Id -User $c.User -Arguments @('keyfile', $Action, '--stdin') -InputBytes $payload -PassError }
     finally { [Array]::Clear($payload, 0, $payload.Length) }
     $j = ConvertFrom-OpenBaoSetupOutput -Text $r.Out
+    Write-OpenBaoWarning -Json $j
     if ($r.Code -ne 0 -or -not $j -or $j.ok -ne $true) {
-        Write-OpenBaoLine -Problem "keyfile:$Action failed: $(Get-OpenBaoSetupReason -Result $r -Json $j). Nothing was saved here."
+        Write-OpenBaoLine -Problem "keyfile:$Action failed: $(Get-OpenBaoSetupReason -Result $r -Json $j). Nothing was saved here; the old shares still unseal."
         return $(if ($r.Code -ne 0) { $r.Code } else { 1 })
     }
-    $custody = @($j.custody | Where-Object { $_ })
-    $saveError = $null
-    $path = $null
-    $json = $null
-    try {
-        $json = ConvertTo-OpenBaoKeyFileJson -KeyFile $j.keyfile -Repo $repo
-        $path = Save-OpenBaoKeyFile -Repo $repo -Server ([string]$j.keyfile.server) -Json $json
+    $server = [string]$(if ($j.server) { $j.server } else { $j.keyfile.server })
+    $cancel = {
+        $cb = [System.Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -Compress -InputObject ([ordered]@{ v = 1; server = $server })))
+        $cr = Invoke-OpenBaoSetup -Engine $c.Engine -ContainerId $c.Id -User $c.User -Arguments @('keyfile', 'cancel', '--stdin') -InputBytes $cb -PassError
+        $cj = ConvertFrom-OpenBaoSetupOutput -Text $cr.Out
+        if ($cr.Code -eq 0 -and $cj -and $cj.ok -eq $true) { Write-OpenBaoLine -Problem 'the pending rotation is cancelled; the old shares still unseal.' }
+        else { Write-OpenBaoLine -Problem "the pending rotation could not be cancelled ($(Get-OpenBaoSetupReason -Result $cr -Json $cj)); the old shares still unseal, and the next keyfile:$Action cancels it first." }
     }
-    catch { $saveError = $_.Exception.Message }
-    finally { if ($json) { [Array]::Clear($json, 0, $json.Length) } }
-    # The server already runs with the new shares: the custody shares are printed whatever happened to the file.
-    if ($custody.Count -gt 0) { Write-OpenBaoCustodyShare -Shares $custody }
-    else { Write-OpenBaoLine -Problem 'the container sent no custody shares back; check task openbao:server:status in the container.' }
-    if ($saveError) {
-        Write-OpenBaoLine -Problem "the OpenBao key file could not be saved ($saveError). The server runs with the new shares: unseal it with two of the custody shares above (task openbao:unseal in the container) and run task dc:openbao:keyfile:rotate once this is fixed."
+    if ($j.pending -ne $true -or -not $j.nonce -or -not $server) {
+        Write-OpenBaoLine -Problem "keyfile:${Action}: the container answered without a pending rotation to confirm (it needs the openbao Feature 1.5.0 or later); nothing was saved here."
+        & $cancel
         return 1
     }
-    Write-OpenBaoLine "the OpenBao key file is saved: $path (server $($j.keyfile.server)). It opens only for this Windows account on this machine (and with the domain's DPAPI backup key on a domain-joined one)."
+    $custody = @($j.custody | Where-Object { $_ })
+    $path = Get-OpenBaoKeyFilePath -Repo $repo -Server $server
+    # The key file this one replaces (rotate), kept as its protected bytes so a failed confirm can put it back.
+    $previous = if (Test-Path -LiteralPath $path -PathType Leaf) { [System.IO.File]::ReadAllBytes($path) } else { $null }
+    $restore = {
+        if ($previous) { [System.IO.File]::WriteAllBytes($path, $previous) }
+        else { Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue }
+    }
+    # Step 1 of 2: save the new key file, before the new shares take effect.
+    $json = $null
+    $confirmIn = $null
+    try {
+        $json = ConvertTo-OpenBaoKeyFileJson -KeyFile $j.keyfile -Repo $repo
+        [void](Save-OpenBaoKeyFile -Repo $repo -Server $server -Json $json)
+        # The confirm's shares come from the file just saved, read back: what unseals from now on is what is on disk.
+        $saved = Read-OpenBaoKeyFile -Path $path
+        try { $shares = [string[]]@(([System.Text.Encoding]::UTF8.GetString($saved) | ConvertFrom-Json).shares) }
+        finally { [Array]::Clear($saved, 0, $saved.Length) }
+        $confirmIn = [System.Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -Compress -InputObject ([ordered]@{ v = 1; server = $server; nonce = [string]$j.nonce; shares = $shares })))
+        $shares = $null
+    }
+    catch {
+        Write-OpenBaoLine -Problem "the OpenBao key file could not be saved ($($_.Exception.Message)); cancelling the rotation."
+        & $restore
+        & $cancel
+        return 1
+    }
+    finally { if ($json) { [Array]::Clear($json, 0, $json.Length) } }
+    # Step 2 of 2: confirm with shares 4 and 5 (OpenBao's rekey verification); once more if the answer is lost (idempotent).
+    $outcome = 'lost'
+    $reason = ''
+    try {
+        foreach ($attempt in 1, 2) {
+            $cr = Invoke-OpenBaoSetup -Engine $c.Engine -ContainerId $c.Id -User $c.User -Arguments @('keyfile', 'confirm', '--stdin') -InputBytes $confirmIn -PassError
+            $cj = ConvertFrom-OpenBaoSetupOutput -Text $cr.Out
+            Write-OpenBaoWarning -Json $cj
+            if ($cr.Code -eq 0 -and $cj -and $cj.ok -eq $true) { $outcome = 'ok'; break }
+            if ($cj -and $cj.ok -eq $false) { $outcome = 'failed'; $reason = Get-OpenBaoSetupReason -Result $cr -Json $cj; break }
+            $reason = Get-OpenBaoSetupReason -Result $cr -Json $cj
+        }
+    }
+    finally { [Array]::Clear($confirmIn, 0, $confirmIn.Length) }
+    if ($outcome -eq 'lost') {
+        # The confirm's answer is lost twice: ask the server whether the five shares are in force.
+        $sr = Invoke-OpenBaoSetup -Engine $c.Engine -ContainerId $c.Id -User $c.User -Arguments @('keyfile', 'status')
+        $sj = ConvertFrom-OpenBaoSetupOutput -Text $sr.Out
+        if ($sr.Code -eq 0 -and $sj -and $sj.ok -eq $true -and [int]$sj.shares -eq 5) {
+            Write-OpenBaoLine "the confirm's answer was lost ($reason), but keyfile status shows the five shares in force: the rotation took effect. Check the backup with task openbao:server:status in the container."
+            $outcome = 'ok'
+        }
+        else { $reason = "no answer to the confirm ($reason), and keyfile status does not show the new shares" }
+    }
+    if ($outcome -ne 'ok') {
+        Write-OpenBaoLine -Problem "keyfile:$Action was not confirmed: $reason. The new OpenBao key file is withdrawn$(if ($previous) { ' and the previous one put back' })."
+        & $restore
+        & $cancel
+        return 1
+    }
+    if ($custody.Count -gt 0) { Write-OpenBaoCustodyShare -Shares $custody }
+    else { Write-OpenBaoLine -Problem 'the container sent no custody shares back; check task openbao:server:status in the container.' }
+    Write-OpenBaoLine "the OpenBao key file is saved: $path (server $server). It opens only for this Windows account on this machine (and with the domain's DPAPI backup key on a domain-joined one)."
     return 0
 }
 

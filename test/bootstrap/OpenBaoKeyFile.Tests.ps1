@@ -2,7 +2,8 @@
 # "the OpenBao key file"; docs/proposals/openbao-key-file.md, slice 2): the unlock step after `up`
 # and the tasks devcontainer:openbao:unlock and :keyfile:create|rotate|export|import|forget.
 # The container is a stub engine (`docker`, a bash script) that speaks the contract of
-# /usr/local/bin/openbao-setup (unlock --status, unlock --stdin, keyfile create|rotate --stdin) and
+# /usr/local/bin/openbao-setup (unlock --status, unlock --stdin, keyfile create|rotate|confirm|cancel
+# --stdin, keyfile status; the contract's Amendment 1) and
 # records its arguments, its environment and its stdin. DPAPI is Windows-only, so everywhere but the
 # round trip the protector (Protect-/Unprotect-OpenBaoKeyFileBlob) is mocked with a reversible
 # stand-in; Read-Host is mocked for the shares and the transfer passphrase.
@@ -10,7 +11,10 @@
 # file streamed on stdin only (never in the engine's arguments or environment, nothing in the temp
 # folder); the no-key-file line; the agent guard (CLAUDECODE, DEVHOST_JOB_CHILD,
 # OPENBAO_AGENT_JOB_VARS); create (typed shares, init), rotate (the key file's own shares), the saved
-# key file's shape, the custody shares printed once; export/import round trip, a wrong passphrase,
+# key file's shape; the two steps: the key file saved before confirm, confirm's shares read back from
+# it, the custody shares printed only after confirm answers ok, a failed save or confirm cancelling
+# (the previous key file put back), a lost confirm answer retried and then settled by keyfile
+# status, the warnings shown, error then code on failure; export/import round trip, a wrong passphrase,
 # the checkout refused; forget; the step wired after `up` only; the bash launcher's one refusal line.
 # The stub engine is a shell script, so the Describes that use it run where bash runs (Linux, macOS,
 # CI); the DPAPI round trip runs only on Windows:
@@ -56,6 +60,17 @@ case "$1 $2" in
   'unlock --status') printf '%s\n' "$FAKE_STATUS"; exit "${FAKE_STATUS_RC:-0}" ;;
   'unlock --stdin') cat > "$FAKE_STDIN"; printf '%s\n' "${FAKE_UNLOCK_OUT:-{\"v\":1,\"ok\":true,\"done\":\"unsealed, logged in\"\}}"; exit "${FAKE_UNLOCK_RC:-0}" ;;
   'keyfile create' | 'keyfile rotate') cat > "$FAKE_STDIN"; echo 'container: rotating keys' >&2; printf '%s\n' "$FAKE_MAKE_OUT"; exit "${FAKE_MAKE_RC:-0}" ;;
+  'keyfile confirm')
+    { cat; echo; } >> "$FAKE_STDIN.confirm"
+    if [ -n "${FAKE_KEYFILE:-}" ] && [ -f "$FAKE_KEYFILE" ]; then echo 'key file on disk at confirm' >> "$FAKE_ARGV"; fi
+    n=$(( $(cat "$FAKE_STDIN.count" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FAKE_STDIN.count"
+    case "${FAKE_CONFIRM:-ok}:$n" in
+      fail:*) printf '%s\n' '{"v":1,"ok":false,"error":"the shares do not verify","code":"verify"}'; exit 1 ;;
+      lost:* | lost-once:1) exit 137 ;;
+    esac
+    printf '%s\n' '{"v":1,"ok":true,"server":"clu-1","backup":"b1","warnings":["the backup went to the default destination"]}'; exit 0 ;;
+  'keyfile cancel') cat > "$FAKE_STDIN.cancel"; printf '%s\n' '{"v":1,"ok":true}'; exit 0 ;;
+  'keyfile status') printf '%s\n' "${FAKE_KF_STATUS:-{\"v\":1,\"ok\":true,\"server\":\"clu-1\",\"shares\":5,\"threshold\":2,\"approle\":true,\"userpass\":false\}}"; exit 0 ;;
 esac
 echo "usage: openbao-setup ..." >&2; exit 2
 '@
@@ -65,7 +80,7 @@ echo "usage: openbao-setup ..." >&2; exit 2
         $w.Engine = $engine
         $w.Saved = @{}
         foreach ($k in 'DEVCONTAINER_DOCKER_PATH', 'XDG_DATA_HOME', 'LOCALAPPDATA', 'TMPDIR', 'TEMP', 'TMP', 'FAKE_ARGV', 'FAKE_ENVLOG', 'FAKE_STDIN',
-            'FAKE_STATUS', 'FAKE_STATUS_RC', 'FAKE_RUNNING', 'FAKE_NO_SETUP', 'FAKE_UNLOCK_OUT', 'FAKE_UNLOCK_RC', 'FAKE_MAKE_OUT', 'FAKE_MAKE_RC',
+            'FAKE_STATUS', 'FAKE_STATUS_RC', 'FAKE_RUNNING', 'FAKE_NO_SETUP', 'FAKE_UNLOCK_OUT', 'FAKE_UNLOCK_RC', 'FAKE_MAKE_OUT', 'FAKE_MAKE_RC', 'FAKE_CONFIRM', 'FAKE_KF_STATUS', 'FAKE_KEYFILE',
             'CLAUDECODE', 'DEVHOST_JOB_CHILD', 'OPENBAO_AGENT_JOB_VARS', 'MY_AGENT_JOB') {
             $w.Saved[$k] = [Environment]::GetEnvironmentVariable($k)
         }
@@ -73,7 +88,7 @@ echo "usage: openbao-setup ..." >&2; exit 2
         $env:XDG_DATA_HOME = (Join-Path $t 'data'); $env:LOCALAPPDATA = (Join-Path $t 'localappdata')
         $env:TMPDIR = $w.Tmp; $env:TEMP = $w.Tmp; $env:TMP = $w.Tmp
         $env:FAKE_ARGV = $w.Argv; $env:FAKE_ENVLOG = $w.EnvLog; $env:FAKE_STDIN = $w.Stdin
-        foreach ($k in 'FAKE_STATUS_RC', 'FAKE_RUNNING', 'FAKE_NO_SETUP', 'FAKE_UNLOCK_OUT', 'FAKE_UNLOCK_RC', 'FAKE_MAKE_OUT', 'FAKE_MAKE_RC', 'CLAUDECODE', 'DEVHOST_JOB_CHILD', 'OPENBAO_AGENT_JOB_VARS', 'MY_AGENT_JOB') {
+        foreach ($k in 'FAKE_STATUS_RC', 'FAKE_RUNNING', 'FAKE_NO_SETUP', 'FAKE_UNLOCK_OUT', 'FAKE_UNLOCK_RC', 'FAKE_MAKE_OUT', 'FAKE_MAKE_RC', 'FAKE_CONFIRM', 'FAKE_KF_STATUS', 'FAKE_KEYFILE', 'CLAUDECODE', 'DEVHOST_JOB_CHILD', 'OPENBAO_AGENT_JOB_VARS', 'MY_AGENT_JOB') {
             [Environment]::SetEnvironmentVariable($k, $null)
         }
         $env:FAKE_STATUS = (Get-Status)
@@ -310,9 +325,13 @@ Describe 'keyfile:create and keyfile:rotate' -Skip:(-not $script:HasBash -or $Is
     BeforeEach {
         $script:W = Initialize-World; Use-ProtectorStandIn
         $kf = [ordered]@{ v = 1; server = 'clu-1'; repo = 'myrepo'; created = '2026-11-05T10:00:00Z'; shares = @('NEW-4', 'NEW-5'); role_id = 'role-abc'; secret_id = 'NEW-SECRET' }
-        $env:FAKE_MAKE_OUT = ConvertTo-Json -Compress -Depth 4 -InputObject ([ordered]@{ v = 1; ok = $true; server = 'clu-1'; custody = @('CUSTODY-1', 'CUSTODY-2', 'CUSTODY-3'); keyfile = $kf })
+        $env:FAKE_MAKE_OUT = ConvertTo-Json -Compress -Depth 4 -InputObject ([ordered]@{ v = 1; ok = $true; pending = $true; server = 'clu-1'; nonce = 'nonce-1'; custody = @('CUSTODY-1', 'CUSTODY-2', 'CUSTODY-3'); keyfile = $kf; warnings = @('the old userpass login stays until confirm') })
         $script:Typed = [System.Collections.Generic.Queue[string]]::new()
         Mock -ModuleName DevcontainerCli Read-Host { Secure $script:Typed.Dequeue() }
+        # The custody shares' printing goes into the stub's call log, so the order of the two is visible.
+        Mock -ModuleName DevcontainerCli Write-OpenBaoCustodyShare { Add-Content -LiteralPath $env:FAKE_ARGV -Value ('CUSTODY PRINTED ' + ($Shares -join ' ')) }
+        function Get-KeyFilePlain { InModuleScope DevcontainerCli { [Text.Encoding]::UTF8.GetString((Read-OpenBaoKeyFile -Path (Get-OpenBaoKeyFilePath -Repo 'myrepo' -Server 'clu-1'))) } }
+        function Get-Call { @((Get-Log $script:W.Argv) -split "`n" | Where-Object { $_ } | ForEach-Object { $_ -replace '^exec -i -u vscode cid1 /usr/local/bin/openbao-setup ', '' }) }
     }
     AfterEach { Clear-World $script:W }
 
@@ -328,8 +347,7 @@ Describe 'keyfile:create and keyfile:rotate' -Skip:(-not $script:HasBash -or $Is
         Get-Log $script:W.Argv | Should -Not -Match $script:Marker
         Get-Log $script:W.EnvLog | Should -Not -Match $script:Marker
         @(Get-ChildItem -LiteralPath $script:W.Tmp -Force -Recurse) | Should -HaveCount 0
-        ([regex]::Matches($r.Host, 'CUSTODY-\d')).Count | Should -Be 3
-        $r.Host | Should -Match 'keep the previous custody shares until the backups made under them are pruned'
+        Get-Call | Should -Contain 'CUSTODY PRINTED CUSTODY-1 CUSTODY-2 CUSTODY-3'
         $r.Host | Should -Not -Match 'NEW-4|NEW-SECRET'
         $path = InModuleScope DevcontainerCli { Get-OpenBaoKeyFilePath -Repo 'myrepo' -Server 'clu-1' }
         $path | Should -Exist
@@ -381,13 +399,102 @@ Describe 'keyfile:create and keyfile:rotate' -Skip:(-not $script:HasBash -or $Is
         Should -Invoke -ModuleName DevcontainerCli Read-Host -Times 0 -Exactly
     }
 
-    It 'still prints the custody shares when the key file cannot be saved' {
+    It 'saves the key file, then confirms with shares 4 and 5 read back from it, then prints the custody shares' {
         $script:Typed.Enqueue('a'); $script:Typed.Enqueue('b')
-        Mock -ModuleName DevcontainerCli Protect-OpenBaoKeyFileBlob { throw 'the OpenBao key file is Windows-only for now' }
+        $env:FAKE_KEYFILE = InModuleScope DevcontainerCli { Get-OpenBaoKeyFilePath -Repo 'myrepo' -Server 'clu-1' }
+        $r = Invoke-Captured { Invoke-OpenBaoKeyFileTask -WorkspaceFolder $script:W.Ws -Arguments @('create') }
+        $r.Rc | Should -Be 0
+        Get-Call | Should -Be @('unlock --status', 'keyfile create --stdin', 'keyfile confirm --stdin', 'key file on disk at confirm', 'CUSTODY PRINTED CUSTODY-1 CUSTODY-2 CUSTODY-3')
+        (Get-Log "$($script:W.Stdin).confirm").Trim() | Should -Be '{"v":1,"server":"clu-1","nonce":"nonce-1","shares":["NEW-4","NEW-5"]}'
+        Get-Log $script:W.Argv | Should -Not -Match 'NEW-4'
+        # FAKE_MAKE_OUT is the stub's own scripted answer; nothing else in the environment may hold a share.
+        @((Get-Log $script:W.EnvLog) -split "`n" | Where-Object { $_ -notlike 'FAKE_MAKE_OUT=*' }) -join "`n" | Should -Not -Match 'NEW-4'
+        @(Get-ChildItem -LiteralPath $script:W.Tmp -Force -Recurse) | Should -HaveCount 0
+    }
+
+    It 'shows the warnings of create and of confirm' {
+        $script:Typed.Enqueue('a'); $script:Typed.Enqueue('b')
+        $r = Invoke-Captured { Invoke-OpenBaoKeyFileTask -WorkspaceFolder $script:W.Ws -Arguments @('create') }
+        $r.Host | Should -Match 'openbao: warning: the old userpass login stays until confirm'
+        $r.Host | Should -Match 'openbao: warning: the backup went to the default destination'
+    }
+
+    It 'a failed save cancels the rotation, keeps the previous key file and prints no custody share' {
+        Save-TestKeyFile
+        $before = Get-KeyFilePlain
+        Mock -ModuleName DevcontainerCli Protect-OpenBaoKeyFileBlob { throw 'disk full' }
+        $r = Invoke-Captured { Invoke-OpenBaoKeyFileTask -WorkspaceFolder $script:W.Ws -Arguments @('rotate') }
+        $r.Rc | Should -Be 1
+        $r.Err | Should -Match 'could not be saved \(disk full\); cancelling'
+        $r.Err | Should -Match 'cancelled; the old shares still unseal'
+        Get-Call | Should -Be @('unlock --status', 'keyfile rotate --stdin', 'keyfile cancel --stdin')
+        (Get-Log "$($script:W.Stdin).cancel") | Should -Be '{"v":1,"server":"clu-1"}'
+        Get-KeyFilePlain | Should -Be $before
+    }
+
+    It 'a failed confirm cancels, puts the previous key file back and prints no custody share' {
+        Save-TestKeyFile
+        $before = Get-KeyFilePlain
+        $env:FAKE_CONFIRM = 'fail'
+        $r = Invoke-Captured { Invoke-OpenBaoKeyFileTask -WorkspaceFolder $script:W.Ws -Arguments @('rotate') }
+        $r.Rc | Should -Be 1
+        $r.Err | Should -Match 'was not confirmed: the shares do not verify'
+        Get-Call | Should -Be @('unlock --status', 'keyfile rotate --stdin', 'keyfile confirm --stdin', 'keyfile cancel --stdin')
+        Get-KeyFilePlain | Should -Be $before
+    }
+
+    It 'a failed confirm on create removes the new key file' {
+        $script:Typed.Enqueue('a'); $script:Typed.Enqueue('b')
+        $env:FAKE_CONFIRM = 'fail'
         $r = Invoke-Captured { Invoke-OpenBaoKeyFileTask -WorkspaceFolder $script:W.Ws -Arguments @('create') }
         $r.Rc | Should -Be 1
-        ([regex]::Matches($r.Host, 'CUSTODY-\d')).Count | Should -Be 3
-        $r.Err | Should -Match 'could not be saved'
+        InModuleScope DevcontainerCli { Get-OpenBaoKeyFilePath -Repo 'myrepo' -Server 'clu-1' } | Should -Not -Exist
+        Get-Call | Should -Not -Match 'CUSTODY PRINTED'
+    }
+
+    It 'a lost confirm answer is asked once more (confirm is idempotent)' {
+        $script:Typed.Enqueue('a'); $script:Typed.Enqueue('b')
+        $env:FAKE_CONFIRM = 'lost-once'
+        $r = Invoke-Captured { Invoke-OpenBaoKeyFileTask -WorkspaceFolder $script:W.Ws -Arguments @('create') }
+        $r.Rc | Should -Be 0
+        Get-Call | Should -Be @('unlock --status', 'keyfile create --stdin', 'keyfile confirm --stdin', 'keyfile confirm --stdin', 'CUSTODY PRINTED CUSTODY-1 CUSTODY-2 CUSTODY-3')
+    }
+
+    It 'confirm answers lost twice: keyfile status showing five shares means it took effect' {
+        $script:Typed.Enqueue('a'); $script:Typed.Enqueue('b')
+        $env:FAKE_CONFIRM = 'lost'
+        $r = Invoke-Captured { Invoke-OpenBaoKeyFileTask -WorkspaceFolder $script:W.Ws -Arguments @('create') }
+        $r.Rc | Should -Be 0
+        $r.Host | Should -Match "the confirm's answer was lost .* the rotation took effect"
+        Get-Call | Should -Be @('unlock --status', 'keyfile create --stdin', 'keyfile confirm --stdin', 'keyfile confirm --stdin', 'keyfile status', 'CUSTODY PRINTED CUSTODY-1 CUSTODY-2 CUSTODY-3')
+        Get-KeyFilePlain | Should -Match '"shares":\["NEW-4","NEW-5"\]'
+    }
+
+    It 'confirm answers lost twice and keyfile status does not show the new shares: cancel, no custody share' {
+        $script:Typed.Enqueue('a'); $script:Typed.Enqueue('b')
+        $env:FAKE_CONFIRM = 'lost'
+        $env:FAKE_KF_STATUS = '{"v":1,"ok":true,"server":"clu-1","shares":3,"threshold":2,"approle":false,"userpass":true}'
+        $r = Invoke-Captured { Invoke-OpenBaoKeyFileTask -WorkspaceFolder $script:W.Ws -Arguments @('create') }
+        $r.Rc | Should -Be 1
+        Get-Call | Should -Be @('unlock --status', 'keyfile create --stdin', 'keyfile confirm --stdin', 'keyfile confirm --stdin', 'keyfile status', 'keyfile cancel --stdin')
+        InModuleScope DevcontainerCli { Get-OpenBaoKeyFilePath -Repo 'myrepo' -Server 'clu-1' } | Should -Not -Exist
+    }
+
+    It 'an answer without a pending rotation saves nothing and cancels' {
+        $script:Typed.Enqueue('a'); $script:Typed.Enqueue('b')
+        $env:FAKE_MAKE_OUT = '{"v":1,"ok":true,"server":"clu-1","custody":["C1","C2","C3"],"keyfile":{}}'
+        $r = Invoke-Captured { Invoke-OpenBaoKeyFileTask -WorkspaceFolder $script:W.Ws -Arguments @('create') }
+        $r.Rc | Should -Be 1
+        Get-Call | Should -Be @('unlock --status', 'keyfile create --stdin', 'keyfile cancel --stdin')
+        InModuleScope DevcontainerCli { Get-OpenBaoKeyFilePath -Repo 'myrepo' -Server 'clu-1' } | Should -Not -Exist
+    }
+
+    It 'a failure reads error, then code' {
+        $script:Typed.Enqueue('a'); $script:Typed.Enqueue('b')
+        $env:FAKE_MAKE_OUT = '{"v":1,"ok":false,"code":"sealed"}'
+        $env:FAKE_MAKE_RC = '1'
+        $r = Invoke-Captured { Invoke-OpenBaoKeyFileTask -WorkspaceFolder $script:W.Ws -Arguments @('create') }
+        $r.Err | Should -Match 'keyfile:create failed: sealed\.'
     }
 }
 
