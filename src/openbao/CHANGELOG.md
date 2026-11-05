@@ -8,6 +8,16 @@ here; `task lint` fails when the entry is missing.
 
 Entries from 1.0.0 to 1.0.3 were generated from the commit history (`.github/scripts/changelog.py backfill`) and the "Changes in x.y.z" sections that NOTES.md used to hold; most list commit subjects as written then; the newest of them is in wording for users.
 
+## [1.4.0] - 2026-11-04
+
+### Added
+
+- **`task openbao:password`** (server mode): sets a new password for the Operator, for when you forgot it or want another. It needs no current password and no login: it asks for the new password twice (12 characters at least), then for two unseal shares at a hidden prompt, which make a root token used for this step alone and revoked straight after. The password never appears in an argument, file or output. Tokens you already hold stay valid until they expire (at most 8 hours); log in again with `task openbao:login -- -method=userpass username=operator`. Plain terminal only; refused inside an agent's job. It works with no login saved at all (see Changed). No action needed.
+
+### Changed
+
+- **Server mode: two unseal shares make a root token without a login.** The config `openbao-setup start` writes sets `disable_unauthed_generate_root_endpoints = false` on its one loopback listener, so OpenBao's unauthenticated `sys/generate-root` endpoints (off by default since 2.5.3) take the shares; the tasks call them with `curl`, since `bao operator generate-root` uses only the authenticated endpoints since OpenBao 2.6.0. `openbao:password`, `openbao:backup:role` and `openbao:restore` onto a store in use no longer need the Operator's login; `openbao:approle:issue` with `POLICY_PATH` and `openbao:approle:revoke` still do, for their other calls. Without a token, any process of the container can now start or cancel a root-token attempt (not complete one: that takes two shares). Action: none while your server's config still has its first line (the marker): it is rewritten at the next container start, which the rebuild for this version is. A config of your own (marker removed) needs `disable_unauthed_generate_root_endpoints = false` in its `listener "tcp"` block and a server restart; until then the tasks use the login as before.
+
 ## [1.3.1] - 2026-11-04
 
 ### Fixed

@@ -19,9 +19,15 @@
 #    mode, no file), a fresh server (the throwaway init, the snapshot installed, the root token
 #    revoked, sealed, unsealed, the login, every role reissued, no marker left), a failed restore
 #    leaving the marker and revoking the token, a half-done one starting again from empty, a store
-#    in use (the confirmation, the root token from shares with the Operator's login, a login that
-#    lacks the policy refused), run twice, another machine's file asking before it goes on;
-#  - openbao:backup:role: the refusals and the role made with a root token from shares.
+#    in use (the confirmation, the root token from shares with the Operator's login when the
+#    listener has the unauthenticated root-token endpoints off, a login that lacks the policy
+#    refused; with them on, no login needed), run twice, another machine's file asking before it
+#    goes on;
+#  - openbao:backup:role: the refusals and the role made with a root token from shares (through
+#    the CLI with the login, or through the unauthenticated endpoints with none).
+# The unauthenticated endpoints are a stub curl (gr_curl_stub.sh), off unless a case sets
+# STUB_GR_OFF= (empty): the cases written before them run the CLI's flow, which still serves a
+# listener without them.
 # Part of `task lint` (`task test:openbao-unit`). SCRIPT points the test at another copy of the
 # script (used to show a test fails when the code it covers is broken). Needs script(1) for the
 # terminal tests (skipped without it).
@@ -170,6 +176,8 @@ mkdir -p "$OPENBAO_STATE_DIR/raft"
 echo uninit > "$STUB_DIR/stubstate"
 STUB
 chmod +x "$T/bin/bao" "$T/bin/date" "$T/bin/sleep" "$T/bin/openbao-setup"
+# the unauthenticated root-token endpoints: a stub curl, so no test reaches a real server
+install -m 0755 "$here/gr_curl_stub.sh" "$T/bin/curl"
 
 pass=0 fail=0
 check() { # <name> <expected> <actual>
@@ -187,7 +195,8 @@ lacks() { # <name> <text> <output>
 
 reset() { # <state>: a fresh stub state and state dir
   rm -rf "${T:?}/state" "${T:?}"/acc.* "${T:?}"/sid.n "${T:?}"/unseal.n "${T:?}"/gr.n "${T:?}"/snap.n "${T:?}"/date.n \
-    "${T:?}"/policy.* "${T:?}"/have "${T:?}"/tokens.log "${T:?}"/login.log "${T:?}"/logins "${T:?}"/restored.from "${T:?}"/dest "${T:?}"/tmpfs
+    "${T:?}"/policy.* "${T:?}"/have "${T:?}"/tokens.log "${T:?}"/login.log "${T:?}"/logins "${T:?}"/restored.from "${T:?}"/dest "${T:?}"/tmpfs \
+    "${T:?}"/curl.stdin "${T:?}"/gr.attempt "${T:?}"/gr.cancelled
   mkdir -p "$T/state/approle/backup" "$T/dest" "$T/tmpfs"
   printf 'ROLEID' > "$T/state/approle/backup/role_id"
   printf 'SECRETID-0' > "$T/state/approle/backup/secret_id"
@@ -198,7 +207,7 @@ reset() { # <state>: a fresh stub state and state dir
 }
 envs() {
   echo "PATH=$T/bin:/usr/local/bin:/usr/bin:/bin" "HOME=$T/home" "STUB_LOG=$LOG" "STUB_DIR=$T" "OPENBAO_STATE_DIR=$T/state" \
-    "OPENBAO_FEATURE_DIR=$T/feat-${MODE_FEAT:-server}" "OPENBAO_BACKUP_TMP=$T/tmpfs" "OPENBAO_MACHINE=testbox" "STUB_FAST_SLEEP=1" "STUB_DATE_SEQ=1"
+    "OPENBAO_FEATURE_DIR=$T/feat-${MODE_FEAT:-server}" "OPENBAO_BACKUP_TMP=$T/tmpfs" "OPENBAO_MACHINE=testbox" "STUB_FAST_SLEEP=1" "STUB_DATE_SEQ=1" "STUB_GR_OFF=1"
 }
 MODE_FEAT=server
 run() { # [VAR=value ...] -- <args>: output in $out, exit status in $rc, no terminal
@@ -695,6 +704,19 @@ if [ "$have_script" -eq 1 ]; then
   reset sealed
   term ";;" -- backup-role
   check "backup-role on a sealed server: exit 11" 11 "$rc"
+  # with the unauthenticated endpoints on, no login is needed
+  reset unsealed
+  rm -f "$T/have"; : > "$T/have"
+  term "SHAREONE;SHARETWO" STUB_GR_OFF= STUB_LOOKUP_RC=2 -- backup-role
+  check "backup-role with no login (endpoints on): exit 0" 0 "$rc"
+  check "backup-role with no login: written with the root token from the shares, which is revoked" "1 1" "$(grep -c '^write auth/approle/role/backup token=s.GENROOT' "$T/tokens.log") $(grep -c '^token revoke token=s.GENROOT' "$T/tokens.log")"
+  check "backup-role with no login: no CLI generate-root" 0 "$(grep -c '^operator generate-root' "$LOG")"
+  # a store in use is restored with the shares alone too
+  reset unsealed
+  term "restore;SHAREONE;SHARETWO;;;;pw" OPENBAO_TASK_FROM="$snap" STUB_GR_OFF= STUB_LOOKUP_RC=2 -- restore
+  check "restore in use with no login (endpoints on): exit 0" 0 "$rc"
+  check "restore in use with no login: the snapshot is installed with the root token from the shares" 1 "$(grep -c '^operator raft token=s.GENROOT' "$T/tokens.log")"
+  check "restore in use with no login: no CLI generate-root" 0 "$(grep -c '^operator generate-root' "$LOG")"
 else
   echo "skip - restore and backup-role under a terminal (no script(1))"
 fi

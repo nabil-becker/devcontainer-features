@@ -12,6 +12,8 @@
 #     making and deleting a role go through a root token made from two shares (typed at a
 #     terminal, never echoed, revoked after); loopback binding honoured (secret id and token), one
 #     valid secret id after a reissue (the Operator's token only);
+#   - task openbao:password through two shares, with a login and with none saved at all (the
+#     listener's unauthenticated root-token endpoints, disable_unauthed_generate_root_endpoints = false);
 #   - the refusals inside an agent's job and without a terminal, for init, unseal and seal.
 set -e
 # shellcheck disable=SC1091  # provided by the devcontainer CLI at test time
@@ -224,6 +226,31 @@ check "the Operator's own login is still the Operator's (no root policy on it)" 
 check "no share was echoed on the screen by revoke" excludes "$(cat "$work/screen.txt")" "$(sed -n 1p "$work/shares")"
 rc=0; bao write auth/approle/login role_id=x secret_id=y > /dev/null 2>&1 || rc=$?
 check "and the role no longer logs in" [ "$rc" != 0 ]
+
+# --- a forgotten password: openbao:password through two shares -----------------------------------------
+newpw='a different horse battery'
+term "task -t $tf password" "$newpw" "$newpw" "$(sed -n 1p "$work/shares")" "$(sed -n 2p "$work/shares")"
+check "password through the shares exits 0" [ "$term_rc" = 0 ]
+check "no share or password was echoed on the screen by password" excludes "$(cat "$work/screen.txt")" "$newpw"
+t logout > /dev/null 2>&1 || true
+term "task -t $tf login -- -method=userpass username=operator" "$pw"
+check "the old password no longer logs in" [ "$(dcf-secret status 2>/dev/null)" != ready ]
+term "task -t $tf login -- -method=userpass username=operator" "$newpw"
+check "the new password logs in" [ "$(dcf-secret status)" = ready ]
+# the forgotten password proper: no login saved at all, the shares alone
+check "the listener has the unauthenticated root-token endpoints on" grep -q 'disable_unauthed_generate_root_endpoints = false' "$state/server.hcl"
+check "and they answer without a token" contains "$(curl -s "$BAO_ADDR/v1/sys/generate-root/attempt")" '"started":false'
+t logout > /dev/null 2>&1 || true
+check "no login is saved now" test ! -s "$state/token"
+newpw2='a third horse battery staple'
+term "task -t $tf password" "$newpw2" "$newpw2" "$(sed -n 1p "$work/shares")" "$(sed -n 2p "$work/shares")"
+check "password with no login saved exits 0" [ "$term_rc" = 0 ]
+check "no share was echoed on the screen" excludes "$(cat "$work/screen.txt")" "$(sed -n 1p "$work/shares")"
+check "and the root token generation is not left open" contains "$(curl -s "$BAO_ADDR/v1/sys/generate-root/attempt")" '"started":false'
+term "task -t $tf login -- -method=userpass username=operator" "$newpw"
+check "the password before it no longer logs in" [ "$(dcf-secret status 2>/dev/null)" != ready ]
+term "task -t $tf login -- -method=userpass username=operator" "$newpw2"
+check "the password set with no login logs in" [ "$(dcf-secret status)" = ready ]
 
 # --- seal, restart, unseal ----------------------------------------------------------------------------
 t seal > /dev/null 2>&1

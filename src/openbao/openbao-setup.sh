@@ -60,9 +60,14 @@ storage "raft" {
   node_id = "devhost"
 }
 
+# The legacy unauthenticated root-token endpoints (sys/generate-root/*) are on for this listener,
+# so two unseal shares alone make a root token when nobody is logged in (a forgotten password).
+# Without a token a caller can only start, read or cancel an attempt; completing one takes the
+# shares. Rekey stays off (the default).
 listener "tcp" {
   address     = "$listen"
   tls_disable = true
+  disable_unauthed_generate_root_endpoints = false
 }
 
 # The file audit device, declared here rather than enabled through the API (which a server

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # openbao-server: what the openbao Feature's server-mode tasks run (task openbao:init, :unseal,
-# :seal, :server:status, :approle:issue and :approle:revoke). It is a thin layer over the `bao`
+# :seal, :server:status, :password, :approle:issue and :approle:revoke). It is a thin layer over the `bao`
 # CLI (NFR-13): the state of the server comes from `bao status`'s exit code and JSON, never from
 # parsed English; the only text read back is the init output's "Unseal Key N:" and "Initial Root
 # Token:" lines, which the CLI documents.
@@ -11,6 +11,8 @@
 #   openbao-server unseal                 ask for shares at bao's own prompt until it is unsealed
 #   openbao-server seal                   seal the server (the Operator's token)
 #   openbao-server status                 mode, state, storage, backup choice, login (both modes)
+#   openbao-server password               a new password for the Operator, with a root token from
+#                                         two unseal shares (no current password or login needed)
 #   openbao-server approle-issue          ROLE=<name> [POLICY_PATH=<mount/path>] or ALL=1 (the
 #                                         OPENBAO_TASK_ROLE, OPENBAO_TASK_POLICY_PATH and
 #                                         OPENBAO_TASK_ALL variables the Taskfile sets)
@@ -26,7 +28,7 @@
 #   openbao-server after-write            what a task that writes a secret ends with: the backup (when
 #                                         a destination is set) or the reminder; always exit 0
 #
-# Every command that handles a share or a token (init, unseal, seal, restore, and approle-issue with
+# Every command that handles a share or a token (init, unseal, seal, restore, password, and approle-issue with
 # POLICY_PATH, approle-revoke and backup-role, which make a root token from the shares for their one
 # step and revoke it after) refuses inside an agent's job and, for all but seal, without a terminal: the shares and the token must never reach a
 # transcript, which the scribe reads. Exit codes: dcf-secret's numbers where they mean the same
@@ -47,7 +49,7 @@ st_rc=0
 st_json=""
 
 usage() {
-  say "usage: openbao-server init|unseal|seal|status|approle-issue|approle-revoke|backup|backup-role|restore|after-write (the tasks of the openbao Feature run it)"
+  say "usage: openbao-server init|unseal|seal|status|password|approle-issue|approle-revoke|backup|backup-role|restore|after-write (the tasks of the openbao Feature run it)"
   exit 2
 }
 
@@ -377,16 +379,88 @@ cmd_configure() {
   op_pw=""
 }
 
+# --------------------------------------------------------------------------------- password ----
+# A new password for the Operator, for one who forgot it: no current password and no login are
+# needed, the unseal shares are the authority (as for a role). The password is asked first, twice,
+# then the shares make a root token that writes it (on bao's stdin, never an argument) and is revoked.
+set_operator_password() { # the password is in $op_pw; runs with the root token
+  bao read sys/auth/userpass >/dev/null 2>&1 || { say "the userpass login is not enabled in this store (an onboarding claim not done yet? task openbao:onboard:claim); nothing was changed"; return 1; }
+  bao read auth/userpass/users/operator >/dev/null 2>&1 || { say "there is no user 'operator' in this store (an onboarding claim not done yet? task openbao:onboard:claim); nothing was changed"; return 1; }
+  printf '%s' "$op_pw" | bao write auth/userpass/users/operator/password password=- >/dev/null || { say "bao did not take the new password; the old one still holds"; return 1; }
+}
+
+cmd_password() {
+  need_server_mode password
+  guard password "it asks for a new password and a root token made from the unseal shares, which must never land in a transcript"
+  need_tty password
+  server_state
+  state_exit
+  local tries=0 pw1="" pw2=""
+  op_pw=""
+  while [ -z "$op_pw" ]; do
+    tries=$((tries + 1))
+    [ "$tries" -le 5 ] || die 3 "no password chosen: nothing was changed"
+    ask_secret "Choose the Operator's new password (at least 12 characters; you log in with it each sitting):"
+    pw1="$REPLY"
+    ask_secret "Again:"
+    pw2="$REPLY"
+    if [ "${#pw1}" -lt 12 ]; then
+      echo "openbao: too short (12 characters at least)" >&2
+    elif [ "$pw1" != "$pw2" ]; then
+      echo "openbao: the two did not match" >&2
+    else
+      op_pw="$pw1"
+    fi
+  done
+  pw1="" pw2="" REPLY=""
+  local rc=0
+  as_root password "changing the Operator's password" set_operator_password || rc=$?
+  op_pw=""
+  [ "$rc" -eq 0 ] || die 1 "the Operator's password was not changed (the messages above say why); the root token is revoked"
+  echo "openbao: the Operator's password is changed. Tokens the Operator already holds stay valid until they expire (at most 8 hours). Log in with the new one: task openbao:login -- -method=userpass username=operator" >&2
+}
+
 # --------------------------------------------------------------------------------- approle ----
-# A root token from the unseal shares, for one step. `bao operator generate-root` (OTP flow): the
-# attempt is started with a one-time password kept in a variable, the Operator types the shares at
-# bao's own hidden prompt (as in unseal), the encoded token is decoded with the OTP, the step runs
-# with the token (BAO_TOKEN in a subshell, nowhere else), and the token is revoked straight after,
-# also on failure or an interrupt (the attempt is cancelled when it was abandoned). No share, OTP
-# or token is printed, logged or put in a file; the OTP is the one argument (useless without the
-# encoded token, which goes over stdin).
-root_otp="" root_tok="" root_started=0 root_done=0
+# A root token from the unseal shares, for one step, with no login needed. The loopback listener
+# of the config openbao-setup start writes has OpenBao's unauthenticated root-token endpoints on
+# (sys/generate-root/*, disable_unauthed_generate_root_endpoints = false); bao's CLI cannot use
+# them (since OpenBao 2.6.0 `bao operator generate-root` calls only the authenticated
+# sys/generate-root-token), so they are called with curl. The attempt is started there and the
+# server hands back its one-time password, kept in a variable; the Operator types the shares at a
+# hidden prompt, each sent on curl's stdin with the attempt's nonce (so a share never feeds an
+# attempt someone else started); the encoded token is decoded here with the one-time password (an
+# XOR: bao's own -decode asks the authenticated status first, which needs a login); the step runs
+# with the token (BAO_TOKEN in a subshell, nowhere else); and the token is revoked straight after,
+# also on failure or an interrupt (an attempt this task started and abandoned is cancelled). No
+# share, one-time password or token is printed, logged, put in a file or passed as an argument.
+# A listener with the endpoints off (a config of the repo's own, without the marker line) answers
+# 405: the task then uses the CLI's authenticated flow, which needs the Operator's login (the
+# policy's two generate-root-token paths) and passes the one-time password as an argument (useless
+# without the encoded token, which goes over stdin).
+root_otp="" root_tok="" root_started=0 root_done=0 root_via=""
 root_replaced=0 # set by a restore: the store the token was made in is replaced, so a failed revoke is expected
+gr_call() { # <method> <attempt|update>: the body on stdin; prints the response, then the HTTP code on a last line of its own
+  local -a ca=()
+  [ -z "${BAO_CACERT:-}" ] || ca=(--cacert "$BAO_CACERT")
+  local url="${BAO_ADDR:-http://127.0.0.1:8200}/v1/sys/generate-root/$2"
+  curl -sS --noproxy '*' --max-time 30 "${ca[@]}" -X "$1" -H 'X-Vault-Request: true' --data-binary @- -w '\n%{http_code}' "$url" 2>/dev/null # dcf-curl: allow a request to the local server, not a download: no retry (a share is sent once)
+}
+json_str() { sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" <<<"$2" | head -n 1; } # <key> <json>
+json_err() { sed -n 's/.*"errors"[[:space:]]*:[[:space:]]*\["\([^"]*\)".*/\1/p' <<<"$1" | head -n 1; }
+otp_decode() { # <encoded token> <one-time password>: the token on stdout (base64 without padding, XORed with the OTP)
+  local e="$1" o="$2" c k i=0 out=""
+  while [ $((${#e} % 4)) -ne 0 ]; do e+="="; done
+  for c in $(printf '%s' "$e" | base64 -d 2>/dev/null | od -An -v -tu1); do
+    [ "$i" -lt "${#o}" ] || return 1
+    printf -v k '%d' "'${o:i:1}"
+    printf -v c '%03o' $((c ^ k))
+    printf -v c '%b' "\\0$c"
+    out+="$c"
+    i=$((i + 1))
+  done
+  [ "$i" -gt 0 ] && [ "$i" -eq "${#o}" ] || return 1
+  printf '%s' "$out"
+}
 root_cleanup() {
   if [ -n "$root_tok" ] && [ "$root_replaced" -eq 1 ]; then
     # try, silently: when the snapshot went in, the token is gone with the store it was made in
@@ -398,41 +472,90 @@ root_cleanup() {
     root_tok=""
   fi
   if [ "$root_started" -eq 1 ] && [ "$root_done" -eq 0 ]; then
-    bao operator generate-root -cancel >/dev/null 2>&1 || true
+    if [ "$root_via" = legacy ]; then
+      gr_call DELETE attempt </dev/null >/dev/null || true
+    else
+      bao operator generate-root -cancel >/dev/null 2>&1 || true
+    fi
   fi
   root_started=0
   root_otp=""
 }
 as_root() { # <task> <what it is for> <command> [args]: the command runs with a root token
-  local task="$1" what="$2" out req n=0 enc rc=0
+  local task="$1" what="$2" out code req n=0 enc nonce share rc=0
   shift 2
   guard "$task" "it needs a root token made from the unseal shares, which must never land in a transcript"
   need_tty "$task"
   trap 'root_cleanup' EXIT
   trap 'root_cleanup; exit 130' INT TERM HUP
-  root_otp="$(bao operator generate-root -generate-otp)" && [ -n "$root_otp" ] || die 1 "bao could not make a one-time password for the root token (does the Operator's login still hold? task openbao:login)"
-  out="$(bao operator generate-root -init -otp="$root_otp" -format=json 2>&1)" || {
-    echo "$prog: bao could not start a root token generation. One may already be in progress (bao operator generate-root -status; -cancel ends it)." >&2
-    die 3 "nothing was changed"
-  }
-  root_started=1
+  out="$(printf '{}' | gr_call PUT attempt)"
+  code="${out##*$'\n'}"
+  out="${out%$'\n'*}"
+  case "$code" in
+    200) root_via=legacy root_started=1 ;;
+    405) root_via=cli ;;
+    400)
+      case "$(json_err "$out")" in
+        *"in progress"*) say "a root token generation is already in progress: one started in another terminal, or by a task that was killed. It is not taken over; cancel it with an HTTP DELETE to ${BAO_ADDR:-http://127.0.0.1:8200}/v1/sys/generate-root/attempt (no token needed)" ;;
+        *) say "the server refused to start a root token generation: $(json_err "$out")" ;;
+      esac
+      die 3 "nothing was changed"
+      ;;
+    *) die 1 "could not start a root token generation at ${BAO_ADDR:-http://127.0.0.1:8200} (HTTP ${code:-none}${out:+: $(json_err "$out")}); nothing was changed" ;;
+  esac
+  if [ "$root_via" = legacy ]; then
+    root_otp="$(json_str otp "$out")"
+    nonce="$(json_str nonce "$out")"
+    [ -n "$root_otp" ] && [ -n "$nonce" ] || die 1 "the server started a root token generation but sent back no one-time password or nonce; the attempt is cancelled"
+  else
+    # The listener has the unauthenticated endpoints off: the CLI's authenticated flow, with the login.
+    bao token lookup >/dev/null 2>&1 || die 12 "this server's listener has the unauthenticated root-token endpoints off (no disable_unauthed_generate_root_endpoints = false in its config: a config of your own, without the marker line), so a root token needs the Operator's login: log in (task openbao:login -- -method=userpass username=operator) and run this again, or add that line to the listener block and restart the server"
+    root_otp="$(bao operator generate-root -generate-otp)" && [ -n "$root_otp" ] || die 1 "bao could not make a one-time password for the root token (does the Operator's login still hold? task openbao:login)"
+    out="$(bao operator generate-root -init -otp="$root_otp" -format=json 2>&1)" || {
+      echo "$prog: bao could not start a root token generation. One may already be in progress (bao operator generate-root -status; -cancel ends it)." >&2
+      die 3 "nothing was changed"
+    }
+    root_started=1
+  fi
   req="$(sed -n 's/.*"required"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' <<<"$out" | head -n 1)"
   [ -n "$req" ] || req=2
   echo "openbao: $what needs a root token, made from $req unseal shares typed at the prompt (hidden); it is used for this step only and revoked straight after." >&2
   while :; do
     n=$((n + 1))
     [ "$n" -le $((req + 2)) ] || die 1 "the root token generation did not complete after $((n - 1)) shares: check the shares and run the task again (the attempt is cancelled)"
-    # bao's own prompt goes to its stdout, which is captured here (the JSON is read back): so say it
-    paste_off
-    printf 'Unseal share %s of %s (one of the three shares task openbao:init printed; not your password) (hidden): ' "$n" "$req" >&2
-    out="$(bao operator generate-root -otp="$root_otp" -format=json)" || { printf '\n' >&2; die 1 "bao could not take that as an unseal share: a password typed instead of a share, or a mistyped share? A share is the base64 string openbao:init printed, not the Operator password; the attempt is cancelled: run the task again"; }
-    printf '\n' >&2
+    if [ "$root_via" = legacy ]; then
+      ask_secret "Unseal share $n of $req (one of the three shares task openbao:init printed; not your password) (hidden):"
+      share="${REPLY#"${REPLY%%[![:space:]]*}"}" # a paste's surrounding blanks off; one inside is no share
+      share="${share%"${share##*[![:space:]]}"}"
+      REPLY=""
+      if [[ ! "$share" =~ ^[A-Za-z0-9+/=]+$ ]]; then
+        share=""
+        die 1 "that is not an unseal share: a password typed instead of a share, or a mistyped share? A share is the base64 string openbao:init printed, not the Operator password; the attempt is cancelled: run the task again"
+      fi
+      out="$(printf '{"key":"%s","nonce":"%s"}' "$share" "$nonce" | gr_call PUT update)"
+      share=""
+      code="${out##*$'\n'}"
+      out="${out%$'\n'*}"
+      [ "$code" = 200 ] || die 1 "the server did not take that share (${code:-no answer}${out:+: $(json_err "$out")}): a password typed instead of a share, or a share of another store? A share is the base64 string openbao:init printed, not the Operator password; the attempt is cancelled: run the task again"
+    else
+      # bao's own prompt goes to its stdout, which is captured here (the JSON is read back): so say it
+      paste_off
+      printf 'Unseal share %s of %s (one of the three shares task openbao:init printed; not your password) (hidden): ' "$n" "$req" >&2
+      out="$(bao operator generate-root -otp="$root_otp" -format=json)" || { printf '\n' >&2; die 1 "bao could not take that as an unseal share: a password typed instead of a share, or a mistyped share? A share is the base64 string openbao:init printed, not the Operator password; the attempt is cancelled: run the task again"; }
+      printf '\n' >&2
+    fi
     grep -Eq '"complete"[[:space:]]*:[[:space:]]*true' <<<"$out" && break
   done
   root_done=1
-  enc="$(sed -n 's/.*"encoded_token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$out" | head -n 1)"
+  enc="$(json_str encoded_token "$out")"
   out=""
-  root_tok="$(printf '%s' "$enc" | bao operator generate-root -decode=- -otp="$root_otp")" && [ -n "$root_tok" ] || die 1 "the root token could not be decoded: the shares were probably wrong; run the task again"
+  if [ "$root_via" = legacy ]; then
+    root_tok="$(otp_decode "$enc" "$root_otp")" || root_tok=""
+    [ -n "$root_tok" ] || die 1 "the server made the root token but its answer could not be decoded (an OpenBao change?); a root token now exists that nobody holds (useless without the one-time password, which is gone); report this"
+  else
+    root_tok="$(printf '%s' "$enc" | bao operator generate-root -decode=- -otp="$root_otp")" || root_tok=""
+    [ -n "$root_tok" ] || die 1 "the root token could not be decoded: the shares were probably wrong; run the task again"
+  fi
   enc=""
   root_otp=""
   (
@@ -812,7 +935,6 @@ cmd_backup_role() {
   need_tty backup:role
   server_state
   state_exit
-  need_token
   as_root backup:role "making the backup role (it writes a policy and a role)" backup_role_step || die 1 "could not make the backup role (bao's message is above); the root token is revoked"
   echo "openbao: the backup role is in place; task openbao:backup uses it from now on, and the timer (backupInterval) can log in" >&2
 }
@@ -926,7 +1048,6 @@ cmd_restore() {
       bao operator unseal -reset >/dev/null 2>&1 || true
       unseal_loop
     fi
-    need_token
     root_replaced=1 # the snapshot replaces the store the root token lives in: nothing is left to revoke
     as_root restore "installing the snapshot" bao operator raft snapshot restore -force "$from" || die 1 "bao could not install the snapshot (its message is above); the current store is unchanged"
   fi
@@ -987,6 +1108,7 @@ case "$cmd" in
   seal) cmd_seal ;;
   status) cmd_status ;;
   configure) cmd_configure ;;
+  password) cmd_password ;;
   approle-issue) cmd_approle_issue ;;
   approle-revoke) cmd_approle_revoke ;;
   backup) cmd_backup ;;
