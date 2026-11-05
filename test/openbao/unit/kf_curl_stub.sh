@@ -9,8 +9,9 @@
 #
 # State files in $STUB_DIR: inited (true|false), sealed (true|false), progress, shares (the valid
 # unseal shares, one per line), cluster (the cluster id), live (live tokens, "token period" lines),
-# sid (the valid secret id of the operator AppRole), renew_fail (present: every renewal is refused),
-# down (present: nothing answers).
+# sids (the operator AppRole's secret ids, "accessor secret uses" lines, uses 0 unlimited), ctoks (the
+# confirmation tokens, "token accessor" lines), rot.pending (the new shares of a rekey waiting for
+# its verification), renew_fail (present: every renewal is refused), down (present: nothing answers).
 a="$*"
 printf 'curl %s\n' "${a//$'\n'/\\n}" >> "$STUB_LOG"
 method=GET url="" kfile="" has_data=0
@@ -74,7 +75,9 @@ case "$method $path" in
     reply 200 '{"keys":["a","b","c","d","e"],"keys_base64":["INIT1AAA","INIT2BBB","INIT3CCC","INIT4DDD","INIT5EEE"],"root_token":"s.GENROOT"}' ;;
   "POST auth/approle/login")
     [ "$sealed" = false ] || reply 503 '{"errors":["Vault is sealed"]}'
-    if [ "$(field role_id)" = ROLEID-op1 ] && [ "$(field secret_id)" = "$(get sid)" ]; then
+    line="$(grep " $(field secret_id) " "$S/sids" 2>/dev/null | head -n 1)"
+    if [ "$(field role_id)" = ROLEID-op1 ] && [ -n "$(field secret_id)" ] && [ -n "$line" ]; then
+      [ "${line##* }" != 1 ] || { grep -vxF "$line" "$S/sids" > "$S/sids.new"; mv "$S/sids.new" "$S/sids"; }
       n=$(($(get tokn || echo 0) + 1)); echo "$n" > "$S/tokn"
       echo "s.LOGIN$n $(get period || echo 3600)" >> "$S/live"
       reply 200 "{\"auth\":{\"client_token\":\"s.LOGIN$n\",\"accessor\":\"acc$n\",\"lease_duration\":3600,\"renewable\":true}}"
@@ -88,7 +91,22 @@ case "$method $path" in
     { [ ! -e "$S/renew_fail" ] && live; } || reply 403 '{"errors":["permission denied"]}'
     echo renewed >> "$S/renewals"
     reply 200 '{"auth":{"lease_duration":3}}' ;;
+  "GET sys/rotate/root/verify")
+    { live || grep -q "^$tok " "$S/ctoks" 2>/dev/null; } || reply 403 '{"errors":["permission denied"]}'
+    [ -s "$S/rot.pending" ] || reply 400 '{"errors":["no rotation configuration found"]}'
+    reply 200 '{"data":{"nonce":"v1","started":true,"progress":0}}' ;;
+  "DELETE sys/rotate/root/init")
+    if grep -q "^$tok " "$S/ctoks" 2>/dev/null; then rm -f "$S/rot.pending" "$S/ver"; echo cancelled-by-confirm-token >> "$S/rot.cancelled"; reply 204 ''; fi ;;
+  "PUT sys/rotate/root/verify")
+    grep -q "^$tok " "$S/ctoks" 2>/dev/null || reply 403 '{"errors":["permission denied"]}'
+    [ -s "$S/rot.pending" ] || reply 400 '{"errors":["no rotation in progress"]}'
+    grep -q '"nonce":"v1"' <<<"$body" || reply 400 '{"errors":["incorrect nonce"]}'
+    grep -qxF "$(field key)" "$S/rot.pending" || reply 400 '{"errors":["invalid key"]}'
+    n=$(($(get ver || echo 0) + 1)); echo "$n" > "$S/ver"
+    if [ "$n" -ge 2 ]; then mv "$S/rot.pending" "$S/shares"; echo 5 > "$S/n"; rm -f "$S/ver"; reply 200 '{"data":{"complete":true,"nonce":"v1"}}'; fi
+    reply 200 '{"data":{"complete":false,"progress":1}}' ;;
   "POST auth/token/revoke-self")
+    if grep -q "^$tok " "$S/ctoks" 2>/dev/null; then grep -v "^$tok " "$S/ctoks" > "$S/ctoks.new"; mv "$S/ctoks.new" "$S/ctoks"; echo confirm >> "$S/revoked"; reply 204 ''; fi
     if root; then rm -f "$S/root_live"; echo root >> "$S/revoked"; reply 204 ''; fi
     live || reply 403 '{"errors":["permission denied"]}'
     grep -v "^$tok " "$S/live" > "$S/live.new"; mv "$S/live.new" "$S/live"
@@ -120,6 +138,25 @@ case "$method $path" in
   "POST auth/approle/role/operator") printf '%s' "$body" > "$S/role.operator"; reply 204 '' ;;
   "POST auth/approle/role/backup") reply 204 '' ;;
   "LIST auth/approle/role") reply 200 '{"data":{"keys":["backup","operator","scribe"]}}' ;;
+  "LIST auth/approle/role/operator/secret-id")
+    [ -s "$S/sids" ] || reply 404 '{"errors":[]}'
+    reply 200 "{\"data\":{\"keys\":$(cut -d' ' -f1 "$S/sids" | jq -Rsc 'split("\n") | map(select(length > 0))')}}" ;;
+  "POST auth/approle/role/operator/secret-id-accessor/destroy")
+    grep -v "^$(field secret_id_accessor) " "$S/sids" > "$S/sids.new" 2>/dev/null; mv "$S/sids.new" "$S/sids"
+    reply 204 '' ;;
+  "POST auth/approle/role/operator/secret-id")
+    n=$(($(get sidn || echo 0) + 1)); echo "$n" > "$S/sidn"
+    uses=0; grep -q '"num_uses":1' <<<"$body" && uses=1
+    echo "ACC-operator-$n SECRETID-$n $uses" >> "$S/sids"
+    reply 200 "{\"data\":{\"secret_id\":\"SECRETID-$n\",\"secret_id_accessor\":\"ACC-operator-$n\"}}" ;;
+  "POST auth/token/create-orphan")
+    grep -q '"policies":\["keyfile-confirm"\]' <<<"$body" || reply 400 '{"errors":["stub: unexpected token"]}'
+    n=$(($(get ctn || echo 0) + 1)); echo "$n" > "$S/ctn"
+    echo "s.CONFIRM$n cacc$n" >> "$S/ctoks"
+    reply 200 "{\"auth\":{\"client_token\":\"s.CONFIRM$n\",\"accessor\":\"cacc$n\"}}" ;;
+  "POST auth/token/revoke-accessor")
+    a="$(field accessor)"; grep -v " $a\$" "$S/ctoks" > "$S/ctoks.new" 2>/dev/null; mv "$S/ctoks.new" "$S/ctoks"; echo "$a" >> "$S/revoked.accessor"
+    reply 204 '' ;;
   "LIST auth/approle/role/"*"/secret-id")
     r="${path#auth/approle/role/}"; r="${r%/secret-id}"
     [ -s "$S/acc.$r" ] || reply 404 '{"errors":[]}'
@@ -132,18 +169,25 @@ case "$method $path" in
     r="${path#auth/approle/role/}"; r="${r%/secret-id}"
     n=$(($(get sidn || echo 0) + 1)); echo "$n" > "$S/sidn"
     echo "ACC-$r-$n" >> "$S/acc.$r"
-    [ "$r" != operator ] || echo "SECRETID-$n" > "$S/sid"
     reply 200 "{\"data\":{\"secret_id\":\"SECRETID-$n\",\"secret_id_accessor\":\"ACC-$r-$n\"}}" ;;
   "GET auth/approle/role/"*"/role-id")
     r="${path#auth/approle/role/}"; r="${r%/role-id}"
     reply 200 "{\"data\":{\"role_id\":\"ROLEID-${r:0:2}1\"}}" ;;
-  "DELETE sys/rotate/root/init") reply 204 '' ;;
-  "PUT sys/rotate/root/init") echo 0 > "$S/rot"; reply 200 '{"data":{"nonce":"r1","started":true,"n":5,"t":2}}' ;;
+  "DELETE sys/rotate/root/init") rm -f "$S/rot.pending" "$S/ver"; echo cancelled >> "$S/rot.cancelled"; reply 204 '' ;;
+  "PUT sys/rotate/root/init")
+    echo 0 > "$S/rot"; rm -f "$S/rot.verify"
+    grep -q '"require_verification":true' <<<"$body" && touch "$S/rot.verify"
+    reply 200 '{"data":{"nonce":"r1","started":true,"n":5,"t":2}}' ;;
   "PUT sys/rotate/root/update")
     [ -z "${STUB_ROTATE_FAIL:-}" ] || reply 500 '{"errors":["stub rotation failure"]}'
     grep -qxF "$(field key)" "$S/shares" || reply 400 '{"errors":["invalid key"]}'
     n=$(($(get rot) + 1)); echo "$n" > "$S/rot"
     if [ "$n" -ge 2 ]; then
+      if [ -e "$S/rot.verify" ]; then
+        p=NEW; ! grep -qx NEW1AAAA "$S/shares" || p=NXT # a second rotation makes other shares
+        printf '%s\n' "${p}1AAAA" "${p}2BBBB" "${p}3CCCC" "${p}4DDDD" "${p}5EEEE" > "$S/rot.pending"
+        reply 200 "{\"data\":{\"complete\":true,\"verification_required\":true,\"verification_nonce\":\"v1\",\"keys_base64\":[\"${p}1AAAA\",\"${p}2BBBB\",\"${p}3CCCC\",\"${p}4DDDD\",\"${p}5EEEE\"]}}"
+      fi
       printf '%s\n' NEW1AAAA NEW2BBBB NEW3CCCC NEW4DDDD NEW5EEEE > "$S/shares"; echo 5 > "$S/n"
       reply 200 '{"data":{"complete":true,"keys_base64":["NEW1AAAA","NEW2BBBB","NEW3CCCC","NEW4DDDD","NEW5EEEE"]}}'
     fi

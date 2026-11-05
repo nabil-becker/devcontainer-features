@@ -8,15 +8,19 @@
 #                            sealed, log in as the operator AppRole, revoke the previous token with
 #                            itself, keep the new one where bao's token helper keeps it, start the
 #                            renewer
-#   keyfile create --stdin   two custody shares (or init:true on an empty server): rotate-keys to 5
-#                            shares, threshold 2, with a root token from the shares (no login); the
-#                            operator AppRole (1 hour periodic token, loopback only), every older
-#                            operator secret id destroyed, the userpass user operator deleted, every
-#                            other role's secret id reissued, the Operator logged in, a backup; the
-#                            new key file and the three custody shares on stdout
-#   keyfile rotate --stdin   the same from any two of the five shares
-#   keyfile status           shares, threshold, whether the operator AppRole and userpass user exist
-#   renew                    the renewer (started by unlock, create and rotate; detached)
+#   keyfile create --stdin   step 1 of 2, from two custody shares (or init:true on an empty
+#                            server): a root token from the shares (no login), the operator AppRole
+#                            (1 hour periodic token, loopback only) and the key file's secret id,
+#                            rotate-keys to 5 shares, threshold 2, WITH verification: the new shares
+#                            and the key file on stdout, not in force yet
+#   keyfile rotate --stdin   step 1 from any two of the five shares
+#   keyfile confirm --stdin  step 2, with the saved key file's two shares: the verification (the
+#                            new shares take effect), every other operator secret id destroyed, the
+#                            userpass user deleted, earlier logins revoked, the other roles
+#                            reissued, the Operator logged in, a backup
+#   keyfile cancel --stdin   drop a step 1 that was not confirmed (an init's empty store is cleared)
+#   keyfile status           shares, threshold, the operator AppRole and userpass user, a pending step
+#   renew                    the renewer (started by unlock and confirm; detached)
 #
 # The contract with the launcher (docs/proposals/openbao-key-file.md, design B with its architecture
 # review): secrets are read only from stdin; stdout carries one JSON object on one line, human lines
@@ -319,7 +323,8 @@ cmd_unlock_status() {
       tok=dead
     fi
     renewer_pid >/dev/null && ren=true
-    [ "$mode" = keyfile ] && [ "$sealed_b" = false ] && [ "$tok" = live ] && ready=true
+    # ready needs the renewer too (Amendment 1): a live token nobody renews dies within the period
+    [ "$mode" = keyfile ] && [ "$sealed_b" = false ] && [ "$tok" = live ] && [ "$ren" = true ] && ready=true
     [ "$reach" -eq 1 ] || say "the server at $addr does not answer (task openbao:server:status says whether it runs)"
   fi
   emit "{\"v\":1,\"mode\":\"$mode\",\"initialized\":$inited_b,\"sealed\":$sealed_b,\"token\":\"$tok\",\"renewer\":$ren,\"ready\":$ready,\"server\":$(jstr "$srv")}"
@@ -381,7 +386,7 @@ cmd_unlock_stdin() {
 # The root token from the shares through the loopback listener's unauthenticated root-token
 # endpoints (ADR 0055): no login is needed, so a lost key file and a dead token are recoverable from
 # two custody shares (review finding 1).
-root_tok="" root_started=0 root_done=0 rot_started=0 new_acc=""
+root_tok="" root_started=0 root_done=0 rot_started=0 new_acc="" refused_code=shares-refused refused_msg=""
 cleanup() {
   if [ "$rot_started" -eq 1 ] && [ -n "$root_tok" ]; then
     call DELETE sys/rotate/root/init "$root_tok" </dev/null
@@ -415,10 +420,10 @@ root_from_shares() { # the two shares in in_shares -> $root_tok, or fails
   for s in "${in_shares[@]}"; do
     printf '{"key":"%s","nonce":"%s"}' "$s" "$nonce" | call PUT sys/generate-root/update
     s=""
-    [ "$http" = 200 ] || fail 1 "shares-refused" "the server did not take a share for the root token (HTTP $http${body:+: $(jerr)}): not two shares of this store? Nothing was changed"
+    [ "$http" = 200 ] || fail 1 "$refused_code" "${refused_msg:-the server did not take a share for the root token (HTTP $http${body:+: $(jerr)}): not two shares of this store? Nothing was changed}"
     [ "$(jget '.complete | tostring')" = true ] && break
   done
-  [ "$(jget '.complete | tostring')" = true ] || fail 1 "shares-refused" "the root token generation did not complete with two shares; nothing was changed"
+  [ "$(jget '.complete | tostring')" = true ] || fail 1 "$refused_code" "${refused_msg:-the root token generation did not complete with two shares; nothing was changed}"
   root_done=1
   enc="$(jget .encoded_token)"
   body=""
@@ -491,7 +496,44 @@ reissue_files() { # <role>
   sid=""
 }
 
-cmd_keyfile_make() { # <create|rotate>
+# Create and rotate are two steps (Amendment 1, "confirm first"): the new shares take effect only
+# once the launcher has saved the OpenBao key file and sent two of its shares back. The state between
+# the steps is keyfile-pending in the volume (no secret: the kind, the server, the accessor of the new
+# secret id, the state). OpenBao's rekey verification answers only to a token and the old shares are
+# gone by then, so step 1 makes a narrow token (verify and cancel that rekey, 15 minutes, a few uses,
+# no other right) and hands it to the launcher inside the opaque nonce, never to a file.
+pending_file="$dir/keyfile-pending"
+pending_get() { sed -n "s/^$1=//p" "$pending_file" 2>/dev/null | head -n 1; } # <field>
+pending_set() { # <kind> <server> <secret id accessor> <state> [<confirmation token accessor> [<verification nonce>]]
+  (printf 'kind=%s\nserver=%s\naccessor=%s\nstate=%s\ntoken_accessor=%s\nnonce=%s\ndate=%s\n' "$1" "$2" "$3" "$4" "${5:-}" "${6:-}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$pending_file.tmp.$$" &&
+    mv -f "$pending_file.tmp.$$" "$pending_file") 2>/dev/null || say "could not record the pending step in $pending_file"
+}
+pending_state() { # <state>: the same record with another state
+  [ -f "$pending_file" ] || return 0
+  pending_set "$(pending_get kind)" "$(pending_get server)" "$(pending_get accessor)" "$1" "$(pending_get token_accessor)" "$(pending_get nonce)"
+}
+confirm_policy() {
+  printf '%s\n' '# The second step of the OpenBao key file (keyfile confirm): verify or cancel the pending rekey, nothing else.' \
+    'path "sys/rotate/root/verify" {' '  capabilities = ["read", "update", "delete"]' '}' \
+    'path "sys/rotate/root/init" {' '  capabilities = ["read", "delete"]' '}' \
+    'path "auth/token/revoke-self" {' '  capabilities = ["update"]' '}'
+}
+# A store initialised by step 1 and never confirmed holds nothing: it is stopped, emptied and started
+# again (the cancel of an init, and a new init after a lost answer).
+wipe_store() {
+  local pid _
+  stop_renewer
+  pid="$(cat "$dir/server.pid" 2>/dev/null || true)"
+  if [ -n "$pid" ] && [ "$(cat "/proc/$pid/comm" 2>/dev/null)" = bao ]; then
+    kill "$pid" 2>/dev/null || true
+    for _ in $(seq 1 40); do [ -d "/proc/$pid" ] || break; sleep 0.25; done
+  fi
+  rm -rf "${dir:?}/raft" "$dir/token" "$dir/cluster-id" "$dir/approle" "$pending_file"
+  "$(dirname "$self")/openbao-setup" start >&2 || true
+  state
+}
+
+cmd_keyfile_make() { # <create|rotate>: step 1
   local kind="$1" repo init=0 keys=() k
   refuse_agent "keyfile $kind"
   need_keyfile
@@ -507,15 +549,21 @@ cmd_keyfile_make() { # <create|rotate>
   state
   [ "$reach" -eq 1 ] || fail 1 unreachable "the server at $addr does not answer: the start hook (openbao-setup start) starts it"
 
+  local vnonce="" ctok="" ctacc=""
   if [ "$init" -eq 1 ]; then
+    if [ "$inited" = true ] && [ "$(pending_get kind)" = init ] && [ "$(pending_get state)" != confirmed ]; then
+      say "an earlier keyfile create initialised this server and was never confirmed (its answer was lost?): the empty store is cleared and initialised again"
+      wipe_store
+    fi
     [ "$inited" = false ] || fail 1 "already-initialised" "the server is already initialised: keyfile create takes two of its unseal shares (the custody shares) instead of init"
     printf '{"secret_shares":5,"secret_threshold":2}' | call PUT sys/init
     [ "$http" = 200 ] || fail 1 "init-failed" "the server could not be initialised (HTTP $http${body:+: $(jerr)})"
     while IFS= read -r k; do keys+=("$k"); done < <(jget '.keys_base64[]?')
     root_tok="$(jget .root_token)"
     body=""
-    step_hint="the store is new and holds nothing: stop the server, delete $dir/raft, start it (task openbao:setup) and run this again"
+    step_hint="the store is new and holds nothing: keyfile cancel (or a new keyfile create with init) clears it"
     [ "${#keys[@]}" -eq 5 ] && [ -n "$root_tok" ] || fail 1 "init-failed" "the server was initialised but did not answer with five shares and a root token; $step_hint"
+    pending_set init "" "" pending
     unseal_with "${keys[0]}" "${keys[1]}" || fail 1 "init-failed" "the new shares did not unseal the new server; $step_hint"
   else
     [ "$inited" = true ] || fail 1 "not-initialised" "the server is not initialised: send init (keyfile create with init:true) instead of shares"
@@ -525,10 +573,22 @@ cmd_keyfile_make() { # <create|rotate>
     fi
     root_from_shares
   fi
+  state
+  remember_cluster
 
   configure_keyfile
-  # every earlier secret id of the operator role goes (review finding 5), then the one of the key file
-  destroy_secret_ids operator || fail 1 "step-failed" "destroying the earlier secret ids of the operator AppRole failed (HTTP $http)"
+  confirm_policy | jq -Rs '{policy: .}' | rcall PUT sys/policies/acl/keyfile-confirm
+  step "writing the confirmation policy"
+  # A step 1 whose answer was lost or cancelled: its rekey is cancelled and its secret id destroyed.
+  rcall DELETE sys/rotate/root/init </dev/null
+  if [ "$(pending_get state)" != confirmed ] && [ -n "$(pending_get accessor)" ]; then
+    printf '{"secret_id_accessor":"%s"}' "$(pending_get accessor)" | rcall POST auth/approle/role/operator/secret-id-accessor/destroy
+  fi
+  if [ -n "$(pending_get token_accessor)" ]; then
+    printf '{"accessor":"%s"}' "$(pending_get token_accessor)" | rcall POST auth/token/revoke-accessor
+  fi
+  # The key file's secret id. The earlier ones stay valid until the confirmation (the key file in
+  # force must keep working if this is never confirmed).
   local sid rid
   printf '{}' | rcall POST auth/approle/role/operator/secret-id
   step "making the operator AppRole's secret id"
@@ -538,12 +598,11 @@ cmd_keyfile_make() { # <create|rotate>
   step "reading the operator AppRole's role id"
   rid="$(jget .data.role_id)"
   body=""
-  [ -n "$sid" ] && [ -n "$rid" ] || fail 1 "step-failed" "the operator AppRole answered without a secret id or role id"
+  [ -n "$sid" ] && [ -n "$rid" ] && [ -n "$new_acc" ] || fail 1 "step-failed" "the operator AppRole answered without a secret id, accessor or role id"
 
   if [ "$init" -eq 0 ]; then
-    # rotate-keys to five shares, threshold two: the last step that can fail without loss
-    rcall DELETE sys/rotate/root/init </dev/null
-    printf '{"secret_shares":5,"secret_threshold":2}' | rcall PUT sys/rotate/root/init
+    # rotate-keys to five shares, threshold two, with verification: in force only after keyfile confirm
+    printf '{"secret_shares":5,"secret_threshold":2,"require_verification":true}' | rcall PUT sys/rotate/root/init
     step "starting rotate-keys"
     rot_started=1
     local nonce
@@ -555,17 +614,98 @@ cmd_keyfile_make() { # <create|rotate>
       [ "$(jget '.data.complete | tostring')" = true ] && break
     done
     while IFS= read -r k; do keys+=("$k"); done < <(jget '.data.keys_base64[]?')
+    vnonce="$(jget .data.verification_nonce)"
     body=""
-    [ "${#keys[@]}" -eq 5 ] || { keys=(); fail 1 "rotate-failed" "rotate-keys did not complete with five new shares; the shares in force still hold"; }
+    [ "${#keys[@]}" -eq 5 ] && [ -n "$vnonce" ] || { keys=(); fail 1 "rotate-failed" "rotate-keys did not answer with five new shares waiting for verification; the shares in force still hold"; }
+    printf '{"policies":["keyfile-confirm"],"no_default_policy":true,"ttl":"15m","num_uses":8,"display_name":"keyfile-confirm"}' | rcall POST auth/token/create-orphan
+    step "making the confirmation token"
+    ctok="$(jget .auth.client_token)"
+    ctacc="$(jget .auth.accessor)"
+    body=""
+    [ -n "$ctok" ] || { keys=(); fail 1 "step-failed" "the confirmation token was not made; the shares in force still hold"; }
     rot_started=0
   fi
   in_shares=()
-  # ---- from here the new shares are in force: they are always printed ----
+  if [ "$init" -eq 1 ]; then
+    pending_set init "$cluster" "$new_acc" pending "" init
+  else
+    pending_set rekey "$cluster" "$new_acc" pending "$ctacc" "$vnonce"
+  fi
   new_acc=""
+  cleanup # the root token is revoked; the rekey waits for its verification
+  trap - EXIT INT TERM HUP
+  local cnonce=init
+  [ "$init" -eq 1 ] || cnonce="$vnonce:$ctok"
+  say "step 1 of 2: the new shares are made but not in force. Save the OpenBao key file, then keyfile confirm with its two shares (within 15 minutes); keyfile cancel drops it. The shares in force still hold until then"
+  local now
+  now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  printf '{"v":1,"ok":true,"pending":true,"server":"%s","nonce":"%s","custody":["%s","%s","%s"],"keyfile":{"v":1,"server":"%s","repo":%s,"created":"%s","shares":["%s","%s"],"role_id":"%s","secret_id":"%s"},"warnings":[]}\n' \
+    "$cluster" "$cnonce" "${keys[0]}" "${keys[1]}" "${keys[2]}" "$cluster" "$(jstr "$repo")" "$now" "${keys[3]}" "${keys[4]}" "$rid" "$sid"
+  keys=() sid="" ctok="" cnonce=""
+}
+
+cmd_keyfile_confirm() { # step 2
+  local fsrv nonce vn="" ctok="" k
+  refuse_agent "keyfile confirm"
+  need_keyfile
+  read_input
+  fsrv="$(ifield .server)"
+  nonce="$(ifield .nonce)"
+  id_ok "$fsrv" || fail 1 input "the input names no server (server: the cluster id)"
+  if [ "$nonce" != init ]; then
+    [[ "$nonce" =~ ^([A-Za-z0-9-]{1,64}):([A-Za-z0-9._-]{4,256})$ ]] || { nonce=""; fail 1 input "the input's nonce is not the one keyfile create or rotate answered"; }
+    vn="${BASH_REMATCH[1]}"
+    ctok="${BASH_REMATCH[2]}"
+  fi
+  nonce=""
+  read_shares
+  input=""
+  trap 'cleanup' EXIT
+  trap 'cleanup; exit 130' INT TERM HUP
+  state
+  [ "$reach" -eq 1 ] || fail 1 unreachable "the server at $addr does not answer"
+  [ "$inited" = true ] || fail 1 "not-initialised" "the server is not initialised: nothing to confirm"
+  local srv="${cluster:-$(known_cluster)}"
+  [ -z "$srv" ] || [ "$srv" = "$fsrv" ] || fail 1 "other-server" "this confirmation is for server $fsrv, but the running server is $srv"
+  # 1. the verification (a rekey only), with the narrow token; an earlier confirm may have done it
+  if [ -n "$ctok" ] && [ "$sealed" = false ] && [ "$(pending_get state)" != confirmed ]; then
+    for k in "${in_shares[@]}"; do
+      printf '{"key":"%s","nonce":"%s"}' "$k" "$vn" | call PUT sys/rotate/root/verify "$ctok"
+      k=""
+      case "$http" in
+        200) [ "$(jget '(.data // .).complete | tostring')" = true ] && break ;;
+        400) break ;; # no rotation in progress: done by an earlier confirm, or dropped (checked below)
+        403) ctok=""; fail 1 "confirm-expired" "the confirmation came too late (its token lasts 15 minutes) or was cancelled: the shares in force still hold. Run keyfile create or rotate again" ;;
+        *) fail 1 "verify-failed" "the server did not take the key file's shares for the verification (HTTP $http${body:+: $(jerr)}); the shares in force still hold" ;;
+      esac
+    done
+    call POST auth/token/revoke-self "$ctok" </dev/null
+    ctok=""
+  fi
+  # 2. the new shares must now open the store: a root token from them (no login needed)
+  if [ "$sealed" = true ]; then
+    unseal_with "${in_shares[@]}" || fail 1 "not-confirmed" "the key file's shares do not open the store: the rotation was not confirmed in time (cancelled, or the server restarted before the confirmation dropped it). The shares in force still hold: run keyfile create or rotate again"
+  fi
+  refused_code=not-confirmed
+  refused_msg="the key file's shares do not open the store: the rotation was not confirmed in time (cancelled, or the server restarted before the confirmation). The shares in force still hold: run keyfile create or rotate again"
+  root_from_shares
+  in_shares=()
+  pending_state confirmed
   state
   remember_cluster
-  local warn=()
-  # The userpass user operator goes: a key-file server has no password.
+  # 3. what the rotation ends with
+  local warn=() keep r
+  keep="$(pending_get accessor)"
+  # every other secret id of the operator role goes (review finding 5): only the key file's stays
+  if [ -n "$keep" ]; then
+    while IFS= read -r r; do
+      [ -n "$r" ] && [ "$r" != "$keep" ] || continue
+      printf '{"secret_id_accessor":"%s"}' "$r" | rcall POST auth/approle/role/operator/secret-id-accessor/destroy
+      ok_http || warn+=("an earlier secret id of the operator AppRole could not be destroyed (HTTP $http)")
+    done < <(list_keys auth/approle/role/operator/secret-id)
+  else
+    warn+=("the record of step 1 is missing ($pending_file): the earlier secret ids of the operator AppRole were left; keyfile rotate again destroys them")
+  fi
   rcall GET sys/auth </dev/null
   if [ "$(jget '(.data // .) | has("userpass/") | tostring')" = true ]; then
     rcall DELETE auth/userpass/users/operator </dev/null
@@ -577,18 +717,23 @@ cmd_keyfile_make() { # <create|rotate>
     rcall PUT "sys/leases/revoke-prefix/$k" </dev/null
     ok_http || warn+=("the tokens made by $k could not be revoked (HTTP $http)")
   done
-  # The backs' roles get new secret ids (after a restore their files are stale; after a theft, theirs too).
-  local r
   while IFS= read -r r; do
     [ -n "$r" ] && [ "$r" != operator ] || continue
     reissue_files "$r" || warn+=("the role $r could not be reissued: task openbao:approle:issue ALL=1")
   done < <(list_keys auth/approle/role)
-  # The root token is revoked, then the Operator logs in with the new key file.
+  # The Operator's login: the key file's secret id is not sent back, so a one-use secret id (2
+  # minutes) is made for this one login and spent by it.
+  local rid sid lrc=0
+  rcall GET auth/approle/role/operator/role-id </dev/null
+  rid="$(jget .data.role_id)"
+  printf '{"num_uses":1,"ttl":"2m"}' | rcall POST auth/approle/role/operator/secret-id
+  sid="$(jget .data.secret_id)"
+  body=""
   cleanup
   trap - EXIT INT TERM HUP
-  local lrc=0
-  login "$rid" "$sid" || lrc=$?
-  [ "$lrc" -eq 0 ] || warn+=("the login with the new key file failed (HTTP $http): task dc:openbao:unlock tries again")
+  if [ -n "$rid" ] && [ -n "$sid" ]; then login "$rid" "$sid" || lrc=$?; else lrc=1; fi
+  sid=""
+  [ "$lrc" -eq 0 ] || warn+=("the login after the rotation failed: task dc:openbao:unlock logs in with the new key file")
   # A backup under the new shares before reporting (review finding 4).
   local bk="none" dest
   dest="$(optval BACKUPDEST OPENBAO_SETUP_BACKUP_DEST "")"
@@ -605,13 +750,51 @@ cmd_keyfile_make() { # <create|rotate>
     warn+=("no backup destination is recorded (the backupDest option, or task openbao:backup DEST=<folder>): take a backup now, since backups made before this rotation open only with the previous shares")
   fi
   for k in "${warn[@]}"; do say "$k"; done
-  say "the store has 5 unseal shares, any 2 open it: 1 to 3 are the custody shares (keep them, and keep the previous ones until the backups made under them are pruned), 4 and 5 are the OpenBao key file's"
-  local now
-  now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  printf '{"v":1,"ok":true,"server":"%s","custody":["%s","%s","%s"],"keyfile":{"v":1,"server":"%s","repo":%s,"created":"%s","shares":["%s","%s"],"role_id":"%s","secret_id":"%s"},"backup":%s,"warnings":%s}\n' \
-    "$cluster" "${keys[0]}" "${keys[1]}" "${keys[2]}" "$cluster" "$(jstr "$repo")" "$now" "${keys[3]}" "${keys[4]}" "$rid" "$sid" "$(jstr "$bk")" \
+  say "confirmed: the store has 5 unseal shares, any 2 open it: 1 to 3 are the custody shares (keep them, and keep the previous ones until the backups made under them are pruned), 4 and 5 are the OpenBao key file's"
+  printf '{"v":1,"ok":true,"server":"%s","backup":%s,"warnings":%s}\n' "$cluster" "$(jstr "$bk")" \
     "$(if [ "${#warn[@]}" -gt 0 ]; then printf '%s\n' "${warn[@]}" | jq -Rsc 'split("\n") | map(select(length > 0))'; else echo '[]'; fi)"
-  keys=() sid=""
+}
+cmd_keyfile_cancel() {
+  local fsrv kind st
+  refuse_agent "keyfile cancel"
+  need_keyfile
+  read_input
+  fsrv="$(ifield .server)"
+  kind="$(pending_get kind)"
+  st="$(pending_get state)"
+  case "$st" in
+    "") fail 1 "nothing-pending" "there is no keyfile create or rotate waiting for its confirmation: nothing was changed" ;;
+    confirmed) fail 1 "already-confirmed" "the rotation is already confirmed and in force: a cancel cannot undo it (keyfile rotate makes new shares)" ;;
+  esac
+  local psrv given gtok="" pn
+  psrv="$(pending_get server)"
+  [ -z "$psrv" ] || [ -z "$fsrv" ] || [ "$psrv" = "$fsrv" ] || fail 1 "other-server" "the pending step is for server $psrv, not $fsrv: nothing was changed"
+  # an optional nonce (Amendment 2): only the step it names is cancelled; one carrying the
+  # confirmation token also cancels the waiting rekey on the server at once
+  given="$(printf '%s' "$input" | jq -r '.nonce // empty' 2>/dev/null)"
+  pn="$(pending_get nonce)"
+  if [ -n "$given" ]; then
+    [[ "$given" == *:* ]] && gtok="${given#*:}"
+    given="${given%%:*}"
+    [ "$given" = "$pn" ] || { gtok=""; fail 1 "nonce-mismatch" "the step waiting for its confirmation is not the one this nonce names: nothing was cancelled"; }
+  fi
+  input=""
+  if [ "$kind" = init ]; then
+    say "the store initialised by keyfile create was never confirmed and holds nothing: it is cleared"
+    wipe_store
+    emit '{"v":1,"ok":true,"done":"cancelled: the server is empty again","warnings":[]}'
+    return 0
+  fi
+  input=""
+  if [ -n "$gtok" ] && [[ "$gtok" =~ ^[A-Za-z0-9._-]{4,256}$ ]]; then
+    call DELETE sys/rotate/root/init "$gtok" </dev/null
+    ok_http && say "the waiting rekey is cancelled on the server"
+    call POST auth/token/revoke-self "$gtok" </dev/null
+  fi
+  gtok=""
+  pending_state cancelled
+  say "cancelled: the new shares never took effect and the shares in force still hold; the waiting rekey is dropped at the next keyfile create or rotate (or when the server restarts)"
+  emit '{"v":1,"ok":true,"done":"cancelled: the shares in force still hold","warnings":[]}'
 }
 
 cmd_keyfile_status() {
@@ -619,8 +802,19 @@ cmd_keyfile_status() {
   state
   [ "$reach" -eq 1 ] || fail 1 unreachable "the server at $addr does not answer"
   [ "$sealed" = false ] && remember_cluster
-  local ar=null up=null t
+  local ar=null up=null t pend=""
+  # pending (Amendment 2): the verification nonce of a step 1 waiting for its confirmation ("init"
+  # for an init), else empty. The record of step 1 says it; the server, when the saved login may
+  # read the rekey's status, has the last word. A server start drops a waiting rekey (start hook).
+  [ "$(pending_get state)" != pending ] || pend="$(pending_get nonce)"
   t="$(saved_token)"
+  if [ -n "$t" ] && [ "$sealed" = false ] && [ "$(pending_get kind)" != init ]; then
+    call GET sys/rotate/root/verify "$t" </dev/null
+    case "$http" in
+      200) pend="$(jget '(.data // .).nonce')" ;;
+      400 | 404) pend="" ;;
+    esac
+  fi
   if [ -n "$t" ] && [ "$sealed" = false ]; then
     call LIST auth/approle/role "$t" </dev/null
     case "$http" in
@@ -634,7 +828,7 @@ cmd_keyfile_status() {
     esac
   fi
   t=""
-  emit "{\"v\":1,\"ok\":true,\"server\":$(jstr "${cluster:-$(known_cluster)}"),\"shares\":${n_now:-0},\"threshold\":${t_now:-0},\"approle\":${ar:-null},\"userpass\":${up:-null}}"
+  emit "{\"v\":1,\"ok\":true,\"server\":$(jstr "${cluster:-$(known_cluster)}"),\"shares\":${n_now:-0},\"threshold\":${t_now:-0},\"approle\":${ar:-null},\"userpass\":${up:-null},\"pending\":$(jstr "$pend")}"
 }
 
 command -v jq >/dev/null 2>&1 || { echo '{"v":1,"ok":false,"error":"jq is not installed: rebuild the devcontainer","code":"broken"}'; exit 1; }
@@ -647,7 +841,15 @@ case "${1:-} ${2:-}" in
     [ "${3:-}" = --stdin ] || fail 2 usage "usage: openbao-setup keyfile $2 --stdin (the input on stdin)"
     cmd_keyfile_make "$2"
     ;;
+  "keyfile confirm")
+    [ "${3:-}" = --stdin ] || fail 2 usage "usage: openbao-setup keyfile confirm --stdin (the input on stdin)"
+    cmd_keyfile_confirm
+    ;;
+  "keyfile cancel")
+    [ "${3:-}" = --stdin ] || fail 2 usage "usage: openbao-setup keyfile cancel --stdin (the input on stdin)"
+    cmd_keyfile_cancel
+    ;;
   "keyfile status") cmd_keyfile_status ;;
   "renew ") cmd_renew ;;
-  *) fail 2 usage "usage: openbao-setup unlock --status|--stdin, keyfile create|rotate --stdin, keyfile status (the workstation's launcher runs these)" ;;
+  *) fail 2 usage "usage: openbao-setup unlock --status|--stdin, keyfile create|rotate|confirm|cancel --stdin, keyfile status (the workstation's launcher runs these)" ;;
 esac

@@ -3,8 +3,13 @@
 # server this Feature runs (mode=server, unlock=keyfile, OpenBao 2.7.1), remoteUser=vscode, with the
 # real bao: what the Docker-free test (test/openbao/unit/keyfile_test.sh) can only stub. The
 # workstation's launcher is played by piping JSON into /usr/local/bin/openbao-setup, as it does.
-#   - a store made the operator way (task openbao:init, 3 shares) moved to the key file by keyfile
-#     create from two of its shares: 5 shares, threshold 2, the operator AppRole, no userpass user;
+#   - an init by the key file cancelled before its confirmation (the store emptied again);
+#   - a store made the operator way (task openbao:init, 3 shares) moved to the key file in two steps
+#     (Amendment 1): step 1 leaves the old shares in force (they unseal after a restart, which drops
+#     the waiting rekey; its confirmation is then refused), a lost step 1 is replaced by a new one,
+#     the confirmation makes 5 shares, threshold 2, the operator AppRole, no userpass user; confirm
+#     again is ok; keyfile status's pending (Amendment 2) follows it all; a rotation cancelled with
+#     a wrong nonce (refused) and its own (the key file in force stays);
 #   - a restart: the server comes back sealed, unlock --stdin unseals it from the key file's two
 #     shares through sys/unseal and logs in with the AppRole (a periodic, loopback-bound token, the
 #     renewer started); the old 3-share set refused; the Operator's token cannot touch its own role;
@@ -101,6 +106,14 @@ stop_server() {
 restart() { stop_server; openbao-setup start > /dev/null; }
 keyfile() { jq -c .keyfile "$1"; } # <create or rotate output>: the key file the launcher would keep
 unlock_with() { "$setup" unlock --stdin > "$work/unlock.json" 2> "$work/unlock.err"; } # stdin: the key file
+# step 1 and step 2 as the launcher runs them (Amendment 1): <create|rotate> <name>, the input on
+# stdin; step 1's answer is $work/<name>.json, the confirmation's $work/<name>.confirm.json
+confirm_input() { jq -c '{v: 1, server: .server, nonce: .nonce, shares: .keyfile.shares}' "$1"; }
+two_step() {
+  "$setup" keyfile "$1" --stdin > "$work/$2.json" 2> "$work/$2.err" || return $?
+  confirm_input "$work/$2.json" | "$setup" keyfile confirm --stdin > "$work/$2.confirm.json" 2>> "$work/$2.err"
+}
+kstatus() { "$setup" keyfile status | jq -r "$1"; } # <filter>
 
 # --- the start hook, keyfile mode -------------------------------------------------------------------
 openbao-setup > "$work/setup.out"
@@ -113,6 +126,15 @@ check "the option is baked" grep -qx 'UNLOCK=keyfile' /usr/local/share/openbao-f
 rc=0; out="$(t init 2>&1 < /dev/null)" || rc=$?
 check "task openbao:init is refused with unlock keyfile, naming keyfile:create" contains "$out" 'dc:openbao:keyfile:create'
 
+# --- an init by the key file, cancelled before its confirmation: the server is empty again ---------
+rc=0; printf '{"v":1,"init":true,"repo":"demo"}' | "$setup" keyfile create --stdin > "$work/init.json" 2> /dev/null || rc=$?
+check "keyfile create with init (step 1) exits 0" [ "$rc" = 0 ]
+check "  pending, nonce init" [ "$(jf '"\(.pending) \(.nonce)"' "$work/init.json")" = "true init" ]
+check "  keyfile status: pending init, 5 shares" [ "$(kstatus '"\(.pending) \(.shares)"')" = "init 5" ]
+rc=0; printf '{"v":1,"server":"%s"}' "$(jf .server "$work/init.json")" | "$setup" keyfile cancel --stdin > /dev/null 2>&1 || rc=$?
+check "keyfile cancel of that init exits 0" [ "$rc" = 0 ]
+check "  the server is not initialised again" status_is .initialized false
+
 # --- a store made the operator way (3 shares, a password), then moved to the key file ------------
 term "OPENBAO_SETUP_UNLOCK=operator task -t $tf init" "$work/dest" "$pw" "$pw" SHARES
 check "task openbao:init (unlock operator for it) exits 0" [ "$term_rc" = 0 ]
@@ -123,15 +145,36 @@ old3="$(sed -n 3p "$work/shares3")"
 restart
 check "after a restart the 3-share server is sealed" status_is .sealed true
 
+# step 1 whose answer is "lost": the old shares still open the store until a confirmation
 rc=0
-printf '{"v":1,"shares":["%s","%s"],"repo":"demo"}' "$old1" "$old3" | "$setup" keyfile create --stdin > "$work/create.json" 2> "$work/create.err" || rc=$?
-check "keyfile create from two of the three shares exits 0" [ "$rc" = 0 ]
+printf '{"v":1,"shares":["%s","%s"],"repo":"demo"}' "$old1" "$old3" | "$setup" keyfile create --stdin > "$work/lost.json" 2> /dev/null || rc=$?
+check "keyfile create step 1 exits 0, pending" [ "$rc:$(jf .pending "$work/lost.json")" = 0:true ]
+check "  the shares in force are still 3 (verification pending)" [ "$(api sys/seal-status | jq -r .n)" = 3 ]
+check "  keyfile status: pending is the verification nonce" [ "$(kstatus .pending)" = "$(jf '.nonce | split(":")[0]' "$work/lost.json")" ]
+check "  no confirmation token in the volume" not in_files "$(jf '.nonce | split(":")[1]' "$work/lost.json")" "$state"
+restart
+check "  after a server restart the old shares still unseal" [ "$(curl -s -X PUT -d "{\"key\":\"$old1\"}" "$BAO_ADDR/v1/sys/unseal" > /dev/null; curl -s -X PUT -d "{\"key\":\"$old2\"}" "$BAO_ADDR/v1/sys/unseal" | jq -r .sealed)" = false ]
+check "  keyfile status: the restart dropped it (pending empty, 3 shares)" [ "$(kstatus '"[\(.pending)] \(.shares)"')" = "[] 3" ]
+rc=0; confirm_input "$work/lost.json" | "$setup" keyfile confirm --stdin > "$work/lost.confirm.json" 2> /dev/null || rc=$?
+check "  its confirmation fails (not-confirmed), nothing changes" [ "$rc:$(jf .code "$work/lost.confirm.json"):$(api sys/seal-status | jq -r .n)" = 1:not-confirmed:3 ]
+# step 1 lost while the server runs, then step 1 again: the waiting rekey is cancelled first
+printf '{"v":1,"shares":["%s","%s"],"repo":"demo"}' "$old1" "$old3" | "$setup" keyfile create --stdin > "$work/lost2.json" 2> /dev/null
+rc=0
+printf '{"v":1,"shares":["%s","%s"],"repo":"demo"}' "$old1" "$old3" | two_step create create || rc=$?
+check "keyfile create from two of the three shares, then confirm, exits 0" [ "$rc" = 0 ]
+cid0="$(jf .server "$work/create.json")"
+check "  confirm answered ok" [ "$(jf .ok "$work/create.confirm.json")" = true ]
+check "  keyfile status: pending empty after the confirmation" [ "$(kstatus .pending)" = "" ]
+rc=0; confirm_input "$work/lost2.json" | "$setup" keyfile confirm --stdin > /dev/null 2>&1 || rc=$?
+check "  the lost step 1's confirmation is refused" [ "$rc" = 1 ]
+rc=0; confirm_input "$work/create.json" | "$setup" keyfile confirm --stdin > "$work/again.json" 2> /dev/null || rc=$?
+check "  confirm run again (a lost answer) is ok" [ "$rc:$(jf .ok "$work/again.json")" = 0:true ]
 check "its stdout is one JSON line" [ "$(wc -l < "$work/create.json")" = 1 ]
 check "ok" [ "$(jf .ok "$work/create.json")" = true ]
 check "three custody shares and two in the key file" [ "$(jf '(.custody | length | tostring) + (.keyfile.shares | length | tostring)' "$work/create.json")" = 32 ]
 check "the server now has 5 shares, threshold 2" [ "$(api sys/seal-status | jq -r '"\(.n)/\(.t)"')" = 5/2 ]
 check "the key file names the running cluster" [ "$(jf .keyfile.server "$work/create.json")" = "$(api sys/seal-status | jq -r .cluster_id)" ]
-check "a backup was taken under the new shares" test -s "$(jf .backup "$work/create.json")"
+check "a backup was taken under the new shares" test -s "$(jf .backup "$work/create.confirm.json")"
 check "it says to keep the previous custody shares until those backups are pruned" grep -q 'keep the previous ones' "$work/create.err"
 "$setup" keyfile status > "$work/kstatus.json"
 check "keyfile status: the operator AppRole exists" [ "$(jf .approle "$work/kstatus.json")" = true ]
@@ -191,10 +234,22 @@ keyfile "$work/create.json" | unlock_with
 check "  unlock --stdin brings the login back (no typing)" status_is .ready true
 
 # --- a rotation from the key file's own shares ------------------------------------------------------
+# a rotation cancelled: a wrong nonce is refused, the right one cancels, the key file in force stays
+printf '{"v":1,"shares":%s,"repo":"demo"}' "$(jq -c .keyfile.shares "$work/create.json")" | "$setup" keyfile rotate --stdin > "$work/cancelled.json" 2> /dev/null
+check "keyfile rotate step 1: keyfile status pending, still 5 shares" [ "$(kstatus '"\(.pending) \(.shares)"')" = "$(jf '.nonce | split(":")[0]' "$work/cancelled.json") 5" ]
+rc=0; printf '{"v":1,"server":"%s","nonce":"not-this-one"}' "$cid0" | "$setup" keyfile cancel --stdin > "$work/c.json" 2> /dev/null || rc=$?
+check "  keyfile cancel with another nonce is refused (nonce-mismatch)" [ "$rc:$(jf .code "$work/c.json")" = 1:nonce-mismatch ]
+rc=0; jq -c '{v: 1, server: .server, nonce: .nonce}' "$work/cancelled.json" | "$setup" keyfile cancel --stdin > /dev/null 2>&1 || rc=$?
+check "  keyfile cancel with its nonce exits 0" [ "$rc" = 0 ]
+check "  keyfile status: pending empty" [ "$(kstatus .pending)" = "" ]
+restart
+keyfile "$work/create.json" | unlock_with
+check "  the key file in force still opens the server" status_is .ready true
+
 before="$(cat "$state/token")"
 rc=0
-printf '{"v":1,"shares":%s,"repo":"demo"}' "$(jq -c .keyfile.shares "$work/create.json")" | "$setup" keyfile rotate --stdin > "$work/rotate.json" 2> "$work/rotate.err" || rc=$?
-check "keyfile rotate from the key file's shares exits 0" [ "$rc" = 0 ]
+printf '{"v":1,"shares":%s,"repo":"demo"}' "$(jq -c .keyfile.shares "$work/create.json")" | two_step rotate rotate || rc=$?
+check "keyfile rotate from the key file's shares, then confirm, exits 0" [ "$rc" = 0 ]
 check "  all five shares are new" [ "$(jq -r '[.custody[], .keyfile.shares[]] | join(" ")' "$work/rotate.json" | tr ' ' '\n' | grep -cxFf <(jq -r '.custody[], .keyfile.shares[]' "$work/create.json") || true)" = 0 ]
 check "  the previous Operator token is revoked" not env BAO_TOKEN="$before" bao token lookup
 check "  ready with the new login" status_is .ready true
@@ -212,7 +267,7 @@ restart
 rm -f "$state/token"
 check "sealed and no token" status_is '(.sealed | tostring) + .token' truemissing
 rc=0
-printf '{"v":1,"shares":["%s","%s"],"repo":"demo"}' "$(jf '.custody[0]' "$work/rotate.json")" "$(jf '.custody[2]' "$work/rotate.json")" | "$setup" keyfile rotate --stdin > "$work/recover.json" 2> "$work/recover.err" || rc=$?
+printf '{"v":1,"shares":["%s","%s"],"repo":"demo"}' "$(jf '.custody[0]' "$work/rotate.json")" "$(jf '.custody[2]' "$work/rotate.json")" | two_step rotate recover || rc=$?
 check "two custody shares make a new key file with no login (exit 0)" [ "$rc" = 0 ]
 check "  ready again" status_is .ready true
 check "  the data is there" [ "$(dcf-secret get kf/probe --field value)" = v1 ]
@@ -244,7 +299,7 @@ check "  it asked for no password" not grep -q 'Password (will' "$work/screen.tx
 check "  it ends with the pointer to task dc:openbao:keyfile:rotate" grep -q 'dc:openbao:keyfile:rotate' "$work/screen.txt"
 check "  the restored store keeps its cluster id" status_is .server "$cid"
 rc=0
-printf '{"v":1,"shares":["%s","%s"],"repo":"demo"}' "$(jf '.custody[0]' "$work/recover.json")" "$(jf '.keyfile.shares[1]' "$work/recover.json")" | "$setup" keyfile rotate --stdin > "$work/restored.json" 2> /dev/null || rc=$?
+printf '{"v":1,"shares":["%s","%s"],"repo":"demo"}' "$(jf '.custody[0]' "$work/recover.json")" "$(jf '.keyfile.shares[1]' "$work/recover.json")" | two_step rotate restored || rc=$?
 check "keyfile rotate makes the restored store's key file (exit 0)" [ "$rc" = 0 ]
 check "  ready" status_is .ready true
 check "  the backup role's files are back (reissued)" test -s "$state/approle/backup/secret_id"
