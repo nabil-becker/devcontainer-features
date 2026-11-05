@@ -57,13 +57,14 @@
     },
     "./features/devhost": {},
     // An SSH agent for the register's operator key. The Windows engines cannot forward the
-    // host's agent, so the Operator turns on key mode per machine (SSH_AGENT_KEY_MODE=true in
-    // .devcontainer/.env on the workstation, which Task's dotenv puts in ${localEnv}; unset is
-    // false; a rebuild applies a change) and imports a dedicated, passphrase-protected key
-    // (task devcontainer:ssh-key-import FILE=...); the start hook skips a protected key, so it is
-    // loaded only for an operator act (task ssh-agent:key:load) and removed after (ssh-add -d).
+    // host's agent, so the Operator turns on key mode per machine with SSH_AGENT_MODE=key in
+    // .devcontainer/.env on the workstation (Task's dotenv puts it in ${localEnv}; unset is auto,
+    // which follows the host; a rebuild applies a change) and imports a dedicated,
+    // passphrase-protected key (task devcontainer:ssh-key-import FILE=...); the start hook skips a
+    // protected key, so it is loaded only for an operator act (task ssh-agent:key:load) and
+    // removed after (ssh-add -d).
     "./features/ssh-agent": {
-      "keyMode": "${localEnv:SSH_AGENT_KEY_MODE:false}"
+      "mode": "${localEnv:SSH_AGENT_MODE:auto}"
     },
     // OpenBao in server mode (ADR 0048): a local server in this container, raft storage in the
     // Feature's volume, started sealed at post-start. The Operator runs task openbao:init once

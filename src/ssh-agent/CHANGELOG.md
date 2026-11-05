@@ -8,6 +8,20 @@ here; `task lint` fails when the entry is missing.
 
 Entries from 1.0.0 to 1.3.0 were generated from the commit history (`.github/scripts/changelog.py backfill`) and the "Changes in x.y.z" sections that NOTES.md used to hold; most list commit subjects as written then; the newest of them is in wording for users.
 
+## [1.5.0] - 2026-11-05
+
+### Added
+
+- **A `mode` option** (`auto`, `socket`, `key`, `none`; default `auto`) is the one setting for which agent the container uses. `auto` behaves exactly as before: it follows what the launcher found for the host. `key` starts the agent inside the container and loads the keys of the key volume (what `keyMode: true` meant; a host socket the launcher really mounted still wins, and the start hook says so). `socket` and `none` pin those two outcomes whatever the launcher found. To choose per machine, write `"mode": "${localEnv:SSH_AGENT_MODE:auto}"` in `devcontainer.json` and `SSH_AGENT_MODE=key` in `.devcontainer/.env` on the workstation, then rebuild. An empty or unknown value counts as `auto` with one warning. `SSH_AGENT_SETUP_MODE` in `containerEnv` overrides it without a rebuild.
+
+### Changed
+
+- The messages that told you how to turn key mode on now name this way (the `mode` line plus `SSH_AGENT_MODE=key` in `.devcontainer/.env`, then rebuild).
+
+### Deprecated
+
+- **`keyMode` and the `SSH_AGENT_SETUP_KEY_MODE` override** (removed in 2.0): they still work, `keyMode: true` meaning `mode: key` while `mode` is `auto`, and the start hook prints one deprecation line while either is on. **You do not have to act now**; move to `mode` when convenient.
+
 ## [1.4.0] - 2026-11-04
 
 ### Added

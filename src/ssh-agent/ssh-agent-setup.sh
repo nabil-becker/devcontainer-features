@@ -53,7 +53,16 @@ set -u
 # environment override them without a rebuild.
 # shellcheck disable=SC1091  # written by install.sh at image build
 [ -f /usr/local/share/ssh-agent-feature/options.env ] && source /usr/local/share/ssh-agent-feature/options.env
+# keyMode and SSH_AGENT_SETUP_KEY_MODE are deprecated (removed in 2.0) for the `mode` option.
 key_option="${SSH_AGENT_SETUP_KEY_MODE-${KEYMODE:-false}}"
+# The Feature option `mode` (auto | socket | key | none; SSH_AGENT_SETUP_MODE overrides it). An empty
+# or unknown value is auto, with one warning from the start hook (option_notes), because
+# ${localEnv:SSH_AGENT_MODE:auto} can produce odd values.
+mode_raw="${SSH_AGENT_SETUP_MODE-${MODE:-auto}}"
+case "$mode_raw" in
+  auto | socket | key | none) opt_mode="$mode_raw" ;;
+  *) opt_mode=auto ;;
+esac
 # Seconds the hook waits for a passphrase typed at ssh-add's prompt (0: never prompt).
 passphrase_wait="${SSH_AGENT_SETUP_PASSPHRASE_TIMEOUT:-${PASSPHRASETIMEOUT:-120}}"
 # Overridable so the Docker-free unit test can run against temp folders.
@@ -68,6 +77,8 @@ gh_key_add="${DCF_GH_SSH_KEY_ADD:-gh-ssh-key-add}"
 # Public keys only; never a private key.
 LOADED_DIR="${DCF_SSH_AGENT_LOADED_DIR:-${XDG_RUNTIME_DIR:-/tmp}/ssh-agent-feature-$(id -u 2>/dev/null || echo 0)}"
 default_key_names="id_ed25519 id_ecdsa id_rsa id_dsa id_ed25519_sk id_ecdsa_sk"
+# shellcheck disable=SC2016  # the text is meant literally
+KEY_HOWTO='"mode": "${localEnv:SSH_AGENT_MODE:auto}" in the ssh-agent entry of devcontainer.json plus SSH_AGENT_MODE=key in .devcontainer/.env on the workstation, then rebuild'
 host_type="${DCF_HOST_TYPE:-}"
 mode="${DCF_HOST_SSH_AGENT:-}"
 
@@ -100,7 +111,7 @@ report_reachable() { # <what>
 
 explain_none() {
   say "no agent is forwarded: host type $(host_name) cannot hand the host's SSH agent to the container without a process left running on the host, which this collection does not do (the Windows agent is a named pipe)."
-  say "ways round: a terminal in VS Code (it forwards the agent itself), or the opt-in key mode (SSH_AGENT_MODE=key at task devcontainer:up, or Feature option keyMode: true), which keeps a signing key in the container's volume and so breaks 'the private key never enters the container'. See task ssh-agent:key:add."
+  say "ways round: a terminal in VS Code (it forwards the agent itself), or the opt-in key mode ($KEY_HOWTO), which keeps a signing key in the container's volume and so breaks 'the private key never enters the container'. See task ssh-agent:key:add."
 }
 
 # --- key mode ----------------------------------------------------------------
@@ -215,8 +226,26 @@ do_key_mode() {
 
 # --- the verdicts --------------------------------------------------------------
 effective_mode() { # sets EFF: key | socket | none | unknown
+  case "$opt_mode" in
+    socket) EFF=socket; return 0 ;; # pinned: the host's agent, whatever the launcher said
+    none) EFF=none; return 0 ;;     # pinned: no agent
+  esac
   case "$mode" in key) EFF=key ;; socket) EFF=socket ;; none) EFF=none ;; *) EFF=unknown ;; esac
-  if [ "$key_option" = true ] && { [ "$EFF" = none ] || [ "$EFF" = unknown ]; }; then EFF=key; fi
+  # mode key, or auto with the deprecated keyMode: true: the in-container agent, unless the launcher
+  # really mounted a host socket (that wins).
+  if want_key && { [ "$EFF" = none ] || [ "$EFF" = unknown ]; }; then EFF=key; fi
+}
+
+want_key() { [ "$opt_mode" = key ] || { [ "$opt_mode" = auto ] && [ "$key_option" = true ]; }; }
+
+option_notes() { # one line per odd or deprecated setting, from the start hook only
+  case "$mode_raw" in
+    auto | socket | key | none) ;;
+    *) warn "the ssh-agent option mode is '$mode_raw', which is not auto, socket, key or none; treating it as auto (check SSH_AGENT_MODE in .devcontainer/.env)" ;;
+  esac
+  if [ "$key_option" = true ]; then
+    warn "deprecated: keyMode / SSH_AGENT_SETUP_KEY_MODE go in ssh-agent 2.0; use the option mode: $KEY_HOWTO$([ "$opt_mode" = auto ] || echo " (keyMode is ignored while mode is $opt_mode)")"
+  fi
 }
 
 verdict() { # the plain report for the current state, no changes; returns 0 when an agent answers
@@ -247,7 +276,7 @@ verdict() { # the plain report for the current state, no changes; returns 0 when
     socket) say "not reachable: the launcher mounted a host socket at $SSH_SOCK but no agent answers on it. Is the host's agent running with a key added (ssh-add on the host)? The mount is made at 'up': start the agent, then restart the container (task devcontainer:up)." ;;
     none) explain_none ;;
     key) say "not reachable: key mode is on but no agent answers on $SSH_SOCK; run task ssh-agent:setup." ;;
-    *) say "not reachable, and the host is unknown (DCF_HOST_SSH_AGENT is unset): start through task devcontainer:up so the launcher can mount the agent, or opt into the key mode (keyMode: true)." ;;
+    *) say "not reachable, and the host is unknown (DCF_HOST_SSH_AGENT is unset): start through task devcontainer:up so the launcher can mount the agent, or opt into the key mode ($KEY_HOWTO)." ;;
   esac
   return 1
 }
@@ -266,7 +295,7 @@ active_sock() {
 require_key_mode() { # refuses (exit 1) unless the key mode is on
   effective_mode
   if [ "$EFF" != key ]; then
-    warn "key mode is off in this container, nothing was changed. Turn it on with the Feature option keyMode: true in devcontainer.json (then rebuild), or start with SSH_AGENT_MODE=key (task devcontainer:up SSH_AGENT_MODE=key, with DCF_HOST_SSH_AGENT mapped by containerEnv). With a host agent (socket mode), load keys on the host: task devcontainer:ssh-add -- <key>."
+    warn "key mode is off in this container, nothing was changed. Turn it on with $KEY_HOWTO. With a host agent (socket mode), load keys on the host: task devcontainer:ssh-add -- <key>."
     exit 1
   fi
 }
@@ -1160,8 +1189,9 @@ case "$cmd" in
 esac
 
 effective_mode
-if [ "$mode" = socket ] && [ "$key_option" = true ]; then
-  say "keyMode is on, but the launcher mounted a host agent socket, which wins; set SSH_AGENT_MODE=key at task devcontainer:up to use the key mode instead."
+option_notes
+if [ "$mode" = socket ] && [ "$opt_mode" != socket ] && want_key; then
+  say "key mode is on, but the launcher mounted a host agent socket, which wins; to use the key mode instead, start the launcher with SSH_AGENT_MODE=key (task devcontainer:up SSH_AGENT_MODE=key), which suppresses that mount."
 fi
 if [ -z "$mode" ]; then
   say "host unknown: DCF_HOST_SSH_AGENT is empty (the launcher did not run, or the repository's containerEnv does not map it); start through task devcontainer:up. Probing $SSH_SOCK anyway."

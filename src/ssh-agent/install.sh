@@ -3,7 +3,7 @@
 # agent: the OpenSSH client tools if the image lacks them (ssh-add, ssh-keygen,
 # ssh-agent), the fixed socket folder, ssh-agent-setup (the postStartCommand)
 # and the Feature Taskfile. Feature options arrive as upper-cased environment
-# variables (see devcontainer-feature.json): KEYMODE, PASSPHRASETIMEOUT.
+# variables (see devcontainer-feature.json): MODE, KEYMODE, PASSPHRASETIMEOUT.
 #
 # Nothing is downloaded outside the distribution's own package manager
 # (openssh-client from apt, only when missing), so there is nothing to verify
@@ -17,6 +17,7 @@
 # write into: it is not mounted at image build.
 set -euo pipefail
 
+MODE="${MODE:-auto}"
 KEYMODE="${KEYMODE:-false}"
 PASSPHRASETIMEOUT="${PASSPHRASETIMEOUT:-120}"
 
@@ -50,6 +51,7 @@ share=/usr/local/share/ssh-agent-feature
 mkdir -p "$share"
 {
   echo "# Written by the ssh-agent Feature's install.sh from its options; sourced by ssh-agent-setup."
+  printf 'MODE=%q\n' "$MODE"
   printf 'KEYMODE=%q\n' "$KEYMODE"
   printf 'PASSPHRASETIMEOUT=%q\n' "$PASSPHRASETIMEOUT"
 } > "$share/options.env"

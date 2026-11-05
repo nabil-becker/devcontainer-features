@@ -16,12 +16,13 @@ check "the key volume is its own folder" test -d /var/lib/devcontainer-features/
 
 check "dcf-persist on PATH" command -v dcf-persist
 check "ssh-agent-setup on PATH" command -v ssh-agent-setup
+check "options baked: mode auto" grep -q '^MODE=auto$' /usr/local/share/ssh-agent-feature/options.env
 check "options baked for ssh-agent-setup" grep -q '^KEYMODE=false$' /usr/local/share/ssh-agent-feature/options.env
 check "ssh-agent-setup exits 0 and reports" bash -c "ssh-agent-setup | grep -E '^ssh-agent: '"
 check "without the launcher it says the host is unknown" bash -c "env -u DCF_HOST_SSH_AGENT ssh-agent-setup | grep -F 'host unknown'"
 check "none names the host type and both ways round" bash -c "DCF_HOST_SSH_AGENT=none DCF_HOST_TYPE=windows-docker ssh-agent-setup | grep -F 'host type windows-docker' && DCF_HOST_SSH_AGENT=none ssh-agent-setup | grep -F 'VS Code'"
 check "check exits 1 when no agent answers" bash -c "! ssh-agent-setup check"
-check "key tasks refuse with keyMode off" bash -c "ssh-agent-setup key-load 2>&1 | grep -F 'keyMode: true'"
+check "key tasks refuse with keyMode off" bash -c "ssh-agent-setup key-load 2>&1 | grep -F 'SSH_AGENT_MODE=key'"
 
 check "taskfile registered" test -f /usr/local/share/go-task/includes.d/ssh-agent.yml
 

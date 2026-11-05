@@ -12,7 +12,7 @@
     "features": {
       "go-task": {},
       "ssh-agent": {
-        "keyMode": true
+        "mode": "key"
       }
     },
     "remoteUser": "vscode"

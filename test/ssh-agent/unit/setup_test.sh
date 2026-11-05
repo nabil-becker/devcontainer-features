@@ -97,10 +97,10 @@ run -- key-load
 check 'key-load refuses when key mode is off' 1 "$rc"
 run DCF_HOST_SSH_AGENT=socket -- key-unlock timed
 check 'key-unlock refuses when key mode is off' 1 "$rc"
-has 'key-unlock off: says how to turn key mode on' 'keyMode: true' "$out"
+has 'key-unlock off: says how to turn key mode on' 'SSH_AGENT_MODE=key' "$out"
 run DCF_HOST_SSH_AGENT=socket -- key-lock timed
 check 'key-lock refuses when key mode is off' 1 "$rc"
-has 'the refusal says how to turn key mode on' 'keyMode: true' "$out"
+has 'the refusal says how to turn key mode on' 'SSH_AGENT_MODE=key' "$out"
 run DCF_HOST_SSH_AGENT=socket -- key-add "$T/b"
 check 'key-add refuses in socket mode' 1 "$rc"
 check 'key-add copied nothing in socket mode' 0 "$(find "$KEYS" -type f | wc -l)"
@@ -511,6 +511,55 @@ rr DCF_HOST_SSH_AGENT=socket -- key-rotate --plan
 check 'rotate refuses outside key mode' 1 "$rc"
 rr DCF_HOST_SSH_AGENT=socket -- key-retire --name x
 check 'retire refuses outside key mode' 1 "$rc"
+
+# --- the mode option (1.5.0): auto, socket, key, none; keyMode and its override deprecated
+pkill -f "ssh-agent -a $T/" 2>/dev/null; rm -f "$SOCK"
+run DCF_HOST_SSH_AGENT=none DCF_HOST_TYPE=windows-docker -- setup
+lacks 'auto, no keyMode: no deprecation line' 'deprecated: keyMode' "$out"
+has 'auto follows the host: none explains' 'no agent is forwarded' "$out"
+run MODE=auto DCF_HOST_SSH_AGENT=none DCF_HOST_TYPE=windows-docker -- setup
+has 'mode auto (baked) follows the host' 'no agent is forwarded' "$out"
+lacks 'mode auto: no warning' 'treating it as auto' "$out"
+run SSH_AGENT_SETUP_MODE=auto SSH_AGENT_SETUP_KEY_MODE=true DCF_HOST_SSH_AGENT=none -- setup
+has 'auto with keyMode true: key mode' 'started an agent inside the container' "$out"
+has 'auto with keyMode true: one deprecation line' 'deprecated: keyMode / SSH_AGENT_SETUP_KEY_MODE go in ssh-agent 2.0' "$out"
+# shellcheck disable=SC2016  # literal text
+has 'the deprecation names the new way' '"mode": "${localEnv:SSH_AGENT_MODE:auto}"' "$out"
+pkill -f "ssh-agent -a $T/" 2>/dev/null; rm -f "$SOCK"
+run SSH_AGENT_SETUP_MODE=key DCF_HOST_SSH_AGENT=none -- setup
+has 'mode key, host none: key mode' 'started an agent inside the container' "$out"
+lacks 'mode key: no deprecation line' 'deprecated: keyMode' "$out"
+pkill -f "ssh-agent -a $T/" 2>/dev/null; rm -f "$SOCK"
+run SSH_AGENT_SETUP_MODE=key -- setup
+has 'mode key, host unknown: key mode' 'started an agent inside the container' "$out"
+pkill -f "ssh-agent -a $T/" 2>/dev/null; rm -f "$SOCK"
+run SSH_AGENT_SETUP_MODE=key DCF_HOST_SSH_AGENT=socket -- setup
+has 'mode key, a mounted socket: the socket wins and it says so' 'launcher mounted a host agent socket, which wins' "$out"
+lacks 'mode key, a mounted socket: no agent started' 'started an agent' "$out"
+run SSH_AGENT_SETUP_MODE=key DCF_HOST_SSH_AGENT=socket -- key-unlock timed
+check 'mode key with a mounted socket: key tasks still refuse' 1 "$rc"
+pkill -f "ssh-agent -a $T/" 2>/dev/null; rm -f "$SOCK"
+run SSH_AGENT_SETUP_MODE=socket DCF_HOST_SSH_AGENT=none DCF_HOST_TYPE=windows-docker -- check
+check 'mode socket pins the socket verdict, not reachable: exit 1' 1 "$rc"
+has 'mode socket says a socket was expected' 'launcher mounted a host socket' "$out"
+run SSH_AGENT_SETUP_MODE=socket SSH_AGENT_SETUP_KEY_MODE=true DCF_HOST_SSH_AGENT=none -- setup
+lacks 'mode socket never starts key mode' 'started an agent' "$out"
+has 'keyMode ignored under socket, said once' 'keyMode is ignored while mode is socket' "$out"
+run SSH_AGENT_SETUP_MODE=none DCF_HOST_SSH_AGENT=socket DCF_HOST_TYPE=linux -- setup
+has 'mode none pins no agent even with a host socket' 'no agent is forwarded' "$out"
+run SSH_AGENT_SETUP_MODE=none DCF_HOST_SSH_AGENT=key -- setup
+lacks 'mode none: no key mode' 'started an agent' "$out"
+for odd in '' 'Key' 'sock'; do
+  run "SSH_AGENT_SETUP_MODE=$odd" DCF_HOST_SSH_AGENT=none -- setup
+  check "mode '$odd': setup exits 0" 0 "$rc"
+  has "mode '$odd': one warning, treated as auto" "the ssh-agent option mode is '$odd'" "$out"
+  has "mode '$odd': behaves as auto" 'no agent is forwarded' "$out"
+done
+run SSH_AGENT_SETUP_MODE=bogus DCF_HOST_SSH_AGENT=none -- check
+lacks 'the warning comes from the start hook only, not check' 'treating it as auto' "$out"
+run DCF_HOST_SSH_AGENT=none -- key-load
+has 'refusal names mode and .env' 'SSH_AGENT_MODE=key in .devcontainer/.env' "$out"
+pkill -f "ssh-agent -a $T/" 2>/dev/null; rm -f "$SOCK"
 
 echo
 echo "$pass passed, $fail failed"
