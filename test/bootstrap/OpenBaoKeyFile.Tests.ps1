@@ -14,7 +14,8 @@
 # key file's shape; the two steps: the key file saved before confirm, confirm's shares read back from
 # it, the custody shares printed only after confirm answers ok, a failed save or confirm cancelling
 # with this run's nonce (the previous key file put back), a lost confirm answer retried and then
-# settled by keyfile status's pending nonce (ours: cancel; empty with five shares: applied, also for
+# settled by keyfile status's pending verification nonce, the part of ours before its first colon
+# (ours: cancel; empty with five shares: applied, also for
 # rotate where five shares hold both ways; another: never cancelled), the warnings shown, error then code on failure; export/import round trip, a wrong passphrase,
 # the checkout refused; forget; the step wired after `up` only; the bash launcher's one refusal line.
 # The stub engine is a shell script, so the Describes that use it run where bash runs (Linux, macOS,
@@ -326,7 +327,7 @@ Describe 'keyfile:create and keyfile:rotate' -Skip:(-not $script:HasBash -or $Is
     BeforeEach {
         $script:W = Initialize-World; Use-ProtectorStandIn
         $kf = [ordered]@{ v = 1; server = 'clu-1'; repo = 'myrepo'; created = '2026-11-05T10:00:00Z'; shares = @('NEW-4', 'NEW-5'); role_id = 'role-abc'; secret_id = 'NEW-SECRET' }
-        $env:FAKE_MAKE_OUT = ConvertTo-Json -Compress -Depth 4 -InputObject ([ordered]@{ v = 1; ok = $true; pending = $true; server = 'clu-1'; nonce = 'nonce-1'; custody = @('CUSTODY-1', 'CUSTODY-2', 'CUSTODY-3'); keyfile = $kf; warnings = @('the old userpass login stays until confirm') })
+        $env:FAKE_MAKE_OUT = ConvertTo-Json -Compress -Depth 4 -InputObject ([ordered]@{ v = 1; ok = $true; pending = $true; server = 'clu-1'; nonce = 'nonce-1:TOKENMARKER-n8'; custody = @('CUSTODY-1', 'CUSTODY-2', 'CUSTODY-3'); keyfile = $kf; warnings = @('the old userpass login stays until confirm') })
         $script:Typed = [System.Collections.Generic.Queue[string]]::new()
         Mock -ModuleName DevcontainerCli Read-Host { Secure $script:Typed.Dequeue() }
         # The custody shares' printing goes into the stub's call log, so the order of the two is visible.
@@ -406,7 +407,7 @@ Describe 'keyfile:create and keyfile:rotate' -Skip:(-not $script:HasBash -or $Is
         $r = Invoke-Captured { Invoke-OpenBaoKeyFileTask -WorkspaceFolder $script:W.Ws -Arguments @('create') }
         $r.Rc | Should -Be 0
         Get-Call | Should -Be @('unlock --status', 'keyfile create --stdin', 'keyfile confirm --stdin', 'key file on disk at confirm', 'CUSTODY PRINTED CUSTODY-1 CUSTODY-2 CUSTODY-3')
-        (Get-Log "$($script:W.Stdin).confirm").Trim() | Should -Be '{"v":1,"server":"clu-1","nonce":"nonce-1","shares":["NEW-4","NEW-5"]}'
+        (Get-Log "$($script:W.Stdin).confirm").Trim() | Should -Be '{"v":1,"server":"clu-1","nonce":"nonce-1:TOKENMARKER-n8","shares":["NEW-4","NEW-5"]}'
         Get-Log $script:W.Argv | Should -Not -Match 'NEW-4'
         # FAKE_MAKE_OUT is the stub's own scripted answer; nothing else in the environment may hold a share.
         @((Get-Log $script:W.EnvLog) -split "`n" | Where-Object { $_ -notlike 'FAKE_MAKE_OUT=*' }) -join "`n" | Should -Not -Match 'NEW-4'
@@ -429,7 +430,7 @@ Describe 'keyfile:create and keyfile:rotate' -Skip:(-not $script:HasBash -or $Is
         $r.Err | Should -Match 'could not be saved \(disk full\); cancelling'
         $r.Err | Should -Match 'cancelled; the old shares still unseal'
         Get-Call | Should -Be @('unlock --status', 'keyfile rotate --stdin', 'keyfile cancel --stdin')
-        (Get-Log "$($script:W.Stdin).cancel") | Should -Be '{"v":1,"server":"clu-1","nonce":"nonce-1"}'
+        (Get-Log "$($script:W.Stdin).cancel") | Should -Be '{"v":1,"server":"clu-1","nonce":"nonce-1:TOKENMARKER-n8"}'
         Get-KeyFilePlain | Should -Be $before
     }
 
@@ -480,7 +481,7 @@ Describe 'keyfile:create and keyfile:rotate' -Skip:(-not $script:HasBash -or $Is
         $r.Rc | Should -Be 1
         $r.Err | Should -Match 'this rotation still pending'
         Get-Call | Should -Be @('unlock --status', 'keyfile rotate --stdin', 'keyfile confirm --stdin', 'keyfile confirm --stdin', 'keyfile status', 'keyfile cancel --stdin')
-        (Get-Log "$($script:W.Stdin).cancel") | Should -Be '{"v":1,"server":"clu-1","nonce":"nonce-1"}'
+        (Get-Log "$($script:W.Stdin).cancel") | Should -Be '{"v":1,"server":"clu-1","nonce":"nonce-1:TOKENMARKER-n8"}'
         Get-KeyFilePlain | Should -Be $before
     }
 
@@ -522,6 +523,33 @@ Describe 'keyfile:create and keyfile:rotate' -Skip:(-not $script:HasBash -or $Is
         $r = Invoke-Captured { Invoke-OpenBaoKeyFileTask -WorkspaceFolder $script:W.Ws -Arguments @('create') }
         $r.Rc | Should -Be 1
         Get-Call | Should -Be @('unlock --status', 'keyfile create --stdin')
+        InModuleScope DevcontainerCli { Get-OpenBaoKeyFilePath -Repo 'myrepo' -Server 'clu-1' } | Should -Not -Exist
+    }
+
+    It 'never prints or logs the nonce (it carries the confirm token), on any path: <case>' -ForEach @(
+        @{ case = 'confirmed'; confirm = 'ok'; status = $null }
+        @{ case = 'confirm failed'; confirm = 'fail'; status = $null }
+        @{ case = 'lost, ours pending'; confirm = 'lost'; status = '{"v":1,"ok":true,"server":"clu-1","shares":5,"threshold":2,"pending":"nonce-1"}' }
+        @{ case = 'lost, another pending'; confirm = 'lost'; status = '{"v":1,"ok":true,"server":"clu-1","shares":5,"threshold":2,"pending":"other"}' }
+    ) {
+        Save-TestKeyFile
+        $env:FAKE_CONFIRM = $confirm
+        if ($status) { $env:FAKE_KF_STATUS = $status }
+        $r = Invoke-Captured { Invoke-OpenBaoKeyFileTask -WorkspaceFolder $script:W.Ws -Arguments @('rotate') }
+        "$($r.Host)`n$($r.Err)" | Should -Not -Match 'TOKENMARKER|nonce-1'
+        Get-Log $script:W.Argv | Should -Not -Match 'TOKENMARKER|nonce-1'
+        @(Get-ChildItem -LiteralPath $script:W.Tmp -Force -Recurse) | Should -HaveCount 0
+    }
+
+    It 'an init''s nonce is just init: status pending init after a lost confirm cancels with init' {
+        $env:FAKE_STATUS = Get-Status -Initialized $false -Server ''
+        $env:FAKE_MAKE_OUT = $env:FAKE_MAKE_OUT -replace 'nonce-1:TOKENMARKER-n8', 'init'
+        $env:FAKE_CONFIRM = 'lost'
+        $env:FAKE_KF_STATUS = '{"v":1,"ok":true,"server":"clu-1","shares":5,"threshold":2,"pending":"init"}'
+        $r = Invoke-Captured { Invoke-OpenBaoKeyFileTask -WorkspaceFolder $script:W.Ws -Arguments @('create') }
+        $r.Rc | Should -Be 1
+        Get-Call | Should -Be @('unlock --status', 'keyfile create --stdin', 'keyfile confirm --stdin', 'keyfile confirm --stdin', 'keyfile status', 'keyfile cancel --stdin')
+        (Get-Log "$($script:W.Stdin).cancel") | Should -Be '{"v":1,"server":"clu-1","nonce":"init"}'
         InModuleScope DevcontainerCli { Get-OpenBaoKeyFilePath -Repo 'myrepo' -Server 'clu-1' } | Should -Not -Exist
     }
 
