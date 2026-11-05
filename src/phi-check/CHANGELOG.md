@@ -8,6 +8,12 @@ here; `task lint` fails when the entry is missing.
 
 Entries from 1.0.0 to 1.0.0 were generated from the commit history (`.github/scripts/changelog.py backfill`) and the "Changes in x.y.z" sections that NOTES.md used to hold; most list commit subjects as written then; the newest of them is in wording for users.
 
+## [1.0.3] - 2026-11-05
+
+### Security
+
+- `phi-check` now starts Python in isolated mode (`-I` on its first line), so a module or `.pth` file in the user's own Python folders, or a `PYTHON*` environment variable, can no longer change what it does or make it pass every file. Nothing to do: rebuild to take it. It needs an `env` that understands `-S` (GNU coreutils 8.30 or later, in every supported base image).
+
 ## [1.0.2] - 2026-11-03
 
 ### Changed

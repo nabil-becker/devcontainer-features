@@ -1,6 +1,6 @@
 {
   "id": "phi-check",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "name": "phi-check (refuse files that hold PHI)",
   "description": "A linter-style command, `phi-check <path>...`, that refuses files holding protected health information: US Social Security numbers, Medicare Beneficiary Identifiers, X12, HL7 v2 and FHIR Patient data on sight, and a record id or date of birth next to a diagnosis, a name label or another id. It never prints the matched text, knows nothing of git or hooks (the repository wires it into pre-commit, a hook or CI), and fails closed (binary, missing and unreadable files are findings). Python 3 standard library only, nothing downloaded: Python comes through dependsOn on ghcr.io/devcontainers/features/python (os-provided, no tools). The patterns are one importable module, /usr/local/share/phi-check/phi_patterns.py, for other guards. Plus the Feature Taskfile.",
   "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/phi-check",
