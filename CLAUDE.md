@@ -45,7 +45,7 @@ Delivery OS, whose learnings become a white paper: [docs/iterations.md](docs/ite
 - `task lint`: shellcheck, yamllint, PSScriptAnalyzer, the vendored-helper
   check and the devhost unit tests (runs anywhere).
 - `task test FEATURE=<id>` / `task test:global`: the real Feature tests;
-  need a Docker daemon (CI, or Docker Desktop; not `wslc`).
+  run in the devhost's docker-in-docker when the host allows `--privileged` (it does not start on `wslc`).
 - `task docs`: regenerate `src/<id>/README.md` after a JSON or NOTES change.
 - `task devhost:*`: briefing, report, costs, adr, verify, init.
 - `task devcontainer:*` (alias `dc:`): the devhost from the workstation.

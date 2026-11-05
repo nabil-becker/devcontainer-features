@@ -83,7 +83,7 @@ The way of working grows from what real work shows it lacks, never ahead of it:
 2. **Costs.** Every agent run is costed at list price: host sessions and cons from their
    transcripts, backs from their metrics lines; a monthly report per engineer sets them side by
    side by model. The briefing shows the month's spend at every session start.
-3. **Review.** Every 25 entries (the setting; the entry rate in the cost report shows whether that is too often or too rarely; the briefing says when) a review reads the cost report
+3. **Review.** Every 75 entries (the setting, ADR 0021; 25 if unset; the entry rate in the cost report shows whether that is too often or too rarely; the briefing says when) a review reads the cost report
    first, checks whether the last review's friction came back, groups the new friction by cause,
    and turns each group into exactly one action (`/ledger-review`).
 4. **The backlog.** Each action is a `TODO.md` item with an owner and the friction it should make
@@ -99,6 +99,11 @@ The way of working grows from what real work shows it lacks, never ahead of it:
 - One way to do each action: its task in `Taskfile.yml`, for engineers and agents alike.
 - The Operator decides; sessions advise. A permission counts only when the Operator grants it in
   their own settings.
+- A pull request is marked ready when the agent is confident in the work and that CI will pass; ready
+  is the agent's status on the work, not CI's, and a pull request does not flap between draft and
+  ready.
+- One draft pull request per deliverable, fed by any number of streams (worktrees); it is marked
+  ready when every stream is done.
 - Records that only grow (the ledger, the lexicon, the ADRs) are corrected by adding, never by
   editing.
 - Paths and ids, never content: nothing committed holds real data, credentials, identifiers or a

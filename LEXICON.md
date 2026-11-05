@@ -227,7 +227,7 @@ The domain words of the project itself are not here; they live with the project'
   its first entry only; the stretch's other entries point to it, so summing the ledger counts it once.
 - **Review**: reading the cost report and the entries since the last review, checking whether the
   last review's friction came back, and turning each group into one action; kept as a `## Review`
-  section (a file in the shared folder's `reviews/`, shown between the ledger's entries), every 25 entries by default (`DEVHOST_REVIEW_EVERY`). Run with `/ledger-review`.
+  section (a file in the shared folder's `reviews/`, shown between the ledger's entries), every 75 entries here (`DEVHOST_REVIEW_EVERY`, ADR 0021; 25 if unset). Run with `/ledger-review`.
 - **Architecture review**: a subagent's check of a proposal's design against the non-functional
   requirements, the ADRs, the CLI capability matrix, the lexicon and where each element is placed,
   written into the proposal before the Operator rules; run with `/architecture-review`.

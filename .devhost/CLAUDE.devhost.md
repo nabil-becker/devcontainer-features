@@ -14,7 +14,7 @@ by `DEVHOST_LEDGER_REGISTER`; read either with `devhost-ledger show`), the ADRs 
 2. **Work:** commands through the Taskfile (`task --list`); propose rather than decide where the
    Operator's confirmation is needed; brief subagents (cons) with the hand-off shape (its Friction
    includes problems the con worked around, such as a command it retried another way, not only
-   what blocked it) and size their models by blast radius (Sonnet by default, Opus only when the change reaches every consumer); a brief names the PR template when the con opens or describes a PR and passes the Operator's decisions in full; a con waits for its own background jobs, writes a long run (such as `task lint`) to its own log, hands back once, and never runs `pkill -f` with a pattern its own shell contains; a permission counts only when the Operator grants it in their
+   what blocked it) and size their models by blast radius (Sonnet by default, Opus only when the change reaches every consumer, and a brief that picks Opus says why the job needs it); a brief names the con's branch as `task devhost:branch` would (`<type>/<id>/<n>`, type feature, fix, docs or chore; never `feat/`); a brief names the PR template when the con opens or describes a PR and passes the Operator's decisions in full; a con waits for its own background jobs, writes a long run (such as `task lint`) to its own log, hands back once, and never runs `pkill -f` with a pattern its own shell contains; a permission counts only when the Operator grants it in their
    own settings. Unattended work only under `/night-shift`.
    When the Operator starts a run of messages ("hold on", "wait", or `/walkie-talkie`), acknowledge each and act on "over" (the `walkie-talkie` skill).
 3. **Close:** `/close-session`: the records checked (the scribe's entries, the backlog, the
@@ -28,7 +28,7 @@ The ledger is append-only: one entry per unit of work, written by the scribe bac
 and each con's job, with its measured cost; in `docs/ledger/YYYY-MM.md`, or, with
 `DEVHOST_LEDGER_REGISTER` set, signed by the scribe into that agentic-register register (outside git,
 mirrored to the shared folder). `devhost-ledger show` prints it either way. A wrong entry is never edited; a
-new entry with a `Corrects:` line replaces it. Every 25 entries (the setting; the entry rate in the cost report shows whether that is too often or too rarely) the briefing asks for a
+new entry with a `Corrects:` line replaces it. Every 75 entries (the setting, ADR 0021: `DEVHOST_REVIEW_EVERY`, 25 if unset; the entry rate in the cost report shows whether that is too often or too rarely) the briefing asks for a
 review (`/ledger-review`), which reads the cost report first and turns each group of friction
 into one action.
 

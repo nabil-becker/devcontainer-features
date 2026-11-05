@@ -133,7 +133,7 @@ shapes (`/close-session`).
 flowchart LR
   work["Work"] --> entries["1 Entries<br/>friction, learned, cost"]
   entries --> costs["2 Costs<br/>the monthly report"]
-  costs --> review["3 Review<br/>every 25 entries"]
+  costs --> review["3 Review<br/>every 75 entries"]
   review --> backlog["4 One action per cause<br/>an item, a decision, a change"]
   backlog --> change["5 The change, with its test<br/>or a guard"]
   change --> work
@@ -148,7 +148,7 @@ The way of working grows from what real work shows it lacks, never ahead of it:
 2. **Costs.** Every agent run is costed at list price: host sessions and cons from their
    transcripts, backs from their metrics lines; a monthly report per engineer sets them side by
    side by model. The briefing shows the month's spend at every session start.
-3. **Review.** Every 25 entries (the setting; the entry rate in the cost report shows whether that is too often or too rarely; the briefing says when) a review reads the cost report
+3. **Review.** Every 75 entries (the setting, ADR 0021; 25 if unset; the entry rate in the cost report shows whether that is too often or too rarely; the briefing says when) a review reads the cost report
    first, checks whether the last review's friction came back, groups the new friction by cause,
    and turns each group into exactly one action (`/ledger-review`).
 4. **The backlog.** Each action is a `TODO.md` item with an owner and the friction it should make
@@ -167,8 +167,10 @@ The way of working grows from what real work shows it lacks, never ahead of it:
 - A pull request's ready or draft is the host's status on the work, not CI's: the host marks it
   ready when its work is done and it is confident CI passes (the checks run here, a trial merge
   against `main` and the other ready pull requests); a red CI on a ready pull request is fixed in
-  place, not flipped back to draft. The Operator reviews and merges what is ready (ADR 0040,
+  place, not flipped back to draft (no flapping between the two). The Operator reviews and merges what is ready (ADR 0040,
   ADR 0053).
+- One draft pull request per deliverable, fed by any number of streams (worktrees); it is marked
+  ready when every stream is done.
 - Records that only grow (the ledger, the lexicon, the ADRs) are corrected by adding, never by
   editing.
 - Paths and ids, never content: nothing committed holds real data, credentials, identifiers or a
