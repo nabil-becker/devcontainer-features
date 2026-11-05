@@ -54,7 +54,7 @@ not go through the launcher (`DCF_HOST_SSH_AGENT` empty) reports `host unknown: 
 task devcontainer:up` and probes the fixed path anyway.
 
 `SSH_AGENT_MODE=key` on the launcher (`task devcontainer:up SSH_AGENT_MODE=key`, or in
-`.devcontainer/.env`) sets `DCF_HOST_SSH_AGENT=key` and suppresses the socket mount.
+`.devcontainer/.env`, where `"mode": "${localEnv:SSH_AGENT_MODE:auto}"` also reads it) sets `DCF_HOST_SSH_AGENT=key` and suppresses the socket mount.
 
 ## The layout, and why there is no volume on the socket's folder
 
@@ -69,10 +69,25 @@ task devcontainer:up` and probes the fixed path anyway.
 ## Options
 
 - `installTaskfile` (default `true`): install the Taskfile into the go-task registry.
-- `keyMode` (default `false`): the opt-in, temporary key mode below. It applies when no host agent
-  socket is mounted (`none` or unknown); a mounted socket wins and the hook says so. Override
-  without a rebuild with `SSH_AGENT_SETUP_KEY_MODE=true|false` in `containerEnv`, or per start
-  with `SSH_AGENT_MODE=key` on the launcher.
+- `mode` (default `auto`; 1.5.0): which agent the container uses, the one setting to touch.
+  - `auto`: follow what the launcher found (`DCF_HOST_SSH_AGENT`): the host's socket where the host
+    type has one, otherwise nothing, with the plain explanation. The deprecated `keyMode: true`
+    still turns this into `key`.
+  - `socket`: pin the host-socket verdict whatever the launcher said (a socket that is not there is
+    reported as not reachable, with the fix).
+  - `key`: the opt-in, temporary key mode below. It applies when no host agent socket is mounted
+    (`none` or unknown); a mounted socket wins and the hook says so.
+  - `none`: pin no agent: the hook explains the ways round and starts nothing.
+  An empty or unknown value is `auto`, with one warning (`${localEnv:SSH_AGENT_MODE:auto}` can
+  produce odd values). Override without a rebuild with `SSH_AGENT_SETUP_MODE` in `containerEnv`.
+  Per machine, write `"mode": "${localEnv:SSH_AGENT_MODE:auto}"` in `devcontainer.json` and
+  `SSH_AGENT_MODE=key` in `.devcontainer/.env` on the workstation, then rebuild. The launcher reads
+  the same `SSH_AGENT_MODE=key` and then suppresses the socket mount (it stays the launcher's
+  internal signal, `DCF_HOST_SSH_AGENT`).
+- `keyMode` (default `false`): **deprecated, removed in 2.0**; with `mode: auto` it means `mode: key`,
+  and it is ignored when `mode` is `socket`, `key` or `none`. Its override
+  `SSH_AGENT_SETUP_KEY_MODE` is deprecated the same way. The start hook prints one deprecation line
+  while either is on.
 - `passphraseTimeout` (default `"120"`): key mode, seconds the explicit tasks wait for the passphrase of a
   protected key at ssh-add's prompt in `task ssh-agent:setup` and the key tasks before it warns and goes on; `0` never prompts. The start hook itself never asks.
   Override without a rebuild with `SSH_AGENT_SETUP_PASSPHRASE_TIMEOUT` in `containerEnv`
@@ -84,7 +99,7 @@ task devcontainer:up` and probes the fixed path anyway.
 }
 ```
 
-On `windows-docker` or `windows-wslc`, add `"keyMode": true` only if you accept the trade-off
+On `windows-docker` or `windows-wslc`, add `"mode": "key"` only if you accept the trade-off
 below.
 
 ## Keys from OpenBao (1.4.0)
@@ -397,7 +412,7 @@ To move off key mode's volume, once per container:
 | 3 | the Operator | `task openbao:ssh:import FROM=ssh-agent`; the host commits `.devcontainer/allowed_signers` |
 | 4 | everyone | `key:unlock NAME=<file>` becomes `key:load NAME=ssh/<file> [MINUTES=]` |
 
-In 2.0 the key volume, its mount and the deprecated tasks go, and `keyMode` becomes `localAgent`
+In 2.0 the key volume, its mount and the deprecated tasks go, and `mode: key` becomes `localAgent` (and `keyMode` goes)
 (an in-container agent with keys in memory only); removing a mount does not delete the volume, so
 import first and remove the old volume with the engine's own command.
 

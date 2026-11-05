@@ -1,7 +1,7 @@
 
 # SSH agent (ssh-agent)
 
-Makes an SSH agent available to every process in the devcontainer (SSH_AUTH_SOCK=/var/lib/devcontainer-features/ssh-agent/agent.sock, also for `devcontainer exec`) so git commits can be signed with an SSH key: the devcontainer-cli launcher bind-mounts the host's agent socket onto that path where the host type has one (linux, macos, a WSL distro), the private key never entering the container; a post-start hook (ssh-agent-setup) checks it on every start and says plainly what a host type without one can do; the opt-in keyMode starts an agent inside the container and loads keys from its own volume instead, which breaks the no-key rule for whoever turns it on. With the openbao Feature, key:load NAME=ssh/<key> fetches a key from OpenBao and pipes it into the agent (ssh-add -t, memory only, never a file) for no longer than the login, key:lock drops it, and key:rotate rotates OpenBao records, keeping .devcontainer/allowed_signers; the key volume's tasks are deprecated (removed in 2.0). Plus the Feature Taskfile (check, keys, key tasks including key:rotate, key:retire and key:age, git:signing, git:verify).
+Makes an SSH agent available to every process in the devcontainer (SSH_AUTH_SOCK=/var/lib/devcontainer-features/ssh-agent/agent.sock, also for `devcontainer exec`) so git commits can be signed with an SSH key: the devcontainer-cli launcher bind-mounts the host's agent socket onto that path where the host type has one (linux, macos, a WSL distro), the private key never entering the container; a post-start hook (ssh-agent-setup) checks it on every start and says plainly what a host type without one can do; the opt-in key mode (option mode: key) starts an agent inside the container and loads keys from its own volume instead, which breaks the no-key rule for whoever turns it on. With the openbao Feature, key:load NAME=ssh/<key> fetches a key from OpenBao and pipes it into the agent (ssh-add -t, memory only, never a file) for no longer than the login, key:lock drops it, and key:rotate rotates OpenBao records, keeping .devcontainer/allowed_signers; the key volume's tasks are deprecated (removed in 2.0). Plus the Feature Taskfile (check, keys, key tasks including key:rotate, key:retire and key:age, git:signing, git:verify).
 
 ## Example Usage
 
@@ -17,7 +17,8 @@ Makes an SSH agent available to every process in the devcontainer (SSH_AUTH_SOCK
 |-----|-----|-----|-----|
 | installTaskfile | Also install this Feature's Taskfile into /usr/local/share/go-task/includes.d so its tasks appear under the <id>: namespace of a root Taskfile that includes /usr/local/share/go-task/features.yml (see the go-task Feature). | boolean | true |
 | passphraseTimeout | Key mode: seconds `task ssh-agent:setup` (and the key tasks) wait for the passphrase of a protected key typed at ssh-add's own prompt. On the timeout, with no terminal to ask on, or with 0 (never prompt), they print one warning (the key is not loaded; task ssh-agent:setup loads it later) and go on with exit 0. The start hook itself never asks: it skips a protected key with that warning. Override per container with SSH_AGENT_SETUP_PASSPHRASE_TIMEOUT in containerEnv. | string | 120 |
-| keyMode | Opt-in, temporary: when no host agent socket is forwarded, start an ssh-agent inside the container on the fixed socket and load the private keys found in the ssh-agent-key volume. This puts a private key in the container, which breaks the default rule that the key never enters it; use it only where the host type cannot forward its agent (windows-docker, windows-wslc). Override per container with SSH_AGENT_SETUP_KEY_MODE in containerEnv, or per start with SSH_AGENT_MODE=key on the launcher. | boolean | false |
+| mode | Which agent the container uses. `auto` (default) follows what the launcher found for the host (DCF_HOST_SSH_AGENT): the host's socket where the host type has one, otherwise nothing (with a plain explanation). `socket` pins the host's agent socket verdict, `none` pins no agent, whatever the launcher found. `key` starts an agent inside the container on the fixed socket and loads the private keys found in the ssh-agent-key volume, unless the launcher really mounted a host socket (a mounted socket wins and the start hook says so); this puts a private key in the container, which breaks the default rule that the key never enters it, so use it only where the host type cannot forward its agent (windows-docker, windows-wslc). Set it per machine with "mode": "${localEnv:SSH_AGENT_MODE:auto}" in devcontainer.json and SSH_AGENT_MODE=key in .devcontainer/.env, then rebuild. An empty or unknown value is treated as auto with one warning. Override per container with SSH_AGENT_SETUP_MODE in containerEnv. | string | auto |
+| keyMode | Deprecated (removed in 2.0; use mode: key). With mode auto, keyMode: true means mode: key. Ignored when mode is socket, key or none. Still overridable per container with SSH_AGENT_SETUP_KEY_MODE in containerEnv, which is deprecated the same way. | boolean | false |
 
 ## How it fits
 
@@ -75,7 +76,7 @@ not go through the launcher (`DCF_HOST_SSH_AGENT` empty) reports `host unknown: 
 task devcontainer:up` and probes the fixed path anyway.
 
 `SSH_AGENT_MODE=key` on the launcher (`task devcontainer:up SSH_AGENT_MODE=key`, or in
-`.devcontainer/.env`) sets `DCF_HOST_SSH_AGENT=key` and suppresses the socket mount.
+`.devcontainer/.env`, where `"mode": "${localEnv:SSH_AGENT_MODE:auto}"` also reads it) sets `DCF_HOST_SSH_AGENT=key` and suppresses the socket mount.
 
 ## The layout, and why there is no volume on the socket's folder
 
@@ -90,10 +91,25 @@ task devcontainer:up` and probes the fixed path anyway.
 ## Options
 
 - `installTaskfile` (default `true`): install the Taskfile into the go-task registry.
-- `keyMode` (default `false`): the opt-in, temporary key mode below. It applies when no host agent
-  socket is mounted (`none` or unknown); a mounted socket wins and the hook says so. Override
-  without a rebuild with `SSH_AGENT_SETUP_KEY_MODE=true|false` in `containerEnv`, or per start
-  with `SSH_AGENT_MODE=key` on the launcher.
+- `mode` (default `auto`; 1.5.0): which agent the container uses, the one setting to touch.
+  - `auto`: follow what the launcher found (`DCF_HOST_SSH_AGENT`): the host's socket where the host
+    type has one, otherwise nothing, with the plain explanation. The deprecated `keyMode: true`
+    still turns this into `key`.
+  - `socket`: pin the host-socket verdict whatever the launcher said (a socket that is not there is
+    reported as not reachable, with the fix).
+  - `key`: the opt-in, temporary key mode below. It applies when no host agent socket is mounted
+    (`none` or unknown); a mounted socket wins and the hook says so.
+  - `none`: pin no agent: the hook explains the ways round and starts nothing.
+  An empty or unknown value is `auto`, with one warning (`${localEnv:SSH_AGENT_MODE:auto}` can
+  produce odd values). Override without a rebuild with `SSH_AGENT_SETUP_MODE` in `containerEnv`.
+  Per machine, write `"mode": "${localEnv:SSH_AGENT_MODE:auto}"` in `devcontainer.json` and
+  `SSH_AGENT_MODE=key` in `.devcontainer/.env` on the workstation, then rebuild. The launcher reads
+  the same `SSH_AGENT_MODE=key` and then suppresses the socket mount (it stays the launcher's
+  internal signal, `DCF_HOST_SSH_AGENT`).
+- `keyMode` (default `false`): **deprecated, removed in 2.0**; with `mode: auto` it means `mode: key`,
+  and it is ignored when `mode` is `socket`, `key` or `none`. Its override
+  `SSH_AGENT_SETUP_KEY_MODE` is deprecated the same way. The start hook prints one deprecation line
+  while either is on.
 - `passphraseTimeout` (default `"120"`): key mode, seconds the explicit tasks wait for the passphrase of a
   protected key at ssh-add's prompt in `task ssh-agent:setup` and the key tasks before it warns and goes on; `0` never prompts. The start hook itself never asks.
   Override without a rebuild with `SSH_AGENT_SETUP_PASSPHRASE_TIMEOUT` in `containerEnv`
@@ -105,7 +121,7 @@ task devcontainer:up` and probes the fixed path anyway.
 }
 ```
 
-On `windows-docker` or `windows-wslc`, add `"keyMode": true` only if you accept the trade-off
+On `windows-docker` or `windows-wslc`, add `"mode": "key"` only if you accept the trade-off
 below.
 
 ## Keys from OpenBao (1.4.0)
@@ -418,7 +434,7 @@ To move off key mode's volume, once per container:
 | 3 | the Operator | `task openbao:ssh:import FROM=ssh-agent`; the host commits `.devcontainer/allowed_signers` |
 | 4 | everyone | `key:unlock NAME=<file>` becomes `key:load NAME=ssh/<file> [MINUTES=]` |
 
-In 2.0 the key volume, its mount and the deprecated tasks go, and `keyMode` becomes `localAgent`
+In 2.0 the key volume, its mount and the deprecated tasks go, and `mode: key` becomes `localAgent` (and `keyMode` goes)
 (an in-container agent with keys in memory only); removing a mount does not delete the volume, so
 import first and remove the old volume with the engine's own command.
 
@@ -447,6 +463,20 @@ volume, and a rebuild re-runs the hook.
 
 ## Changes
 
+### [1.5.0] - 2026-11-05
+
+#### Added
+
+- **A `mode` option** (`auto`, `socket`, `key`, `none`; default `auto`) is the one setting for which agent the container uses. `auto` behaves exactly as before: it follows what the launcher found for the host. `key` starts the agent inside the container and loads the keys of the key volume (what `keyMode: true` meant; a host socket the launcher really mounted still wins, and the start hook says so). `socket` and `none` pin those two outcomes whatever the launcher found. To choose per machine, write `"mode": "${localEnv:SSH_AGENT_MODE:auto}"` in `devcontainer.json` and `SSH_AGENT_MODE=key` in `.devcontainer/.env` on the workstation, then rebuild. An empty or unknown value counts as `auto` with one warning. `SSH_AGENT_SETUP_MODE` in `containerEnv` overrides it without a rebuild.
+
+#### Changed
+
+- The messages that told you how to turn key mode on now name this way (the `mode` line plus `SSH_AGENT_MODE=key` in `.devcontainer/.env`, then rebuild).
+
+#### Deprecated
+
+- **`keyMode` and the `SSH_AGENT_SETUP_KEY_MODE` override** (removed in 2.0): they still work, `keyMode: true` meaning `mode: key` while `mode` is `auto`, and the start hook prints one deprecation line while either is on. **You do not have to act now**; move to `mode` when convenient.
+
 ### [1.4.0] - 2026-11-04
 
 #### Added
@@ -464,12 +494,6 @@ volume, and a rebuild re-runs the hook.
 #### Changed
 
 - The README now has a "How it fits" section with a small diagram of how the Feature sits in a devcontainer, a table of the data it keeps and the storage tier of each, and "Used in" links to the reference architectures that use it. Where the Feature has them, its best practices and anti-patterns are in the README too. Documentation only: the Feature itself is unchanged. Nothing to do.
-
-### [1.3.1] - 2026-11-03
-
-#### Added
-
-- This changelog: every release of this Feature now has an entry here, written for its users, and the Feature's README shows the latest three under "Changes". Nothing to do.
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/ssh-agent/CHANGELOG.md).
 

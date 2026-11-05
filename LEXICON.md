@@ -373,9 +373,15 @@ The words of the secrets split: OpenBao keeps every secret, `ssh-agent` only use
   OpenBao and loaded for a sitting by `key:load` (ADR-0048, replacing ADR-0046).
 - **Recovery key**: the register's second operator key, kept offline outside OpenBao, the one
   stated exception to "OpenBao keeps everything".
-- **Key mode**: the `ssh-agent` Feature's opt-in mode with a key volume and key tasks; deprecated
+- **Key mode**: the `ssh-agent` Feature's opt-in mode with a key volume and key tasks, chosen with
+  the SSH agent mode `key` (formerly `keyMode: true`); deprecated
   by ADR-0048, and renamed `localAgent` (an in-container agent whose keys live only in memory) in
   `ssh-agent` 2.0.
+- **SSH agent mode**: the one setting a user touches for the `ssh-agent` Feature, `SSH_AGENT_MODE`
+  in the workstation's `.devcontainer/.env`, mapped by `"mode": "${localEnv:SSH_AGENT_MODE:auto}"`;
+  values `auto` (follow the host socket), `socket`, `key` and `none`; an empty or unknown value
+  counts as `auto` with a warning. It replaces the `keyMode` option and the
+  `SSH_AGENT_SETUP_KEY_MODE` override, both deprecated and removed in `ssh-agent` 2.0.
 - **Central server**: an owner-run OpenBao server that devcontainers reach in client mode; the
   only server a wrapping token can be unwrapped against.
 - **Snapshot**: the raft file `bao operator raft snapshot save` writes: the whole store, as

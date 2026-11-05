@@ -1,5 +1,5 @@
 #!/bin/bash
-# Scenario 'key_mode' (see scenarios.json): keyMode: true. The in-container agent runs on the fixed path
+# Scenario 'key_mode' (see scenarios.json): mode: key. The in-container agent runs on the fixed path
 # (started by the post-start hook), loads a 0600 key put in the key volume, refuses a 0644 one, and the
 # key tasks work end to end: key:new, key:load, git:signing, git:verify.
 set -e
@@ -12,7 +12,9 @@ registry=/usr/local/share/go-task/features.yml
 tmp="$(mktemp -d)"
 export GIT_CONFIG_GLOBAL="$tmp/gitconfig"
 
-check "options baked: keyMode on" grep -q '^KEYMODE=true$' /usr/local/share/ssh-agent-feature/options.env
+check "options baked: mode key" grep -q '^MODE=key$' /usr/local/share/ssh-agent-feature/options.env
+check "options baked: keyMode off (deprecated, not set)" grep -q '^KEYMODE=false$' /usr/local/share/ssh-agent-feature/options.env
+check "no deprecation line for mode: key" bash -c "! ssh-agent-setup 2>&1 | grep -F deprecated: | grep -F keyMode"
 check "options baked: passphraseTimeout default" grep -q "^PASSPHRASETIMEOUT=120$" /usr/local/share/ssh-agent-feature/options.env
 check "setup starts or keeps the agent on the fixed path" bash -c "ssh-agent-setup | grep -E 'started an agent|already answers'"
 check "an agent answers on the fixed path" bash -c "ssh-add -l >/dev/null; [ \$? -le 1 ]"
