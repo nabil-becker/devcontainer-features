@@ -7,7 +7,8 @@
 # BAO_ADDR and its server-mode default, BAO_TOKEN, a saved login), never fatal, and the token's text
 # never printed. Server mode's start hook (`openbao-setup start`) against a stub bao that plays
 # `bao server` and `bao status`: the config written (raft on the state dir, one loopback listener
-# without TLS, the file audit device, no disable_mlock), the server started once and reused, its
+# without TLS and with the unauthenticated root-token endpoints on, the file audit device, no
+# disable_mlock), the server started once and reused, its
 # pid and log in the state dir, the line for not initialised, sealed and unsealed, a server that
 # does not answer reported with its log and still exit 0, a config without the marker left alone, a
 # config with it rewritten, client mode and a missing bao doing nothing, never fatal. Part of
@@ -186,6 +187,8 @@ check "start: the config is mode 600" 600 "$(stat -c %a "$conf")"
 check "start: raft storage on the state dir" 1 "$(grep -c "path    = \"$T/state/raft\"" "$conf")"
 check "start: a fixed node id" 1 "$(grep -c 'node_id = "devhost"' "$conf")"
 check "start: one loopback listener without TLS" "1 1" "$(grep -c 'address     = "127.0.0.1:8200"' "$conf") $(grep -c 'tls_disable = true' "$conf")"
+check "start: the unauthenticated root-token endpoints are on, in the listener block" "disable_unauthed_generate_root_endpoints = false" "$(sed -n '/^listener "tcp" {/,/^}/p' "$conf" | grep -o 'disable_unauthed_generate_root_endpoints = [a-z]*')"
+check "start: and only those (the legacy rekey endpoints stay off)" 0 "$(grep -c 'disable_unauthed_rekey_endpoints' "$conf")"
 check "start: the audit device is declared in the config, in the state dir" 1 "$(grep -c "file_path = \"$T/state/audit.log\"" "$conf")"
 check "start: no disable_mlock (OpenBao has none since 2.0.0)" 0 "$(grep -c '^disable_mlock' "$conf")"
 check "start: the raft folder exists, private" 700 "$(stat -c %a "$T/state/raft")"
@@ -201,6 +204,10 @@ rm -f "$T/state/server.pid"
 srv -- start
 check "a dead pid is not reused: a second server start" 2 "$(grep -c '^server' "$T/calls.log")"
 # the config: rewritten while it carries the marker, left alone without it
+# a config from an earlier release (the marker, no root-token line) gets the line at the next start
+sed -i '/disable_unauthed_generate_root_endpoints/d' "$conf"
+srv -- start
+check "a marked config from before 1.4.0 is rewritten with the root-token line" 1 "$(grep -c 'disable_unauthed_generate_root_endpoints = false' "$conf")"
 sed -i '1s/^/# my own edits\n/' "$conf"
 srv -- start
 check "a config without the marker line is left alone" "# my own edits" "$(head -n 1 "$conf")"

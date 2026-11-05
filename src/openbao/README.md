@@ -212,6 +212,40 @@ of every request, with secrets hashed, names each identity that read a key.
   (needed after every server start, so after a container restart). `task openbao:seal` seals it
   with the saved login (`bao operator seal`; the Operator's policy has `update` and `sudo` on
   `sys/seal`).
+- **`task openbao:password`**: a new password for the Operator, for one who forgot it (or wants
+  another). It needs no current password and no login: two unseal shares are the authority. It
+  asks for the new password twice (12 characters at least, as `init` does), then for two shares at
+  a hidden prompt, makes a root token from them for this step alone, writes the password with
+  `bao write auth/userpass/users/operator/password password=-` (on stdin, never an argument) and
+  revokes the token, also when the step fails. It checks first, with that token, that the userpass
+  login and the user `operator` exist (an onboarding claim not done yet has neither) and changes
+  nothing when they do not. Tokens the Operator already holds stay valid until they expire (at most
+  8 hours); log in again with the new password. Plain terminal only; refused inside an agent's job.
+  It works with **no login saved at all** (the lock-out case: the shares unseal the server, but
+  nothing can log in): the root token comes from the listener's unauthenticated root-token
+  endpoints (below).
+- **The root token from the shares, without a login.** OpenBao 2.6.0 made `bao operator
+  generate-root` call the authenticated `sys/generate-root-token` endpoints and turned the old
+  unauthenticated `sys/generate-root` ones off by default (the listener option
+  `disable_unauthed_generate_root_endpoints`, true since 2.5.3). The config `openbao-setup start`
+  writes sets it to **false on the one loopback listener**, so two shares alone make a root token.
+  `bao`'s CLI cannot reach those endpoints, so the tasks call them with `curl`: the attempt is
+  started and the server hands back its one-time password; each share is typed at a hidden prompt
+  and sent on `curl`'s stdin with the attempt's nonce (a share never feeds an attempt someone else
+  started, and an attempt already in progress is refused, not taken over); the encoded token is
+  decoded in memory with the one-time password (an XOR: `bao`'s own `-decode` asks the
+  authenticated status first). No share, one-time password or token is in an argument, a file or the
+  output. **What an unauthenticated caller can do** on that listener (any process of the container):
+  read an attempt's status (its nonce and progress, never the encoded token), start an attempt and
+  cancel any attempt, a nuisance and not a breach: completing one takes two shares, and the token it
+  makes is useless without the one-time password of whoever started it. The legacy rekey endpoints
+  stay off. **A server picks the setting up when it starts**: a config that still carries the
+  marker line is rewritten on every container start (a Feature upgrade is a rebuild, so it starts
+  with the new config); a reload (SIGHUP) does not change it. A config without the marker line is
+  the repo's own: add `disable_unauthed_generate_root_endpoints = false` to its listener block and
+  restart the server, or the tasks fall back to the CLI's authenticated flow, which needs the
+  Operator's login (the policy's two `sys/generate-root-token` paths, ADR 0051) and says so when there
+  is none.
 - **The login**: `userpass`, user `operator`, token `ttl` **4 hours**, `max_ttl` **8 hours**; a
   renewal past 8 hours is capped (`bao token renew` says so). `task openbao:logout` ends it early. A
   night shift that must sign overnight starts with a login made for it. These lifetimes are set on
@@ -227,11 +261,11 @@ of every request, with secrets hashed, names each identity that read a key.
   sidestep the rule that restore needs the shares. Making and deleting a role therefore take a root
   token made from the shares, for that step only (below).
 
-**Agents.** `init`, `unseal`, `seal`, `restore` and the steps that ask for the shares (making a role, deleting a role, `backup:role`) **refuse inside an agent's job**: when `DEVHOST_JOB_CHILD`
+**Agents.** `init`, `unseal`, `seal`, `restore`, `password` and the steps that ask for the shares (making a role, deleting a role, `backup:role`) **refuse inside an agent's job**: when `DEVHOST_JOB_CHILD`
 (the devhost's backs and its test run) or `CLAUDECODE` (set by Claude Code on every process it
 starts) is set, or a variable named in `OPENBAO_AGENT_JOB_VARS` (space separated, for another agent
 CLI), each saying why and exiting 3: the shares and the token must never land in a transcript, which
-the scribe reads. `init`, `unseal` and those two steps also refuse without a terminal on stdin and stdout (they ask
+the scribe reads. `init`, `unseal`, `password` and those two steps also refuse without a terminal on stdin and stdout (they ask
 for secrets and print them only to a terminal), and all server-mode tasks refuse in client mode.
 Run them yourself in a plain terminal in the devcontainer (a terminal opened from inside a Claude
 Code session inherits `CLAUDECODE` and is refused too: open a fresh one). A refusal is no call to `bao`.
@@ -239,11 +273,14 @@ Code session inherits `CLAUDECODE` and is refused too: open a fresh one). A refu
 **AppRole** (`task openbao:approle:issue`, `:revoke`; server mode). One role per machine identity,
 generic: the Feature never calls a task of another Feature. `ROLE=<name> POLICY_PATH=<mount/path>`
 **asks for the unseal shares** (it writes a policy): it makes a root token with `bao operator
-generate-root` (a one-time password held in a variable, two shares typed at a hidden prompt, the
-token decoded in memory), runs that step with it, and revokes it straight after, also when the step
-fails or is interrupted (an abandoned generation is cancelled). No share, password or token is
-printed, logged, put in a file or passed as an argument but the one-time password, which is useless
-without the encoded token (that goes over stdin). It makes the role (lower case name) with a policy `approle-<name>` that lets it read that one secret
+generate-root`'s unauthenticated endpoints (above: a one-time password held in a variable, two
+shares typed at a hidden prompt, the token decoded in memory), runs that step with it, and revokes it
+straight after, also when the step fails or is interrupted (an abandoned generation is cancelled). No
+share, password or token is printed, logged, put in a file or passed as an argument (the CLI
+fallback for a listener without those endpoints passes the one-time password, which is useless
+without the encoded token, which goes over stdin). Issuing and revoking a role still need the
+Operator's login for their other calls (the new role's secret id is made, and a role's existence
+checked, with the login), so they check it before asking for a share. It makes the role (lower case name) with a policy `approle-<name>` that lets it read that one secret
 and nothing else, **bound to loopback**: `secret_id_bound_cidrs` and `token_bound_cidrs` of
 `127.0.0.1/32`, so a stolen secret id or token works only from inside this container, and only while
 the server is unsealed; tokens last 5 minutes, at most 15; secret ids do not expire (an expiring one
@@ -368,9 +405,10 @@ inside an agent's job and without a terminal). The restore installs the snapshot
   (`bao operator generate-root`), used once and revoked, the same way as making or deleting a role
   (a one-time password in a variable, the shares typed at a hidden prompt, the token only in the
   step's subshell, revoked on every way out, an attempt this task started cancelled if abandoned).
-  In OpenBao 2.6.0 and later that call is authenticated, so it starts with the Operator's login,
-  whose policy holds exactly two paths for it (`sys/generate-root-token/attempt` and `/update`): the
-  shares are the authority, the login only opens the door. A login without those paths (a server
+  It needs no login: the listener's unauthenticated root-token endpoints take the shares (above).
+  On a listener without them (a config of the repo's own) the CLI's authenticated flow is used,
+  which starts with the Operator's login, whose policy holds exactly two paths for it
+  (`sys/generate-root-token/attempt` and `/update`); a login without those paths (a server
   initialised by an unreleased 1.2.0 build) is refused by the server, and the task stops before any
   share is typed. The root token is made in the store the snapshot replaces, so it goes with it:
   the task tries to revoke it and does not complain when the restored store no longer knows it.
@@ -410,9 +448,24 @@ from two shares, used once and revoked, as for making a role).
   it. So no share ever travels with a snapshot, and a restore needs the shares that went with it.
 - `bao operator unseal` and `generate-root` need a terminal to read a share (a pipe is refused);
   `bao operator generate-root` prints its prompt on stdout, so the task prints its own prompt line.
-- A root token generation needs a token from 2.6.0 on (an unauthenticated one is a 403); a token with
-  create/read/update/delete on `sys/generate-root-token/attempt` and update on
+- A root token generation through the CLI needs a token from 2.6.0 on (an unauthenticated one is a
+  403); a token with create/read/update/delete on `sys/generate-root-token/attempt` and update on
   `sys/generate-root-token/update` runs it and the result is a `root` token.
+- **The unauthenticated endpoints** (2.7.2, 2026-11-05): `disable_unauthed_generate_root_endpoints`
+  is a listener option (`listener "tcp"` and `listener "unix"`), default true; with it true
+  `sys/generate-root/*` answers 405, with it false a fresh server with no token anywhere completes
+  a root token from 2 of 3 shares (`PUT sys/generate-root/attempt` with `{}` returns the nonce and a
+  one-time password the server made, `PUT sys/generate-root/update` takes `{"key","nonce"}`), the
+  token decodes to a `root` token (base64 without padding, XORed with the one-time password) and
+  resets a userpass password; `bao operator generate-root -decode` asks the authenticated status
+  first, so it cannot decode without a token. Without a token: the status (nonce, progress) is
+  readable and never shows the encoded token, an attempt can be started and any attempt cancelled
+  (also one started through the authenticated endpoints: they share one attempt), a share with the
+  wrong nonce is refused, a second attempt while one runs is refused, a wrong share aborts at the
+  threshold and leaves the attempt to be cancelled; the authenticated endpoints still answer 403
+  and the legacy rekey endpoints 405. The option is read when the server starts: a SIGHUP does not
+  change it. OpenBao calls these endpoints deprecated (2.6.0); no release has announced their
+  removal yet.
 
 **Not checked here:** the throwaway init and restore of the Feature's own tasks against a real
 server, and restore run twice, run only in CI's Docker run (`test/openbao/backup_restore.sh`): the
@@ -497,7 +550,9 @@ A claim that fails midway leaves the claim token valid and a resume file in the 
 generate-root` uses the authenticated `/sys/generate-root-token` endpoint since 2.6.0, and the
 unauthenticated one is off by default (the listener option
 `disable_unauthed_generate_root_endpoints`). A restored store holds only the sender's tokens, so
-the receiver has no token that may start a generation. The claim token is a root token that
+the receiver has no token that may start a generation. (Since openbao 1.4.0 the server's listener
+has those unauthenticated endpoints on, so the shares alone could now start one; the claim is
+unchanged so far.) The claim token is a root token that
 was in the snapshot: the sender holds it already, so it adds no trust, and the claim revokes it.
 `rotate-keys` itself needs a token too (`sys/rotate/root`), which is the same token.
 
@@ -726,6 +781,9 @@ registry, these appear under `openbao:`:
 - `openbao:unseal`: server mode: shares at the hidden prompt until unsealed. Refuses inside an
   agent's job.
 - `openbao:seal`: server mode: seal the server with the saved login. Refuses inside an agent's job.
+- `openbao:password`: server mode: a new password for the Operator, asked twice, then two unseal
+  shares (a root token for this step alone, revoked after); no current password needed. Refuses
+  inside an agent's job.
 - `openbao:approle:issue`: server mode: `ROLE=<name> POLICY_PATH=<mount/path>` makes a loopback-bound
   role that reads one secret (asks for two unseal shares; refuses inside an agent's job);
   `ROLE=<name>` or `ALL=1` reissues with your login, no shares; one valid secret id each.
@@ -771,14 +829,16 @@ itself.
   engine) or the hook's first line says `image` instead of `volume`. Log in again.
 - `put` without `--replace` needs the `patch` capability on the secret's path; a policy that has
   only `create` and `update` must use `--replace`, which drops the secret's other fields.
-- Not there yet: `DCF_SECRET_AS` (a secret read as another identity). No task changes the Operator's
-  password or a policy: both need a root token made from the shares (`bao operator generate-root`,
-  used once and revoked); then `bao write auth/userpass/users/operator/password password=-` changes
-  the password. Making or deleting an AppRole role asks for two shares for the same reason.
+- Not there yet: `DCF_SECRET_AS` (a secret read as another identity). No task changes a policy:
+  it needs a root token made from the shares (the unauthenticated root-token endpoints, used once
+  and revoked), as making or deleting an AppRole role and `openbao:password` do.
 - Server mode: the shares are the keys to everything; losing two of three loses every secret. The
   loopback listener has no TLS: any process of the container can reach it and read the Operator's
   saved token (mode 600, the remote user's), as with any login kept in a volume; the token's 4 hour
-  lifetime is the bound. `server.log` and `audit.log` grow without rotation. The server stops with
+  lifetime is the bound. Any process of the container can also start, read or cancel a root-token
+  attempt on that listener without a token (the unauthenticated endpoints that let the shares work
+  with no login): it can get in the way of an attempt, not complete one. `server.log` and
+  `audit.log` grow without rotation. The server stops with
   the container and comes back sealed (the start hook says so); a server that does not answer is
   reported with the end of its log. Pinning `version` below 2.4.0 fails the build in server mode.
 - `dcf-secret` asks `bao` up to three questions after a failure, so a failure costs a few round
@@ -832,6 +892,16 @@ secret ids; making or deleting a role asks for two shares). A server initialised
 
 ## Changes
 
+### [1.4.0] - 2026-11-04
+
+#### Added
+
+- **`task openbao:password`** (server mode): sets a new password for the Operator, for when you forgot it or want another. It needs no current password and no login: it asks for the new password twice (12 characters at least), then for two unseal shares at a hidden prompt, which make a root token used for this step alone and revoked straight after. The password never appears in an argument, file or output. Tokens you already hold stay valid until they expire (at most 8 hours); log in again with `task openbao:login -- -method=userpass username=operator`. Plain terminal only; refused inside an agent's job. It works with no login saved at all (see Changed). No action needed.
+
+#### Changed
+
+- **Server mode: two unseal shares make a root token without a login.** The config `openbao-setup start` writes sets `disable_unauthed_generate_root_endpoints = false` on its one loopback listener, so OpenBao's unauthenticated `sys/generate-root` endpoints (off by default since 2.5.3) take the shares; the tasks call them with `curl`, since `bao operator generate-root` uses only the authenticated endpoints since OpenBao 2.6.0. `openbao:password`, `openbao:backup:role` and `openbao:restore` onto a store in use no longer need the Operator's login; `openbao:approle:issue` with `POLICY_PATH` and `openbao:approle:revoke` still do, for their other calls. Without a token, any process of the container can now start or cancel a root-token attempt (not complete one: that takes two shares). Action: none while your server's config still has its first line (the marker): it is rewritten at the next container start, which the rebuild for this version is. A config of your own (marker removed) needs `disable_unauthed_generate_root_endpoints = false` in its `listener "tcp"` block and a server restart; until then the tasks use the login as before.
+
 ### [1.3.1] - 2026-11-04
 
 #### Fixed
@@ -859,23 +929,6 @@ secret ids; making or deleting a role asks for two shares). A server initialised
 - Restore on a store in use and the backup role make their root token the same way.
 - `jq` is installed at build time (the onboarding scripts read `bao`'s JSON with it). Rebuild the devcontainer to get the new tasks.
 - **Action if you initialised a server with an unreleased 1.2.0 build:** it lacks the `backup` role and the two paths that let your login start a root token generation. Run `task openbao:backup:role` once (it asks for two unseal shares); until then `openbao:backup` uses your login, with a line saying so, and `openbao:restore` on a store in use stops before any share is typed. Servers initialised by the released 1.2.0 or by this version need nothing.
-
-### [1.2.0] - 2026-11-03
-
-#### Added
-
-- **Server mode: a local OpenBao server in the container.** Set the `mode` option to `server` (or `OPENBAO_SETUP_MODE=server` in `containerEnv`, no rebuild; needs OpenBao 2.4.0 or newer, and an older pinned `version` fails the build with that said). The post-start hook starts one server with raft storage on the Feature's volume and a loopback-only listener (`127.0.0.1:8200`, no TLS), and it comes up **sealed**: nothing can read a secret until you unseal it. The hook never waits and never prompts; it prints whether the server is not initialised, sealed or unsealed. `mode: client` stays the default and behaves as before. **You must act once, in a plain terminal in the container:** `task openbao:init`, then after every container restart `task openbao:unseal`.
-- `task openbao:init`: asks for a **backup destination or the words `no backup`** (never defaulted, and the answer is recorded in the volume), asks for the Operator's password, makes **3 unseal shares with a threshold of 2** and prints them once, only to the terminal (keep one in a password manager, one on paper offline, one with a second person or on a hardware key; losing two loses every secret), has you enter two of them to prove you stored them, sets up the `dcf` KV mount, `userpass` and `approle`, and revokes the root token. `-pgp-keys=...` after `--` encrypts the shares.
-- `task openbao:unseal` and `task openbao:seal`. `task openbao:server:status` shows the state, the storage, the audit log, whether your login is valid and the backup choice, with a standing warning while there is none. Your login is `task openbao:login -- -method=userpass username=operator`: it lasts **4 hours, at most 8**, and a renewal past that is refused.
-- `task openbao:approle:issue ROLE=<name> POLICY_PATH=<mount/path>` makes a role for a machine identity (for the devhost's backs, later) that may read that one secret, only from inside the container (loopback-bound secret ids and tokens), with 5 minute tokens; `ROLE=<name>` alone or `ALL=1` reissues, leaving exactly one valid secret id per role, written to the volume and never printed. `task openbao:approle:revoke ROLE=<name>` removes a role. **Making a role and deleting one ask for two unseal shares** (typed at a hidden prompt, they make a root token, `bao operator generate-root`, used for that step only and revoked straight after, also on failure); reissuing (`ROLE=<name>` alone, `ALL=1`) uses your login and asks for none. Your login's policy cannot write a policy or make, change or delete a role, so a token of yours can never give a role `snapshot-force`.
-- A file audit device in the volume (`audit.log`), declared in the server's config.
-- **Not included yet:** `openbao:backup` and restore. A backup destination is recorded but not used, so until a later version a lost machine loses what is in the server's volume (this is why `init` asks and `server:status` warns); take a snapshot by hand with `bao operator raft snapshot save`.
-
-#### Changed
-
-- **`init`, `unseal`, `seal` and the two steps that ask for shares (making and deleting a role) refuse inside an agent's job** (when `DEVHOST_JOB_CHILD` or `CLAUDECODE` is set, or a variable you name in `OPENBAO_AGENT_JOB_VARS`), and `init`, `unseal` and those two steps refuse without a terminal: the shares and the token must never land in a transcript. Run them yourself in a plain terminal.
-- `dcf-secret`'s failure lines now name the tasks: sealed points to `task openbao:unseal`, not initialised to `task openbao:init`, unreachable to `task openbao:server:status`, each adding what to do against a server elsewhere. The exit codes are unchanged.
-- In server mode `BAO_ADDR` defaults to the local server for `dcf-secret` and every task when you have not set it (a bare `bao` still needs `BAO_ADDR`). The tasks `status`, `login`, `logout`, `kv:get` and `setup` run the same `bao` call through `openbao-run`, which adds only that default; client mode is unchanged. `task openbao:setup` now also runs the start hook.
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/openbao/CHANGELOG.md).
 
