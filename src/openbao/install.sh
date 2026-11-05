@@ -3,7 +3,7 @@
 # verified against the release's checksums.txt, plus the pieces that make it part of this
 # collection's ecosystem: dcf-secret, dcf-persist, the post-create setup (openbao-setup) and the
 # Feature Taskfile. Feature options arrive as upper-cased environment variables (see
-# devcontainer-feature.json): VERSION, MODE, BACKUPDEST, BACKUPKEEP, BACKUPINTERVAL, BACKUPWARNAFTER.
+# devcontainer-feature.json): VERSION, MODE, UNLOCK, BACKUPDEST, BACKUPKEEP, BACKUPINTERVAL, BACKUPWARNAFTER.
 set -euo pipefail
 
 # Every download goes through dcf_curl (dcf-curl.sh, the collection's retry helper, vendored from
@@ -13,6 +13,7 @@ set -euo pipefail
 
 VERSION="${VERSION:-latest}"
 MODE="${MODE:-client}"
+UNLOCK="${UNLOCK:-operator}"
 BACKUPDEST="${BACKUPDEST:-}"
 BACKUPKEEP="${BACKUPKEEP:-30}"
 BACKUPINTERVAL="${BACKUPINTERVAL:-}"
@@ -26,6 +27,11 @@ fi
 
 if [ "$MODE" != "client" ] && [ "$MODE" != "server" ]; then
   echo "openbao: mode '$MODE' is not known (client or server)." >&2
+  exit 1
+fi
+
+if [ "$UNLOCK" != "operator" ] && [ "$UNLOCK" != "keyfile" ]; then
+  echo "openbao: unlock '$UNLOCK' is not known (operator or keyfile)." >&2
   exit 1
 fi
 
@@ -121,6 +127,7 @@ mkdir -p "$share"
 {
   echo "# Written by the openbao Feature's install.sh from its options; sourced by openbao-setup."
   printf 'MODE=%q\n' "$MODE"
+  printf 'UNLOCK=%q\n' "$UNLOCK"
   printf 'BACKUPDEST=%q\n' "$BACKUPDEST"
   printf 'BACKUPKEEP=%q\n' "$BACKUPKEEP"
   printf 'BACKUPINTERVAL=%q\n' "$BACKUPINTERVAL"
@@ -132,6 +139,8 @@ install -m 0755 "$feature_dir/openbao-setup.sh" /usr/local/bin/openbao-setup
 install -m 0755 "$feature_dir/openbao-server.sh" /usr/local/bin/openbao-server
 install -m 0755 "$feature_dir/openbao-onboard.sh" /usr/local/bin/openbao-onboard
 install -m 0755 "$feature_dir/openbao-run.sh" /usr/local/bin/openbao-run
+# openbao-keyfile: the OpenBao key file's container side (openbao-setup unlock|keyfile|renew hand over to it).
+install -m 0755 "$feature_dir/openbao-keyfile.sh" /usr/local/bin/openbao-keyfile
 # openbao-ssh: the SSH key records (task openbao:ssh:*) and the import of keys kept elsewhere.
 install -m 0755 "$feature_dir/openbao-ssh.sh" /usr/local/bin/openbao-ssh
 install -m 0644 "$feature_dir/env.sh" "$share/env.sh"

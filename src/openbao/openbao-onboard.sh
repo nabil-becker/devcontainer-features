@@ -47,6 +47,7 @@ usage() {
 command -v bao >/dev/null 2>&1 || die 10 "bao is not installed: add the openbao Feature to the devcontainer"
 
 mode_now="$(openbao_mode 2>/dev/null || echo client)"
+unlock_now="$(openbao_unlock 2>/dev/null || echo operator)"
 
 # ---------------------------------------------------------------------------- refusals ----
 need_server_mode() { # <task>
@@ -294,6 +295,9 @@ cmd_claim() {
   fi
 
   local newpw="" pw2="" tries=0
+  # A server opened with the OpenBao key file has no password: the workstation's keyfile:rotate
+  # makes the Operator's login at the end.
+  [ "$unlock_now" != keyfile ] || newpw=keyfile
   while [ -z "$newpw" ]; do
     tries=$((tries + 1))
     [ "$tries" -le 5 ] || die 3 "no password chosen: nothing was changed"
@@ -425,6 +429,7 @@ EOF
   done < <(cl read -format=json sys/audit 2>/dev/null | jq -r '(.data // .) | keys[]' 2>/dev/null | grep '/$')
 
   # the receiver's own: the mounts and the Operator (a configure of openbao-server, as init does)
+  [ "$unlock_now" != keyfile ] || newpw=""
   printf '%s\n' "$newpw" | BAO_TOKEN="$claim_tok" openbao-server configure || { newpw=""; die 1 "could not set up the Operator (the message above): the claim token is still valid, run the task again"; }
   newpw=""
 
@@ -463,6 +468,18 @@ EOF
   claim_tok=""
   rm -f "$claim_state"
   openbao-token-helper erase 2>/dev/null || true
+  if [ "$unlock_now" = keyfile ]; then
+    cat >&2 <<EOF
+openbao: claimed. The claim token is revoked and your new unseal shares are the only ones. This
+server is opened with the OpenBao key file: run task dc:openbao:keyfile:rotate on the workstation
+with two of the new shares; it makes the key file (five shares: three custody, two in the file)
+and logs you in.
+The sender (machine '$marker_machine') knows these values for good; put new values for the ones
+you want to be yours alone (dcf-secret put <name> --field <field>):
+  ${names_out//$'\n'/$'\n'  }
+EOF
+    return 0
+  fi
   cat >&2 <<EOF
 openbao: claimed. The claim token is revoked and the new unseal shares are the only ones. Log in:
   task openbao:login -- -method=userpass username=operator

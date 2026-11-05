@@ -22,6 +22,10 @@ check "dcf-secret on PATH" command -v dcf-secret
 check "openbao-server on PATH" command -v openbao-server
 check "openbao-run on PATH" command -v openbao-run
 check "openbao-onboard on PATH" command -v openbao-onboard
+check "openbao-keyfile on PATH (the OpenBao key file's container side)" command -v openbao-keyfile
+check "the unlock option is baked as operator by default" grep -q '^UNLOCK=operator$' /usr/local/share/openbao-feature/options.env
+# shellcheck disable=SC2016  # expansion is meant to happen inside the inner bash
+check "openbao-setup unlock --status answers mode off in client mode, exit 0" bash -c 'out="$(openbao-setup unlock --status)" && [ "$(jq -r .mode <<<"$out")" = off ]'
 check "openbao-lib.sh is installed next to env.sh (the two scripts source it)" test -f /usr/local/share/openbao-feature/openbao-lib.sh
 check "jq is installed (the onboarding scripts read bao's JSON with it)" command -v jq
 check "openbao-ssh on PATH" command -v openbao-ssh

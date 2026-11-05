@@ -1,8 +1,8 @@
 {
   "id": "openbao",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "name": "OpenBao CLI",
-  "description": "Installs the OpenBao CLI (https://openbao.org), the open-source Vault fork, as a release binary at /usr/local/bin/bao, verified against the release's checksums.txt. Owns the login state as a named volume at OPENBAO_STATE_DIR=/var/lib/devcontainer-features/openbao (bao's token helper, set through BAO_CONFIG_PATH, keeps the token in it) so `bao login` survives rebuilds, with the post-create hook openbao-setup, and installs dcf-secret, the one command the collection's Features use to read and write secrets (get, put, status, with fixed exit codes). Mode client (the default) is the CLI against a server of yours (set BAO_ADDR in containerEnv). Mode server also runs a server inside the container, started at post-start with raft storage on the same volume and sealed until the Operator unseals it: tasks openbao:init (unseal shares printed only to a terminal, a backup choice asked for), openbao:unseal, openbao:seal, userpass login for the Operator, loopback-bound AppRole roles (openbao:approle:issue) and openbao:server:status. Backup and restore (openbao:backup to a folder you name, on a timer if you set one, and openbao:restore from a snapshot). SSH key records in OpenBao (openbao:ssh:new, put, retire, age) and the import of keys kept elsewhere (openbao:ssh:import FROM=file, ssh-agent or agentic-register), which ssh-agent's key:load and key:rotate use. Onboarding: openbao:onboard:export and :onboard:claim (a starter instance restored, then rotate-keys and every access the sender held revoked) and openbao:wrap and :unwrap (one-use response-wrapping tokens for a few keys against a central server).",
+  "description": "Installs the OpenBao CLI (https://openbao.org), the open-source Vault fork, as a release binary at /usr/local/bin/bao, verified against the release's checksums.txt. Owns the login state as a named volume at OPENBAO_STATE_DIR=/var/lib/devcontainer-features/openbao (bao's token helper, set through BAO_CONFIG_PATH, keeps the token in it) so `bao login` survives rebuilds, with the post-create hook openbao-setup, and installs dcf-secret, the one command the collection's Features use to read and write secrets (get, put, status, with fixed exit codes). Mode client (the default) is the CLI against a server of yours (set BAO_ADDR in containerEnv). Mode server also runs a server inside the container, started at post-start with raft storage on the same volume and sealed until the Operator unseals it: tasks openbao:init (unseal shares printed only to a terminal, a backup choice asked for), openbao:unseal, openbao:seal, userpass login for the Operator, loopback-bound AppRole roles (openbao:approle:issue) and openbao:server:status. Backup and restore (openbao:backup to a folder you name, on a timer if you set one, and openbao:restore from a snapshot). SSH key records in OpenBao (openbao:ssh:new, put, retire, age) and the import of keys kept elsewhere (openbao:ssh:import FROM=file, ssh-agent or agentic-register), which ssh-agent's key:load and key:rotate use. Onboarding: openbao:onboard:export and :onboard:claim (a starter instance restored, then rotate-keys and every access the sender held revoked) and openbao:wrap and :unwrap (one-use response-wrapping tokens for a few keys against a central server). Option unlock: keyfile opens a server-mode store with the OpenBao key file the Windows launcher keeps (no typed share or password; opt-in).",
   "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/openbao",
   "licenseURL": "https://github.com/nabil-becker/devcontainer-features/blob/main/LICENSE",
   "options": {
@@ -19,6 +19,15 @@
       ],
       "default": "client",
       "description": "How the Feature is used. 'client' (default): the bao CLI and dcf-secret against a server outside the container (BAO_ADDR). 'server': also run a server in the container (raft storage on the Feature's volume, loopback only, started at post-start, sealed until `task openbao:unseal`; needs OpenBao 2.4.0 or newer). Override per container with OPENBAO_SETUP_MODE in containerEnv."
+    },
+    "unlock": {
+      "type": "string",
+      "enum": [
+        "operator",
+        "keyfile"
+      ],
+      "default": "operator",
+      "description": "Server mode: how the store is opened. 'operator' (default): the Operator types two unseal shares after every server start (task openbao:unseal) and logs in with a password. 'keyfile': the OpenBao key file on the workstation (Windows launcher, task dc:openbao:keyfile:create once) unseals the server and logs the Operator in at every task dc:* with nothing typed: 5 unseal shares (3 custody shares kept by the Operator, 2 in the key file), an operator AppRole with a 1-hour periodic token renewed in the container, no password. Override per container with OPENBAO_SETUP_UNLOCK in containerEnv."
     },
     "backupDest": {
       "type": "string",

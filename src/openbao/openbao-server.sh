@@ -56,10 +56,30 @@ usage() {
 command -v bao >/dev/null 2>&1 || die 10 "bao is not installed: add the openbao Feature to the devcontainer"
 
 mode_now="$(openbao_mode 2>/dev/null || echo client)"
+# unlock: keyfile (the OpenBao key file, from the workstation's launcher) or operator (typed)
+unlock_now="$(openbao_unlock 2>/dev/null || echo operator)"
+[ "$mode_now" = server ] || unlock_now=operator
+login_hint() { # what gets the Operator a token
+  if [ "$unlock_now" = keyfile ]; then
+    echo "task dc:openbao:unlock on the workstation (the OpenBao key file logs you in; nothing is typed)"
+  else
+    echo "task openbao:login -- -method=userpass username=operator"
+  fi
+}
+unseal_hint() {
+  if [ "$unlock_now" = keyfile ]; then
+    echo "the workstation's launcher unseals it with the OpenBao key file (task dc:openbao:unlock), or two custody shares at task openbao:unseal"
+  else
+    echo "the Operator unseals it with task openbao:unseal"
+  fi
+}
 
 # ---------------------------------------------------------------------------- refusals ----
 need_server_mode() { # <task>
   [ "$mode_now" = server ] || die 3 "task openbao:$1 is for server mode: this container runs no server (mode $mode_now); the server's owner does this, or set the Feature option mode to server"
+}
+not_keyfile() { # <task> <what instead>
+  [ "$unlock_now" != keyfile ] || die 3 "task openbao:$1 is not for a server opened with the OpenBao key file (the unlock option is keyfile): $2"
 }
 
 # ----------------------------------------------------------------------- the server ----
@@ -75,7 +95,7 @@ state_exit() { # exit with the line for a server that is not ready; no-op when i
     0) return 0 ;;
     2)
       if is_initialised; then
-        die 11 "the server is sealed: the Operator unseals it with task openbao:unseal"
+        die 11 "the server is sealed: $(unseal_hint)"
       fi
       die 11 "the server is not initialised: the Operator initialises it with task openbao:init"
       ;;
@@ -83,7 +103,7 @@ state_exit() { # exit with the line for a server that is not ready; no-op when i
   esac
 }
 need_token() {
-  bao token lookup >/dev/null 2>&1 || die 12 "no valid token (none, expired or revoked): log in with task openbao:login -- -method=userpass username=operator (task openbao:logout first clears a dead one)"
+  bao token lookup >/dev/null 2>&1 || die 12 "no valid token (none, expired or revoked): log in with $(login_hint) (task openbao:logout first clears a dead one)"
 }
 preflight() {
   server_state
@@ -117,53 +137,19 @@ unseal_loop() {
 }
 
 # ---------------------------------------------------------------------------------- init ----
-operator_policy() {
-  cat <<EOF
-# The Operator (userpass): the secrets, the snapshot read, sealing, reissuing the secret ids of
-# AppRole roles that already exist, and starting or cancelling a root-token generation (which only
-# the unseal shares can complete). NOT any policy (sys/policies/acl/*), not the making, changing or
-# deleting of a role, not snapshot-force, not audit: a token that could write a policy could give a
-# role snapshot-force. Creating and deleting roles use a root token made from the shares for that
-# step only. Written by openbao:init.
-path "$mount/*" {
-  capabilities = ["create", "read", "update", "patch", "delete", "list"]
-}
-path "sys/storage/raft/snapshot" {
-  capabilities = ["read"]
-}
-path "sys/seal" {
-  capabilities = ["update", "sudo"]
-}
-path "auth/approle/role" {
-  capabilities = ["list"]
-}
-path "auth/approle/role/+/role-id" {
-  capabilities = ["read"]
-}
-path "auth/approle/role/+/secret-id" {
-  capabilities = ["create", "update", "list"]
-}
-path "auth/approle/role/+/secret-id-accessor/destroy" {
-  capabilities = ["update"]
-}
-path "sys/generate-root-token/attempt" {
-  capabilities = ["read", "update", "delete"]
-}
-path "sys/generate-root-token/update" {
-  capabilities = ["update"]
-}
-EOF
-}
-
 # Everything init sets up, with the root token in BAO_TOKEN and the password in $op_pw. Each step
 # is idempotent: it is skipped when it is already there.
 configure_store() {
   bao read "sys/mounts/$mount" >/dev/null 2>&1 || bao secrets enable -path="$mount" -version=2 kv >/dev/null || return 1
-  bao read sys/auth/userpass >/dev/null 2>&1 || bao auth enable userpass >/dev/null || return 1
+  if [ "$unlock_now" != keyfile ]; then
+    bao read sys/auth/userpass >/dev/null 2>&1 || bao auth enable userpass >/dev/null || return 1
+  fi
   bao read sys/auth/approle >/dev/null 2>&1 || bao auth enable approle >/dev/null || return 1
-  operator_policy | bao policy write operator - >/dev/null || return 1
-  # The login lifetime (ruling 6): 4 hours, at most 8 with no renewal past that.
-  printf '%s' "$op_pw" | bao write auth/userpass/users/operator password=- token_policies=operator token_ttl=4h token_max_ttl=8h >/dev/null || return 1
+  operator_policy "$mount" | bao policy write operator - >/dev/null || return 1
+  if [ "$unlock_now" != keyfile ]; then
+    # The login lifetime (ruling 6): 4 hours, at most 8 with no renewal past that.
+    printf '%s' "$op_pw" | bao write auth/userpass/users/operator password=- token_policies=operator token_ttl=4h token_max_ttl=8h >/dev/null || return 1
+  fi
   # The backup role (read on the snapshot path only, loopback only): what a scheduled backup logs in
   # with, since the Operator's token ends after at most 8 hours.
   ensure_backup_role || return 1
@@ -173,6 +159,7 @@ configure_store() {
 cmd_init() {
   guard init "it prints the unseal shares and the root token once, and they must never land in a transcript"
   need_server_mode init
+  not_keyfile init "task dc:openbao:keyfile:create on the workstation initialises it (five shares: three custody shares printed there once, two in the OpenBao key file; no password)"
   need_tty init
   local a
   for a in "$@"; do
@@ -300,7 +287,7 @@ cmd_unseal() {
     *) state_exit ;;
   esac
   unseal_loop
-  echo "openbao: unsealed. Log in (task openbao:login -- -method=userpass username=operator) if you have no valid login." >&2
+  echo "openbao: unsealed. Log in ($(login_hint)) if you have no valid login." >&2
 }
 
 # ---------------------------------------------------------------------------------- seal ----
@@ -339,6 +326,18 @@ cmd_status() {
       echo "process:  not running: openbao-setup start (task openbao:setup) starts it"
     fi
     echo "storage:  raft, $dir/raft (tier 4: the volume)"
+    if [ "$unlock_now" = keyfile ]; then
+      echo "unlock:   keyfile (the OpenBao key file on the workstation unseals and logs in at every task dc:*; three custody shares are the spare)"
+      local rp=""
+      rp="$(cat "$dir/renewer.pid" 2>/dev/null || true)"
+      if [[ "$rp" =~ ^[0-9]+$ ]] && tr '\0' ' ' < "/proc/$rp/cmdline" 2>/dev/null | grep -q 'openbao-keyfile renew'; then
+        echo "renewer:  running, pid $rp (renews the Operator's periodic token; log $dir/renewer.log)"
+      else
+        echo "renewer:  not running (it starts with the next unlock: task dc:openbao:unlock on the workstation)"
+      fi
+    else
+      echo "unlock:   operator (two typed unseal shares after every start, a password per sitting)"
+    fi
     echo "audit:    $dir/audit.log"
     local choice="" dest="" chosen=""
     if [ -f "$dir/backup-choice" ]; then
@@ -352,7 +351,7 @@ cmd_status() {
     if bao token lookup >/dev/null 2>&1; then
       echo "login:    valid"
     else
-      echo "login:    none or expired: task openbao:login -- -method=userpass username=operator"
+      echo "login:    none or expired: $(login_hint)"
     fi
   fi
   case "$state" in
@@ -371,8 +370,12 @@ cmd_configure() {
   need_server_mode configure
   # shellcheck disable=SC2031  # init's subshell sets its own BAO_TOKEN; here it is the caller's
   [ -n "${BAO_TOKEN:-}" ] || die 2 "configure takes the token in BAO_TOKEN and the Operator's password on stdin"
-  IFS= read -r op_pw || die 2 "configure takes the Operator's password on stdin"
-  [ "${#op_pw}" -ge 12 ] || die 2 "the password is shorter than 12 characters"
+  if [ "$unlock_now" = keyfile ]; then
+    op_pw="" # no password: the OpenBao key file's rotate makes the Operator's login
+  else
+    IFS= read -r op_pw || die 2 "configure takes the Operator's password on stdin"
+    [ "${#op_pw}" -ge 12 ] || die 2 "the password is shorter than 12 characters"
+  fi
   server_state
   state_exit
   configure_store || die 1 "a configuration step failed (bao's message is above)"
@@ -391,6 +394,7 @@ set_operator_password() { # the password is in $op_pw; runs with the root token
 
 cmd_password() {
   need_server_mode password
+  not_keyfile password "it has no password; the Operator logs in with the OpenBao key file (task dc:openbao:unlock on the workstation). To go back to a password, set unlock to operator, then task openbao:password"
   guard password "it asks for a new password and a root token made from the unseal shares, which must never land in a transcript"
   need_tty password
   server_state
@@ -447,20 +451,6 @@ gr_call() { # <method> <attempt|update>: the body on stdin; prints the response,
 }
 json_str() { sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" <<<"$2" | head -n 1; } # <key> <json>
 json_err() { sed -n 's/.*"errors"[[:space:]]*:[[:space:]]*\["\([^"]*\)".*/\1/p' <<<"$1" | head -n 1; }
-otp_decode() { # <encoded token> <one-time password>: the token on stdout (base64 without padding, XORed with the OTP)
-  local e="$1" o="$2" c k i=0 out=""
-  while [ $((${#e} % 4)) -ne 0 ]; do e+="="; done
-  for c in $(printf '%s' "$e" | base64 -d 2>/dev/null | od -An -v -tu1); do
-    [ "$i" -lt "${#o}" ] || return 1
-    printf -v k '%d' "'${o:i:1}"
-    printf -v c '%03o' $((c ^ k))
-    printf -v c '%b' "\\0$c"
-    out+="$c"
-    i=$((i + 1))
-  done
-  [ "$i" -gt 0 ] && [ "$i" -eq "${#o}" ] || return 1
-  printf '%s' "$out"
-}
 root_cleanup() {
   if [ -n "$root_tok" ] && [ "$root_replaced" -eq 1 ]; then
     # try, silently: when the snapshot went in, the token is gone with the store it was made in
@@ -914,7 +904,7 @@ backup_status_lines() { # in server mode, after the destination/choice lines of 
   case "$choice" in
     path) echo "backup:   WARNING no backup taken yet (destination $dest, chosen $chosen): task openbao:backup" ;;
     none) echo "backup:   WARNING no backup (chosen $chosen): a lost machine loses everything in this server; task openbao:backup DEST=<folder> takes one" ;;
-    *) echo "backup:   WARNING none chosen yet: task openbao:init asks (a lost machine loses everything in this server); task openbao:backup DEST=<folder> takes one" ;;
+    *) echo "backup:   WARNING none chosen yet: task openbao:init asks, or the backupDest option names one (a lost machine loses everything in this server); task openbao:backup DEST=<folder> takes one" ;;
   esac
 }
 
@@ -1076,6 +1066,13 @@ cmd_restore() {
     exit 0
   fi
 
+  if [ "$unlock_now" = keyfile ]; then
+    # No password here and no key file in the container: the workstation makes the new key file, which
+    # also reissues every AppRole's secret id and logs the Operator in.
+    openbao-setup unlock --status >/dev/null 2>&1 || true # remembers the restored store's cluster id
+    echo "openbao: restored from $from; the server is unsealed. This server is opened with the OpenBao key file: run task dc:openbao:keyfile:rotate on the workstation (two shares of the restored store) to make its new key file; it also reissues every AppRole's secret id and logs you in." >&2
+    exit 0
+  fi
   # The backs and the backup role must work again: the secret ids' files in the volume are not in
   # the snapshot and the ids in the store are the old ones, so every role is reissued. That needs
   # only the Operator's login of the restored store (it may reissue the secret ids of existing
