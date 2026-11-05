@@ -540,6 +540,16 @@ type = "mechanism"
 term = "Response wrapping"
 summary = "A one-use wrapping token holding one secret in a central server's cubbyhole."
 
+[keyfile-unlock]
+type = "mechanism"
+term = "Keyfile unlock"
+summary = "The openbao unlock option keyfile: the Operator's OpenBao key file unlocks a server-mode store through openbao-keyfile."
+
+[renewer]
+type = "mechanism"
+term = "Renewer"
+summary = "The Feature's own process under keyfile unlock that renews the operator AppRole token and stops when renewal is refused."
+
 # Relations
 
 [[relation]]

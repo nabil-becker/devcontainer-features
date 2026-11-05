@@ -403,6 +403,14 @@ The words of the secrets split: OpenBao keeps every secret, `ssh-agent` only use
 - **Response wrapping**: a one-use, short-lived wrapping token that holds one secret in the
   issuing server's cubbyhole (`openbao:wrap`, `openbao:unwrap`); one token per secret, and it works
   only against a central server.
+- **Keyfile unlock**: the `openbao` Feature's `unlock` option set to `keyfile` (`operator` is the
+  default): a server-mode store that the Operator's OpenBao key file on the workstation unlocks,
+  through `openbao-keyfile` (`unlock`, `create`, `confirm`, `cancel`, `rotate`, `renew`, `status`),
+  instead of the Operator typing shares and a password. The Feature's own renewer, not `bao agent`,
+  keeps the AppRole token alive.
+- **Renewer**: the Feature's own background process under keyfile unlock that renews the operator
+  AppRole's 1-hour periodic token and stops when a renewal is refused, the token is dead or the
+  Operator logs out; `server:status` shows it.
 
 ## The bar layer
 
