@@ -19,6 +19,20 @@ openbao_mode() {
   )
 }
 
+# How a server-mode store is opened (the unlock option): operator (the default: typed shares and a
+# password) or keyfile (the OpenBao key file the workstation's launcher sends). OPENBAO_SETUP_UNLOCK
+# overrides the option; an unknown value reads as operator.
+openbao_unlock() {
+  (
+    UNLOCK=operator
+    # shellcheck disable=SC1091  # written by install.sh at image build
+    [ -f "$_ob_dir/options.env" ] && . "$_ob_dir/options.env"
+    _u="${OPENBAO_SETUP_UNLOCK:-${UNLOCK:-operator}}"
+    [ "$_u" = keyfile ] || _u=operator
+    printf '%s' "$_u"
+  )
+}
+
 if [ -z "${BAO_ADDR:-}" ] && [ "$(openbao_mode)" = server ]; then
   BAO_ADDR=http://127.0.0.1:8200
   export BAO_ADDR

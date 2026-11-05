@@ -48,7 +48,7 @@ lacks() { # <name> <text> <output>
 # fresh: a new home and state folder; run [VAR=value ...]: out = stdout+stderr, rc = exit status.
 fresh() { rm -rf "${T:?}/home" "${T:?}/state"; mkdir -p "$T/home"; }
 run() {
-  out="$(env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" OPENBAO_STATE_DIR="$T/state" "$@" bash "$script" 2>&1)"
+  out="$(env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" OPENBAO_STATE_DIR="$T/state" OPENBAO_FEATURE_DIR="$T/no-feature" "$@" bash "$script" 2>&1)"
   rc=$?
 }
 
@@ -242,7 +242,7 @@ fresh
 fresh
 mkdir -p "$T/nobao"
 ln -s "$persist" "$T/nobao/dcf-persist"
-out="$(env -i PATH="$T/nobao:/usr/bin:/bin" HOME="$T/home" OPENBAO_STATE_DIR="$T/state" bash "$script" 2>&1)"
+out="$(env -i PATH="$T/nobao:/usr/bin:/bin" HOME="$T/home" OPENBAO_STATE_DIR="$T/state" OPENBAO_FEATURE_DIR="$T/no-feature" bash "$script" 2>&1)"
 rc=$?
 check "no bao: exit 0" 0 "$rc"
 has "no bao: said, not fatal" "bao not found on PATH" "$out"

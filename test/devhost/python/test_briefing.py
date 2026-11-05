@@ -144,6 +144,57 @@ class Briefing(h.RepoCase):
         (self.base / "openbao-state" / "raft").mkdir()
         self.assertNotIn("OpenBao", self.b.briefing(self.root, refresh=False))  # no bao on PATH
 
+    def _setup(self, mode: str = "keyfile", sealed: bool = False, token: str = "live", shares: int = 5, userpass: bool = False,
+               initialized: bool = True):
+        """A fake openbao-setup answering `unlock --status` and `keyfile status` (the two commands the briefing calls)."""
+        import stat
+        import sys
+        fake = self.base / "fake-openbao-setup"
+        status = {"v": 1, "mode": mode, "initialized": initialized, "sealed": sealed, "token": token, "renewer": True,
+                  "ready": mode == "keyfile" and not sealed and token == "live", "server": "abc"}
+        kf = {"v": 1, "ok": True, "server": "abc", "shares": shares, "threshold": 2, "approle": shares == 5, "userpass": userpass}
+        fake.write_text(f"#!{sys.executable}\nimport sys\nprint({json.dumps(json.dumps(kf))} if sys.argv[1:2] == ['keyfile'] else {json.dumps(json.dumps(status))})\n",
+                        encoding="utf-8")
+        fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
+        os.environ["DEVHOST_OPENBAO_SETUP"] = str(fake)
+
+    def test_keyfile_unlock_sealed_names_the_workstation_unlock(self):
+        self._bao(2)
+        self._setup(sealed=True)
+        out = self.b.briefing(self.root, refresh=False)
+        self.assertIn("OpenBao sealed: the backs cannot sign; last backup unknown; run `task dc:openbao:unlock` on the workstation (nothing typed).", out)
+        self.assertNotIn("task openbao:unseal", out)
+
+    def test_keyfile_unlock_missing_or_dead_token_names_the_workstation_unlock(self):
+        self._bao(0)
+        for token in ("missing", "dead"):
+            self._setup(token=token)
+            out = self.b.briefing(self.root, refresh=False)
+            self.assertIn(f"the Operator's login is {token}: run `task dc:openbao:unlock` on the workstation (nothing typed).", out)
+
+    def test_keyfile_unlock_without_an_openbao_key_file_names_the_create_task_once(self):
+        self._bao(2)
+        for kw in ({"shares": 3}, {"shares": 5, "userpass": True}):
+            self._setup(sealed=True, **kw)
+            out = self.b.briefing(self.root, refresh=False)
+            self.assertEqual(out.count("task dc:openbao:keyfile:create"), 1)
+            self.assertIn("No OpenBao key file yet", out)
+            self.assertNotIn("dc:openbao:unlock", out)
+
+    def test_keyfile_unlock_is_quiet_when_ready(self):
+        self._bao(0)
+        self._setup()
+        self.assertNotIn("OpenBao", self.b.briefing(self.root, refresh=False))
+
+    def test_operator_unlock_keeps_the_lines_as_they_were(self):
+        self._bao(2)
+        self._setup(mode="operator", sealed=True, token="missing", shares=3)
+        out = self.b.briefing(self.root, refresh=False)
+        self.assertIn("OpenBao sealed: the backs cannot sign; last backup unknown; task openbao:unseal.", out)
+        self.assertNotIn("dc:openbao", out)
+        os.environ["DEVHOST_OPENBAO_SETUP"] = str(self.base / "no-such-openbao-setup")  # not installed: as before
+        self.assertIn("task openbao:unseal.", self.b.briefing(self.root, refresh=False))
+
     def test_openbao_line_for_an_uninitialised_or_unreachable_server(self):
         self._bao(2, initialized=False)
         self.assertIn("OpenBao is not initialised", self.b.briefing(self.root, refresh=False))

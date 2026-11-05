@@ -105,6 +105,15 @@ class KeyFetch(h.RepoCase):
         refused = self.call('hk_fetch_key scribe; echo "rc=$? $HK_KEY_RC $HK_KEY_ERR"')
         self.assertIn("rc=2 12 the AppRole login of the scribe back was refused", refused.stdout)
 
+    def test_a_sealed_server_under_keyfile_unlock_names_the_workstation_unlock(self):
+        self.role()
+        for mode, want in (("keyfile", "OpenBao is sealed: the Operator runs task dc:openbao:unlock on the workstation (nothing typed)"),
+                           ("operator", "OpenBao is sealed: the Operator runs task openbao:unseal")):
+            setup = self.base / f"openbao-setup-{mode}"
+            _exe(setup, f"#!/usr/bin/env bash\necho '{{\"v\":1,\"mode\":\"{mode}\",\"sealed\":true}}'\n")
+            sealed = self.call('hk_fetch_key scribe; echo "rc=$? $HK_KEY_RC $HK_KEY_ERR"', FAKE_SEALED="1", DEVHOST_OPENBAO_SETUP=str(setup))
+            self.assertIn(f"rc=2 11 {want}", sealed.stdout)
+
     def test_a_denied_read_returns_the_dcf_secret_line_and_leaves_no_key_file(self):
         self.role()
         done = self.call('hk_fetch_key scribe; echo "rc=$? $HK_KEY_RC $HK_KEY_ERR"; ls "$HK_KEY_DIR"', FAKE_DCF_RC="13")

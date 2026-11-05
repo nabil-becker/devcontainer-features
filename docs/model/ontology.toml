@@ -448,7 +448,17 @@ summary = "A sealed server cannot read its store; unsealing needs a quorum of th
 [unseal-share]
 type = "concept"
 term = "Unseal share"
-summary = "One of the 3 Shamir shares (threshold 2) the Operator keeps off the machine."
+summary = "One of the Shamir shares (threshold 2) of the OpenBao server: 3, or 5 with an OpenBao key file."
+
+[openbao-key-file]
+type = "record"
+term = "OpenBao key file"
+summary = "The DPAPI-protected workstation file with two unseal shares that unseals OpenBao and logs the Operator in."
+
+[custody-share]
+type = "concept"
+term = "Custody share"
+summary = "One of unseal shares 1 to 3, held by the Operator outside every tier; two rebuild the OpenBao key file."
 
 [gate]
 type = "mechanism"
@@ -529,6 +539,16 @@ summary = "The onboarding instance's root token, printed once at export and revo
 type = "mechanism"
 term = "Response wrapping"
 summary = "A one-use wrapping token holding one secret in a central server's cubbyhole."
+
+[keyfile-unlock]
+type = "mechanism"
+term = "Keyfile unlock"
+summary = "The openbao unlock option keyfile: the Operator's OpenBao key file unlocks a server-mode store through openbao-keyfile."
+
+[renewer]
+type = "mechanism"
+term = "Renewer"
+summary = "The Feature's own process under keyfile unlock that renews the operator AppRole token and stops when renewal is refused."
 
 # Relations
 

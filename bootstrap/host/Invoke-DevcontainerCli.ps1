@@ -8,8 +8,10 @@
 .PARAMETER Subcommand
     @devcontainers/cli subcommand: up, build, exec, read-configuration,
     features, ...; or stop, prepshutdown, running, host, ssh-key-import (deprecated),
-    openbao-ssh-import and cloud-folder-login (the cloud-folder Feature's sign-in from the workstation),
-    which are not CLI subcommands (see DevcontainerCli.psm1).
+    openbao-ssh-import, cloud-folder-login (the cloud-folder Feature's sign-in from the workstation),
+    openbao-unlock and openbao-keyfile (the OpenBao key file: create, rotate, export, import, forget),
+    which are not CLI subcommands (see DevcontainerCli.psm1). After a successful up, the OpenBao key
+    file's unlock step runs (silent unless the openbao Feature there is set to unlock: keyfile).
 
 .PARAMETER WorkspaceFolder
     Folder containing .devcontainer/ (passed as --workspace-folder where the

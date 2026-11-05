@@ -75,6 +75,13 @@
     seconds (default 60; 0 = no wait), then fail naming the engine and how to start it.
     A failed up or build asks the engine once more and prints its own error (see
     Wait-ContainerEngine, Write-ContainerEngineDiagnosis).
+
+    The OpenBao key file (the openbao Feature's unlock: keyfile; Windows only, DPAPI): after every
+    successful `up` the launcher asks /usr/local/bin/openbao-setup unlock --status through the
+    engine's `exec -i -u <remote user>` and, when the server is sealed or the token is not live,
+    streams this server's key file from %LOCALAPPDATA%\devcontainer-features-keys\openbao into
+    `unlock --stdin`, one line of output; silent otherwise. The subcommands openbao-unlock and
+    openbao-keyfile back the devcontainer:openbao:* tasks (see "the OpenBao key file" below).
 #>
 
 $script:CacheRoot = if ($IsWindows) { Join-Path $env:LOCALAPPDATA 'devcontainer-features\devcontainer-node' } else { $null }
@@ -1916,6 +1923,711 @@ function Invoke-CloudFolderLogin {
     }
 }
 
+# ------------------------------------------------------ the OpenBao key file ----
+# The openbao Feature's `unlock: keyfile` mode (docs/proposals/openbao-key-file.md, design B): on this
+# workstation one OpenBao key file per server holds unseal shares 4 and 5 and the Operator's AppRole
+# login, protected with DPAPI for the Windows account. After every `up` the launcher asks
+# `openbao-setup unlock --status` and, when the server is sealed or the token is not live, streams the
+# key file into `openbao-setup unlock --stdin`. The tasks devcontainer:openbao:unlock and
+# devcontainer:openbao:keyfile:create|rotate|export|import|forget drive the rest.
+# The contract with the Feature: only the absolute path below, through the engine's own `exec -i -u
+# <remote user>` (never `devcontainer exec`, which runs the user's profile first), secrets only on
+# stdin and written there from memory, one JSON object on stdout; exit 0 ok, 1 failed, 3 refused inside
+# an agent's job, 4 not applicable. The plain key file exists only in this process's memory.
+# Seams for tests: Protect-OpenBaoKeyFileBlob and Unprotect-OpenBaoKeyFileBlob (DPAPI is Windows-only,
+# Pester mocks them elsewhere), Read-Host (the shares and the transfer passphrase).
+$script:OpenBaoSetupPath = '/usr/local/bin/openbao-setup'
+# Fixed per launcher: a blob made by another program for this account does not open as a key file.
+$script:OpenBaoKeyFileEntropy = [System.Text.Encoding]::UTF8.GetBytes('devcontainer-features/devcontainer-cli/openbao-key-file/v1')
+$script:OpenBaoKeyFileMagic = [System.Text.Encoding]::ASCII.GetBytes("DCF-OPENBAO-KEY-FILE-1`n")
+$script:OpenBaoTransferKind = 'devcontainer-features/openbao-key-file-transfer'
+$script:OpenBaoTransferIterations = 600000
+
+function Get-OpenBaoKeyFileDir {
+    <#
+    .SYNOPSIS
+        Where the OpenBao key files live: %LOCALAPPDATA%\devcontainer-features-keys\openbao on Windows
+        (its own folder, not the launcher's download cache, which may be cleared; not roamed, not in
+        OneDrive's known-folder move), else ${XDG_DATA_HOME:-~/.local/share}/devcontainer-features-keys/openbao.
+    #>
+    [CmdletBinding()]
+    param()
+    if ($IsWindows) { return (Join-Path $env:LOCALAPPDATA 'devcontainer-features-keys\openbao') }
+    $base = if ($env:XDG_DATA_HOME) { $env:XDG_DATA_HOME } else { Join-Path $HOME '.local/share' }
+    return (Join-Path $base 'devcontainer-features-keys/openbao')
+}
+
+function Get-OpenBaoRepoName {
+    <# .SYNOPSIS The workspace folder's name, as the key file's name carries it. #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$WorkspaceFolder)
+    return (Split-Path -Leaf (Resolve-Path -LiteralPath $WorkspaceFolder).Path)
+}
+
+function Get-OpenBaoKeyFilePath {
+    <# .SYNOPSIS The key file of one server: <dir>\<repo>-<cluster id>.keyfile (both cut to letters, digits, dot, underscore, hyphen). #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Repo, [Parameter(Mandatory)][string]$Server)
+    $r = $Repo -replace '[^A-Za-z0-9._-]', '_'
+    $s = $Server -replace '[^A-Za-z0-9._-]', '_'
+    return (Join-Path (Get-OpenBaoKeyFileDir) "$r-$s.keyfile")
+}
+
+function Find-OpenBaoKeyFile {
+    <# .SYNOPSIS The key files of a repository on this workstation (one per server), or the one of -Server; wrap the call in @(). #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Repo, [string]$Server)
+    if ($Server) {
+        $p = Get-OpenBaoKeyFilePath -Repo $Repo -Server $Server
+        if (Test-Path -LiteralPath $p -PathType Leaf) { return $p }
+        return
+    }
+    $dir = Get-OpenBaoKeyFileDir
+    if (-not (Test-Path -LiteralPath $dir -PathType Container)) { return }
+    $prefix = ($Repo -replace '[^A-Za-z0-9._-]', '_') + '-'
+    Get-ChildItem -LiteralPath $dir -File -Filter '*.keyfile' | Where-Object { $_.Name.StartsWith($prefix, [StringComparison]::Ordinal) } | ForEach-Object { $_.FullName }
+}
+
+function Initialize-ProtectedData {
+    <# .SYNOPSIS Loads System.Security.Cryptography.ProtectedData (DPAPI) where pwsh has not yet. #>
+    if ('System.Security.Cryptography.ProtectedData' -as [type]) { return }
+    foreach ($a in 'System.Security.Cryptography.ProtectedData', 'System.Security') {
+        try { Add-Type -AssemblyName $a -ErrorAction Stop } catch { Write-Verbose "no assembly $a" }
+        if ('System.Security.Cryptography.ProtectedData' -as [type]) { return }
+    }
+    throw 'DPAPI (System.Security.Cryptography.ProtectedData) is not available in this pwsh.'
+}
+
+function Protect-OpenBaoKeyFileBlob {
+    <# .SYNOPSIS DPAPI, scope CurrentUser, the launcher's fixed entropy. Windows only: the OpenBao key file is Windows-only for now. #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][byte[]]$Bytes)
+    if (-not $IsWindows) { throw 'the OpenBao key file is Windows-only for now (it is protected with Windows DPAPI).' }
+    Initialize-ProtectedData
+    return , [System.Security.Cryptography.ProtectedData]::Protect($Bytes, $script:OpenBaoKeyFileEntropy, [System.Security.Cryptography.DataProtectionScope]::CurrentUser)
+}
+
+function Unprotect-OpenBaoKeyFileBlob {
+    <# .SYNOPSIS The reverse of Protect-OpenBaoKeyFileBlob; fails for another Windows account or another entropy. #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][byte[]]$Bytes)
+    if (-not $IsWindows) { throw 'the OpenBao key file is Windows-only for now (it is protected with Windows DPAPI).' }
+    Initialize-ProtectedData
+    return , [System.Security.Cryptography.ProtectedData]::Unprotect($Bytes, $script:OpenBaoKeyFileEntropy, [System.Security.Cryptography.DataProtectionScope]::CurrentUser)
+}
+
+function Save-OpenBaoKeyFile {
+    <#
+    .SYNOPSIS
+        Protects the key file's JSON (bytes, from memory) and writes it as <repo>-<server>.keyfile,
+        through a file beside it that is renamed over it, so a half-written key file never replaces a
+        good one. The folder is created (mode 0700 off Windows; on Windows %LOCALAPPDATA% is the
+        account's own). Returns the path. The caller clears its bytes.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Repo, [Parameter(Mandatory)][string]$Server, [Parameter(Mandatory)][byte[]]$Json)
+    $blob = [byte[]](Protect-OpenBaoKeyFileBlob -Bytes $Json)
+    $dir = Get-OpenBaoKeyFileDir
+    if (-not (Test-Path -LiteralPath $dir -PathType Container)) {
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        if (-not $IsWindows) { & chmod 0700 $dir }
+    }
+    $path = Get-OpenBaoKeyFilePath -Repo $Repo -Server $Server
+    $tmp = "$path.new"
+    $data = [byte[]]::new($script:OpenBaoKeyFileMagic.Length + $blob.Length)
+    [Array]::Copy($script:OpenBaoKeyFileMagic, $data, $script:OpenBaoKeyFileMagic.Length)
+    [Array]::Copy($blob, 0, $data, $script:OpenBaoKeyFileMagic.Length, $blob.Length)
+    try {
+        [System.IO.File]::WriteAllBytes($tmp, $data)
+        if (-not $IsWindows) { & chmod 0600 $tmp }
+        Move-Item -LiteralPath $tmp -Destination $path -Force
+    }
+    finally { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+    return $path
+}
+
+function Read-OpenBaoKeyFile {
+    <# .SYNOPSIS The key file's JSON as bytes, in memory only; throws when the file is not a key file or does not open for this account. The caller clears the bytes. #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Path)
+    $data = [System.IO.File]::ReadAllBytes($Path)
+    $m = $script:OpenBaoKeyFileMagic
+    if ($data.Length -le $m.Length -or -not [System.Linq.Enumerable]::SequenceEqual([byte[]]$data[0..($m.Length - 1)], [byte[]]$m)) {
+        throw "$Path is not an OpenBao key file."
+    }
+    $blob = [byte[]]::new($data.Length - $m.Length)
+    [Array]::Copy($data, $m.Length, $blob, 0, $blob.Length)
+    $plain = [byte[]](Unprotect-OpenBaoKeyFileBlob -Bytes $blob)
+    return , $plain
+}
+
+function ConvertTo-OpenBaoKeyFileJson {
+    <#
+    .SYNOPSIS
+        The key file's JSON in the contract's shape ({v, server, repo, created, shares[2], role_id,
+        secret_id}) as UTF-8 bytes, from the object the container sent; throws when a field is missing.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$KeyFile, [string]$Repo)
+    $shares = @($KeyFile.shares | Where-Object { $_ })
+    foreach ($f in 'server', 'role_id', 'secret_id') {
+        if (-not $KeyFile.$f) { throw "the container's answer has no key file $f." }
+    }
+    if ($shares.Count -ne 2) { throw "the container's answer has $($shares.Count) key file shares, not 2." }
+    $created = $KeyFile.created
+    if ($created -is [datetime]) { $created = $created.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ') }
+    if (-not $created) { $created = [datetime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ') }
+    $o = [ordered]@{
+        v = 1; server = [string]$KeyFile.server; repo = $(if ($KeyFile.repo) { [string]$KeyFile.repo } else { $Repo })
+        created = [string]$created; shares = [string[]]$shares; role_id = [string]$KeyFile.role_id; secret_id = [string]$KeyFile.secret_id
+    }
+    return , [System.Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -InputObject $o -Compress))
+}
+
+function Get-OpenBaoAgentJobVariable {
+    <# .SYNOPSIS The first of DEVHOST_JOB_CHILD, CLAUDECODE and the names in OPENBAO_AGENT_JOB_VARS (space separated) set on this workstation, else empty. #>
+    [CmdletBinding()]
+    param()
+    $names = @('DEVHOST_JOB_CHILD', 'CLAUDECODE') + @("$env:OPENBAO_AGENT_JOB_VARS" -split '[\s,]+' | Where-Object { $_ })
+    foreach ($n in $names) { if ([Environment]::GetEnvironmentVariable($n)) { return $n } }
+    return ''
+}
+
+function Get-DevcontainerRemoteUser {
+    <# .SYNOPSIS The container's remoteUser (else containerUser) from the devcontainer.metadata label `devcontainer up` sets; empty when the engine does not say. #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Engine, [Parameter(Mandatory)][string]$ContainerId)
+    try {
+        $text = (& $Engine inspect $ContainerId 2>$null) -join "`n"
+        if ($LASTEXITCODE -ne 0 -or -not $text) { return '' }
+        $label = @($text | ConvertFrom-Json)[0].Config.Labels.'devcontainer.metadata'
+        if (-not $label) { return '' }
+        $meta = @($label | ConvertFrom-Json | ForEach-Object { $_ })
+        $user = ''
+        foreach ($m in $meta) { if ($m.remoteUser) { $user = [string]$m.remoteUser } }
+        if (-not $user) { foreach ($m in $meta) { if ($m.containerUser) { $user = [string]$m.containerUser } } }
+        return $user
+    }
+    catch { return '' }
+}
+
+function Invoke-OpenBaoSetup {
+    <#
+    .SYNOPSIS
+        One `openbao-setup` call in the container: `<engine> exec -i [-u <user>] <id>
+        /usr/local/bin/openbao-setup <arguments>`, InputBytes written to its stdin from memory (never
+        an argument, an environment variable or a file). Returns Code, Out (stdout, which may hold
+        secrets: never print it) and Err (stderr; empty with -PassError, which lets it reach the console).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Engine,
+        [Parameter(Mandatory)][string]$ContainerId,
+        [string]$User,
+        [Parameter(Mandatory)][string[]]$Arguments,
+        [byte[]]$InputBytes,
+        [switch]$PassError
+    )
+    $psi = [System.Diagnostics.ProcessStartInfo]::new($Engine)
+    $argv = @('exec', '-i')
+    if ($User) { $argv += @('-u', $User) }
+    $argv += @($ContainerId, $script:OpenBaoSetupPath) + $Arguments
+    foreach ($a in $argv) { $psi.ArgumentList.Add($a) }
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardInput = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = -not $PassError
+    $psi.CreateNoWindow = $true
+    $p = [System.Diagnostics.Process]::Start($psi)
+    $out = $p.StandardOutput.ReadToEndAsync()
+    $err = if ($PassError) { $null } else { $p.StandardError.ReadToEndAsync() }
+    try {
+        if ($InputBytes -and $InputBytes.Length -gt 0) {
+            $p.StandardInput.BaseStream.Write($InputBytes, 0, $InputBytes.Length)
+            $p.StandardInput.BaseStream.Flush()
+        }
+    }
+    catch { Write-Verbose "openbao-setup closed its stdin early: $($_.Exception.Message)" }
+    finally { try { $p.StandardInput.Close() } catch { Write-Verbose 'stdin already closed' } }
+    $p.WaitForExit()
+    return [pscustomobject]@{ Code = $p.ExitCode; Out = $out.Result; Err = $(if ($err) { $err.Result } else { '' }) }
+}
+
+function ConvertFrom-OpenBaoSetupOutput {
+    <# .SYNOPSIS The one JSON object openbao-setup writes on stdout (its last non-empty line), else $null. #>
+    [CmdletBinding()]
+    param([string]$Text)
+    $line = @("$Text" -split "`r?`n" | Where-Object { $_.Trim() }) | Select-Object -Last 1
+    if (-not $line) { return $null }
+    try { return ($line | ConvertFrom-Json -ErrorAction Stop) } catch { return $null }
+}
+
+function Get-OpenBaoSetupReason {
+    <# .SYNOPSIS Why an openbao-setup call failed, in a few words: the JSON's error, else its code, else stderr's last line, else the exit code. #>
+    [CmdletBinding()]
+    param($Result, $Json)
+    if ($Result.Code -eq 3) { return "the container refused inside an agent's job (exit 3); run it yourself in a plain terminal" }
+    if ($Result.Code -eq 4) { return 'not applicable in this container (exit 4: no server mode, or unlock is not keyfile)' }
+    if ($Json -and $Json.error) { return [string]$Json.error }
+    if ($Json -and $Json.code) { return [string]$Json.code }
+    $last = @("$($Result.Err)" -split "`r?`n" | Where-Object { $_.Trim() }) | Select-Object -Last 1
+    if ($last) { return $last.Trim() }
+    return "exit $($Result.Code)"
+}
+
+function Get-OpenBaoContainer {
+    <# .SYNOPSIS The running container of the workspace and its engine and remote user (Engine, Id, User); $null when none runs. Throws when the engine cannot list containers. #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$WorkspaceFolder, [string]$DockerPath)
+    $engine = Resolve-DockerPath -DockerPath $DockerPath
+    if (-not $engine) { $engine = 'docker' }
+    $ids = @(Get-RunningDevcontainerId -WorkspaceFolder $WorkspaceFolder -DockerPath $DockerPath)
+    if ($ids.Count -eq 0) { return $null }
+    return [pscustomobject]@{ Engine = $engine; Id = $ids[0]; User = (Get-DevcontainerRemoteUser -Engine $engine -ContainerId $ids[0]) }
+}
+
+function Get-OpenBaoUnlockStatus {
+    <# .SYNOPSIS openbao-setup unlock --status in the container: the JSON object, or $null when there is no openbao-setup that knows it (silently). #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$Container)
+    $r = Invoke-OpenBaoSetup -Engine $Container.Engine -ContainerId $Container.Id -User $Container.User -Arguments @('unlock', '--status')
+    if ($r.Code -ne 0) { return $null }
+    $s = ConvertFrom-OpenBaoSetupOutput -Text $r.Out
+    if (-not $s -or -not $s.mode) { return $null }
+    return $s
+}
+
+function Write-OpenBaoWarning {
+    <# .SYNOPSIS One line per entry of the "warnings" list an openbao-setup answer carries. #>
+    param($Json)
+    if ($Json -and $Json.warnings) { foreach ($w in @($Json.warnings)) { if ($w) { Write-OpenBaoLine "warning: $w" } } }
+}
+
+function Write-OpenBaoLine {
+    <# .SYNOPSIS One line of the key-file steps, on the console (never stdout's pipeline); -Problem to stderr. #>
+    param([string]$Text, [switch]$Problem)
+    if ($Problem) { [Console]::Error.WriteLine("openbao: $Text") } else { Write-Host "openbao: $Text" }
+}
+
+function Invoke-OpenBaoUnlock {
+    <#
+    .SYNOPSIS
+        The unlock step after every `up` (and task devcontainer:openbao:unlock with -Explicit): asks
+        `openbao-setup unlock --status`; when mode is keyfile and the server is not ready, opens this
+        server's OpenBao key file and streams it into `openbao-setup unlock --stdin`; prints one line.
+        Silent when mode is off or operator, when the status says ready, and when the container has no
+        openbao-setup that answers (a repository without the Feature, or an older one). Never throws.
+        Returns 0 (done, or nothing to do) or 1 (could not unlock); after `up` the code is ignored.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$WorkspaceFolder, [string]$DockerPath, [switch]$Explicit)
+    try {
+        $folder = (Resolve-Path -LiteralPath $WorkspaceFolder).Path
+        $c = Get-OpenBaoContainer -WorkspaceFolder $folder -DockerPath $DockerPath
+        if (-not $c) {
+            if ($Explicit) { Write-OpenBaoLine -Problem "No running devcontainer for $folder. Start it with: task dc:start (which unlocks OpenBao itself)." }
+            return [int]$Explicit.IsPresent
+        }
+        $s = Get-OpenBaoUnlockStatus -Container $c
+    }
+    catch {
+        if ($Explicit) { Write-OpenBaoLine -Problem "could not ask the container: $($_.Exception.Message)" }
+        return [int]$Explicit.IsPresent
+    }
+    if (-not $s) {
+        if ($Explicit) { Write-OpenBaoLine -Problem 'this devcontainer has no openbao-setup that knows the OpenBao key file (the openbao Feature 1.5.0 or later, in server mode).' }
+        return [int]$Explicit.IsPresent
+    }
+    if ($s.mode -ne 'keyfile') {
+        if ($Explicit) { Write-OpenBaoLine "the openbao Feature here is set to unlock: $($s.mode), not keyfile; nothing to do (task openbao:unseal in the container)." }
+        return 0
+    }
+    if ($s.ready -eq $true) {
+        if ($Explicit) { Write-OpenBaoLine 'unsealed and logged in already; nothing sent.' }
+        return 0
+    }
+    if (-not $s.initialized -or -not $s.server) {
+        Write-OpenBaoLine -Problem 'OpenBao here is not initialised: make it and its OpenBao key file with task dc:openbao:keyfile:create on this workstation.'
+        return 1
+    }
+    $repo = Get-OpenBaoRepoName -WorkspaceFolder $folder
+    $path = Get-OpenBaoKeyFilePath -Repo $repo -Server ([string]$s.server)
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        Write-OpenBaoLine -Problem "no OpenBao key file for this server ($repo, $($s.server)) on this workstation, so OpenBao stays sealed: make one with task dc:openbao:keyfile:create (or type two custody shares at task openbao:unseal in the container, then task dc:openbao:keyfile:rotate)."
+        return 1
+    }
+    $bytes = $null
+    try {
+        $bytes = Read-OpenBaoKeyFile -Path $path
+        $r = Invoke-OpenBaoSetup -Engine $c.Engine -ContainerId $c.Id -User $c.User -Arguments @('unlock', '--stdin') -InputBytes $bytes
+    }
+    catch {
+        Write-OpenBaoLine -Problem "the OpenBao key file $path could not be used ($($_.Exception.Message)); OpenBao stays sealed."
+        return 1
+    }
+    finally { if ($bytes) { [Array]::Clear($bytes, 0, $bytes.Length) } }
+    $j = ConvertFrom-OpenBaoSetupOutput -Text $r.Out
+    if ($r.Code -eq 0 -and $j -and $j.ok -eq $true) {
+        $done = if ($j.done) { [string]$j.done } else { 'unsealed, logged in' }
+        Write-OpenBaoLine "$done (the OpenBao key file)."
+        return 0
+    }
+    Write-OpenBaoLine -Problem "the OpenBao key file did not unlock OpenBao: $(Get-OpenBaoSetupReason -Result $r -Json $j)."
+    return 1
+}
+
+function Read-OpenBaoShare {
+    <# .SYNOPSIS Two unseal shares typed at hidden prompts (Read-Host -AsSecureString); returns the plain strings, which live in memory only. #>
+    [CmdletBinding()]
+    param([string]$What = 'custody share')
+    $shares = @()
+    foreach ($i in 1, 2) {
+        $sec = Read-Host -AsSecureString -Prompt "$What $i of 2 (hidden)"
+        $plain = [System.Net.NetworkCredential]::new('', $sec).Password
+        $sec.Dispose()
+        if (-not $plain -or -not $plain.Trim()) { throw 'an empty share; nothing was sent.' }
+        $shares += $plain.Trim()
+    }
+    if ($shares[0] -eq $shares[1]) { throw 'the same share twice; two different shares are needed. Nothing was sent.' }
+    return , $shares
+}
+
+function Write-OpenBaoCustodyShare {
+    <# .SYNOPSIS Prints the three new custody shares once, on the console, with what to do with them. #>
+    param([string[]]$Shares)
+    Write-Host ''
+    Write-Host 'openbao: the three new custody shares, shown this once. Store them again now, each in its own place, as before:'
+    $n = 1
+    foreach ($s in $Shares) { Write-Host "  custody share ${n}: $s"; $n++ }
+    Write-Host 'openbao: keep the previous custody shares until the backups made under them are pruned: an older backup opens only with the shares in force when it was made.'
+    Write-Host 'openbao: then clear this console (cls) so the shares do not stay in its scrollback.'
+    Write-Host ''
+}
+
+function Invoke-OpenBaoKeyFileMake {
+    <#
+    .SYNOPSIS
+        task devcontainer:openbao:keyfile:create and :rotate. Create: on an uninitialised server
+        {"init":true}, else two custody shares typed here; rotate: the key file's own two shares when
+        this workstation has it (nothing typed), else any two of the five typed. The shares go to
+        `openbao-setup keyfile <action> --stdin`, which answers with a pending rotation (OpenBao's
+        rekey verification). Then, in this order: the answer's key file is saved (DPAPI); `keyfile
+        confirm --stdin` gets the nonce and shares 4 and 5 read back from the saved file; only after
+        it answers ok are the three custody shares printed, once. A failed save, or a confirm that
+        fails, puts the previous key file back and runs `keyfile cancel --stdin` with this run's
+        nonce (the old shares stay in force); a rekey with another nonce is never cancelled. A lost
+        confirm answer is retried once (confirm is idempotent), then `keyfile status` decides: its
+        `pending` equal to this nonce's verification part (before its first colon) = not applied (cancel, restore); empty with five shares =
+        applied (custody shares printed); anything else = unknown (nothing cancelled, the previous
+        key file kept as <path>.previous, no custody share). Warnings the container returns are shown. Returns the
+        exit code.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$WorkspaceFolder, [Parameter(Mandatory)][ValidateSet('create', 'rotate')][string]$Action, [string]$DockerPath)
+    $folder = (Resolve-Path -LiteralPath $WorkspaceFolder).Path
+    $c = Get-OpenBaoContainer -WorkspaceFolder $folder -DockerPath $DockerPath
+    if (-not $c) { Write-OpenBaoLine -Problem "No running devcontainer for $folder. Start it with: task dc:start"; return 1 }
+    $s = Get-OpenBaoUnlockStatus -Container $c
+    if (-not $s) { Write-OpenBaoLine -Problem 'this devcontainer has no openbao-setup that knows the OpenBao key file (the openbao Feature 1.5.0 or later, in server mode).'; return 4 }
+    if ($s.mode -ne 'keyfile') { Write-OpenBaoLine -Problem "the openbao Feature here is set to unlock: $($s.mode); set its option unlock: keyfile (or OPENBAO_SETUP_UNLOCK=keyfile) and rebuild first."; return 4 }
+    $repo = Get-OpenBaoRepoName -WorkspaceFolder $folder
+    $request = [ordered]@{ v = 1 }
+    if ($Action -eq 'create' -and $s.initialized -ne $true) {
+        Write-OpenBaoLine 'OpenBao here is not initialised: initialising it with five shares, threshold two (nothing to type).'
+        $request.init = $true
+    }
+    elseif ($Action -eq 'rotate' -and $s.server -and (Test-Path -LiteralPath (Get-OpenBaoKeyFilePath -Repo $repo -Server ([string]$s.server)) -PathType Leaf)) {
+        Write-OpenBaoLine "rotating with this server's OpenBao key file (nothing to type)."
+        $kb = Read-OpenBaoKeyFile -Path (Get-OpenBaoKeyFilePath -Repo $repo -Server ([string]$s.server))
+        try { $request.shares = [string[]]@(([System.Text.Encoding]::UTF8.GetString($kb) | ConvertFrom-Json).shares) }
+        finally { [Array]::Clear($kb, 0, $kb.Length) }
+    }
+    else {
+        $what = if ($Action -eq 'create') { 'custody share' } else { 'unseal share (any two of the five)' }
+        Write-OpenBaoLine "type two of the server's unseal shares; they go to the container on stdin, never as an argument."
+        $request.shares = Read-OpenBaoShare -What $what
+    }
+    $request.repo = $repo
+    $payload = [System.Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -InputObject $request -Compress))
+    $request = $null
+    try { $r = Invoke-OpenBaoSetup -Engine $c.Engine -ContainerId $c.Id -User $c.User -Arguments @('keyfile', $Action, '--stdin') -InputBytes $payload -PassError }
+    finally { [Array]::Clear($payload, 0, $payload.Length) }
+    $j = ConvertFrom-OpenBaoSetupOutput -Text $r.Out
+    Write-OpenBaoWarning -Json $j
+    if ($r.Code -ne 0 -or -not $j -or $j.ok -ne $true) {
+        Write-OpenBaoLine -Problem "keyfile:$Action failed: $(Get-OpenBaoSetupReason -Result $r -Json $j). Nothing was saved here; the old shares still unseal."
+        return $(if ($r.Code -ne 0) { $r.Code } else { 1 })
+    }
+    $server = [string]$(if ($j.server) { $j.server } else { $j.keyfile.server })
+    # The nonce is `<verification nonce>:<narrow confirm token>` (just `init` for an init): a secret,
+    # never printed or logged; sent whole on confirm and every cancel. keyfile status's `pending` is
+    # the verification nonce only, the part before the first colon.
+    $nonce = [string]$j.nonce
+    $verification = ($nonce -split ':', 2)[0]
+    # Cancels this run's own pending rekey only: always with its nonce, never one it did not start.
+    $cancel = {
+        $cb = [System.Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -Compress -InputObject ([ordered]@{ v = 1; server = $server; nonce = $nonce })))
+        $cr = Invoke-OpenBaoSetup -Engine $c.Engine -ContainerId $c.Id -User $c.User -Arguments @('keyfile', 'cancel', '--stdin') -InputBytes $cb -PassError
+        $cj = ConvertFrom-OpenBaoSetupOutput -Text $cr.Out
+        if ($cr.Code -eq 0 -and $cj -and $cj.ok -eq $true) { Write-OpenBaoLine -Problem 'the pending rotation is cancelled; the old shares still unseal.' }
+        else { Write-OpenBaoLine -Problem "the pending rotation could not be cancelled ($(Get-OpenBaoSetupReason -Result $cr -Json $cj)); the old shares still unseal, and the next keyfile:$Action cancels it first." }
+    }
+    if ($j.pending -ne $true -or -not $nonce -or -not $server) {
+        # No nonce of this run's to cancel with: nothing is cancelled (a rekey that is not ours is never touched).
+        Write-OpenBaoLine -Problem "keyfile:${Action}: the container answered without a pending rotation to confirm (it needs the openbao Feature 1.5.0 or later); nothing was saved or cancelled here."
+        return 1
+    }
+    $custody = @($j.custody | Where-Object { $_ })
+    $path = Get-OpenBaoKeyFilePath -Repo $repo -Server $server
+    # The key file this one replaces (rotate), kept as its protected bytes so a failed confirm can put it back.
+    $previous = if (Test-Path -LiteralPath $path -PathType Leaf) { [System.IO.File]::ReadAllBytes($path) } else { $null }
+    $restore = {
+        if ($previous) { [System.IO.File]::WriteAllBytes($path, $previous) }
+        else { Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue }
+    }
+    # Step 1 of 2: save the new key file, before the new shares take effect.
+    $json = $null
+    $confirmIn = $null
+    try {
+        $json = ConvertTo-OpenBaoKeyFileJson -KeyFile $j.keyfile -Repo $repo
+        [void](Save-OpenBaoKeyFile -Repo $repo -Server $server -Json $json)
+        # The confirm's shares come from the file just saved, read back: what unseals from now on is what is on disk.
+        $saved = Read-OpenBaoKeyFile -Path $path
+        try { $shares = [string[]]@(([System.Text.Encoding]::UTF8.GetString($saved) | ConvertFrom-Json).shares) }
+        finally { [Array]::Clear($saved, 0, $saved.Length) }
+        $confirmIn = [System.Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -Compress -InputObject ([ordered]@{ v = 1; server = $server; nonce = $nonce; shares = $shares })))
+        $shares = $null
+    }
+    catch {
+        Write-OpenBaoLine -Problem "the OpenBao key file could not be saved ($($_.Exception.Message)); cancelling the rotation."
+        & $restore
+        & $cancel
+        return 1
+    }
+    finally { if ($json) { [Array]::Clear($json, 0, $json.Length) } }
+    # Step 2 of 2: confirm with shares 4 and 5 (OpenBao's rekey verification); once more if the answer is lost (idempotent).
+    $outcome = 'lost'
+    $reason = ''
+    try {
+        foreach ($attempt in 1, 2) {
+            $cr = Invoke-OpenBaoSetup -Engine $c.Engine -ContainerId $c.Id -User $c.User -Arguments @('keyfile', 'confirm', '--stdin') -InputBytes $confirmIn -PassError
+            $cj = ConvertFrom-OpenBaoSetupOutput -Text $cr.Out
+            Write-OpenBaoWarning -Json $cj
+            if ($cr.Code -eq 0 -and $cj -and $cj.ok -eq $true) { $outcome = 'ok'; break }
+            if ($cj -and $cj.ok -eq $false) { $outcome = 'failed'; $reason = Get-OpenBaoSetupReason -Result $cr -Json $cj; break }
+            $reason = Get-OpenBaoSetupReason -Result $cr -Json $cj
+        }
+    }
+    finally { [Array]::Clear($confirmIn, 0, $confirmIn.Length) }
+    if ($outcome -eq 'lost') {
+        # The confirm's answer is lost twice: keyfile status says whether this run's rekey is still
+        # pending (its nonce: not applied) or finished (pending empty, five shares: applied).
+        $sr = Invoke-OpenBaoSetup -Engine $c.Engine -ContainerId $c.Id -User $c.User -Arguments @('keyfile', 'status')
+        $sj = ConvertFrom-OpenBaoSetupOutput -Text $sr.Out
+        $known = $sr.Code -eq 0 -and $sj -and $sj.ok -eq $true -and $null -ne $sj.pending
+        if ($known -and [string]$sj.pending -eq '' -and [int]$sj.shares -eq 5) {
+            Write-OpenBaoLine "the confirm's answer was lost ($reason), but keyfile status shows no pending rotation and five shares in force: the rotation took effect. Check the backup with task openbao:server:status in the container."
+            $outcome = 'ok'
+        }
+        elseif ($known -and [string]$sj.pending -eq $verification) {
+            $reason = "no answer to the confirm ($reason), and keyfile status shows this rotation still pending"
+        }
+        else {
+            # Not ours to cancel, or no telling: keep the new key file, the previous one beside it, no custody share.
+            $what = if ($known -and $sj.pending) { 'another rotation is pending there (not this one: left alone)' } elseif ($known) { "no rotation is pending but the server has $($sj.shares) shares" } else { "keyfile status did not answer ($(Get-OpenBaoSetupReason -Result $sr -Json $sj))" }
+            $kept = ''
+            if ($previous) { [System.IO.File]::WriteAllBytes("$path.previous", $previous); $kept = " The previous one is kept as $path.previous: if OpenBao does not unseal with the new one, put that back." }
+            Write-OpenBaoLine -Problem "keyfile:${Action}: no answer to the confirm ($reason), and $what. Whether the new shares took effect cannot be told, so no custody share is shown and nothing is cancelled. The new OpenBao key file stays at $path.$kept Check with task openbao:server:status in the container."
+            return 1
+        }
+    }
+    if ($outcome -ne 'ok') {
+        Write-OpenBaoLine -Problem "keyfile:$Action was not confirmed: $reason. The new OpenBao key file is withdrawn$(if ($previous) { ' and the previous one put back' })."
+        & $restore
+        & $cancel
+        return 1
+    }
+    if ($custody.Count -gt 0) { Write-OpenBaoCustodyShare -Shares $custody }
+    else { Write-OpenBaoLine -Problem 'the container sent no custody shares back; check task openbao:server:status in the container.' }
+    Write-OpenBaoLine "the OpenBao key file is saved: $path (server $server). It opens only for this Windows account on this machine (and with the domain's DPAPI backup key on a domain-joined one)."
+    return 0
+}
+
+function Get-OpenBaoTransferPassphrase {
+    <# .SYNOPSIS A one-time transfer passphrase: 160 random bits in base32, in groups of four. #>
+    $alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+    $bytes = [System.Security.Cryptography.RandomNumberGenerator]::GetBytes(32)
+    $chars = foreach ($b in $bytes) { $alphabet[$b % 32] }
+    return ((-join $chars) -split '(.{4})' | Where-Object { $_ }) -join '-'
+}
+
+function Get-OpenBaoTransferKey {
+    param([string]$Phrase, [byte[]]$Salt, [int]$Iterations)
+    $norm = ($Phrase -replace '[\s-]', '').ToUpperInvariant()
+    $kdf = [System.Security.Cryptography.Rfc2898DeriveBytes]::new([System.Text.Encoding]::UTF8.GetBytes($norm), $Salt, $Iterations, [System.Security.Cryptography.HashAlgorithmName]::SHA256)
+    try { return , $kdf.GetBytes(32) } finally { $kdf.Dispose() }
+}
+
+function Export-OpenBaoKeyFile {
+    <#
+    .SYNOPSIS
+        task devcontainer:openbao:keyfile:export FILE=<path> [SERVER=<cluster id>]: writes this
+        repository's OpenBao key file to FILE, encrypted (AES-256-GCM, a key from PBKDF2-SHA256) with
+        a one-time transfer passphrase printed once here, for :import on another workstation. Refuses
+        a FILE that exists or lies inside the checkout. Returns the exit code.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$WorkspaceFolder, [string]$File, [string]$Server)
+    if (-not $File) { Write-OpenBaoLine -Problem 'keyfile:export needs FILE=<path of the transfer file to write>, outside the checkout.'; return 1 }
+    $folder = (Resolve-Path -LiteralPath $WorkspaceFolder).Path
+    $target = [System.IO.Path]::GetFullPath($File, (Get-Location).Path)
+    $sep = [System.IO.Path]::DirectorySeparatorChar
+    if ($target.StartsWith($folder.TrimEnd($sep) + $sep, [StringComparison]::OrdinalIgnoreCase)) {
+        Write-OpenBaoLine -Problem "keyfile:export: $target is inside the checkout; write the transfer file elsewhere, so it never reaches git."
+        return 1
+    }
+    if (Test-Path -LiteralPath $target) { Write-OpenBaoLine -Problem "keyfile:export: $target exists; name a new file."; return 1 }
+    $repo = Get-OpenBaoRepoName -WorkspaceFolder $folder
+    $found = @(Find-OpenBaoKeyFile -Repo $repo -Server $Server)
+    if ($found.Count -eq 0) { Write-OpenBaoLine -Problem "no OpenBao key file for $repo$(if ($Server) { ", server $Server" }) on this workstation."; return 1 }
+    if ($found.Count -gt 1) { Write-OpenBaoLine -Problem "$repo has OpenBao key files for several servers; name one with SERVER=<cluster id>: $(($found | ForEach-Object { Split-Path -Leaf $_ }) -join ', ')"; return 1 }
+    $plain = Read-OpenBaoKeyFile -Path $found[0]
+    try {
+        $kf = [System.Text.Encoding]::UTF8.GetString($plain) | ConvertFrom-Json
+        $passphrase = Get-OpenBaoTransferPassphrase
+        $salt = [System.Security.Cryptography.RandomNumberGenerator]::GetBytes(16)
+        $nonce = [System.Security.Cryptography.RandomNumberGenerator]::GetBytes(12)
+        $key = Get-OpenBaoTransferKey -Phrase $passphrase -Salt $salt -Iterations $script:OpenBaoTransferIterations
+        $cipher = [byte[]]::new($plain.Length)
+        $tag = [byte[]]::new(16)
+        $aes = [System.Security.Cryptography.AesGcm]::new($key)
+        try { $aes.Encrypt($nonce, $plain, $cipher, $tag) } finally { $aes.Dispose(); [Array]::Clear($key, 0, $key.Length) }
+        $doc = [ordered]@{
+            v = 1; kind = $script:OpenBaoTransferKind; repo = [string]$kf.repo; server = [string]$kf.server
+            kdf = 'PBKDF2-SHA256'; iterations = $script:OpenBaoTransferIterations; cipher = 'AES-256-GCM'
+            salt = [Convert]::ToBase64String($salt); nonce = [Convert]::ToBase64String($nonce); tag = [Convert]::ToBase64String($tag)
+            data = [Convert]::ToBase64String($cipher)
+        }
+        [System.IO.File]::WriteAllText($target, (ConvertTo-Json -InputObject $doc -Compress) + "`n")
+    }
+    finally { [Array]::Clear($plain, 0, $plain.Length) }
+    Write-OpenBaoLine "the OpenBao key file of $repo (server $($kf.server)) is written to $target, encrypted."
+    Write-Host "openbao: the one-time transfer passphrase, shown this once: $passphrase"
+    Write-OpenBaoLine 'on the other workstation: task dc:openbao:keyfile:import FILE=<that file>, and type the passphrase there; the import deletes the file. Carry the file and the passphrase by different routes.'
+    return 0
+}
+
+function Import-OpenBaoKeyFile {
+    <#
+    .SYNOPSIS
+        task devcontainer:openbao:keyfile:import FILE=<transfer file>: asks the one-time transfer
+        passphrase (hidden), decrypts in memory, saves the key file with this workstation's DPAPI and
+        deletes the transfer file. Refuses when this workstation has a key file for that server
+        already (:forget it first). Returns the exit code.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$WorkspaceFolder, [string]$File)
+    if (-not $File -or -not (Test-Path -LiteralPath $File -PathType Leaf)) { Write-OpenBaoLine -Problem "keyfile:import needs FILE=<the transfer file keyfile:export wrote>, and '$File' is not a file."; return 1 }
+    $folder = (Resolve-Path -LiteralPath $WorkspaceFolder).Path
+    $repo = Get-OpenBaoRepoName -WorkspaceFolder $folder
+    try { $doc = Get-Content -LiteralPath $File -Raw | ConvertFrom-Json -ErrorAction Stop } catch { $doc = $null }
+    if (-not $doc -or $doc.kind -ne $script:OpenBaoTransferKind -or $doc.v -ne 1) { Write-OpenBaoLine -Problem "$File is not an OpenBao key file transfer file."; return 1 }
+    if (Test-Path -LiteralPath (Get-OpenBaoKeyFilePath -Repo $repo -Server ([string]$doc.server)) -PathType Leaf) {
+        Write-OpenBaoLine -Problem "this workstation has an OpenBao key file for $repo, server $($doc.server), already; task dc:openbao:keyfile:forget SERVER=$($doc.server) first if this one should replace it. Nothing changed."
+        return 1
+    }
+    $sec = Read-Host -AsSecureString -Prompt 'the one-time transfer passphrase (hidden)'
+    $passphrase = [System.Net.NetworkCredential]::new('', $sec).Password
+    $sec.Dispose()
+    $plain = $null
+    try {
+        $salt = [Convert]::FromBase64String($doc.salt); $nonce = [Convert]::FromBase64String($doc.nonce)
+        $tag = [Convert]::FromBase64String($doc.tag); $cipher = [Convert]::FromBase64String($doc.data)
+        $key = Get-OpenBaoTransferKey -Phrase $passphrase -Salt $salt -Iterations ([int]$doc.iterations)
+        $plain = [byte[]]::new($cipher.Length)
+        $aes = [System.Security.Cryptography.AesGcm]::new($key)
+        try { $aes.Decrypt($nonce, $cipher, $tag, $plain) } finally { $aes.Dispose(); [Array]::Clear($key, 0, $key.Length) }
+    }
+    catch {
+        if ($plain) { [Array]::Clear($plain, 0, $plain.Length) }
+        Write-OpenBaoLine -Problem 'keyfile:import: the passphrase is wrong or the file is damaged; nothing changed and the file is kept.'
+        return 1
+    }
+    $json = $null
+    try {
+        $kf = [System.Text.Encoding]::UTF8.GetString($plain) | ConvertFrom-Json
+        $json = ConvertTo-OpenBaoKeyFileJson -KeyFile $kf -Repo $repo
+        $path = Save-OpenBaoKeyFile -Repo $repo -Server ([string]$kf.server) -Json $json
+    }
+    catch { Write-OpenBaoLine -Problem "keyfile:import: the OpenBao key file could not be saved ($($_.Exception.Message)); the transfer file is kept."; return 1 }
+    finally {
+        [Array]::Clear($plain, 0, $plain.Length)
+        if ($json) { [Array]::Clear($json, 0, $json.Length) }
+    }
+    if ($kf.repo -and [string]$kf.repo -ne $repo) { Write-OpenBaoLine "note: the key file was made for the folder $($kf.repo); it is kept here under $repo." }
+    Remove-Item -LiteralPath $File -Force -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $File) { Write-OpenBaoLine -Problem "keyfile:import: could not delete the transfer file $File; delete it yourself." }
+    Write-OpenBaoLine "the OpenBao key file is saved: $path (server $($kf.server)); the transfer file is deleted. The next task dc:start unlocks OpenBao with it."
+    return 0
+}
+
+function Remove-OpenBaoKeyFile {
+    <# .SYNOPSIS task devcontainer:openbao:keyfile:forget [SERVER=<cluster id>]: deletes this repository's OpenBao key file on this workstation, after a y at the prompt. Returns the exit code. #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param([Parameter(Mandatory)][string]$WorkspaceFolder, [string]$Server)
+    $repo = Get-OpenBaoRepoName -WorkspaceFolder $WorkspaceFolder
+    $found = @(Find-OpenBaoKeyFile -Repo $repo -Server $Server)
+    if ($found.Count -eq 0) { Write-OpenBaoLine "no OpenBao key file for $repo$(if ($Server) { ", server $Server" }) on this workstation; nothing to forget."; return 0 }
+    if ($found.Count -gt 1) { Write-OpenBaoLine -Problem "$repo has OpenBao key files for several servers; name one with SERVER=<cluster id>: $(($found | ForEach-Object { Split-Path -Leaf $_ }) -join ', ')"; return 1 }
+    Write-OpenBaoLine "this deletes $($found[0]). Without it this workstation unseals that server only with two custody shares (task openbao:unseal in the container)."
+    $answer = Read-Host -Prompt 'Forget it? [y/N]'
+    if ($answer -notmatch '^(y|yes)$') { Write-OpenBaoLine 'kept.'; return 1 }
+    if (-not $PSCmdlet.ShouldProcess($found[0], 'Remove the OpenBao key file')) { return 1 }
+    Remove-Item -LiteralPath $found[0] -Force
+    Write-OpenBaoLine 'forgotten. Its shares 4 and 5 still open the server (and its backups) until task dc:openbao:keyfile:rotate makes new ones; set the Feature option unlock: operator to go back to typing.'
+    return 0
+}
+
+function Invoke-OpenBaoKeyFileTask {
+    <#
+    .SYNOPSIS
+        The devcontainer:openbao:keyfile:* tasks: Arguments[0] is create, rotate, export, import or
+        forget, then --file <path> and --server <cluster id>. create, rotate, export and import
+        refuse (exit 3) when DEVHOST_JOB_CHILD, CLAUDECODE or a name in OPENBAO_AGENT_JOB_VARS is set
+        on this workstation: they handle custody shares or the whole key file. Returns the exit code.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$WorkspaceFolder, [string[]]$Arguments = @(), [string]$DockerPath)
+    $a = @($Arguments)
+    $action = $a | Select-Object -First 1
+    $file = ''; $server = ''
+    for ($i = 1; $i -lt $a.Count; $i++) {
+        switch ($a[$i]) {
+            '--file' { $i++; $file = $a[$i] }
+            '--server' { $i++; $server = $a[$i] }
+            default { Write-OpenBaoLine -Problem "keyfile: unknown argument '$($a[$i])'."; return 2 }
+        }
+    }
+    if ($action -notin 'create', 'rotate', 'export', 'import', 'forget') {
+        Write-OpenBaoLine -Problem "keyfile: create, rotate, export, import or forget (got '$action')."
+        return 2
+    }
+    if ($action -ne 'forget') {
+        $agentVar = Get-OpenBaoAgentJobVariable
+        if ($agentVar) {
+            Write-OpenBaoLine -Problem "keyfile:$action refuses inside an agent's job ($agentVar is set on this workstation): it handles custody shares or the whole OpenBao key file, which must never land in a transcript. Run it yourself in a plain terminal."
+            return 3
+        }
+    }
+    switch ($action) {
+        'create' { return (Invoke-OpenBaoKeyFileMake -WorkspaceFolder $WorkspaceFolder -Action create -DockerPath $DockerPath) }
+        'rotate' { return (Invoke-OpenBaoKeyFileMake -WorkspaceFolder $WorkspaceFolder -Action rotate -DockerPath $DockerPath) }
+        'export' { return (Export-OpenBaoKeyFile -WorkspaceFolder $WorkspaceFolder -File $file -Server $server) }
+        'import' { return (Import-OpenBaoKeyFile -WorkspaceFolder $WorkspaceFolder -File $file) }
+        'forget' { return (Remove-OpenBaoKeyFile -WorkspaceFolder $WorkspaceFolder -Server $server) }
+    }
+}
+
 function Invoke-DevcontainerCli {
     [CmdletBinding()]
     param(
@@ -1958,6 +2670,14 @@ function Invoke-DevcontainerCli {
         return
     }
 
+    # `openbao-unlock` and `openbao-keyfile` are not CLI subcommands: the OpenBao key file (Windows).
+    if ($Subcommand -eq 'openbao-unlock') {
+        exit (Invoke-OpenBaoUnlock -WorkspaceFolder $WorkspaceFolder -DockerPath $DockerPath -Explicit)
+    }
+    if ($Subcommand -eq 'openbao-keyfile') {
+        exit (Invoke-OpenBaoKeyFileTask -WorkspaceFolder $WorkspaceFolder -Arguments $Arguments -DockerPath $DockerPath)
+    }
+
     # `host` is not a CLI subcommand: it prints the resolved host profile and starts nothing.
     if ($Subcommand -eq 'host') { Show-HostProfile -DockerPath $DockerPath -WorkspaceFolder $WorkspaceFolder -Arguments $Arguments; return }
 
@@ -1986,7 +2706,15 @@ function Invoke-DevcontainerCli {
     }
     finally { Exit-DevcontainerBuildLock -Lock $lock }
     $rc = $script:CliExitCode
-    if ($rc -eq 0) { return }
+    if ($rc -eq 0) {
+        # After every up (so start, shell, exec, agent, claude, rebuild): the OpenBao key file's unlock
+        # step; silent unless the openbao Feature here is set to unlock: keyfile. It never fails the up.
+        if ($Subcommand -eq 'up') {
+            try { [void](Invoke-OpenBaoUnlock -WorkspaceFolder $WorkspaceFolder -DockerPath $DockerPath) }
+            catch { Write-Verbose "the OpenBao unlock step: $($_.Exception.Message)" }
+        }
+        return
+    }
 
     if ($Subcommand -ne 'exec') {
         if (Test-EngineSubcommand -Subcommand $Subcommand) { Write-ContainerEngineDiagnosis -DockerPath $DockerPath }
@@ -2012,4 +2740,4 @@ function Invoke-DevcontainerCli {
     exit $rc
 }
 
-Export-ModuleMember -Function Get-HostTypeId, Get-DefaultHostTypePriority, Resolve-HostType, Resolve-SshAgent, Resolve-HostProfile, Initialize-HostEnvironment, Test-FuseRequested, Get-FuseRefusal, Get-FuseRunArgument, Get-FuseSlotMissing, Write-FuseSlotWarning, Write-FuseRefusedWarning, ConvertTo-MachineName, Get-HostMachineName, Test-MachineSlotMissing, Write-MachineSlotWarning, Get-DevcontainerConfigFile, Get-HostMount, Test-CloudFolderMount, ConvertTo-MountArgument, ConvertTo-JsonWithoutComment, Get-ConfiguredMountTarget, Test-HostMountsEnabled, Resolve-HostMount, Initialize-HostMountSource, Get-HostMountArgument, Show-HostProfile, Import-SshKey, Import-OpenBaoSshKey, Clear-HostProfileCache, Get-SettingOrEnv, ConvertFrom-TaskCliArgString, Get-PortableNodeDir, Invoke-DcfDownload, Get-DevcontainersCliEntrypoint, Remove-DevcontainersCli, Resolve-DockerPath, Get-WorkspaceFolderVariant, Get-RunningDevcontainerId, Stop-Devcontainer, Test-BuildSubcommand, Get-BuildLockStateDir, Get-BuildLockLabel, Get-BuildLockWaitMessage, Get-EngineBuildxVersion, Get-BuildLockSkipReason, Enter-DevcontainerBuildLock, Exit-DevcontainerBuildLock, Test-EngineSubcommand, Get-ContainerEngineCheck, Test-ContainerEngineResponding, Get-ContainerEngineError, Get-ContainerEngineStartHint, Wait-ContainerEngine, Write-ContainerEngineDiagnosis, Get-DevcontainerCliInvocation, Invoke-DevcontainerCliProcess, Get-LauncherCacheRoot, Get-CloudFolderRcloneVersion, Get-WorkstationRclone, Open-Browser, Invoke-CloudFolderRelayRequest, Invoke-CloudFolderLoginRelay, Invoke-CloudFolderLogin, Invoke-DevcontainerCli
+Export-ModuleMember -Function Get-HostTypeId, Get-DefaultHostTypePriority, Resolve-HostType, Resolve-SshAgent, Resolve-HostProfile, Initialize-HostEnvironment, Test-FuseRequested, Get-FuseRefusal, Get-FuseRunArgument, Get-FuseSlotMissing, Write-FuseSlotWarning, Write-FuseRefusedWarning, ConvertTo-MachineName, Get-HostMachineName, Test-MachineSlotMissing, Write-MachineSlotWarning, Get-DevcontainerConfigFile, Get-HostMount, Test-CloudFolderMount, ConvertTo-MountArgument, ConvertTo-JsonWithoutComment, Get-ConfiguredMountTarget, Test-HostMountsEnabled, Resolve-HostMount, Initialize-HostMountSource, Get-HostMountArgument, Show-HostProfile, Import-SshKey, Import-OpenBaoSshKey, Clear-HostProfileCache, Get-SettingOrEnv, ConvertFrom-TaskCliArgString, Get-PortableNodeDir, Invoke-DcfDownload, Get-DevcontainersCliEntrypoint, Remove-DevcontainersCli, Resolve-DockerPath, Get-WorkspaceFolderVariant, Get-RunningDevcontainerId, Stop-Devcontainer, Test-BuildSubcommand, Get-BuildLockStateDir, Get-BuildLockLabel, Get-BuildLockWaitMessage, Get-EngineBuildxVersion, Get-BuildLockSkipReason, Enter-DevcontainerBuildLock, Exit-DevcontainerBuildLock, Test-EngineSubcommand, Get-ContainerEngineCheck, Test-ContainerEngineResponding, Get-ContainerEngineError, Get-ContainerEngineStartHint, Wait-ContainerEngine, Write-ContainerEngineDiagnosis, Get-DevcontainerCliInvocation, Invoke-DevcontainerCliProcess, Get-LauncherCacheRoot, Get-CloudFolderRcloneVersion, Get-WorkstationRclone, Open-Browser, Invoke-CloudFolderRelayRequest, Invoke-CloudFolderLoginRelay, Invoke-CloudFolderLogin, Get-OpenBaoKeyFileDir, Get-OpenBaoRepoName, Get-OpenBaoKeyFilePath, Find-OpenBaoKeyFile, Protect-OpenBaoKeyFileBlob, Unprotect-OpenBaoKeyFileBlob, Save-OpenBaoKeyFile, Read-OpenBaoKeyFile, ConvertTo-OpenBaoKeyFileJson, Get-OpenBaoAgentJobVariable, Get-DevcontainerRemoteUser, Invoke-OpenBaoSetup, ConvertFrom-OpenBaoSetupOutput, Get-OpenBaoUnlockStatus, Invoke-OpenBaoUnlock, Invoke-OpenBaoKeyFileMake, Export-OpenBaoKeyFile, Import-OpenBaoKeyFile, Remove-OpenBaoKeyFile, Invoke-OpenBaoKeyFileTask, Invoke-DevcontainerCli

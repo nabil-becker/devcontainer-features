@@ -17,8 +17,15 @@
 #    Feature's volume, one loopback listener, the file audit device), start `bao server` in the
 #    background and say whether it is not initialised, sealed or unsealed. It never waits for an
 #    unseal and never prompts: a start hook that waits holds every Feature's start. The server
-#    stays sealed until the Operator runs task openbao:unseal.
+#    stays sealed until the Operator runs task openbao:unseal (or, with the unlock option set to
+#    keyfile, until the workstation's launcher sends the OpenBao key file).
+# 5. `unlock`, `keyfile` and `renew`: the OpenBao key file's container side, which the workstation's
+#    launcher runs at this absolute path; handed over to openbao-keyfile (see there).
 set -u
+
+case "${1:-}" in
+  unlock | keyfile | renew) exec "$(dirname "$(readlink -f "$0")")/openbao-keyfile" "$@" ;;
+esac
 
 # Defaults baked by install.sh from the Feature options. OPENBAO_SETUP_* in the environment
 # (containerEnv) override them without a rebuild.
@@ -26,6 +33,8 @@ feature_dir="${OPENBAO_FEATURE_DIR:-/usr/local/share/openbao-feature}"
 # shellcheck disable=SC1091  # written by install.sh at image build
 [ -f "$feature_dir/options.env" ] && source "$feature_dir/options.env"
 mode="${OPENBAO_SETUP_MODE-${MODE:-client}}"
+unlock="${OPENBAO_SETUP_UNLOCK:-${UNLOCK:-operator}}"
+[ "$unlock" = keyfile ] || unlock=operator
 # env.sh gives server mode its BAO_ADDR default (the local listener), as it does for dcf-secret
 # shellcheck disable=SC1091  # installed by install.sh
 [ -f "$feature_dir/env.sh" ] && source "$feature_dir/env.sh"
@@ -108,6 +117,11 @@ start_server() {
   if server_alive; then
     echo "openbao: server already running (pid $(cat "$dir/server.pid"))"
   else
+    # a rekey waiting for the OpenBao key file's confirmation lives in the server's memory: a new
+    # server process has none, so the record says it was dropped (keyfile status then answers so)
+    if [ -f "$dir/keyfile-pending" ] && grep -qx 'state=pending' "$dir/keyfile-pending" && grep -qx 'kind=rekey' "$dir/keyfile-pending"; then
+      sed -i 's/^state=pending$/state=dropped/' "$dir/keyfile-pending" 2>/dev/null || true
+    fi
     if command -v setsid >/dev/null 2>&1; then
       (umask 077; setsid bao server -config="$conf" </dev/null >>"$dir/server.log" 2>&1 & echo "$!" > "$dir/server.pid")
     else
@@ -126,7 +140,13 @@ start_server() {
     0) echo "openbao: server running and unsealed at http://$listen" ;;
     2)
       if grep -Eq '"initialized"[[:space:]]*:[[:space:]]*false' <<<"$st_json"; then
-        echo "openbao: server started at http://$listen, not initialised; the Operator runs task openbao:init"
+        if [ "$unlock" = keyfile ]; then
+          echo "openbao: server started at http://$listen, not initialised; the Operator runs task dc:openbao:keyfile:create on the workstation (the OpenBao key file)"
+        else
+          echo "openbao: server started at http://$listen, not initialised; the Operator runs task openbao:init"
+        fi
+      elif [ "$unlock" = keyfile ]; then
+        echo "openbao: server started at http://$listen, sealed; the workstation's launcher unseals it with the OpenBao key file at its next task dc:* (or task dc:openbao:unlock; two custody shares at task openbao:unseal also do)"
       else
         echo "openbao: server started at http://$listen, sealed; the Operator runs task openbao:unseal"
       fi
@@ -161,7 +181,13 @@ dcf-persist --label openbao "$dir"
 
 case "$mode" in
   client) echo "openbao: mode client (the bao CLI and dcf-secret; BAO_ADDR names the server)" ;;
-  server) echo "openbao: mode server (a server with raft storage in $dir/raft, started by the post-start hook; sealed until the Operator runs task openbao:unseal)" ;;
+  server)
+    if [ "$unlock" = keyfile ]; then
+      echo "openbao: mode server, unlock keyfile (a server with raft storage in $dir/raft, started by the post-start hook; the workstation's launcher unseals it and logs the Operator in with the OpenBao key file)"
+    else
+      echo "openbao: mode server (a server with raft storage in $dir/raft, started by the post-start hook; sealed until the Operator runs task openbao:unseal)"
+    fi
+    ;;
   *)
     echo "openbao: mode '$mode' is not known (client or server); running as client" >&2
     mode=client
@@ -207,6 +233,8 @@ if [ -n "${BAO_TOKEN:-}" ]; then
   echo "openbao: BAO_TOKEN is set in the environment and takes precedence over the saved login"
 elif [ -s "$target" ]; then
   echo "openbao: a login is saved in $dir (it may have expired; dcf-secret status checks it)"
+elif [ "$mode" = server ] && [ "$unlock" = keyfile ]; then
+  echo "openbao: no login yet; the workstation's launcher logs the Operator in with the OpenBao key file (task dc:openbao:unlock)"
 elif [ "$mode" = server ]; then
   echo "openbao: no login yet; once the server is unsealed, run task openbao:login -- -method=userpass username=operator (it persists in $dir)"
 else

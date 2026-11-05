@@ -25,7 +25,7 @@ PERSON = "Guinevere Pendragon"
 ENV_VARS = ("DEVHOST_ROOT", "DEVHOST_STATE", "DEVHOST_LEDGER_DIR", "DEVHOST_BACKLOG", "DEVHOST_LEXICON",
             "DEVHOST_ADR_DIR", "DEVHOST_MODEL_DIR", "DEVHOST_NIGHT_SHIFT_DIR", "DEVHOST_ENGINEER", "DEVHOST_REDACT_FILE",
             "DEVHOST_REDACT_WITH", "DEVHOST_FORBIDDEN_WORDS", "DEVHOST_BASE_REF", "CLAUDE_CONFIG_DIR",
-            "CLAUDE_PROJECT_DIR", "DEVHOST_SHARE", "DEVHOST_GH", "DEVHOST_REVIEW_EVERY", "DEVHOST_MONTHLY_TARGET", "DEVHOST_BAO", "OPENBAO_STATE_DIR", "BAO_ADDR",
+            "CLAUDE_PROJECT_DIR", "DEVHOST_SHARE", "DEVHOST_GH", "DEVHOST_REVIEW_EVERY", "DEVHOST_MONTHLY_TARGET", "DEVHOST_BAO", "DEVHOST_OPENBAO_SETUP", "OPENBAO_STATE_DIR", "BAO_ADDR",
             "DEVHOST_RECORDS_DIR", "DEVHOST_COSTS_DIR", "DEVHOST_REVIEWS_DIR", "DEVHOST_LEDGER_REGISTER",
             "DEVHOST_AGENTIC_REGISTER", "AGENTIC_REGISTER_LIB", "FAKE_AR")
 
@@ -190,6 +190,7 @@ def devhost_env(root: Path, **extra: str):
     os.environ["CLAUDE_CONFIG_DIR"] = str(root.parent / "claude")
     os.environ["DEVHOST_ENGINEER"] = "tester"
     os.environ["DEVHOST_BAO"] = "devhost-test-no-bao"  # never the real bao; tests that need one set it
+    os.environ["DEVHOST_OPENBAO_SETUP"] = "/nonexistent/devhost-test-no-openbao-setup"  # never the real one
     os.environ["OPENBAO_STATE_DIR"] = str(root.parent / "openbao-state")
     os.environ["DEVHOST_GH"] = "devhost-test-no-gh"  # never the real gh (network); tests that need one set it
     for k, v in extra.items():
