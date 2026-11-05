@@ -136,6 +136,9 @@
     "DEVHOST_LEDGER_REGISTER": "ledger",
     // The workstation's machine name, set by the launcher (devcontainer-cli 1.16.2).
     "DCF_HOST_MACHINE": "${localEnv:DCF_HOST_MACHINE}",
+    // socket, key or none, set by the launcher (SSH_AGENT_MODE=key in .devcontainer/.env turns
+    // on the ssh-agent Feature's key mode); as in bootstrap/devcontainer.json
+    "DCF_HOST_SSH_AGENT": "${localEnv:DCF_HOST_SSH_AGENT}",
     // 1 when DCF_HOST_FUSE=1 in .devcontainer/.env asked the launcher for FUSE
     "DCF_HOST_FUSE": "${localEnv:DCF_HOST_FUSE}"
   },
