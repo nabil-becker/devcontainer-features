@@ -28,6 +28,8 @@
 #       those it would skip), and starts nothing (devcontainer:host).
 #       `cloud-folder-login` is not one either: the cloud-folder Feature's sign-in from the
 #       workstation (relay, --paste, --workstation-rclone; see "cloud-folder login" below).
+#       `openbao-unlock` and `openbao-keyfile` (devcontainer:openbao:unlock, :keyfile:*) refuse in
+#       one line: the OpenBao key file is Windows-only for now (DPAPI, the PowerShell launcher).
 #       A failed `exec` says which of three things failed: the command (its
 #       exit code is passed on), no running container (1), the engine (2).
 #
@@ -1408,6 +1410,14 @@ mode_run() {
     mode_cloud_folder_login "$(resolve_workspace "$workspace")" "$@"
     return
   fi
+
+  # The OpenBao key file (task devcontainer:openbao:unlock, :keyfile:*) is kept with Windows DPAPI by
+  # the PowerShell launcher; this launcher has no store for it yet, and `up` has no unlock step here.
+  case "$subcommand" in
+    openbao-unlock | openbao-keyfile)
+      echo 'devcontainer-cli: the OpenBao key file is Windows-only for now; here unseal OpenBao in the container with two custody shares (task openbao:unseal).' >&2
+      return 1 ;;
+  esac
 
   if [ "$subcommand" = openbao-ssh-import ]; then
     [ -n "$workspace" ] || die 'run: --workspace-folder is required for openbao-ssh-import'

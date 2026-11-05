@@ -251,6 +251,64 @@ tasks:
       - cmd: '{{if ._IN_CONTAINER}}:{{else}}{{._SH_SETTINGS}} bash ''{{._BASH_CLI}}'' run cloud-folder-login --workspace-folder ''{{.WORKSPACE_FOLDER}}'' -- {{.CLI_ARGS}}{{end}}'
         platforms: [linux, darwin]
 
+  openbao:unlock:
+    desc: 'Unseal OpenBao in the running devcontainer and log the Operator in with this workstation''s OpenBao key file (the openbao Feature 1.5.0 or later with unlock: keyfile), nothing typed: the step every task devcontainer:up (so start, shell, exec, agent, claude, rebuild) runs on its own, for a container started another way (VS Code). Asks openbao-setup unlock --status through the engine''s exec, and when the server is sealed or the token is not live streams the key file (DPAPI, opened in memory) into openbao-setup unlock --stdin; never an argument, an environment variable or a file. Says so and does nothing when the Feature is not in keyfile mode or OpenBao is ready; names task devcontainer:openbao:keyfile:create when this workstation has no key file for that server. Windows (pwsh) only for now; the bash launcher says so in one line.'
+    cmds:
+      - cmd: '{{if ._IN_CONTAINER}}echo "devcontainer:openbao:unlock runs from the workstation: this Task is inside the container." >&2; exit 1{{else}}:{{end}}'
+      - task: cli
+        vars:
+          SUBCOMMAND: openbao-unlock
+
+  openbao:keyfile:create:
+    desc: 'Make the OpenBao key file for the running devcontainer''s OpenBao (the openbao Feature 1.5.0 or later with unlock: keyfile), once: on today''s server, type two custody shares at hidden prompts; on an uninitialised one nothing is typed. The container rotates to five shares, threshold two (or initialises so), makes the operator AppRole and ends with a backup; shares 4 and 5 and the login are saved here with DPAPI in %LOCALAPPDATA%\devcontainer-features-keys\openbao\<repo>-<cluster id>.keyfile, and custody shares 1 to 3 are printed once: store them again, and keep the previous ones until the backups made under them are pruned. Refuses (exit 3) when CLAUDECODE, DEVHOST_JOB_CHILD or a name in OPENBAO_AGENT_JOB_VARS is set on the workstation: run it yourself in a plain terminal. Windows (pwsh) only for now; the bash launcher says so in one line.'
+    interactive: true
+    cmds:
+      - cmd: '{{if ._IN_CONTAINER}}echo "devcontainer:openbao:keyfile:create runs from the workstation: this Task is inside the container." >&2; exit 1{{else}}:{{end}}'
+      - task: cli
+        vars:
+          SUBCOMMAND: openbao-keyfile
+          ARGS: 'create'
+
+  openbao:keyfile:rotate:
+    desc: 'New unseal shares and a new AppRole secret id for the running devcontainer''s OpenBao (after a suspected copy of the key file, after a restore or an onboarding claim, or once agents run as their own Linux user): with this workstation''s OpenBao key file for that server nothing is typed, else type any two of the five shares. Replaces the key file and prints the three new custody shares once (keep the previous ones until the backups made under them are pruned). Refuses (exit 3) when CLAUDECODE, DEVHOST_JOB_CHILD or a name in OPENBAO_AGENT_JOB_VARS is set on the workstation: run it yourself in a plain terminal. Windows (pwsh) only for now; the bash launcher says so in one line.'
+    interactive: true
+    cmds:
+      - cmd: '{{if ._IN_CONTAINER}}echo "devcontainer:openbao:keyfile:rotate runs from the workstation: this Task is inside the container." >&2; exit 1{{else}}:{{end}}'
+      - task: cli
+        vars:
+          SUBCOMMAND: openbao-keyfile
+          ARGS: 'rotate'
+
+  openbao:keyfile:export:
+    desc: 'Write this repository''s OpenBao key file to FILE=<path outside the checkout>, encrypted with a one-time transfer passphrase printed once here (AES-256-GCM, PBKDF2-SHA256), for task devcontainer:openbao:keyfile:import on a second workstation that restores this server''s backups. SERVER=<cluster id> when this workstation has key files for several servers. Refuses a FILE that exists or lies inside the checkout. Carry the file and the passphrase by different routes. Refuses (exit 3) when CLAUDECODE, DEVHOST_JOB_CHILD or a name in OPENBAO_AGENT_JOB_VARS is set on the workstation: run it yourself in a plain terminal. Windows (pwsh) only for now; the bash launcher says so in one line.'
+    interactive: true
+    cmds:
+      - cmd: '{{if ._IN_CONTAINER}}echo "devcontainer:openbao:keyfile:export runs from the workstation: this Task is inside the container." >&2; exit 1{{else}}:{{end}}'
+      - task: cli
+        vars:
+          SUBCOMMAND: openbao-keyfile
+          ARGS: 'export --file {{.FILE | default "" | shellQuote}} --server {{.SERVER | default "" | shellQuote}}'
+
+  openbao:keyfile:import:
+    desc: 'Read a transfer file that task devcontainer:openbao:keyfile:export wrote (FILE=<path>), ask its one-time transfer passphrase at a hidden prompt, save the OpenBao key file with this workstation''s DPAPI and delete the transfer file. Refuses when this workstation has a key file for that server already (forget it first); a wrong passphrase changes nothing. Refuses (exit 3) when CLAUDECODE, DEVHOST_JOB_CHILD or a name in OPENBAO_AGENT_JOB_VARS is set on the workstation: run it yourself in a plain terminal. Windows (pwsh) only for now; the bash launcher says so in one line.'
+    interactive: true
+    cmds:
+      - cmd: '{{if ._IN_CONTAINER}}echo "devcontainer:openbao:keyfile:import runs from the workstation: this Task is inside the container." >&2; exit 1{{else}}:{{end}}'
+      - task: cli
+        vars:
+          SUBCOMMAND: openbao-keyfile
+          ARGS: 'import --file {{.FILE | default "" | shellQuote}}'
+
+  openbao:keyfile:forget:
+    desc: 'Delete this repository''s OpenBao key file on this workstation (SERVER=<cluster id> when it has several), after a y at the prompt: OpenBao then unseals only with two custody shares (task openbao:unseal in the container). Its shares 4 and 5 keep opening the server and its backups until task devcontainer:openbao:keyfile:rotate; to go back to typing set the openbao option unlock: operator. Windows (pwsh) only for now; the bash launcher says so in one line.'
+    interactive: true
+    cmds:
+      - cmd: '{{if ._IN_CONTAINER}}echo "devcontainer:openbao:keyfile:forget runs from the workstation: this Task is inside the container." >&2; exit 1{{else}}:{{end}}'
+      - task: cli
+        vars:
+          SUBCOMMAND: openbao-keyfile
+          ARGS: 'forget --server {{.SERVER | default "" | shellQuote}}'
+
   run:
     desc: 'Internal: run CMD inside the devcontainer - directly when Task already runs inside it, through the exec task (which starts the container first) from the host. What claude and similar "inside" tasks use.'
     internal: true

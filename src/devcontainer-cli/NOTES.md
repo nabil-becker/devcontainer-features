@@ -314,6 +314,68 @@ release's `SHA256SUMS` (saved to a file and read as text on Windows), and its `r
 container on stdin, never as an argument, and is never printed. Not verified on a real host: the
 relay through Docker Desktop, `wslc exec -i` and a WSL distro's localhost forwarding.
 
+## The OpenBao key file (Windows)
+
+With the openbao Feature (1.5.0 or later) in server mode and its option `unlock: keyfile`, the
+Windows launcher unseals OpenBao and logs the Operator in at every start, with nothing typed. The
+**OpenBao key file** holds unseal shares 4 and 5 and the Operator's AppRole login (role id, secret
+id) for one server; shares 1 to 3 are the **custody shares** the Operator keeps. Repositories whose
+openbao Feature is not set to `unlock: keyfile`, or that have no openbao Feature, see no change.
+
+- **Where it lives**: `%LOCALAPPDATA%\devcontainer-features-keys\openbao\<repo>-<cluster id>.keyfile`,
+  one file per server (`<repo>` is the workspace folder's name). Its own folder, not the launcher's
+  download cache (`%LOCALAPPDATA%\devcontainer-features`), which may be cleared; `%LOCALAPPDATA%`
+  does not roam and is not in OneDrive's known-folder move. Never in the shared folder, the checkout
+  or git.
+- **How it is protected**: Windows DPAPI (`ProtectedData`, scope `CurrentUser`, a fixed entropy of
+  this launcher). It opens for any process running as your Windows account on that machine, and for
+  nobody else; on a domain-joined machine **the domain's DPAPI backup key opens it too**. A Claude
+  Code session on the workstation runs as you and could open it: the share and file tasks below
+  refuse inside one, but the file itself cannot tell. The plain JSON exists only in the launcher's
+  memory.
+- **Windows only for now**: the bash launcher (Linux, macOS, a WSL distro) has no store; its tasks
+  say "the OpenBao key file is Windows-only for now" in one line and `up` has no unlock step there.
+
+**At every start.** After a successful `up` (so `start`, `shell`, `pwsh`, `exec`, `agent`, `claude`
+and `rebuild`), the launcher asks `/usr/local/bin/openbao-setup unlock --status` in the container.
+When the mode is `keyfile` and the server is sealed or the token is missing or dead, it opens this
+server's key file and streams it into `openbao-setup unlock --stdin`, then prints one line
+(`openbao: unsealed, logged in (the OpenBao key file).`, or why not). Silent when the mode is `off` or
+`operator`, when the status says `ready`, and when the container has no `openbao-setup` that
+answers. With no key file for that server it says so in one line and names
+`task dc:openbao:keyfile:create` (or two custody shares at `task openbao:unseal` in the container,
+then `task dc:openbao:keyfile:rotate`); the start goes on and OpenBao stays sealed. A failing step
+never fails the `up`.
+
+**How it travels.** Through the engine's own `exec -i -u <remote user> <container>
+/usr/local/bin/openbao-setup ...` (the remote user from the container's `devcontainer.metadata`
+label), not `devcontainer exec`, which runs the user's profile first; the bytes are written to its
+standard input from memory. Never an argument, an environment variable, a temporary file or a log
+line. Not verified on a real host: `wslc exec -i -u`.
+
+**The tasks** (from the workstation; inside the container they say so and stop):
+
+| Task | What it does |
+|---|---|
+| `task dc:openbao:unlock` | The same step on demand, for a container started another way (VS Code); says so when OpenBao is ready or the mode is not `keyfile`. |
+| `task dc:openbao:keyfile:create` | Once per server. On today's server, type two custody shares at hidden prompts (`Read-Host -AsSecureString`); on an uninitialised one nothing is typed. The container rotates to five shares, threshold two (or initialises so), makes the `operator` AppRole and ends with a backup; the launcher saves the key file and prints the three custody shares once. |
+| `task dc:openbao:keyfile:rotate` | New shares and a new secret id: with this workstation's key file for that server nothing is typed, else any two of the five. After a suspected copy, a restore, an onboarding claim, and once agents run as their own Linux user. Replaces the key file and prints the three new custody shares once. |
+| `task dc:openbao:keyfile:export FILE=<path> [SERVER=<id>]` | Writes the key file to `FILE` (outside the checkout, a new file) encrypted with a one-time transfer passphrase printed once (AES-256-GCM, a key from PBKDF2-SHA256), for a second workstation that restores this server's backups. Carry the file and the passphrase by different routes. |
+| `task dc:openbao:keyfile:import FILE=<path>` | Asks the passphrase (hidden), saves the key file with this workstation's DPAPI and deletes the transfer file. Refuses when a key file for that server is here already; a wrong passphrase changes nothing. |
+| `task dc:openbao:keyfile:forget [SERVER=<id>]` | Deletes the key file after a `y`. Its shares 4 and 5 keep opening the server and its backups until a `rotate`; set `unlock: operator` to go back to typing. |
+
+Each time custody shares are printed, store them again, each in its own place, and **keep the
+previous custody shares until the backups made under them are pruned**: a backup opens only with the
+shares in force when it was made. Then clear the console. `SERVER=<cluster id>` is needed only when
+this workstation has key files for several servers of the repository.
+
+**The agent guard.** `create`, `rotate`, `export` and `import` handle custody shares or the whole
+key file, so they refuse (exit 3) when `CLAUDECODE`, `DEVHOST_JOB_CHILD` or a variable named in
+`OPENBAO_AGENT_JOB_VARS` (space separated) is set on the workstation, and they are
+`interactive: true` tasks. Run them yourself in a plain terminal. Until agents run as their own
+Linux user in the container, any agent there could read what the unlock leaves (the token, and
+while it runs, the shares): rotate once that lands.
+
 ## Host type
 
 The launcher (the PowerShell flavour and the bash twin, the same rules in both)
