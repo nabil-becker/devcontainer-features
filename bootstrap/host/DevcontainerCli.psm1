@@ -2314,9 +2314,12 @@ function Invoke-OpenBaoKeyFileMake {
         rekey verification). Then, in this order: the answer's key file is saved (DPAPI); `keyfile
         confirm --stdin` gets the nonce and shares 4 and 5 read back from the saved file; only after
         it answers ok are the three custody shares printed, once. A failed save, or a confirm that
-        fails, puts the previous key file back and runs `keyfile cancel --stdin` (the old shares stay
-        in force). A lost confirm answer is retried once (confirm is idempotent), then `keyfile
-        status` decides (five shares in force). Warnings the container returns are shown. Returns the
+        fails, puts the previous key file back and runs `keyfile cancel --stdin` with this run's
+        nonce (the old shares stay in force); a rekey with another nonce is never cancelled. A lost
+        confirm answer is retried once (confirm is idempotent), then `keyfile status` decides: its
+        `pending` equal to this nonce = not applied (cancel, restore); empty with five shares =
+        applied (custody shares printed); anything else = unknown (nothing cancelled, the previous
+        key file kept as <path>.previous, no custody share). Warnings the container returns are shown. Returns the
         exit code.
     #>
     [CmdletBinding()]
@@ -2356,16 +2359,18 @@ function Invoke-OpenBaoKeyFileMake {
         return $(if ($r.Code -ne 0) { $r.Code } else { 1 })
     }
     $server = [string]$(if ($j.server) { $j.server } else { $j.keyfile.server })
+    $nonce = [string]$j.nonce
+    # Cancels this run's own pending rekey only: always with its nonce, never one it did not start.
     $cancel = {
-        $cb = [System.Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -Compress -InputObject ([ordered]@{ v = 1; server = $server })))
+        $cb = [System.Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -Compress -InputObject ([ordered]@{ v = 1; server = $server; nonce = $nonce })))
         $cr = Invoke-OpenBaoSetup -Engine $c.Engine -ContainerId $c.Id -User $c.User -Arguments @('keyfile', 'cancel', '--stdin') -InputBytes $cb -PassError
         $cj = ConvertFrom-OpenBaoSetupOutput -Text $cr.Out
         if ($cr.Code -eq 0 -and $cj -and $cj.ok -eq $true) { Write-OpenBaoLine -Problem 'the pending rotation is cancelled; the old shares still unseal.' }
         else { Write-OpenBaoLine -Problem "the pending rotation could not be cancelled ($(Get-OpenBaoSetupReason -Result $cr -Json $cj)); the old shares still unseal, and the next keyfile:$Action cancels it first." }
     }
-    if ($j.pending -ne $true -or -not $j.nonce -or -not $server) {
-        Write-OpenBaoLine -Problem "keyfile:${Action}: the container answered without a pending rotation to confirm (it needs the openbao Feature 1.5.0 or later); nothing was saved here."
-        & $cancel
+    if ($j.pending -ne $true -or -not $nonce -or -not $server) {
+        # No nonce of this run's to cancel with: nothing is cancelled (a rekey that is not ours is never touched).
+        Write-OpenBaoLine -Problem "keyfile:${Action}: the container answered without a pending rotation to confirm (it needs the openbao Feature 1.5.0 or later); nothing was saved or cancelled here."
         return 1
     }
     $custody = @($j.custody | Where-Object { $_ })
@@ -2386,7 +2391,7 @@ function Invoke-OpenBaoKeyFileMake {
         $saved = Read-OpenBaoKeyFile -Path $path
         try { $shares = [string[]]@(([System.Text.Encoding]::UTF8.GetString($saved) | ConvertFrom-Json).shares) }
         finally { [Array]::Clear($saved, 0, $saved.Length) }
-        $confirmIn = [System.Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -Compress -InputObject ([ordered]@{ v = 1; server = $server; nonce = [string]$j.nonce; shares = $shares })))
+        $confirmIn = [System.Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -Compress -InputObject ([ordered]@{ v = 1; server = $server; nonce = $nonce; shares = $shares })))
         $shares = $null
     }
     catch {
@@ -2411,14 +2416,26 @@ function Invoke-OpenBaoKeyFileMake {
     }
     finally { [Array]::Clear($confirmIn, 0, $confirmIn.Length) }
     if ($outcome -eq 'lost') {
-        # The confirm's answer is lost twice: ask the server whether the five shares are in force.
+        # The confirm's answer is lost twice: keyfile status says whether this run's rekey is still
+        # pending (its nonce: not applied) or finished (pending empty, five shares: applied).
         $sr = Invoke-OpenBaoSetup -Engine $c.Engine -ContainerId $c.Id -User $c.User -Arguments @('keyfile', 'status')
         $sj = ConvertFrom-OpenBaoSetupOutput -Text $sr.Out
-        if ($sr.Code -eq 0 -and $sj -and $sj.ok -eq $true -and [int]$sj.shares -eq 5) {
-            Write-OpenBaoLine "the confirm's answer was lost ($reason), but keyfile status shows the five shares in force: the rotation took effect. Check the backup with task openbao:server:status in the container."
+        $known = $sr.Code -eq 0 -and $sj -and $sj.ok -eq $true -and $null -ne $sj.pending
+        if ($known -and [string]$sj.pending -eq '' -and [int]$sj.shares -eq 5) {
+            Write-OpenBaoLine "the confirm's answer was lost ($reason), but keyfile status shows no pending rotation and five shares in force: the rotation took effect. Check the backup with task openbao:server:status in the container."
             $outcome = 'ok'
         }
-        else { $reason = "no answer to the confirm ($reason), and keyfile status does not show the new shares" }
+        elseif ($known -and [string]$sj.pending -eq $nonce) {
+            $reason = "no answer to the confirm ($reason), and keyfile status shows this rotation still pending"
+        }
+        else {
+            # Not ours to cancel, or no telling: keep the new key file, the previous one beside it, no custody share.
+            $what = if ($known -and $sj.pending) { 'another rotation is pending there (not this one: left alone)' } elseif ($known) { "no rotation is pending but the server has $($sj.shares) shares" } else { "keyfile status did not answer ($(Get-OpenBaoSetupReason -Result $sr -Json $sj))" }
+            $kept = ''
+            if ($previous) { [System.IO.File]::WriteAllBytes("$path.previous", $previous); $kept = " The previous one is kept as $path.previous: if OpenBao does not unseal with the new one, put that back." }
+            Write-OpenBaoLine -Problem "keyfile:${Action}: no answer to the confirm ($reason), and $what. Whether the new shares took effect cannot be told, so no custody share is shown and nothing is cancelled. The new OpenBao key file stays at $path.$kept Check with task openbao:server:status in the container."
+            return 1
+        }
     }
     if ($outcome -ne 'ok') {
         Write-OpenBaoLine -Problem "keyfile:$Action was not confirmed: $reason. The new OpenBao key file is withdrawn$(if ($previous) { ' and the previous one put back' })."

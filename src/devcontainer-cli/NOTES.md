@@ -370,9 +370,14 @@ The launcher then saves the new key file, reads shares 4 and 5 back from it and 
 `keyfile confirm`; only that makes the new shares take effect, and only after confirm answers ok are
 the custody shares printed. When the key file cannot be saved, or confirm fails, the launcher puts
 the previous key file back (or removes the new one) and cancels the pending rotation (`keyfile
-cancel`): the old shares and the old key file stay in force, and no custody share is shown. When
-confirm's answer is lost it asks once more (confirm is idempotent), then `keyfile status`: five
-shares in force means the rotation took effect. Warnings the container returns are shown as
+cancel`, always with this run's nonce): the old shares and the old key file stay in force, and no
+custody share is shown. When confirm's answer is lost it asks once more (confirm is idempotent),
+then `keyfile status`: `pending` equal to this run's nonce means not applied (cancel, previous key
+file back); `pending` empty with five shares means applied (the custody shares are printed; this is
+how a rotate, five shares before and after, is told apart). Anything else (another rotation
+pending, or no answer) cannot be told: nothing is cancelled, since the launcher never cancels a
+rotation it did not start, the new key file stays with the previous one beside it as
+`<file>.previous`, and no custody share is shown. Warnings the container returns are shown as
 `openbao: warning: ...` lines; a failure shows the container's `error` (else its `code`).
 
 Each time custody shares are printed, store them again, each in its own place, and **keep the

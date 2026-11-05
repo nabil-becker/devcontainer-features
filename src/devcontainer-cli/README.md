@@ -391,9 +391,14 @@ The launcher then saves the new key file, reads shares 4 and 5 back from it and 
 `keyfile confirm`; only that makes the new shares take effect, and only after confirm answers ok are
 the custody shares printed. When the key file cannot be saved, or confirm fails, the launcher puts
 the previous key file back (or removes the new one) and cancels the pending rotation (`keyfile
-cancel`): the old shares and the old key file stay in force, and no custody share is shown. When
-confirm's answer is lost it asks once more (confirm is idempotent), then `keyfile status`: five
-shares in force means the rotation took effect. Warnings the container returns are shown as
+cancel`, always with this run's nonce): the old shares and the old key file stay in force, and no
+custody share is shown. When confirm's answer is lost it asks once more (confirm is idempotent),
+then `keyfile status`: `pending` equal to this run's nonce means not applied (cancel, previous key
+file back); `pending` empty with five shares means applied (the custody shares are printed; this is
+how a rotate, five shares before and after, is told apart). Anything else (another rotation
+pending, or no answer) cannot be told: nothing is cancelled, since the launcher never cancels a
+rotation it did not start, the new key file stays with the previous one beside it as
+`<file>.previous`, and no custody share is shown. Warnings the container returns are shown as
 `openbao: warning: ...` lines; a failure shows the container's `error` (else its `code`).
 
 Each time custody shares are printed, store them again, each in its own place, and **keep the
@@ -618,7 +623,7 @@ so the same script serves the container and the host-side tasks.
 
 #### Added
 
-- **The OpenBao key file (Windows launcher)**: with the openbao Feature 1.5.0 or later set to `unlock: keyfile`, every `task dc:up` (so `start`, `shell`, `exec`, `agent`, `claude`, `rebuild`) unseals OpenBao and logs you in with nothing typed, from a DPAPI-protected key file in `%LOCALAPPDATA%\devcontainer-features-keys\openbao\` (it also opens with a domain's DPAPI backup key). It is streamed into the container on stdin through the engine's `exec`, never as an argument, an environment variable or a file. New tasks: `dc:openbao:unlock`, `dc:openbao:keyfile:create`, `:rotate`, `:export`, `:import`, `:forget`; `create` and `rotate` take two steps (OpenBao's rekey verification): the key file is saved first, then confirmed with its own shares 4 and 5, and only then are the three custody shares printed; a failed save or confirm cancels the rotation and keeps the old shares and key file; the container's warnings are shown. The four that handle shares or the file refuse inside an agent's job (`CLAUDECODE`, `DEVHOST_JOB_CHILD`, `OPENBAO_AGENT_JOB_VARS`). Nothing changes for a repository whose openbao Feature is not in keyfile mode (one silent status call after `up`). To use it: re-vendor the bootstrap, set `unlock: keyfile`, rebuild, then run `task dc:openbao:keyfile:create` once in a plain terminal and store the three custody shares it prints.
+- **The OpenBao key file (Windows launcher)**: with the openbao Feature 1.5.0 or later set to `unlock: keyfile`, every `task dc:up` (so `start`, `shell`, `exec`, `agent`, `claude`, `rebuild`) unseals OpenBao and logs you in with nothing typed, from a DPAPI-protected key file in `%LOCALAPPDATA%\devcontainer-features-keys\openbao\` (it also opens with a domain's DPAPI backup key). It is streamed into the container on stdin through the engine's `exec`, never as an argument, an environment variable or a file. New tasks: `dc:openbao:unlock`, `dc:openbao:keyfile:create`, `:rotate`, `:export`, `:import`, `:forget`; `create` and `rotate` take two steps (OpenBao's rekey verification): the key file is saved first, then confirmed with its own shares 4 and 5, and only then are the three custody shares printed; a failed save or confirm cancels the rotation (with its own nonce; another rotation is never cancelled) and keeps the old shares and key file; a lost confirm answer is settled by `keyfile status`'s pending nonce; the container's warnings are shown. The four that handle shares or the file refuse inside an agent's job (`CLAUDECODE`, `DEVHOST_JOB_CHILD`, `OPENBAO_AGENT_JOB_VARS`). Nothing changes for a repository whose openbao Feature is not in keyfile mode (one silent status call after `up`). To use it: re-vendor the bootstrap, set `unlock: keyfile`, rebuild, then run `task dc:openbao:keyfile:create` once in a plain terminal and store the three custody shares it prints.
 - The bash launcher (Linux, macOS, a WSL distro) refuses those tasks in one line: the OpenBao key file is Windows-only for now.
 
 ### [1.19.0] - 2026-11-04
