@@ -1,7 +1,8 @@
 # shellcheck shell=bash
 # openbao-feature/openbao-lib.sh: sourced (never run) by openbao-server and openbao-onboard, so the
 # two share one definition of what must not drift apart: the refusal inside an agent's job and
-# without a terminal, the prompts, and the AppRole role settings. The caller sets `prog` first.
+# without a terminal, the prompts, the AppRole role settings, the Operator's policy and the decoding
+# of a root token made from the shares. openbao-keyfile sources it too. The caller sets `prog` first.
 
 # shellcheck disable=SC2154  # prog is the caller's
 say() { echo "$prog: $*" >&2; }
@@ -54,4 +55,72 @@ ask_secret() { # <prompt> -> $REPLY, input hidden
 role_write() { # <role> <comma separated policies>
   bao write "auth/approle/role/$1" token_policies="$2" token_ttl=5m token_max_ttl=15m \
     secret_id_ttl=0 secret_id_num_uses=0 secret_id_bound_cidrs=127.0.0.1/32 token_bound_cidrs=127.0.0.1/32 >/dev/null
+}
+
+# The Operator's policy, one definition for init, configure (an onboarding claim) and the OpenBao
+# key file's create and rotate.
+operator_policy() { # <kv mount>
+  cat <<EOF
+# The Operator (userpass, or the operator AppRole of the OpenBao key file): the secrets, the snapshot read, sealing, reissuing the secret ids of
+# AppRole roles that already exist, and starting or cancelling a root-token generation (which only
+# the unseal shares can complete). NOT any policy (sys/policies/acl/*), not the making, changing or
+# deleting of a role, not snapshot-force, not audit: a token that could write a policy could give a
+# role snapshot-force. Creating and deleting roles use a root token made from the shares for that
+# step only. Its own AppRole (the OpenBao key file's login) is denied outright: a token that could
+# mint an operator secret id would outlive every rotation. Written by openbao:init and by the key
+# file's create and rotate.
+path "$1/*" {
+  capabilities = ["create", "read", "update", "patch", "delete", "list"]
+}
+path "sys/storage/raft/snapshot" {
+  capabilities = ["read"]
+}
+path "sys/seal" {
+  capabilities = ["update", "sudo"]
+}
+path "auth/approle/role" {
+  capabilities = ["list"]
+}
+path "auth/approle/role/+/role-id" {
+  capabilities = ["read"]
+}
+path "auth/approle/role/+/secret-id" {
+  capabilities = ["create", "update", "list"]
+}
+path "auth/approle/role/+/secret-id-accessor/destroy" {
+  capabilities = ["update"]
+}
+path "sys/generate-root-token/attempt" {
+  capabilities = ["read", "update", "delete"]
+}
+path "sys/generate-root-token/update" {
+  capabilities = ["update"]
+}
+path "auth/approle/role/operator" {
+  capabilities = ["deny"]
+}
+path "auth/approle/role/operator/*" {
+  capabilities = ["deny"]
+}
+path "auth/userpass/users" {
+  capabilities = ["list"]
+}
+EOF
+}
+
+# The token from sys/generate-root/update's encoded_token, decoded with the attempt's one-time
+# password, in memory.
+otp_decode() { # <encoded token> <one-time password>: the token on stdout (base64 without padding, XORed with the OTP)
+  local e="$1" o="$2" c k i=0 out=""
+  while [ $((${#e} % 4)) -ne 0 ]; do e+="="; done
+  for c in $(printf '%s' "$e" | base64 -d 2>/dev/null | od -An -v -tu1); do
+    [ "$i" -lt "${#o}" ] || return 1
+    printf -v k '%d' "'${o:i:1}"
+    printf -v c '%03o' $((c ^ k))
+    printf -v c '%b' "\\0$c"
+    out+="$c"
+    i=$((i + 1))
+  done
+  [ "$i" -gt 0 ] && [ "$i" -eq "${#o}" ] || return 1
+  printf '%s' "$out"
 }

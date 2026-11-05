@@ -8,6 +8,18 @@ here; `task lint` fails when the entry is missing.
 
 Entries from 1.0.0 to 1.0.3 were generated from the commit history (`.github/scripts/changelog.py backfill`) and the "Changes in x.y.z" sections that NOTES.md used to hold; most list commit subjects as written then; the newest of them is in wording for users.
 
+## [1.5.0] - 2026-11-05
+
+### Added
+
+- **The OpenBao key file: option `unlock: keyfile`** (server mode, opt-in; the default `operator` is unchanged, override `OPENBAO_SETUP_UNLOCK`). The workstation's launcher (Windows, `devcontainer-cli` 1.20.0) keeps a key file for the server and sends it at every `task dc:*`, so the server is unsealed and you are logged in with nothing typed. The store gets five unseal shares, threshold two: three custody shares you keep, two in the key file. You log in as the operator AppRole (a 1-hour periodic token, loopback only, renewed in the container while it runs); a key-file server has no password. The container side is `/usr/local/bin/openbao-setup unlock --status|--stdin`, `keyfile create|rotate --stdin` and `keyfile status` (one JSON line on stdout; secrets only on stdin, never in an argument, the environment, a file or a log; `BAO_ADDR`, `VAULT_ADDR` and `BAO_TOKEN` ignored; refused inside an agent's job), installed as `openbao-keyfile`. `create` and `rotate` make a root token from two shares with no login (so a lost key file is recoverable from two custody shares), destroy every earlier operator secret id, delete the userpass user, revoke earlier logins, reissue every role and end with a backup. Action: none unless you opt in; to opt in, set `unlock: keyfile`, rebuild, then run `task dc:openbao:keyfile:create` once on the workstation. Until agents run as their own Linux user, any agent in the container could harvest the key file's shares; rotate (`task dc:openbao:keyfile:rotate`) once they do (see the NOTES).
+- `task openbao:server:status` says the unlock mode and, with `keyfile`, whether the token renewer runs.
+
+### Changed
+
+- With `unlock: keyfile`: `task openbao:password` and `task openbao:init` refuse (exit 3) and name the workstation's task; `task openbao:restore` and `task openbao:onboard:claim` ask for no password and end by naming `task dc:openbao:keyfile:rotate`; the login hints name `task dc:openbao:unlock`. No change with `unlock: operator`.
+- The Operator's policy denies `auth/approle/role/operator` and everything under it (no Operator token can mint a secret id for the key file's login) and may list userpass user names. It is written by `task openbao:init` and by the key file's `create` and `rotate`; an existing store keeps its policy. No action needed.
+
 ## [1.4.0] - 2026-11-04
 
 ### Added

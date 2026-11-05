@@ -18,20 +18,20 @@ tasks:
 
   server:status:
     dir: '{{.USER_WORKING_DIR}}'
-    desc: 'Show the mode, the address, the server''s state (unsealed, sealed, not initialised, unreachable), and in server mode the process, the storage, the audit log, the backup choice (a standing warning when there is none) and whether the login is valid. Exit 0 unsealed, 10 unreachable, 11 sealed or not initialised.'
+    desc: 'Show the mode, the address, the server''s state (unsealed, sealed, not initialised, unreachable), and in server mode the process, the storage, the audit log, the unlock mode (operator, or keyfile with whether the token renewer runs), the backup choice (a standing warning when there is none) and whether the login is valid. Exit 0 unsealed, 10 unreachable, 11 sealed or not initialised.'
     cmds:
       - openbao-server status
 
   init:
     dir: '{{.USER_WORKING_DIR}}'
-    desc: 'Server mode, once, the Operator only, in a plain terminal (refuses inside an agent''s job and without a terminal): ask for a backup destination or an explicit "no backup" and for the Operator''s password, initialise the server (3 unseal shares, threshold 2, printed once to the terminal), unseal it with two of them, enable the dcf KV mount, userpass (login 4 hours, at most 8) and approle, write the Operator''s policy, record the backup choice, revoke the root token. -pgp-keys=... after -- encrypts the shares.'
+    desc: 'Server mode, once, the Operator only, in a plain terminal (refuses inside an agent''s job and without a terminal): ask for a backup destination or an explicit "no backup" and for the Operator''s password, initialise the server (3 unseal shares, threshold 2, printed once to the terminal), unseal it with two of them, enable the dcf KV mount, userpass (login 4 hours, at most 8) and approle, write the Operator''s policy, record the backup choice, revoke the root token. -pgp-keys=... after -- encrypts the shares. Refused when the unlock option is keyfile: task dc:openbao:keyfile:create on the workstation initialises that server.'
     interactive: true
     cmds:
       - openbao-server init {{.CLI_ARGS}}
 
   unseal:
     dir: '{{.USER_WORKING_DIR}}'
-    desc: 'Server mode, the Operator only, in a plain terminal (refuses inside an agent''s job and without a terminal): enter unseal shares at bao''s own hidden prompt until the server is unsealed. Needed after every server start.'
+    desc: 'Server mode, the Operator only, in a plain terminal (refuses inside an agent''s job and without a terminal): enter unseal shares at bao''s own hidden prompt until the server is unsealed. Needed after every server start, unless the unlock option is keyfile (the workstation''s launcher then unseals it with the OpenBao key file; two custody shares here still work).'
     interactive: true
     cmds:
       - openbao-server unseal
@@ -54,7 +54,7 @@ tasks:
 
   password:
     dir: '{{.USER_WORKING_DIR}}'
-    desc: 'Server mode: sets a new password for the Operator (the userpass user operator), for one who forgot it or wants another: no current password and no login are needed (none saved at all: the server''s loopback listener takes the shares without a token), two unseal shares are the authority. Asks for the new password twice (at least 12 characters), then for two unseal shares at a hidden prompt (a root token for this step alone, revoked after): the Operator only, in a plain terminal, refused inside an agent''s job. The password never appears in an argument, file or output. Tokens the Operator already holds stay valid until they expire (at most 8 hours); log in again with task openbao:login -- -method=userpass username=operator.'
+    desc: 'Server mode: sets a new password for the Operator (the userpass user operator), for one who forgot it or wants another: no current password and no login are needed (none saved at all: the server''s loopback listener takes the shares without a token), two unseal shares are the authority. Asks for the new password twice (at least 12 characters), then for two unseal shares at a hidden prompt (a root token for this step alone, revoked after): the Operator only, in a plain terminal, refused inside an agent''s job. The password never appears in an argument, file or output. Tokens the Operator already holds stay valid until they expire (at most 8 hours); log in again with task openbao:login -- -method=userpass username=operator. Refused (exit 3) when the unlock option is keyfile: that server has no password, the OpenBao key file logs the Operator in.'
     interactive: true
     cmds:
       - openbao-server password
@@ -83,7 +83,7 @@ tasks:
 
   onboard:claim:
     dir: '{{.USER_WORKING_DIR}}'
-    desc: 'Onboarding, the receiver, server mode, after openbao:restore of an onboarding snapshot, in a plain terminal (refuses inside an agent''s job and without a terminal): asks for the claim token, your own Operator password and two of the sender''s shares, runs bao operator rotate-keys (new unseal shares, printed once, committed only after you type two back), revokes everything the sender held (every token, every user, every auth method but token, userpass and approle, any other audit device, the AppRole roles written again so every secret id is gone), sets up your Operator, reissues the AppRole secret ids (openbao:approle:issue ALL=1), rotates the data key (ROTATE=0 skips it), replaces the onboarding marker, revokes the claim token, and lists the names that came with the snapshot as the sender''s knowledge. Safe to run again after a failure (it resumes after the rotation).'
+    desc: 'Onboarding, the receiver, server mode, after openbao:restore of an onboarding snapshot, in a plain terminal (refuses inside an agent''s job and without a terminal): asks for the claim token, your own Operator password and two of the sender''s shares, runs bao operator rotate-keys (new unseal shares, printed once, committed only after you type two back), revokes everything the sender held (every token, every user, every auth method but token, userpass and approle, any other audit device, the AppRole roles written again so every secret id is gone), sets up your Operator, reissues the AppRole secret ids (openbao:approle:issue ALL=1), rotates the data key (ROTATE=0 skips it), replaces the onboarding marker, revokes the claim token, and lists the names that came with the snapshot as the sender''s knowledge. Safe to run again after a failure (it resumes after the rotation). With the unlock option keyfile it asks for no password and ends by naming task dc:openbao:keyfile:rotate on the workstation, which makes the OpenBao key file and logs you in.'
     interactive: true
     env:
       OPENBAO_TASK_ROTATE: '{{.ROTATE | default ""}}'
@@ -154,7 +154,7 @@ tasks:
 
   restore:
     dir: '{{.USER_WORKING_DIR}}'
-    desc: 'Server mode, the Operator only, in a plain terminal (refuses inside an agent''s job and without a terminal): install the snapshot FROM=<file> written by task openbao:backup. On an empty server it first initialises with one throwaway share (discarded); on a store in use it replaces it after you type restore and a root token generated from two of its shares (used once, revoked). The restored store is sealed under the snapshot''s own shares: enter two of them, then every AppRole gets a new secret id. Safe to run twice; a half-done restore starts again from empty. Warns when the file is from another machine.'
+    desc: 'Server mode, the Operator only, in a plain terminal (refuses inside an agent''s job and without a terminal): install the snapshot FROM=<file> written by task openbao:backup. On an empty server it first initialises with one throwaway share (discarded); on a store in use it replaces it after you type restore and a root token generated from two of its shares (used once, revoked). The restored store is sealed under the snapshot''s own shares: enter two of them, then every AppRole gets a new secret id. Safe to run twice; a half-done restore starts again from empty. Warns when the file is from another machine. With the unlock option keyfile it asks for no password and reissues nothing: it ends by naming task dc:openbao:keyfile:rotate on the workstation, which makes the restored store''s OpenBao key file, reissues every AppRole and logs you in.'
     interactive: true
     requires:
       vars: [FROM]
