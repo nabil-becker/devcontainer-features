@@ -147,6 +147,14 @@ _hk_bao() (
   "${DEVHOST_BAO:-bao}" "$@"
 )
 
+# _hk_keyfile_unlock: succeeds when the openbao Feature runs keyfile unlock (the OpenBao key file opens the
+# store). Asks `openbao-setup unlock --status` (no secret, no stdin) and reads its "mode" field.
+_hk_keyfile_unlock() {
+  local exe="${DEVHOST_OPENBAO_SETUP:-/usr/local/bin/openbao-setup}"
+  [ -x "$exe" ] || return 1
+  "$exe" unlock --status </dev/null 2>/dev/null | grep -q '"mode"[[:space:]]*:[[:space:]]*"keyfile"'
+}
+
 # shellcheck disable=SC2034  # HK_* are read by the runner
 hk_fetch_key() {
   local job="$1" od rid sid name field tok st rc err tfs
@@ -170,7 +178,9 @@ hk_fetch_key() {
     # What the server says is read from its own exit code, never from the words of the error.
     _hk_bao status >/dev/null 2>&1; st=$?
     case "$st" in
-      2) HK_KEY_RC=11; HK_KEY_ERR="OpenBao is sealed: the Operator runs task openbao:unseal" ;;
+      2) HK_KEY_RC=11
+         if _hk_keyfile_unlock; then HK_KEY_ERR="OpenBao is sealed: the Operator runs task dc:openbao:unlock on the workstation (nothing typed)"
+         else HK_KEY_ERR="OpenBao is sealed: the Operator runs task openbao:unseal"; fi ;;
       0) HK_KEY_RC=12; HK_KEY_ERR="the AppRole login of the $job back was refused (role revoked or its secret id reissued elsewhere): task devhost:approles:setup, or task openbao:approle:issue ROLE=$job" ;;
       *) HK_KEY_RC=10; HK_KEY_ERR="OpenBao is unreachable: task openbao:server:status says whether it runs" ;;
     esac
