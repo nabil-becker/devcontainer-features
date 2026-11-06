@@ -912,7 +912,8 @@ for by two consumers: AOF (the agentic-operating-framework's tooling agent), who
 signs each stack instance's relay key so that the receiving stack can trust it (rulings D94 and
 D95), and the KGO Office, which wants register writer keys (the signed ledgers and the backlog kept
 with `agentic-register`) to be trusted by one CA once per register instead of one key at a time. Both
-verify with stock OpenSSH: `ssh-keygen -Y verify` against `cert-authority` lines.
+verify with stock OpenSSH: `ssh-keygen -Y verify` against `cert-authority` lines. The decisions and
+the options weighed are in [ADR 0058](../../docs/adr/0058-an-openbao-ssh-certificate-authority-signs-for-the-operator-only-with-roles-of-principal-patterns.md).
 
 ```text
 dcf-ssh-sign sign --principals <p1,p2,...> --key-id <id> [--ttl <dur>] [--role <name>]
@@ -1269,6 +1270,7 @@ create and rotate; an existing store keeps its policy until one of those runs).
     the key's hash, so a call with no key id puts no token name in a certificate (a key id the caller
     passes must not carry a person's name). `sign` is refused inside an agent's job (exit 3); `ca`,
     `ca --fingerprint`, `roles` and `status` are public reads and are not.
+  - The decisions and the options weighed are in ADR 0058 (`docs/adr/`).
   - Action: none unless you want the CA. To use it, rebuild, then run `task openbao:ssh:ca:init`
     (in server mode on a store made before 1.6.0 this also adds the sign path to the Operator's
     policy, which an existing store otherwise keeps unchanged). Compare the CA's fingerprint with the

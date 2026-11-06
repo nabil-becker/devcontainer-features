@@ -47,6 +47,7 @@ Entries from 1.0.0 to 1.0.3 were generated from the commit history (`.github/scr
     the key's hash, so a call with no key id puts no token name in a certificate (a key id the caller
     passes must not carry a person's name). `sign` is refused inside an agent's job (exit 3); `ca`,
     `ca --fingerprint`, `roles` and `status` are public reads and are not.
+  - The decisions and the options weighed are in ADR 0058 (`docs/adr/`).
   - Action: none unless you want the CA. To use it, rebuild, then run `task openbao:ssh:ca:init`
     (in server mode on a store made before 1.6.0 this also adds the sign path to the Operator's
     policy, which an existing store otherwise keeps unchanged). Compare the CA's fingerprint with the
