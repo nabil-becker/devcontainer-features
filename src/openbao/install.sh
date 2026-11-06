@@ -135,6 +135,8 @@ mkdir -p "$share"
 } > "$share/options.env"
 chmod 0644 "$share/options.env"
 install -m 0755 "$feature_dir/dcf-secret.sh" /usr/local/bin/dcf-secret
+# dcf-ssh-sign: the one way to ask the SSH certificate authority in OpenBao for a user certificate.
+install -m 0755 "$feature_dir/dcf-ssh-sign.sh" /usr/local/bin/dcf-ssh-sign
 install -m 0755 "$feature_dir/openbao-setup.sh" /usr/local/bin/openbao-setup
 install -m 0755 "$feature_dir/openbao-server.sh" /usr/local/bin/openbao-server
 install -m 0755 "$feature_dir/openbao-onboard.sh" /usr/local/bin/openbao-onboard

@@ -14,7 +14,11 @@
 #     valid secret id after a reissue (the Operator's token only);
 #   - task openbao:password through two shares, with a login and with none saved at all (the
 #     listener's unauthenticated root-token endpoints, disable_unauthed_generate_root_endpoints = false);
-#   - the refusals inside an agent's job and without a terminal, for init, unseal and seal.
+#   - the refusals inside an agent's job and without a terminal, for init, unseal and seal;
+#   - the SSH certificate authority in server mode (task openbao:ssh:ca:init): the mount, the CA and
+#     the role made through the shares, the Operator's login signing afterwards and an AppRole's token
+#     refused (13), nothing changed when run again (no terminal needed), no policy but the Operator's
+#     carrying the sign path (the certificates themselves: test/openbao/ssh_ca.sh).
 set -e
 # shellcheck disable=SC1091  # provided by the devcontainer CLI at test time
 source dev-container-features-test-lib
@@ -251,6 +255,49 @@ term "task -t $tf login -- -method=userpass username=operator" "$newpw"
 check "the password before it no longer logs in" [ "$(dcf-secret status 2>/dev/null)" != ready ]
 term "task -t $tf login -- -method=userpass username=operator" "$newpw2"
 check "the password set with no login logs in" [ "$(dcf-secret status)" = ready ]
+
+# --- the SSH certificate authority: the shares' step, the Operator's policy ----------------------------
+# (the real certificates and the roles are test/openbao/ssh_ca.sh; here the server-mode path)
+check "dcf-ssh-sign says there is no CA yet (exit 11, not-initialised)" [ "$(dcf-ssh-sign status 2>/dev/null || true)" = not-initialised ]
+rc=0; out="$(t ssh:ca:init 2>&1 < /dev/null)" || rc=$?
+check "ssh:ca:init without a terminal is refused" [ "$rc" != 0 ]
+check "and says it needs a terminal" contains "$out" 'needs a terminal'
+make_root
+check "nothing was made by it" not env BAO_TOKEN="$rootok" bao read sys/mounts/ssh-ca
+drop_root
+for tk in ssh:ca:init ssh:ca:import; do
+  rc=0; out="$(CLAUDECODE=1 t "$tk" 2>&1 < /dev/null)" || rc=$?
+  check "task openbao:$tk refuses inside a Claude Code run" refused "$rc" "$out"
+  rc=0; out="$(DEVHOST_JOB_CHILD=1 t "$tk" 2>&1 < /dev/null)" || rc=$?
+  check "task openbao:$tk refuses inside the devhost's job" refused "$rc" "$out"
+done
+rc=0; bao secrets enable -path=ssh-evil ssh > /dev/null 2>&1 || rc=$?
+check "the Operator's token cannot enable a mount itself" [ "$rc" != 0 ]
+term "task -t $tf ssh:ca:init" "$(sed -n 1p "$work/shares")" "$(sed -n 2p "$work/shares")"
+check "ssh:ca:init through the shares exits 0" [ "$term_rc" = 0 ]
+check "it said it asks for the shares" contains "$(cat "$work/screen.txt")" 'unseal shares typed at the prompt'
+check "no share was echoed on the screen" excludes "$(cat "$work/screen.txt")" "$(sed -n 1p "$work/shares")"
+check "and the root token generation is not left open" contains "$(bao operator generate-root -status 2>&1)" 'Started       false'
+check "the CA is there, readable by the Operator's login (the policy was written)" [ -n "$(dcf-ssh-sign ca)" ]
+check "the screen shows the CA's fingerprint" contains "$(cat "$work/screen.txt")" "$(dcf-ssh-sign ca --fingerprint | awk '{print $2}')"
+check "status is ready" [ "$(dcf-ssh-sign status)" = ready ]
+rc=0; out="$(t ssh:ca:init 2>&1 < /dev/null)" || rc=$?
+check "ssh:ca:init again needs no terminal and no shares (exit 0)" [ "$rc" = 0 ]
+check "and changes nothing" contains "$out" 'nothing changed'
+check "the Operator's login signs a certificate" bash -c "ssh-keygen -q -t ed25519 -N '' -f $work/ca-key && dcf-ssh-sign sign --principals relay@11111111-2222-3333-4444-555555555555 --key-id k < $work/ca-key.pub | grep -q '^ssh-ed25519-cert-v01@openssh[.]com '"
+check "the Operator's token cannot change the CA (the policy has no write path)" not bao write ssh-ca/config/ca generate_signing_key=true
+# an AppRole's token (the backs') is refused
+term "task -t $tf approle:issue ROLE=scribe POLICY_PATH=dcf/register/scribe" "$(sed -n 1p "$work/shares")" "$(sed -n 2p "$work/shares")"
+tok="$(login_scribe)"
+rc=0; BAO_TOKEN="$tok" dcf-ssh-sign sign --principals relay@11111111-2222-3333-4444-555555555555 --key-id k < "$work/ca-key.pub" > /dev/null 2>&1 || rc=$?
+check "a back's AppRole token may not sign (exit 13)" [ "$rc" = 13 ]
+check "nor read the CA (exit 13)" [ "$(BAO_TOKEN="$tok" dcf-ssh-sign status 2>/dev/null || true)" = denied ]
+make_root
+check "the Operator's policy holds the sign path" contains "$(BAO_TOKEN="$rootok" bao policy read operator)" 'path "ssh-ca/sign/*"'
+check "the back's policy does not" excludes "$(BAO_TOKEN="$rootok" bao policy read approle-scribe)" 'ssh-ca'
+check "no policy but the Operator's holds the sign path" [ "$(for p in $(BAO_TOKEN="$rootok" bao policy list); do BAO_TOKEN="$rootok" bao policy read "$p" | grep -l 'ssh-ca/sign' > /dev/null && echo "$p"; done | paste -sd,)" = operator ]
+drop_root
+term "task -t $tf approle:revoke ROLE=scribe" "$(sed -n 1p "$work/shares")" "$(sed -n 2p "$work/shares")"
 
 # --- seal, restart, unseal ----------------------------------------------------------------------------
 t seal > /dev/null 2>&1

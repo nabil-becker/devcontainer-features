@@ -36,6 +36,16 @@
       }
     }
   },
+  "ssh_ca": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "remoteUser": "vscode",
+    "features": {
+      "go-task": {},
+      "openbao": {
+        "version": "2.7.1"
+      }
+    }
+  },
   "server_mode": {
     "image": "mcr.microsoft.com/devcontainers/base:debian",
     "remoteUser": "vscode",
