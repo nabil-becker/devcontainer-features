@@ -124,6 +124,7 @@ tasks:
       - task: test:agents-lease
       - task: test:claude-unit
       - task: test:phi-check-unit
+      - task: test:audio-unit
       - task: test:claude-fleet-task
       - task: test:agent-task
 
@@ -149,6 +150,11 @@ tasks:
     desc: 'Docker-free tests of the phi-check Feature (src/phi-check): every rule with a positive and a near-miss case (never-issued SSN ranges, a lower-case MBI, an ICD code list, an NPI, a date, a name or a diagnosis word alone, an anchor outside the three-line window), no output line in any format holding the matched value, a binary or missing path failing closed, exit 2 on bad usage, the exceptions file skipping only the listed path and reporting a malformed line, --no-exceptions, standard input with --stdin-filename, the importable module; then a mutation check that three deliberately broken patterns each fail the suite; part of lint. Needs python3.'
     cmds:
       - bash test/phi-check/unit/phi_check_test.sh
+
+  test:audio-unit:
+    desc: 'Docker-free tests of the audio Feature''s audio-check (src/audio/audio-check.sh): each missing piece gives its own line, in order, and exit 1 (rec, SoX''s PulseAudio backend, pactl; arecord only a note; no PULSE_SERVER; the socket missing, with the hint for DCF_HOST_AUDIO wslg, none and unset; PulseAudio not answering; only monitor sources), "ready" with the capture source and exit 0, and the Feature Taskfile running it; fake sox, pactl and arecord, a real unix socket; part of lint. Needs python3 (the socket) and task (the Taskfile part).'
+    cmds:
+      - bash test/audio/unit/audio_check_test.sh
 
   test:agents-unit:
     desc: 'Docker-free tests of the agents Feature''s agents command: the agent list (the YAML subset, required keys, unknown keys warned, errors with file and line), AGENTS_FILE from the task variable, .env, .devcontainer/.env, the environment or the default (a missing file named with its source), each verb per kind (start, --resume, --new and its question, up, list, stop, logs), the no-terminal rule, the fallbacks when the adapter answers exit 3, a listing that fails (state error, nothing started, the hint, never a fresh session), an on-demand agent shown none unless running, reset (a dry run by default, duplicates stopped, --purge, only listed agents and their folders, unlisted sessions untouched, a session mid-turn not stopped, uncommitted changes a warning and with --purge a refusal, --force, refused inside a Claude Code session, --all), the once-per-container-start marker, and the Feature Taskfile; a fake adapter keeps sessions in a file and records every call; part of lint. Needs task for the Taskfile part.'

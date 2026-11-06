@@ -65,6 +65,12 @@
 #                              three are removed from the CLI's environment. Never by default.
 #                              Not granted when the engine is wslc (no --device, --cap-add or
 #                              --security-opt option): a warning, the start goes on without.
+#   DCF_HOST_AUDIO             wslg = the machine gives the container its microphone through WSLg's
+#                              PulseAudio socket (the audio Feature): on windows-wsl-docker `up`
+#                              binds the default WSL distro's /mnt/wslg to /mnt/wsl/wslg as root
+#                              (wsl.exe through interop; skipped when already there), mounts it
+#                              at /mnt/wslg and sets DCF_HOST_AUDIO=wslg; otherwise none, with one
+#                              warning when asked for. Unset or none = nothing runs. Never fails a start.
 #   DEVCONTAINER_ENGINE_WAIT   seconds to wait for the container engine to answer before
 #                              up, build, exec, set-up and run-user-commands (default 60;
 #                              0 = no wait, no check). See "engine wait" below.
@@ -401,6 +407,76 @@ resolve_fuse() {
 # fuse_run_args: the run arguments of the grant, one per line (none when not asked for).
 fuse_run_args() { [ "${HT_FUSE:-}" = 1 ] || return 0; printf '%s\n' "${fuse_args[@]}"; }
 
+# Audio on request (the audio Feature; backlog audio-feature): DCF_HOST_AUDIO=wslg asks for the
+# workstation's microphone through WSLg's PulseAudio socket. The container engine's WSL distro does
+# not see /mnt/wslg, but every WSL2 distro shares /mnt/wsl, so before `up` the launcher binds the
+# default distro's /mnt/wslg to /mnt/wsl/wslg (as root through wsl.exe, once: skipped when already
+# there; a WSL restart drops it and the next `up` redoes it) and mounts that at /mnt/wslg, where the
+# Feature's PULSE_SERVER points. DCF_HOST_AUDIO then says what the launcher did: wslg or none.
+# Unset or none asks for nothing and runs nothing. Never fails a start: anything missing is one
+# warning and none. Here only windows-wsl-docker (from inside a distro, wsl.exe through interop)
+# can carry it. DCF_HOST_WSL_EXE replaces wsl.exe (tests). The PowerShell twin is Initialize-HostAudio.
+audio_source=/mnt/wsl/wslg
+audio_target=/mnt/wslg
+# One line of sh, the same as $script:AudioBindScript in DevcontainerCli.psm1.
+# shellcheck disable=SC2016  # expanded by the distro's sh
+audio_bind_script='t=/mnt/wsl/wslg; if mountpoint -q $t && [ -S $t/PulseServer ]; then echo present; elif [ ! -S /mnt/wslg/PulseServer ]; then echo nopulse; else mkdir -p $t && mount --bind /mnt/wslg $t && [ -S $t/PulseServer ] && echo bound; fi'
+# What init_audio decided in this run (wslg or none); empty until it ran.
+audio_result=''
+
+# audio_request: prints wslg, none (unset, empty or none) or unknown.
+audio_request() {
+  local v="${DCF_HOST_AUDIO:-}"
+  v="$(printf '%s' "$v" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+  case "$v" in '' | none) echo none ;; wslg) echo wslg ;; *) echo unknown ;; esac
+}
+
+# audio_refusal: prints why this host cannot carry WSLg's socket, nothing when it can. Needs HT_TYPE.
+audio_refusal() {
+  if ! host_mounts_enabled; then echo "HOST_MOUNTS=false turns the launcher's mounts off, the audio mount with them"; return 0; fi
+  case "${HT_TYPE:-}" in
+    windows-docker | windows-wsl-docker) ;;
+    windows-wslc) echo 'not verified on windows-wslc (whether wslc run can bind a path of the WSL VM is unknown), so nothing is mounted there' ;;
+    *) echo "${HT_TYPE:-this host} is not a Windows host type backed by WSL2 (windows-docker, windows-wsl-docker); WSLg's socket is a WSL path" ;;
+  esac
+}
+
+# wslg_bind: runs the bind in the default WSL distro as root; prints present, bound, nopulse,
+# nowsl (no wsl.exe) or "error: <output>".
+wslg_bind() {
+  local exe="${DCF_HOST_WSL_EXE:-wsl.exe}" out rc last
+  command -v "$exe" >/dev/null 2>&1 || { echo nowsl; return 0; }
+  out="$("$exe" -u root -e sh -c "$audio_bind_script" 2>&1)"; rc=$?
+  last="$(printf '%s\n' "$out" | tr -d '\r' | sed '/^[[:space:]]*$/d' | tail -n1)"
+  case "$rc:$last" in
+    0:present | 0:bound | 0:nopulse) echo "$last" ;;
+    *) echo "error: exit $rc${out:+: $(printf '%s' "$out" | tr -d '\r' | tr '\n' ' ')}" ;;
+  esac
+}
+
+# init_audio: `up` only, after resolve_host_type. Sets audio_result (once per run) to wslg when
+# DCF_HOST_AUDIO=wslg and the bind is there, else none (one warning on stderr when asked for).
+init_audio() {
+  [ -z "$audio_result" ] || return 0
+  audio_result=none
+  local ask r no_audio='The container starts without audio; DCF_HOST_AUDIO=none in .devcontainer/.env on this machine drops this warning.'
+  ask="$(audio_request)"
+  case "$ask" in
+    none) return 0 ;;
+    unknown) echo "DCF_HOST_AUDIO='${DCF_HOST_AUDIO:-}' is not known (none, wslg). $no_audio" >&2; return 0 ;;
+  esac
+  r="$(audio_refusal)"
+  if [ -n "$r" ]; then echo "DCF_HOST_AUDIO=wslg, but no audio on this host ($HT_TYPE): $r. $no_audio" >&2; return 0; fi
+  r="$(wslg_bind)"
+  case "$r" in
+    present) echo "audio: WSLg's PulseAudio socket is already shared at $audio_source" >&2; audio_result=wslg ;;
+    bound) echo "audio: bound the default WSL distro's /mnt/wslg to $audio_source (as root; a WSL restart drops it and the next up redoes it)" >&2; audio_result=wslg ;;
+    nopulse) echo "DCF_HOST_AUDIO=wslg, but the default WSL distro has no /mnt/wslg/PulseServer (WSLg off or missing, WSL1, or the engine's own distro set as the default). $no_audio" >&2 ;;
+    nowsl) echo "DCF_HOST_AUDIO=wslg, but wsl.exe is not on PATH (WSL interop off?), so the default distro's WSLg socket cannot be shared. $no_audio" >&2 ;;
+    *) echo "DCF_HOST_AUDIO=wslg, but the bind in the default WSL distro failed ($r). $no_audio" >&2 ;;
+  esac
+}
+
 # resolve_host_profile: HT_* plus HT_HOME, the SSH agent (HT_SSH_AGENT, HT_SSH_SOCKET), the
 # cloud folder (HT_CLOUD_FOLDER) and the FUSE request (HT_FUSE).
 resolve_host_profile() {
@@ -410,6 +486,8 @@ resolve_host_profile() {
   resolve_cloud_folder
   resolve_fuse
   resolve_machine
+  # wslg only after init_audio (up) bound the socket; `host` and the other subcommands say none.
+  HT_AUDIO="${audio_result:-none}"
 }
 
 # export_host_env: DCF_HOST_* into this process's environment, which the CLI inherits;
@@ -417,7 +495,7 @@ resolve_host_profile() {
 export_host_env() {
   resolve_host_profile
   export DCF_HOST_TYPE="$HT_TYPE" DCF_HOST_HOME="$HT_HOME" DCF_HOST_SSH_AGENT="$HT_SSH_AGENT" DCF_HOST_CLOUD_FOLDER="$HT_CLOUD_FOLDER"
-  export DCF_HOST_FUSE="$HT_FUSE" DCF_HOST_MACHINE="$HT_MACHINE"
+  export DCF_HOST_FUSE="$HT_FUSE" DCF_HOST_MACHINE="$HT_MACHINE" DCF_HOST_AUDIO="$HT_AUDIO"
   local i
   # Set from the fixed list when asked for, removed otherwise: a value left in the user's
   # environment or .env never reaches runArgs.
@@ -491,6 +569,9 @@ host_mount_specs() {
   fi
   if [ -n "${HT_CLOUD_FOLDER:-}" ]; then
     printf 'cloud-folder|%s|%s\n' "$HT_CLOUD_FOLDER" "$cloud_folder_target"
+  fi
+  if [ "${HT_AUDIO:-none}" = wslg ]; then
+    printf 'audio|%s|%s\n' "$audio_source" "$audio_target"
   fi
 }
 
@@ -616,6 +697,7 @@ host_mount_args() {
     esac
     case "$name" in
       ssh-agent) ;; # a socket is not ours to create
+      audio) ;; # a path of the WSL VM that init_audio made
       cloud-folder) # the user's folder: never created (an empty one would hide a wrong path)
         # Only a path of this host can be checked; another form (a Windows path) goes to the engine as is.
         case "$source" in
@@ -654,6 +736,14 @@ mode_host() { # [workspace] [cli args...]
   else
     echo 'DCF_HOST_FUSE      : (unset: no FUSE grant)'
   fi
+  case "$(audio_request)" in
+    none) echo 'DCF_HOST_AUDIO     : (unset: no audio)' ;;
+    unknown) echo "DCF_HOST_AUDIO     : '${DCF_HOST_AUDIO:-}' is not known (none, wslg): no audio" ;;
+    *)
+      local refusal; refusal="$(audio_refusal)"
+      if [ -n "$refusal" ]; then echo "DCF_HOST_AUDIO     : wslg asked for, not on $HT_TYPE: $refusal"
+      else echo "DCF_HOST_AUDIO     : wslg asked for: up binds the default WSL distro's /mnt/wslg to $audio_source and mounts it at $audio_target (none when that distro has no WSLg socket)"; fi ;;
+  esac
   resolve_host_mounts "$ws" "$@"
   if [ "$HM_ENABLED" = false ]; then echo 'host mounts        : off (HOST_MOUNTS=false)'; return 0; fi
   if [ $(( ${#HM_ADD[@]} + ${#HM_SKIP[@]} )) -eq 0 ]; then echo 'host mounts        : none'; return 0; fi
@@ -774,6 +864,8 @@ run_cli() {
   esac
   # Only the subcommands that drive an engine take --docker-path;
   # `features ...`, `templates ...` and `outdated` reject it.
+  # Audio first (up only): its mount and DCF_HOST_AUDIO=wslg come only once the bind is there.
+  if [ "$subcommand" = up ]; then resolve_host_type; init_audio; fi
   local engine
   case "$subcommand" in
     up | set-up | build | run-user-commands | read-configuration | upgrade | exec)

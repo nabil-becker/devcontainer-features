@@ -1,0 +1,18 @@
+# Tasks contributed by the audio Feature (namespace: audio).
+version: '3'
+
+tasks:
+  version:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Show the audio tools and their versions (sox, pactl, arecord) and PULSE_SERVER; updates come from rebuilding.'
+    cmds:
+      - 'sox --version 2>/dev/null || echo "sox: not installed"'
+      - 'pactl --version 2>/dev/null | head -n1 || echo "pactl: not installed"'
+      - 'arecord --version 2>/dev/null | head -n1 || echo "arecord: not installed"'
+      - 'echo "PULSE_SERVER=${PULSE_SERVER:-} DCF_HOST_AUDIO=${DCF_HOST_AUDIO:-}"'
+
+  check:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Plain verdict on the microphone (audio-check): what is missing, in order (rec with SoX''s PulseAudio backend, pactl, arecord; PULSE_SERVER; the socket it names, with what DCF_HOST_AUDIO says the launcher did; PulseAudio answering; a capture source that is not a monitor), or "ready" with the source. Records nothing. Exit 0 when ready, 1 when not.'
+    cmds:
+      - audio-check

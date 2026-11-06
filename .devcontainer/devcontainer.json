@@ -63,6 +63,9 @@
     // passphrase-protected key (task devcontainer:ssh-key-import FILE=...); the start hook skips a
     // protected key, so it is loaded only for an operator act (task ssh-agent:key:load) and
     // removed after (ssh-add -d).
+    // The microphone for Claude Code's /voice (ADR-0057): tools only; the launcher shares WSLg's
+    // socket in when DCF_HOST_AUDIO=wslg is in .devcontainer/.env on the workstation.
+    "./features/audio": {},
     "./features/ssh-agent": {
       "mode": "${localEnv:SSH_AGENT_MODE:auto}"
     },
@@ -141,7 +144,9 @@
     // The workstation's machine name, set by the launcher (devcontainer-cli 1.16.2).
     "DCF_HOST_MACHINE": "${localEnv:DCF_HOST_MACHINE}",
     // 1 when DCF_HOST_FUSE=1 in .devcontainer/.env asked the launcher for FUSE
-    "DCF_HOST_FUSE": "${localEnv:DCF_HOST_FUSE}"
+    "DCF_HOST_FUSE": "${localEnv:DCF_HOST_FUSE}",
+    // wslg when DCF_HOST_AUDIO=wslg asked the launcher to share WSLg's microphone socket, else none
+    "DCF_HOST_AUDIO": "${localEnv:DCF_HOST_AUDIO}"
   },
   "postCreateCommand": "bash .devcontainer/post-create.sh",
   "remoteUser": "vscode",

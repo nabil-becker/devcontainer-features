@@ -1405,6 +1405,191 @@ Describe 'FUSE on request (DCF_HOST_FUSE)' -Skip:$IsWindows {
     }
 }
 
+# Audio on request (the audio Feature), the counterpart of the audio part of
+# test/bootstrap/host_mounts_test.sh: DCF_HOST_AUDIO=wslg on a WSL2-backed Windows host type runs
+# the bind once (Invoke-WslgBind, mocked) and adds /mnt/wsl/wslg at /mnt/wslg; unset or none runs
+# nothing and adds nothing; a host that cannot carry it warns once and passes none. The recorded
+# `up` runs a stub devcontainer, so that part is skipped on Windows.
+Describe 'Audio on request (DCF_HOST_AUDIO)' {
+    BeforeAll {
+        $script:AudioEnvNames = 'HOST_TYPE', 'HOST_TYPE_PRIORITY', 'HOST_MOUNTS', 'DEVCONTAINER_DOCKER_PATH', 'HOME', 'USERPROFILE', 'SSH_AUTH_SOCK', 'SSH_AGENT_MODE', 'DCF_HOST_TYPE', 'DCF_HOST_HOME', 'DCF_HOST_SSH_AGENT', 'DCF_HOST_CLOUD_FOLDER', 'DCF_HOST_FUSE', 'DCF_HOST_AUDIO'
+        $script:AudioSavedEnv = @{}
+        foreach ($n in $script:AudioEnvNames) { $script:AudioSavedEnv[$n] = [Environment]::GetEnvironmentVariable($n) }
+        $script:AudioSavedPath = $env:PATH
+        $script:AudioMount = 'type=bind,source=/mnt/wsl/wslg,target=/mnt/wslg'
+        function Initialize-AudioEvidence {
+            param([string]$Os = 'windows', [string]$Bind = 'bound')
+            $script:aev = @{ Os = $Os; Bind = $Bind }
+            Mock -ModuleName DevcontainerCli Get-HostPlatform { $script:aev.Os }
+            Mock -ModuleName DevcontainerCli Test-DockerResponding { $true }
+            Mock -ModuleName DevcontainerCli Test-WslDockerResponding { $true }
+            Mock -ModuleName DevcontainerCli Get-WslcPath { 'C:\wslc.exe' }
+            Mock -ModuleName DevcontainerCli Get-WslHome { '/home/wsluser' }
+            Mock -ModuleName DevcontainerCli Test-HostSocket { $false }
+            Mock -ModuleName DevcontainerCli Get-Command { [pscustomobject]@{ Source = '/fake/docker' } } -ParameterFilter { $Name -eq 'docker' }
+            Mock -ModuleName DevcontainerCli Initialize-HostMountSource { }
+            Mock -ModuleName DevcontainerCli Invoke-WslgBind { $script:aev.Bind }
+        }
+        function Get-AudioWorkspace {
+            param([string]$Json = '{ "name": "plain" }')
+            $ws = Join-Path $TestDrive ('aws-' + [guid]::NewGuid().ToString('N'))
+            New-Item -ItemType Directory -Path (Join-Path $ws '.devcontainer') -Force | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $ws '.devcontainer/devcontainer.json'), $Json)
+            $ws
+        }
+    }
+    BeforeEach {
+        foreach ($n in $script:AudioEnvNames) { [Environment]::SetEnvironmentVariable($n, $null) }
+        $env:USERPROFILE = 'C:\Users\test'
+        $env:HOME = '/home/test'
+        Clear-HostProfileCache
+    }
+    AfterAll {
+        foreach ($n in $script:AudioEnvNames) { [Environment]::SetEnvironmentVariable($n, $script:AudioSavedEnv[$n]) }
+        $env:PATH = $script:AudioSavedPath
+    }
+
+    It 'Get-AudioRequest reads <Value> as <Expected>' -ForEach @(
+        @{ Value = ''; Expected = 'none' }, @{ Value = 'none'; Expected = 'none' }, @{ Value = ' NONE '; Expected = 'none' }
+        @{ Value = 'wslg'; Expected = 'wslg' }, @{ Value = 'WSLg'; Expected = 'wslg' }, @{ Value = 'pulse'; Expected = 'unknown' }
+    ) {
+        $env:DCF_HOST_AUDIO = $Value
+        Get-AudioRequest | Should -Be $Expected
+    }
+
+    It 'opt-out (<Value>): no bind, no mount, DCF_HOST_AUDIO=none, no warning' -ForEach @(@{ Value = '' }, @{ Value = 'none' }) {
+        Initialize-AudioEvidence
+        $env:HOST_TYPE = 'windows-docker'
+        $env:DCF_HOST_AUDIO = $Value
+        $w = $null
+        Initialize-HostAudio -WarningVariable w -WarningAction SilentlyContinue | Should -Be 'none'
+        $w | Should -HaveCount 0
+        $a = @(Get-HostMountArgument -WorkspaceFolder (Get-AudioWorkspace) 6>$null)
+        $a | Should -Not -Contain $script:AudioMount
+        @($a | Where-Object { $_ -eq '--mount' }) | Should -HaveCount 1   # .git-dirs only, as before
+        [void](Initialize-HostEnvironment)
+        $env:DCF_HOST_AUDIO | Should -Be 'none'
+        Should -Invoke -ModuleName DevcontainerCli Invoke-WslgBind -Times 0 -Exactly
+    }
+
+    It 'wslg on <Id> (<Os>), bind answering <Bind>: the mount and DCF_HOST_AUDIO=wslg, the bind run once' -ForEach @(
+        @{ Os = 'windows'; Id = 'windows-docker'; Bind = 'bound' }
+        @{ Os = 'windows'; Id = 'windows-docker'; Bind = 'present' }
+        @{ Os = 'windows'; Id = 'windows-wsl-docker'; Bind = 'bound' }
+        @{ Os = 'wsl'; Id = 'windows-wsl-docker'; Bind = 'present' }
+    ) {
+        Initialize-AudioEvidence -Os $Os -Bind $Bind
+        $env:HOST_TYPE = $Id
+        $env:DCF_HOST_AUDIO = 'wslg'
+        Initialize-HostAudio 6>$null | Should -Be 'wslg'
+        Initialize-HostAudio 6>$null | Should -Be 'wslg'
+        $a = @(Get-HostMountArgument -WorkspaceFolder (Get-AudioWorkspace) 6>$null)
+        $a | Should -Contain $script:AudioMount
+        $a[[array]::IndexOf($a, $script:AudioMount) - 1] | Should -Be '--mount'
+        [void](Initialize-HostEnvironment)
+        $env:DCF_HOST_AUDIO | Should -Be 'wslg'
+        Should -Invoke -ModuleName DevcontainerCli Invoke-WslgBind -Times 1 -Exactly
+    }
+
+    It 'wslg, bind answering <Bind>: one warning, no mount, none' -ForEach @(
+        @{ Bind = 'nopulse'; Says = 'has no /mnt/wslg/PulseServer' }
+        @{ Bind = 'nowsl'; Says = 'wsl.exe is not on PATH' }
+        @{ Bind = 'error: exit 32: mount: permission denied'; Says = 'bind in the default WSL distro failed (error: exit 32' }
+    ) {
+        Initialize-AudioEvidence -Bind $Bind
+        $env:HOST_TYPE = 'windows-docker'
+        $env:DCF_HOST_AUDIO = 'wslg'
+        $w = $null
+        Initialize-HostAudio -WarningVariable w -WarningAction SilentlyContinue 6>$null | Should -Be 'none'
+        $w | Should -HaveCount 1
+        "$w" | Should -BeLike "*$Says*"
+        "$w" | Should -BeLike '*starts without audio*'
+        @(Get-HostMountArgument -WorkspaceFolder (Get-AudioWorkspace) 6>$null) | Should -Not -Contain $script:AudioMount
+        [void](Initialize-HostEnvironment)
+        $env:DCF_HOST_AUDIO | Should -Be 'none'
+    }
+
+    It 'wslg on <Id>: refused with one warning naming why, the bind never run' -ForEach @(
+        @{ Os = 'windows'; Id = 'windows-wslc'; Says = 'not verified on windows-wslc' }
+        @{ Os = 'linux'; Id = 'linux'; Says = 'linux is not a Windows host type backed by WSL2' }
+        @{ Os = 'macos'; Id = 'macos'; Says = 'macos is not a Windows host type backed by WSL2' }
+    ) {
+        Initialize-AudioEvidence -Os $Os
+        $env:HOST_TYPE = $Id
+        $env:DCF_HOST_AUDIO = 'wslg'
+        $w = $null
+        Initialize-HostAudio -WarningVariable w -WarningAction SilentlyContinue | Should -Be 'none'
+        "$w" | Should -BeLike "*no audio on this host ($Id): $Says*"
+        Should -Invoke -ModuleName DevcontainerCli Invoke-WslgBind -Times 0 -Exactly
+    }
+
+    It 'wslg with HOST_MOUNTS=false, or an unknown value: one warning, none, no bind' {
+        Initialize-AudioEvidence
+        $env:HOST_TYPE = 'windows-docker'
+        $env:DCF_HOST_AUDIO = 'wslg'
+        $env:HOST_MOUNTS = 'false'
+        $w = $null
+        Initialize-HostAudio -WarningVariable w -WarningAction SilentlyContinue | Should -Be 'none'
+        "$w" | Should -BeLike '*HOST_MOUNTS=false*'
+        $env:HOST_MOUNTS = $null
+        Clear-HostProfileCache
+        $env:DCF_HOST_AUDIO = 'pulse'
+        Initialize-HostAudio -WarningVariable w -WarningAction SilentlyContinue | Should -Be 'none'
+        "$w" | Should -BeLike "*DCF_HOST_AUDIO='pulse' is not known*"
+        Should -Invoke -ModuleName DevcontainerCli Invoke-WslgBind -Times 0 -Exactly
+    }
+
+    It 'Get-HostMount lists audio only with -Audio wslg; Initialize-HostMountSource leaves its source alone' {
+        @(Get-HostMount -Type 'windows-docker' -HostHome '' -Audio 'none') | Should -HaveCount 0
+        $m = @(Get-HostMount -Type 'windows-docker' -HostHome '' -Audio 'wslg')
+        $m | Should -HaveCount 1
+        $m[0].Name | Should -Be 'audio'
+        ConvertTo-MountArgument -Mount $m[0] | Should -Be $script:AudioMount
+    }
+
+    It 'host says what wslg would do, or why not, and runs nothing' {
+        Initialize-AudioEvidence
+        $env:HOST_TYPE = 'windows-docker'
+        $ws = Get-AudioWorkspace '{ "containerEnv": { "DCF_HOST_MACHINE": "${localEnv:DCF_HOST_MACHINE}" } }'
+        $text = (Show-HostProfile -WorkspaceFolder $ws 6>&1 | Out-String)
+        $text | Should -Match 'DCF_HOST_AUDIO     : \(unset: no audio\)'
+        $env:DCF_HOST_AUDIO = 'wslg'
+        $text = (Show-HostProfile -WorkspaceFolder $ws 6>&1 | Out-String)
+        $text | Should -Match 'DCF_HOST_AUDIO     : wslg asked for: up binds the default WSL distro''s /mnt/wslg to /mnt/wsl/wslg'
+        $text | Should -Not -Match 'target=/mnt/wslg'
+        $env:HOST_TYPE = 'windows-wslc'
+        Clear-HostProfileCache
+        (Show-HostProfile -WorkspaceFolder $ws 6>&1 | Out-String) | Should -Match 'DCF_HOST_AUDIO     : wslg asked for, not on windows-wslc'
+        Should -Invoke -ModuleName DevcontainerCli Invoke-WslgBind -Times 0 -Exactly
+    }
+
+    It 'the recorded up: the mount and DCF_HOST_AUDIO reach the CLI only with wslg' -Skip:$IsWindows {
+        # Only the OS and the bind are mocked: the stub docker and devcontainer below are real commands.
+        Mock -ModuleName DevcontainerCli Get-HostPlatform { 'wsl' }
+        Mock -ModuleName DevcontainerCli Invoke-WslgBind { 'bound' }
+        $bin = Join-Path $TestDrive 'audio-bin'
+        New-Item -ItemType Directory -Path $bin -Force | Out-Null
+        $rec = Join-Path $TestDrive 'audio-args.txt'
+        Set-Content (Join-Path $bin 'devcontainer') "#!/bin/sh`nfor a in `"`$@`"; do echo `"`$a`"; done > '$rec'`nenv | grep '^DCF_HOST_AUDIO=' > '$rec.env'"
+        chmod +x (Join-Path $bin 'devcontainer')
+        Set-Content (Join-Path $bin 'docker') "#!/bin/sh`nexit 0"
+        chmod +x (Join-Path $bin 'docker')
+        $env:PATH = $bin + [System.IO.Path]::PathSeparator + $script:AudioSavedPath
+        $env:HOST_TYPE = 'windows-wsl-docker'
+        Invoke-DevcontainerCliProcess -Subcommand up -WorkspaceFolder (Get-AudioWorkspace) 6>$null 3>$null
+        @(Get-Content $rec) | Should -Not -Contain $script:AudioMount
+        Get-Content "$rec.env" | Should -Be 'DCF_HOST_AUDIO=none'
+        Should -Invoke -ModuleName DevcontainerCli Invoke-WslgBind -Times 0 -Exactly
+        Clear-HostProfileCache
+        $env:DCF_HOST_AUDIO = 'wslg'
+        Invoke-DevcontainerCliProcess -Subcommand up -WorkspaceFolder (Get-AudioWorkspace) 6>$null 3>$null
+        @(Get-Content $rec) | Should -Contain $script:AudioMount
+        Get-Content "$rec.env" | Should -Be 'DCF_HOST_AUDIO=wslg'
+        Should -Invoke -ModuleName DevcontainerCli Invoke-WslgBind -Times 1 -Exactly
+        $env:PATH = $script:AudioSavedPath
+    }
+}
+
 # The machine name (session-names proposal, slice 1), the counterpart of the machine part of
 # test/bootstrap/host_mounts_test.sh: DCF_HOST_MACHINE is the workstation's name, sanitised, set for
 # `up`; `up` and `host` warn once when the repository's devcontainer.json does not read it.

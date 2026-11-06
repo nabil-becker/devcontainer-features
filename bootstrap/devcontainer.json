@@ -45,7 +45,10 @@
     "DCF_HOST_MACHINE": "${localEnv:DCF_HOST_MACHINE}",
     // 1 when DCF_HOST_FUSE=1 in .devcontainer/.env asked the launcher for FUSE on this machine
     // (the cloud-folder Feature's mount mode); empty otherwise.
-    "DCF_HOST_FUSE": "${localEnv:DCF_HOST_FUSE}"
+    "DCF_HOST_FUSE": "${localEnv:DCF_HOST_FUSE}",
+    // wslg when DCF_HOST_AUDIO=wslg in .devcontainer/.env gave the container WSLg's microphone
+    // (the audio Feature); none otherwise.
+    "DCF_HOST_AUDIO": "${localEnv:DCF_HOST_AUDIO}"
   },
   // FUSE on request, per machine (ADR 0031): with DCF_HOST_FUSE=1 in .devcontainer/.env the
   // launcher fills these three with --device=/dev/fuse, --cap-add=SYS_ADMIN and

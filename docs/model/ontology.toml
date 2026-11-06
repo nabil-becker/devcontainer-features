@@ -500,6 +500,16 @@ type = "concept"
 term = "Host agent mode"
 summary = "What the workstation offers the ssh-agent Feature: socket, none or key, passed as DCF_HOST_SSH_AGENT."
 
+[host-audio]
+type = "mechanism"
+term = "Host audio"
+summary = "Opt-in DCF_HOST_AUDIO=wslg: the launcher shares WSLg into the container so the audio Feature sees the Windows microphone."
+
+[[relation]]
+subject = "launcher"
+predicate = "uses"
+object = "host-audio"
+
 [ssh-agent-mode]
 type = "mechanism"
 term = "SSH agent mode"

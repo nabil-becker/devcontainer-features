@@ -8,7 +8,8 @@
 # lists, the SSH agent socket mount, and the cloud folder (DCF_HOST_CLOUD_FOLDER, a Windows path,
 # a missing folder, the fixed target), and FUSE on request (DCF_HOST_FUSE: the three grant
 # variables or none, the argument list unchanged, the runArgs lines checked, the grant refused on a
-# wslc engine). A stub `devcontainer` first on PATH records its arguments, one per line.
+# wslc engine), and audio on request (DCF_HOST_AUDIO: the bind through a fake wsl.exe run once,
+# the /mnt/wslg mount, none and a warning where it cannot be carried). A stub `devcontainer` first on PATH records its arguments, one per line.
 # Part of `task lint` (`task test:host-mounts`). CLI_SH points the tests at another copy of the
 # script (used to show a test fails when the code it covers is broken).
 set -u
@@ -336,6 +337,72 @@ ws="$(new_ws "$plain")"; run linux "$ws" DCF_TEST_HOSTNAME=Alice-PC -- host
 check 'host shows the machine name' 'DCF_HOST_MACHINE   : Alice-PC' "$(grep '^DCF_HOST_MACHINE' <<<"$out")"
 check 'host warns when the line is missing' 1 "$(grep -c 'does not read DCF_HOST_MACHINE' <<<"$out")"
 check "this repository's devcontainer.json reads it" 1 "$(grep -cF 'localEnv:DCF_HOST_MACHINE' "$here/../../.devcontainer/devcontainer.json")"
+
+# --- Audio on request (the audio Feature): DCF_HOST_AUDIO=wslg on windows-wsl-docker binds the
+# default distro's /mnt/wslg once through wsl.exe and mounts /mnt/wsl/wslg at /mnt/wslg; unset or
+# none runs nothing and adds nothing; a host that cannot carry it warns once and passes none.
+# A fake wsl.exe records each call and answers FAKE_WSL (present, bound, nopulse, fail).
+ln -sf "$(command -v tail)" "$bin/tail"
+# shellcheck disable=SC2016  # the stub's own variables
+printf '#!/bin/sh\nfor a in "$@"; do echo "$a"; done > "$DCF_TEST_RECORD"\nenv | grep "^DCF_HOST_AUDIO=" > "$DCF_TEST_RECORD.env" || : > "$DCF_TEST_RECORD.env"\n' > "$bin/devcontainer"
+# shellcheck disable=SC2016  # the stub's own variables
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "%s/wsl-calls"\ncase "$FAKE_WSL" in fail) echo "mount: permission denied" >&2; exit 32 ;; *) echo "$FAKE_WSL" ;; esac\n' "$T" > "$bin/wsl.exe"
+chmod +x "$bin/wsl.exe"
+audio_mount='type=bind,source=/mnt/wsl/wslg,target=/mnt/wslg'
+wsl_calls() { if [ -f "$T/wsl-calls" ]; then wc -l < "$T/wsl-calls" | tr -d ' '; else echo 0; fi; }
+for v in unset none NONE; do
+  rm -f "$T/wsl-calls"; ws="$(new_ws "$plain")"
+  if [ "$v" = unset ]; then run wsl "$ws" FAKE_WSL=bound -- up; else run wsl "$ws" FAKE_WSL=bound DCF_HOST_AUDIO="$v" -- up; fi
+  check "audio $v: wsl.exe is never run" 0 "$(wsl_calls)"
+  check "audio $v: no audio mount" 0 "$(grep -c -x -- "$audio_mount" <<<"$args")"
+  check "audio $v: only the .git-dirs mount, as before" 1 "$(grep -c -x -- '--mount' <<<"$args")"
+  check "audio $v: DCF_HOST_AUDIO=none for the CLI" 'DCF_HOST_AUDIO=none' "$(cat "$T/rec.env")"
+  check "audio $v: no audio line" 0 "$(grep -c -i 'audio' <<<"$out")"
+done
+for answer in bound present; do
+  rm -f "$T/wsl-calls"; ws="$(new_ws "$plain")"; run wsl "$ws" FAKE_WSL="$answer" DCF_HOST_AUDIO=wslg -- up
+  check "audio wslg ($answer): wsl.exe run once" 1 "$(wsl_calls)"
+  check "audio wslg ($answer): the mount is added" 1 "$(grep -c -x -- "$audio_mount" <<<"$args")"
+  check "audio wslg ($answer): DCF_HOST_AUDIO=wslg for the CLI" 'DCF_HOST_AUDIO=wslg' "$(cat "$T/rec.env")"
+  check "audio wslg ($answer): no warning" 0 "$(grep -c 'starts without audio' <<<"$out")"
+done
+# shellcheck disable=SC2016  # literal text, not ours to expand
+check 'audio wslg: wsl.exe as root in the default distro, the bind script' '-u root -e sh -c t=/mnt/wsl/wslg; if mountpoint -q $t' "$(head -n1 "$T/wsl-calls" | cut -c1-53)"
+check 'audio wslg present: says the socket is already shared' 1 "$(grep -c 'already shared at /mnt/wsl/wslg' <<<"$out")"
+check 'audio wslg: the mount source is not created' no "$([ -e /mnt/wsl/wslg ] && [ ! -d /mnt/wsl ] && echo yes || echo no)"
+for answer in nopulse fail; do
+  rm -f "$T/wsl-calls"; ws="$(new_ws "$plain")"; run wsl "$ws" FAKE_WSL="$answer" DCF_HOST_AUDIO=wslg -- up
+  check "audio wslg ($answer): one warning" 1 "$(grep -c 'starts without audio' <<<"$out")"
+  check "audio wslg ($answer): no audio mount" 0 "$(grep -c -x -- "$audio_mount" <<<"$args")"
+  check "audio wslg ($answer): DCF_HOST_AUDIO=none" 'DCF_HOST_AUDIO=none' "$(cat "$T/rec.env")"
+  check "audio wslg ($answer): the start goes on" up "$(head -n1 <<<"$args")"
+done
+check 'audio wslg nopulse... the last warning names the failed bind' 1 "$(grep -c 'bind in the default WSL distro failed (error: exit 32' <<<"$out")"
+rm -f "$T/wsl-calls"; ws="$(new_ws "$plain")"; run linux "$ws" FAKE_WSL=bound DCF_HOST_AUDIO=wslg -- up
+check 'audio wslg on linux: refused, wsl.exe not run' 0 "$(wsl_calls)"
+check 'audio wslg on linux: one warning naming the host type' 1 "$(grep -c 'no audio on this host (linux)' <<<"$out")"
+check 'audio wslg on linux: DCF_HOST_AUDIO=none' 'DCF_HOST_AUDIO=none' "$(cat "$T/rec.env")"
+ws="$(new_ws "$plain")"; run wsl "$ws" FAKE_WSL=bound DCF_HOST_AUDIO=wslg HOST_MOUNTS=false -- up
+check 'audio wslg with HOST_MOUNTS=false: refused, no mount' 0 "$(grep -c -x -- '--mount' <<<"$args")"
+check 'audio wslg with HOST_MOUNTS=false: says why' 1 "$(grep -c 'HOST_MOUNTS=false turns' <<<"$out")"
+ws="$(new_ws "$plain")"; run wsl "$ws" FAKE_WSL=bound DCF_HOST_AUDIO=pulse -- up
+check 'audio unknown value: warned, none' 'DCF_HOST_AUDIO=none' "$(cat "$T/rec.env")"
+check 'audio unknown value: the warning names it' 1 "$(grep -c "DCF_HOST_AUDIO='pulse' is not known" <<<"$out")"
+rm -f "$T/wsl-calls"; ws="$(new_ws "$plain")"; run wsl "$ws" FAKE_WSL=bound DCF_HOST_AUDIO=wslg -- exec
+check 'audio wslg, exec: wsl.exe not run, no mount' '0 0' "$(wsl_calls) $(grep -c -x -- '--mount' <<<"$args")"
+rm -f "$T/wsl-calls"; ws="$(new_ws '{ "mounts": ["source=/x,target=/mnt/wslg,type=bind"] }')"; run wsl "$ws" FAKE_WSL=bound DCF_HOST_AUDIO=wslg -- up
+check 'audio wslg, the repository mounts /mnt/wslg itself: skipped' 0 "$(grep -c -x -- "$audio_mount" <<<"$args")"
+rm -f "$T/wsl-calls"; ws="$(new_ws "$plain")"; run wsl "$ws" FAKE_WSL=bound DCF_HOST_AUDIO=wslg -- host
+check 'host: says what wslg would do, runs nothing' "0 1" "$(wsl_calls) $(grep -c "^DCF_HOST_AUDIO     : wslg asked for: up binds" <<<"$out")"
+run linux "$ws" DCF_HOST_AUDIO=wslg -- host
+check 'host on linux: says why not' 1 "$(grep -c '^DCF_HOST_AUDIO     : wslg asked for, not on linux' <<<"$out")"
+run wsl "$ws" -- host
+check 'host, unset: no audio' 'DCF_HOST_AUDIO     : (unset: no audio)' "$(grep '^DCF_HOST_AUDIO' <<<"$out")"
+rm -f "$bin/wsl.exe"
+ws="$(new_ws "$plain")"; run wsl "$ws" DCF_HOST_AUDIO=wslg -- up
+check 'audio wslg with no wsl.exe: one warning, none' "1 DCF_HOST_AUDIO=none" "$(grep -c 'wsl.exe is not on PATH' <<<"$out") $(cat "$T/rec.env")"
+# shellcheck disable=SC2016  # literal text, not ours to expand
+check 'the bootstrap template passes DCF_HOST_AUDIO on' 1 "$(grep -cF '"DCF_HOST_AUDIO": "${localEnv:DCF_HOST_AUDIO}"' "$here/../../bootstrap/devcontainer.json")"
 
 echo
 echo "$pass passed, $fail failed"

@@ -8,6 +8,12 @@ here; `task lint` fails when the entry is missing.
 
 Entries from 1.0.0 to 1.18.1 were generated from the commit history (`.github/scripts/changelog.py backfill`) and the "Changes in x.y.z" sections that NOTES.md used to hold; most list commit subjects as written then; the newest of them is in wording for users.
 
+## [1.21.0] - 2026-11-06
+
+### Added
+
+- **Audio on request (both launchers)**: `DCF_HOST_AUDIO=wslg` in a Windows WSL2 workstation's `.devcontainer/.env` gives the container its microphone through WSLg's PulseAudio socket, for the new `audio` Feature (Claude Code's `/voice`). Before `up`, on the `windows-docker` and `windows-wsl-docker` host types, the launcher binds the default WSL distro's `/mnt/wslg` to `/mnt/wsl/wslg` as root (skipped when already there; a WSL restart drops it and the next `up` redoes it), mounts it at `/mnt/wslg`, and sets `DCF_HOST_AUDIO=wslg` for `containerEnv`; anywhere else, or when that distro has no WSLg socket, it warns once and starts the container without audio (`DCF_HOST_AUDIO=none`). `task devcontainer:host` says what it would do. Unset or `none` (the default) runs nothing and adds nothing: nothing changes unless you opt in. It gives every process in the container the microphone; whether dictated audio may go to a model provider is your repository's ruling. To use it: re-vendor the bootstrap, add `"DCF_HOST_AUDIO": "${localEnv:DCF_HOST_AUDIO}"` to `containerEnv` (the bootstrap's template has it), add the `audio` Feature once it is released, set the variable and run `task devcontainer:rebuild`.
+
 ## [1.20.0] - 2026-11-05
 
 ### Added

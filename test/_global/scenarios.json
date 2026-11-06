@@ -24,7 +24,8 @@
       "cloud-folder": {},
       "az": {},
       "kube-state": {},
-      "phi-check": {}
+      "phi-check": {},
+      "audio": {}
     },
     "remoteUser": "vscode"
   }
