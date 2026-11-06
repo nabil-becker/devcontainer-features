@@ -1,7 +1,7 @@
 # Vendored: agentic-register
 
 This folder is the AOF seed's `agentic-register` Feature (0.14.4), copied unchanged from the
-offline package, with two exceptions listed below. Do not edit the files here; take a newer
+offline package, with the exceptions listed below. Do not edit the files here; take a newer
 copy instead.
 
 | | |
@@ -16,6 +16,11 @@ Differences from the source:
 
 - `dcf-persist.sh` is this collection's canonical `src/common/dcf-persist.sh` (`task common:check`
   requires every copy to equal it); the seed's copy differs by one comment line.
+- `mirror` (0.14.5 here; upstream is 0.14.4) goes by name: `register/cli.py` reads from the mirror only
+  the entries the store lacks, and `register/adapters.py` has `raws(only=)` and `sync(read_sink=False)`
+  for it. Upstream reads every entry of both sides twice (four full passes), which on rclone's FUSE
+  mount (about 0.6 s a read, 1,623 entries) took 23-28 minutes (`scribe-mirror-slow`). To go upstream;
+  drop this difference when a release has it.
 - This file is added.
 
 The register's own tests (`aof/tooling/test/agentic-register/`, 4,390 lines) are not vendored: they
