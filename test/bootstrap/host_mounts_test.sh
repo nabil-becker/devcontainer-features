@@ -430,7 +430,7 @@ for bad in soon 5x -3 1.5h 5mm 0; do
   check "audio on '$bad' (not a duration): refused, wsl.exe not run" "1 0" "$(grep -c 'is not a duration' <<<"$out") $(wsl_calls)"
 done
 rm -f "$T/wsl-calls"; run wsl "$ws" FAKE_WSL=nosocat DCF_HOST_AUDIO=wslg -- audio on 5m
-check 'audio on, no socat: says what to install' 1 "$(grep -c 'socat is not installed in the default WSL distro' <<<"$out")"
+check 'audio on, no socat: says what to install' 1 "$(grep -c 'socat is not installed in the default WSL distro (run task audio:setup on the workstation)' <<<"$out")"
 run wsl "$ws" FAKE_WSL=nopulse DCF_HOST_AUDIO=wslg -- audio on 5m
 check 'audio on, no WSLg socket: says so, nothing turned on' 1 "$(grep -c 'has no /mnt/wslg/PulseServer.*nothing was turned on' <<<"$out")"
 run wsl "$ws" FAKE_WSL=failed DCF_HOST_AUDIO=wslg -- audio on 5m

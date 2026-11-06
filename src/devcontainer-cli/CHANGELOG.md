@@ -14,6 +14,7 @@ Entries from 1.0.0 to 1.18.1 were generated from the commit history (`.github/sc
 
 - **The microphone is gated on the workstation (both launchers)**: with `DCF_HOST_AUDIO=wslg`, `up` no longer binds WSLg's own `/mnt/wslg` and mounts it in the container (1.21.0, always on) but makes an empty relay directory `/mnt/wsl/devhost-audio` in the default WSL distro and mounts that at `/mnt/wslg`. The real socket is never mounted and the microphone is OFF until you turn it on: `task audio:on` (the new `audio.yml`, vendored by the bootstrap; include it in the root Taskfile as the bootstrap's `Taskfile.yml` shows) starts a socat relay in the default distro for `TTL=<duration>` (`90s`, `15m`, `2h`; default `DCF_HOST_AUDIO_TTL` or 15 minutes; at most `DCF_HOST_AUDIO_TTL_MAX`, default 2 hours, longer is cut to it), `task audio:off` ends it at once, `task audio:status` says whether it is on and the time left. When the relay ends, the socket file is gone and the container sees none. The switch lives outside the container, so no process in it can undo it, and turning it on or off needs no rebuild. New launcher subcommand `audio on|off|status`. It needs socat in the default distro.
 - `task devcontainer:host` describes the relay directory.
+- `task audio:setup` (optional, once per machine) installs socat in the default WSL distro with apt-get, or says it is already there; `audio on` names it when socat is missing.
 
 ### Changed
 

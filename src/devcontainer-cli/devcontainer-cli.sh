@@ -541,7 +541,7 @@ mode_audio() {
       r="$(wsl_sh "$audio_relay_script" on "$secs" "$audio_source" "$audio_wslg_socket")"
       case "$r" in
         on*) echo "audio: ON for $(audio_human "$secs"): the container's processes can record until then; task audio:off ends it." ;;
-        nosocat) echo "audio: socat is not installed in the default WSL distro (sudo apt-get install socat there); nothing was turned on." >&2; return 1 ;;
+        nosocat) echo "audio: socat is not installed in the default WSL distro (run task audio:setup on the workstation); nothing was turned on." >&2; return 1 ;;
         nopulse) echo "audio: the default WSL distro has no /mnt/wslg/PulseServer (WSLg off or missing, WSL1, or the engine's own distro set as the default); nothing was turned on." >&2; return 1 ;;
         nowsl) echo "audio: wsl.exe is not on PATH (WSL interop off?); nothing was turned on." >&2; return 1 ;;
         *) echo "audio: the relay did not start ($r); the microphone stays off." >&2; return 1 ;;

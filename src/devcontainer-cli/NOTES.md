@@ -614,7 +614,7 @@ workstation. Since 1.21.0 (always on); gated since 1.22.0; backlog items `audio-
   `/mnt/wsl/devhost-audio` and the engine may refuse to start the container until the next `task devcontainer:up`. A
   container that was running when the directory was re-made keeps the old, orphaned one: after a restart of WSL run
   `task devcontainer:up` and `task devcontainer:rebuild` once. `task audio:on` says so when it had to make the directory.
-- **Needs socat in the default distro** (`sudo apt-get install socat` there), which `audio on` checks and says.
+- **Needs socat in the default distro** (`task audio:setup` installs it, once per machine; or `sudo apt-get install socat` there), which `audio on` checks and says.
 - **Never fails a start.** Unset or `none` (the default) runs nothing, adds nothing and passes `none`. `wslg` where
   it cannot be carried passes `none` with one warning naming why: another host type (`linux`, `macos`), `windows-wslc`
   (not verified: whether `wslc run` can bind a path of the WSL VM is unknown), `HOST_MOUNTS=false`, no `wsl.exe`, a

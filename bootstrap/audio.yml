@@ -1,4 +1,4 @@
-# task audio:on, audio:off and audio:status on the workstation: the switch for the microphone that
+# task audio:setup, audio:on, audio:off and audio:status on the workstation: the switch for the microphone that
 # the audio Feature's container sees (ADR 0057). Vendored with devcontainer.yml by the bootstrap and
 # included from the root Taskfile as
 #   includes:
@@ -14,8 +14,14 @@
 version: '3'
 
 tasks:
+  setup:
+    desc: 'Optional, once per machine: install socat in the default WSL distro (as root, with apt-get), the relay task audio:on runs there. Says so and changes nothing when socat is already there, or when the distro has no apt-get (install socat there yourself). One wsl.exe call.'
+    cmds:
+      - cmd: |
+          wsl.exe -u root -e sh -c 'if command -v socat >/dev/null 2>&1; then echo "audio: socat is already installed in the default WSL distro"; elif command -v apt-get >/dev/null 2>&1; then apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq socat >/dev/null && echo "audio: installed socat in the default WSL distro"; else echo "audio: the default WSL distro has no apt-get; install socat there yourself" >&2; exit 1; fi'
+
   on:
-    desc: 'Turn the container''s microphone ON from the workstation, for TTL=<duration> (90s, 15m, 2h; a bare number is minutes; default DCF_HOST_AUDIO_TTL or 15m; at most DCF_HOST_AUDIO_TTL_MAX, default 2h, longer is cut to it): starts a socat relay in the default WSL distro from /mnt/wsl/devhost-audio/PulseServer (the directory the container sees at /mnt/wslg) to WSLg''s socket, ended by the duration. Until then, and after task audio:off, the socket file is not there and no process in the container can record. Needs DCF_HOST_AUDIO=wslg in .devcontainer/.env, a container started with it (task devcontainer:up), and socat in the default distro. While it is on, any process in the container can record. One wsl.exe call; nothing is left running on Windows.'
+    desc: 'Turn the container''s microphone ON from the workstation, for TTL=<duration> (90s, 15m, 2h; a bare number is minutes; default DCF_HOST_AUDIO_TTL or 15m; at most DCF_HOST_AUDIO_TTL_MAX, default 2h, longer is cut to it): starts a socat relay in the default WSL distro from /mnt/wsl/devhost-audio/PulseServer (the directory the container sees at /mnt/wslg) to WSLg''s socket, ended by the duration. Until then, and after task audio:off, the socket file is not there and no process in the container can record. Needs DCF_HOST_AUDIO=wslg in .devcontainer/.env, a container started with it (task devcontainer:up), and socat in the default distro (task audio:setup installs it). While it is on, any process in the container can record. One wsl.exe call; nothing is left running on Windows.'
     cmds:
       - task: :devcontainer:cli
         vars:

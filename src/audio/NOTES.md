@@ -69,7 +69,7 @@ The Feature only installs tools. The microphone comes from the workstation, per 
 the devcontainer-cli launcher (1.22.0 or later) and is off until you switch it on:
 
 1. In the workstation's `.devcontainer/.env`: `DCF_HOST_AUDIO=wslg`. Install `socat` in the default WSL
-   distro (`sudo apt-get install socat` there).
+   distro: `task audio:setup` on the workstation installs it (or `sudo apt-get install socat` there).
 2. In the repository's `devcontainer.json`, `containerEnv`: `"DCF_HOST_AUDIO":
    "${localEnv:DCF_HOST_AUDIO}"` (the bootstrap's template has it), so the container knows what the
    launcher did. The root Taskfile includes the bootstrap's `audio.yml` (the template has it).

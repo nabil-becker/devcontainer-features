@@ -744,7 +744,7 @@ function Invoke-HostAudio {
             $r = & $relay 'on' $secs
             if ($r -like 'on*') { Write-Host "audio: ON for $(Format-AudioDuration $secs): the container's processes can record until then; task audio:off ends it."; return 0 }
             $msg = switch -Wildcard ($r) {
-                'nosocat' { 'socat is not installed in the default WSL distro (sudo apt-get install socat there); nothing was turned on.' }
+                'nosocat' { 'socat is not installed in the default WSL distro (run task audio:setup on the workstation); nothing was turned on.' }
                 'nopulse' { 'the default WSL distro has no /mnt/wslg/PulseServer (WSLg off or missing, WSL1, or the engine''s own distro set as the default); nothing was turned on.' }
                 'nowsl' { 'wsl.exe is not on PATH (WSL interop off?); nothing was turned on.' }
                 default { "the relay did not start ($r); the microphone stays off." }
