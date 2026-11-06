@@ -26,7 +26,7 @@ Entries from 1.0.0 to 1.0.3 were generated from the commit history (`.github/scr
     inside an agent's job. Against a server elsewhere it runs with the token you hold and prints the
     policy paths the server's owner adds.
   - **Roles.** The default role (`default`, `DCF_SSH_CA_ROLE` renames it) has the principal forms AOF
-    uses, `relay@*` and `fed-*` (`ALLOWED=` overrides them), `TTL=` default 2160h (90 days), `MAX_TTL=`
+    uses, `relay@<guid>` and `fed-<guid>` (exactly a lowercase 8-4-4-4-12 GUID after the prefix; `<guid>` and `*` are the pattern syntax of every role; `ALLOWED=` overrides them), `TTL=` default 2160h (90 days), `MAX_TTL=`
     default the same as `TTL`. **`task openbao:ssh:ca:role NAME=<role> ALLOWED=<patterns> [TTL=]
     [MAX_TTL=]`** makes or changes another role on the same mount, with the same defaults and
     refusals, for the Office's `register` (`writer@*`): ed25519 keys only, user certificates only, host
@@ -40,8 +40,13 @@ Entries from 1.0.0 to 1.0.3 were generated from the commit history (`.github/scr
     it, for the Operators to compare out of band), `roles` (one per line) and `status` (one word).
     `dcf-secret`'s exit codes (0, 10 unreachable, 11 sealed, not initialised or no CA, 12 no token,
     13 the token may not sign or a principal is outside the role, 2 usage, 1 other) with one plain
-    line on stderr; 3 when it is run inside an agent's job. Only the Operator's policy may sign: the
+    line on stderr; 3 when `sign` is run inside an agent's job. Only the Operator's policy may sign: the
     backs' AppRoles and an agent's token are refused with 13. No private key is taken or printed.
+    No role admits the principal `operator` (`ca:init` and `ca:role` refuse such an `ALLOWED`, and
+    `sign` refuses the principal under any role). Every role sets a key id format of the role name and
+    the key's hash, so a call with no key id puts no token name in a certificate (a key id the caller
+    passes must not carry a person's name). `sign` is refused inside an agent's job (exit 3); `ca`,
+    `ca --fingerprint`, `roles` and `status` are public reads and are not.
   - Action: none unless you want the CA. To use it, rebuild, then run `task openbao:ssh:ca:init`
     (in server mode on a store made before 1.6.0 this also adds the sign path to the Operator's
     policy, which an existing store otherwise keeps unchanged). Compare the CA's fingerprint with the

@@ -6,7 +6,8 @@
 # and logs every call with its token. That the real bao answers as the stub plays, and that a
 # certificate really verifies with ssh-keygen -Y verify, is the container test
 # test/openbao/ssh_ca.sh (CI). Covered:
-#  - dcf-ssh-sign: refused inside an agent's job (exit 3, for every subcommand, bao never called);
+#  - dcf-ssh-sign: `sign` refused inside an agent's job (exit 3, bao never called) while ca,
+#    ca --fingerprint, roles and status are public reads and work there;
 #    sign (the public key on stdin and in no argument, the certificate alone on stdout, the role
 #    path, the principals, the key id and a ttl in seconds, the default role and --role), each exit
 #    code with its one line (10 unreachable, 11 sealed, not initialised or no CA, 12 no token,
@@ -209,7 +210,7 @@ check "DCF_SSH_CA_ROLE names the default role" "/sign/register " "$(grep -o '/si
 INPUT="$T/key.pub" runs -- sign --principals "evil" --key-id k
 check "a principal outside the role: exit 13" 13 "$rc"
 check "13: nothing on stdout" "" "$out"
-has "13: the line names the role and what it allows" "outside the role 'default' (it allows: relay@*,fed-*)" "$err"
+has "13: the line names the role and what it allows" "outside the role 'default' (it allows: relay@<guid>,fed-<guid>)" "$err"
 check "13: bao was never asked to sign" 0 "$(grep -c 'signed_key' "$LOG")"
 INPUT="$T/key.pub" runs -- sign --principals "relay@$GUID" --key-id k --role register
 check "a principal only another role allows: exit 13" 13 "$rc"
@@ -316,16 +317,45 @@ echo unsealed > "$ST/state"; rm -f "$ST/ca.pub"; runs -- status
 check "status with no CA: not-initialised, exit 11" "not-initialised:11" "$out:$rc"
 setup_ca
 
-# an agent's job: refused for every subcommand, bao never called
+# an agent's job: sign is refused, bao never called; the public reads are not
 for v in DEVHOST_JOB_CHILD CLAUDECODE MY_AGENT; do
-  for c in "sign --principals relay@$GUID --key-id k" "ca" "ca --fingerprint" "roles" "status" ""; do
+  INPUT="$T/key.pub" runs "$v=1" OPENBAO_AGENT_JOB_VARS=MY_AGENT -- sign --principals "relay@$GUID" --key-id k
+  check "inside an agent's job ($v): sign is refused, exit 3, bao never called" "3:0" "$rc:$(wc -l < "$LOG")"
+  for c in "ca" "ca --fingerprint" "roles" "status"; do
     # shellcheck disable=SC2086  # the words of a command
-    INPUT="$T/key.pub" runs "$v=1" OPENBAO_AGENT_JOB_VARS=MY_AGENT -- $c
-    check "inside an agent's job ($v): '${c:-no command}' is refused, exit 3, bao never called" "3:0" "$rc:$(wc -l < "$LOG")"
+    runs "$v=1" OPENBAO_AGENT_JOB_VARS=MY_AGENT -- $c
+    check "inside an agent's job ($v): '$c' is a public read and works (exit 0)" 0 "$rc"
   done
 done
-has "the refusal names the variable and says only the Operator signs" "CLAUDECODE is set): only the Operator signs" "$(INPUT="$T/key.pub" runs CLAUDECODE=1 -- ca; echo "$err")"
+has "the refusal names the variable and says only the Operator signs" "CLAUDECODE is set): only the Operator signs" "$(INPUT="$T/key.pub" runs CLAUDECODE=1 -- sign --principals "relay@$GUID" --key-id k; echo "$err")"
 check "no certificate came out of a refused sign" "" "$(INPUT="$T/key.pub" runs CLAUDECODE=1 -- sign --principals "relay@$GUID" --key-id k; echo "$out")"
+runs CLAUDECODE=1 -- ca
+check "ca inside an agent's job prints the key" "$CA_PUB" "$out"
+
+# the exact GUID forms of the default role: lowercase 8-4-4-4-12, nothing before or after
+LG=abcdef01-2345-6789-abcd-ef0123456789
+for p in "relay@$LG" "fed-$LG"; do
+  INPUT="$T/key.pub" runs -- sign --principals "$p" --key-id k
+  check "default role: $p (lowercase GUID) is signed" 0 "$rc"
+done
+for p in "relay@${LG^^}" "fed-${LG^^}" "relay@${LG%-*}" "relay@${LG}0" "relay@${LG}-x" "relay@${LG} x" "relay@" "relay@$LG.evil" "xrelay@$LG" "relay@${LG//-/}" "fed-${LG:0:35}" "relay@abcdefg1-2345-6789-abcd-ef0123456789"; do
+  INPUT="$T/key.pub" runs -- sign --principals "$p" --key-id k
+  want=13; [[ "$p" == *" "* ]] && want=2
+  check "default role: '$p' (uppercase, short, extra text or not a GUID) is exit $want, nothing signed" "$want:0" "$rc:$(grep -c signed_key "$LOG")"
+done
+
+# no certificate names the principal operator, under any role
+printf '{"key_type": "ca", "allowed_users": "*", "ttl": 60, "max_ttl": 60}' > "$ST/role.wide.json"
+INPUT="$T/key.pub" runs -- sign --role wide --principals anyone --key-id k
+check "a role made outside the task with allowed_users * signs another principal (the fallback to the server's list)" 0 "$rc"
+for p in operator Operator OPERATOR; do
+  INPUT="$T/key.pub" runs -- sign --role wide --principals "$p" --key-id k
+  check "'$p' under a role that allows everything: exit 13, nothing signed" "13:0" "$rc:$(grep -c signed_key "$LOG")"
+done
+INPUT="$T/key.pub" runs -- sign --role wide --principals "anyone,operator" --key-id k
+check "operator among other principals: exit 13" 13 "$rc"
+has "13: says no certificate names operator" "no certificate names the principal operator" "$err"
+rm -f "$ST/role.wide.json"
 
 # no fallback: a file in the state folder or the environment never stands in for the server
 mkdir -p "$T/state"
@@ -352,10 +382,12 @@ check "init: no extensions permitted" '""' "$(jq -c '.allowed_extensions' <<<"$r
 check "init: no critical options permitted" '""' "$(jq -c '.allowed_critical_options' <<<"$role")"
 check "init: no default extensions or critical options" '{}:{}' "$(jq -c '.default_extensions' <<<"$role"):$(jq -c '.default_critical_options' <<<"$role")"
 check "init: no empty principals" false "$(jq -r '.allow_empty_principals' <<<"$role")"
+check "init: the key id carries no token name (the role's name and the key's hash)" '{{role_name}}-{{public_key_hash}}' "$(jq -r '.key_id_format' <<<"$role")"
+check "init: nothing about a token or a user in the key id format" 0 "$(jq -r '.key_id_format' <<<"$role" | grep -ci 'token\|display\|user\|name}}$')"
 check "init: default_ttl 2160h (90 days)" 7776000 "$(jq -r '.ttl' <<<"$role")"
 check "init: max_ttl the same unless asked" 7776000 "$(jq -r '.max_ttl' <<<"$role")"
 check "init: the server's allowed_users is * (OpenBao has no wildcard matching; the patterns are in the KV record)" '*' "$(jq -r '.allowed_users' <<<"$role")"
-check "init: the patterns of AOF's two principal forms in the KV record" 'relay@*,fed-*' "$(cat "$ST/kv.default")"
+check "init: the patterns of AOF's two principal forms in the KV record" 'relay@<guid>,fed-<guid>' "$(cat "$ST/kv.default")"
 has "init: the record is in the KV mount, under ssh-ca/roles/" "kv put -mount=dcf ssh-ca/roles/default" "$(calls)"
 has "init (client mode): prints the policy paths the server's owner adds" 'path "ssh-ca/sign/*"' "$err"
 check "init (client mode): writes no policy" 0 "$(grep -c '^policy write' "$LOG")"
@@ -366,6 +398,10 @@ check "init again: exit 0" 0 "$rc"
 has "init again: reports the existing CA" "already there" "$err"
 has "init again: says nothing changed" "nothing changed" "$err"
 check "init again: no write, no enable, no policy" 0 "$(grep -cE '^(write|secrets enable|policy write|kv put)' "$LOG")"
+# a role written before the key id format was set is rewritten
+jq 'del(.key_id_format)' "$ST/role.default.json" > "$ST/role.tmp" && mv "$ST/role.tmp" "$ST/role.default.json"
+run_srv client -- ssh-ca-init
+check "init on a role without the key id format rewrites it (not 'nothing changed')" '{{role_name}}-{{public_key_hash}}' "$(jq -r '.key_id_format' "$ST/role.default.json")"
 # options
 reset
 run_srv client OPENBAO_TASK_ALLOWED='relay@*' OPENBAO_TASK_TTL=1h OPENBAO_TASK_MAX_TTL=2h OPENBAO_TASK_MOUNT=pki-ssh -- ssh-ca-init
@@ -388,6 +424,22 @@ check "a mount of another type: refused, exit 1" 1 "$rc"
 check "nothing written to it" 0 "$(grep -cE '^write' "$LOG")"
 
 # refusals before bao is asked
+reset
+for al in '*' 'op*' 'operator' 'Operator,writer@*' 'writer@*,*' 'OPERATOR'; do
+  run_srv client "OPENBAO_TASK_ALLOWED=$al" -- ssh-ca-init
+  check "init with ALLOWED=$al (admits the principal operator): exit 2" 2 "$rc"
+  run_srv client OPENBAO_TASK_NAME=r "OPENBAO_TASK_ALLOWED=$al" -- ssh-ca-role
+  check "role with ALLOWED=$al: exit 2" 2 "$rc"
+done
+has "the line says why" "would admit the principal operator" "$err"
+check "none of those called bao" 0 "$(wc -l < "$LOG")"
+for al in 'writer@*' 'relay@<guid>' 'a.b' 'x@<guid>,y-*'; do
+  run_srv client "OPENBAO_TASK_ALLOWED=$al" -- ssh-ca-init
+  check "init with ALLOWED=$al is accepted" 0 "$rc"
+  reset
+done
+run_srv client "OPENBAO_TASK_ALLOWED=a<b" -- ssh-ca-init
+check "ALLOWED with a stray < : exit 2" 2 "$rc"
 reset
 run_srv client "OPENBAO_TASK_ALLOWED=x y" -- ssh-ca-init
 check "ALLOWED with a space: exit 2" 2 "$rc"
@@ -440,7 +492,7 @@ rj="$ST/role.register.json"
 check "role register: same refusals as the default: user certs, no host certs, ed25519 only" "true:false:[\"ssh-ed25519\"]" "$(jq -r '"\(.allow_user_certificates):\(.allow_host_certificates):\(.allowed_user_key_lengths | keys | tojson)"' "$rj")"
 check "role register: no extensions, no critical options" '"":"":{}:{}' "$(jq -r '[(.allowed_extensions|tojson), (.allowed_critical_options|tojson), (.default_extensions|tojson), (.default_critical_options|tojson)] | join(":")' "$rj")"
 check "role register: its patterns and lifetimes" "writer@*:2592000:7776000" "$(cat "$ST/kv.register"):$(jq -r '"\(.ttl):\(.max_ttl)"' "$ST/role.register.json")"
-check "role register: the default role is untouched" 'relay@*,fed-*' "$(cat "$ST/kv.default")"
+check "role register: the default role is untouched" 'relay@<guid>,fed-<guid>' "$(cat "$ST/kv.default")"
 check "role register: the Operator's policy is not written in client mode" 0 "$(grep -c '^policy write' "$LOG")"
 run_srv client OPENBAO_TASK_NAME=register OPENBAO_TASK_ALLOWED='writer@*' OPENBAO_TASK_TTL=30d OPENBAO_TASK_MAX_TTL=90d -- ssh-ca-role
 has "role again as asked: nothing changed" "already as asked: nothing changed" "$err"

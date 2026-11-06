@@ -917,15 +917,32 @@ dcf-ssh-sign status               one word: ready, sealed, unreachable, logged-o
   and no critical options**, a default lifetime (`TTL=`, default `2160h`, 90 days) and a maximum
   (`MAX_TTL=`, default the same as `TTL`, so a longer certificate takes a conscious change). The
   default role (named `default`, `DCF_SSH_CA_ROLE` renames it) is a role like any other: it has
-  `relay@*,fed-*`, the two principal forms AOF uses (`relay@<lowercase GUID>` and
-  `fed-<lowercase GUID>`), and `ALLOWED=` on `init` overrides that. `task openbao:ssh:ca:role
-  NAME=<role> ALLOWED=<patterns> [TTL=] [MAX_TTL=]` makes another or changes one: for the Office,
-  `NAME=register ALLOWED='writer@*'` for principals `writer@<handle>-<machine tag>`.
+  `relay@<guid>,fed-<guid>`, the two principal forms AOF uses, and `ALLOWED=` on `init` overrides
+  that. `task openbao:ssh:ca:role NAME=<role> ALLOWED=<patterns> [TTL=] [MAX_TTL=]` makes another or
+  changes one: for the Office, `NAME=register ALLOWED='writer@*'` for principals
+  `writer@<handle>-<machine tag>`.
   `dcf-ssh-sign sign --role <name>` picks it, and a principal outside that role's patterns is exit 13,
   so a relay certificate and a register certificate never stand in for each other.
+- **Pattern syntax**, the same for every role. A pattern is matched against the whole principal. Its
+  characters are letters, digits and `. _ @ -`; `*` stands for any run of them; `<guid>` stands for
+  exactly a lowercase 8-4-4-4-12 GUID (hex digits `0-9a-f`, nothing before or after it, no upper case,
+  no short or long form). So `relay@<guid>` takes `relay@` and a lowercase GUID and nothing else,
+  `writer@*` takes `writer@` and anything after it, and a bare name is that name only. A list is
+  comma separated.
+- **No certificate names `operator`.** `openbao:ssh:ca:init` and `:ca:role` refuse any `ALLOWED` that
+  would admit the principal `operator` (`*`, `op*`, `operator`, in any capitalisation; `writer@*` is
+  fine), and `dcf-ssh-sign sign` refuses the principal `operator` under any role, also one made
+  outside the task (exit 13). The Operator's login is never a user a certificate can log in as.
+- **Key ids carry no names.** A certificate's key id ends up in records that can never be erased, so
+  every role sets `key_id_format` to the role's name and the public key's hash
+  (`{{role_name}}-{{public_key_hash}}`): OpenBao's default would build the key id from the requesting
+  token's name, which for a password login includes the user name. A call to the API with no `key_id`
+  can therefore not put a name in a certificate. `dcf-ssh-sign sign` requires `--key-id` and cannot
+  tell a name from an id, so **a key id the caller passes must not carry a person's name**: that is
+  the caller's responsibility.
 - **Where the patterns are enforced.** OpenBao matches a role's `allowed_users` exactly and has no
   wildcard. A role of exact names (`ALLOWED=relay@a,fed-b`) is enforced by the server itself. A role
-  with a `*` has `allowed_users: "*"` on the server, and its patterns are kept in the KV store as
+  with a `*` or a `<guid>` has `allowed_users: "*"` on the server, and its patterns are kept in the KV store as
   `ssh-ca/roles/<role>` (field `allowed`); `dcf-ssh-sign` checks them before it signs, and refuses
   with 13. The boundary a verifier relies on is its own `cert-authority` line, which restricts the
   principals (`relay@*`) and the namespace: a verifier must always write that restriction (below).
@@ -933,9 +950,10 @@ dcf-ssh-sign status               one word: ready, sealed, unreachable, logged-o
 - **Only the Operator signs.** The Operator's policy (`operator_policy` in `openbao-lib.sh`) is the
   only one with `ssh-ca/sign/*` (update), the CA's public key (read) and the roles (list, read). The
   backs' AppRole policies (one secret each, the backup role's snapshot read) and an agent's token have
-  no path there, so every `dcf-ssh-sign` subcommand with such a token is exit 13. `dcf-ssh-sign` also
-  refuses to run inside an agent's job (exit 3, like the Feature's other Operator commands:
-  `DEVHOST_JOB_CHILD`, `CLAUDECODE`, `OPENBAO_AGENT_JOB_VARS`), for every subcommand.
+  no path there, so every `dcf-ssh-sign` subcommand with such a token is exit 13. `dcf-ssh-sign sign`
+  also refuses to run inside an agent's job (exit 3, like the Feature's other Operator commands:
+  `DEVHOST_JOB_CHILD`, `CLAUDECODE`, `OPENBAO_AGENT_JOB_VARS`); `ca`, `ca --fingerprint`, `roles` and
+  `status` are public reads and work there.
   The Operator's policy names one CA mount, the one `openbao:ssh:ca:init` last ran for.
 - **Import, optional.** `task openbao:ssh:ca:import [MOUNT=] < ca_key` takes an existing ed25519 CA
   private key on stdin (never an argument, no passphrase) for an Operator who wants one CA across
@@ -947,7 +965,7 @@ dcf-ssh-sign status               one word: ready, sealed, unreachable, logged-o
   server is unreachable; 11 sealed, not initialised or no CA yet (names `openbao:ssh:ca:init`); 12 no
   token, or it expired; 13 the token may not sign, or a principal is outside the role; 2 a wrong call
   (also an unknown role, a private or RSA key on stdin, a `--ttl` above the role's maximum); 3
-  refused (inside an agent's job); 1 `bao` failed for a reason no signal explains (its message
+  refused (`sign` inside an agent's job); 1 `bao` failed for a reason no signal explains (its message
   follows). The codes come from `dcf-secret status`, the capabilities `bao token capabilities`
   reports and whether the CA and the role can be read, never from the words of an error. No private
   key is ever taken or printed, and nothing is read from a file or the environment instead of the
@@ -962,11 +980,14 @@ CA's public key, or its fingerprint, is **never trusted because it was found in 
 a repository, a registry or a message anyone else could have changed: whoever can write there could
 substitute their own key, and every certificate of theirs would then verify. Only after the
 fingerprints match does the Operator put the key in the verifying side's `allowed_signers`, as a
-line that restricts the principals and the namespace:
+line that restricts the principals and names the namespace. **SSH namespaces are shared by everyone
+who signs with that namespace, so the principal pattern is what restricts; the namespace is the
+kind of thing signed** (all registers share one, such as `ledger`; the relay has its own), not a
+register's or a room's:
 
 ```text
-relay@* cert-authority,namespaces="<ns>" ssh-ed25519 AAAA...          # AOF's relay
-writer@* cert-authority,namespaces="ledger-<room>" ssh-ed25519 AAAA... # the Office's register
+relay@* cert-authority,namespaces="<relay ns>" ssh-ed25519 AAAA...   # AOF's relay
+writer@* cert-authority,namespaces="ledger" ssh-ed25519 AAAA...      # the Office's registers
 ```
 
 A certificate then verifies with `ssh-keygen -Y verify -f allowed_signers -I relay@<guid> -n <ns>

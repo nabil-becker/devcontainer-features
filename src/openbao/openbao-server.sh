@@ -1108,9 +1108,9 @@ cmd_restore() {
 # from stdin, and never leaves it (the engine returns only the public key). A signing role is a
 # named set of principal patterns: ed25519 subject keys only, user certificates only, no
 # extensions and no critical options, a default lifetime and a maximum one. The default role
-# (DCF_SSH_CA_ROLE, default "default", patterns relay@*,fed-*) is made by init and is a role like
+# (DCF_SSH_CA_ROLE, default "default", patterns relay@<guid>,fed-<guid>) is made by init and is a role like
 # any other (:ca:role changes it or adds more). OpenBao matches a role's allowed_users exactly,
-# with no wildcard, so a role whose patterns have a * is stored with allowed_users "*" and its
+# with no wildcard, so a role whose patterns have a * or a <guid> is stored with allowed_users "*" and its
 # patterns are kept in the KV store as ssh-ca/roles/<role> (field allowed); dcf-ssh-sign checks
 # them before it signs, and the verifier's cert-authority line is the boundary that counts (the
 # NOTES say so). A role of exact names is enforced by the server itself.
@@ -1122,19 +1122,20 @@ cmd_restore() {
 camount="${DCF_SSH_CA_MOUNT:-ssh-ca}"
 dcf_secret_bin="${DCF_SECRET_BIN:-dcf-secret}"
 ca_default_role="${DCF_SSH_CA_ROLE:-default}"
-ca_default_allowed='relay@*,fed-*'
+ca_default_allowed='relay@<guid>,fed-<guid>'
+ca_key_id_format='{{role_name}}-{{public_key_hash}}' # no name of a token or a person in a key id
 ca_default_ttl=2160h # 90 days
 
 ca_mount_ok() { [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] && [ "$1" != "$mount" ] && [ "$1" != sys ] && [ "$1" != auth ]; }
-ca_allowed_ok() { # a comma separated list of principals or patterns (only a * as a wildcard)
+ca_allowed_ok() { # a comma separated list of principals or patterns (pattern_ok in openbao-lib.sh)
   local p
   local -a ps
   [ -n "$1" ] || return 1
   IFS=, read -ra ps <<<"$1"
-  for p in "${ps[@]}"; do [[ "$p" =~ ^[A-Za-z0-9][A-Za-z0-9._@*-]{0,127}$ ]] || return 1; done
+  for p in "${ps[@]}"; do pattern_ok "$p" || return 1; done
 }
 ca_server_allowed() { # what the server's allowed_users holds for these patterns
-  case "$1" in *'*'*) echo '*' ;; *) echo "$1" ;; esac
+  case "$1" in *'*'* | *'<guid>'*) echo '*' ;; *) echo "$1" ;; esac
 }
 ca_fp() { printf '%s\n' "$1" | ssh-keygen -l -f - 2>/dev/null | awk '{print $2}'; }
 ca_pub_now() { bao read -field=public_key "$camount/config/ca" 2>/dev/null | head -n 1; }
@@ -1143,9 +1144,10 @@ ca_pub_now() { bao read -field=public_key "$camount/config/ca" 2>/dev/null | hea
 ca_role_current() { # <role> <patterns> <ttl secs> <max secs>
   local json
   json="$(bao read -format=json "$camount/roles/$1" 2>/dev/null)" || return 1
-  jq -e --arg au "$(ca_server_allowed "$2")" --argjson t "$3" --argjson m "$4" '.data |
+  jq -e --arg au "$(ca_server_allowed "$2")" --arg kf "$ca_key_id_format" --argjson t "$3" --argjson m "$4" '.data |
     .key_type == "ca" and .allow_user_certificates == true and .allow_host_certificates == false and
     .allow_user_key_ids == true and .allow_empty_principals == false and .allowed_users == $au and
+    .key_id_format == $kf and
     .ttl == $t and .max_ttl == $m and (.allowed_extensions // "") == "" and
     (.allowed_critical_options // "") == "" and ((.allowed_user_key_lengths // {}) | keys) == ["ssh-ed25519"]' >/dev/null <<<"$json" || return 1
   [ "$(bao kv get -mount="$mount" -field=allowed "ssh-ca/roles/$1" 2>/dev/null)" = "$2" ]
@@ -1192,14 +1194,14 @@ ssh_ca_apply() { # <init|role|import> <role> <patterns> <ttl secs> <max secs>
       ;;
   esac
   # The role: only what is asked and nothing wider.
-  jq -n --arg au "$(ca_server_allowed "$patterns")" --argjson t "$ttl" --argjson m "$max" '{
+  jq -n --arg au "$(ca_server_allowed "$patterns")" --arg kf "$ca_key_id_format" --argjson t "$ttl" --argjson m "$max" '{
     key_type: "ca", allow_user_certificates: true, allow_host_certificates: false, allow_user_key_ids: true,
-    allow_empty_principals: false, allowed_users: $au, allowed_extensions: "", allowed_critical_options: "",
+    allow_empty_principals: false, allowed_users: $au, key_id_format: $kf, allowed_extensions: "", allowed_critical_options: "",
     default_extensions: {}, default_critical_options: {}, allowed_user_key_lengths: {"ssh-ed25519": 0},
     ttl: $t, max_ttl: $m}' | bao write "$camount/roles/$role" - >/dev/null || { say "could not write the role $role at $camount"; return 1; }
   # The patterns, where dcf-ssh-sign reads them (see above).
   bao kv put -mount="$mount" "ssh-ca/roles/$role" allowed="$patterns" ttl="$ttl" max_ttl="$max" >/dev/null || { say "could not write the role's patterns to $mount/ssh-ca/roles/$role (is the $mount KV mount there?)"; return 1; }
-  say "role $role at $camount: ed25519 keys only, user certificates only, no extensions, no critical options; principals $patterns; lifetime $ttl s by default, $max s at most"
+  say "role $role at $camount: ed25519 keys only, user certificates only, no extensions, no critical options, a key id of the role name and the key's hash; principals $patterns; lifetime $ttl s by default, $max s at most"
   if [ "$mode_now" = server ]; then
     # The Operator may sign with every role of the mount from now on (an existing store keeps its
     # policy until this runs).
@@ -1228,7 +1230,8 @@ cmd_ssh_ca() { # <init|role|import>
   esac
   if [ "$what" != import ]; then
     role_ok "$role" || die 2 "'$role' is not a role name (lower case letters, digits, - and _, starting with a letter)"
-    ca_allowed_ok "$patterns" || die 2 "ALLOWED='$patterns' is not a comma separated list of principals or patterns (letters, digits, . _ @ - and * as a wildcard)"
+    ca_allowed_ok "$patterns" || die 2 "ALLOWED='$patterns' is not a comma separated list of principals or patterns (letters, digits, . _ @ -, * for any run of them, <guid> for a lowercase 8-4-4-4-12 GUID)"
+    ! admits_operator "$patterns" || die 2 "ALLOWED='$patterns' would admit the principal operator: no certificate names it, under any role (a narrower pattern, e.g. writer@*)"
     ttl="${OPENBAO_TASK_TTL:-$ca_default_ttl}"
     ttl_s="$(dur_secs "$ttl")" || die 2 "TTL='$ttl' is not a duration (a number and s, m, h or d: 90d, 2160h)"
     max="${OPENBAO_TASK_MAX_TTL:-}"

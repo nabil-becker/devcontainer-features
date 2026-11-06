@@ -22,14 +22,18 @@
 # a file, a volume or the environment instead of the server: no fallback.
 #
 # Only the Operator's policy may sign (see ssh_ca_policy in openbao-lib.sh): a token of an AppRole
-# (the backs) or of an agent is refused with 13. The command also refuses to run inside an agent's
-# job (exit 3, like the Feature's other Operator commands).
+# (the backs) or of an agent is refused with 13. `sign` also refuses to run inside an agent's job
+# (exit 3, like the Feature's other Operator commands); ca, ca --fingerprint, roles and status are
+# public reads and are not. No role signs the principal operator (13).
+#
+# Role patterns (openbao-lib.sh, pattern_ok): letters, digits . _ @ -, a * for any run of them and
+# <guid> for exactly a lowercase 8-4-4-4-12 GUID, matched whole: relay@<guid>, writer@*.
 #
 # Exit codes, the same as dcf-secret's, each with one plain line on stderr naming the fix:
 #   0  done        10 the server is unreachable    11 the server is sealed, or not initialised, or
 #                                                  has no CA
 #   12 no token, or it expired    13 the token may not sign, or a principal is outside the role
-#   2  a wrong call (usage, an unknown role)       3 refused (inside an agent's job)
+#   2  a wrong call (usage, an unknown role)       3 refused (sign, inside an agent's job)
 #   1  bao failed for a reason none of the signals explain (bao's own message follows)
 set -u
 
@@ -56,11 +60,6 @@ usage: dcf-ssh-sign sign --principals <p1,p2,...> --key-id <id> [--ttl <dur>] [-
 EOF
   exit 2
 }
-
-# An agent's job is refused before anything else, also a call with no or a wrong argument.
-if v="$(agent_job)"; then
-  die 3 "dcf-ssh-sign refuses to run inside an agent's job ($v is set): only the Operator signs certificates. Run it yourself in a plain terminal in the devcontainer"
-fi
 
 fix_denied() { say "the token may not $1: only the Operator's policy may sign (log in as the Operator with task openbao:login; an agent's or an AppRole's token is refused on purpose, and a server made before openbao 1.6.0 gets the policy from task openbao:ssh:ca:init)"; }
 fix_no_ca() { say "the SSH CA is not set up at $camount in this server: the Operator makes it with task openbao:ssh:ca:init (against a server elsewhere, its owner does)"; }
@@ -114,20 +113,8 @@ role_patterns() { # <role> -> the list on stdout; fails when the role cannot be 
   jq -r '.data.allowed_users // ""' <<<"$json"
 }
 
-matches_any() { # <principal> <comma separated patterns>
-  local p="$1" pat
-  local -a pats
-  IFS=, read -ra pats <<<"$2"
-  for pat in "${pats[@]}"; do
-    [[ "$pat" =~ ^[A-Za-z0-9._@*-]+$ ]] || continue # never a glob metacharacter of the shell
-    # shellcheck disable=SC2254  # the pattern is meant to be one
-    case "$p" in $pat) return 0 ;; esac
-  done
-  return 1
-}
-
 cmd_sign() {
-  local principals="" kid="" ttl="" role="$default_role" secs="" pub p rc out
+  local principals="" kid="" ttl="" role="$default_role" secs="" pub p rc out v
   while [ $# -gt 0 ]; do
     case "$1" in
       --principals) [ $# -ge 2 ] || usage; principals="$2"; shift 2 ;;
@@ -142,6 +129,10 @@ cmd_sign() {
     esac
   done
   [ -n "$principals" ] && [ -n "$kid" ] || usage
+  # Only the Operator signs: never from inside an agent's job (public reads are not refused).
+  if v="$(agent_job)"; then
+    die 3 "dcf-ssh-sign sign refuses to run inside an agent's job ($v is set): only the Operator signs certificates. Run it yourself in a plain terminal in the devcontainer"
+  fi
   role_ok "$role" || die 2 "'$role' is not a role name (lower case letters, digits, - and _, starting with a letter)"
   key_id_ok "$kid" || die 2 "'$kid' is not a usable key id (letters, digits and . _ @ : / + = -, at most 128)"
   local -a plist
@@ -149,6 +140,7 @@ cmd_sign() {
   [ "${#plist[@]}" -gt 0 ] || usage
   for p in "${plist[@]}"; do
     principal_ok "$p" || die 2 "'$p' is not a usable principal (letters, digits and . _ @ -, comma between principals)"
+    is_operator_principal "$p" && { say "no certificate names the principal operator, under any role"; exit 13; }
   done
   if [ -n "$ttl" ]; then
     secs="$(dur_secs "$ttl")" || die 2 "'$ttl' is not a duration (a number and s, m, h or d: 90d, 12h, 3600)"
@@ -173,7 +165,7 @@ cmd_sign() {
     die 2 "no signing role '$role' at $camount: dcf-ssh-sign roles lists them, task openbao:ssh:ca:role makes one"
   fi
   for p in "${plist[@]}"; do
-    matches_any "$p" "$pats" || { say "the principal '$p' is outside the role '$role' (it allows: $pats): ask for a principal of that form, or sign with another role (dcf-ssh-sign roles), or have the Operator change the role with task openbao:ssh:ca:role"; exit 13; }
+    principal_matches "$p" "$pats" || { say "the principal '$p' is outside the role '$role' (it allows: $pats): ask for a principal of that form, or sign with another role (dcf-ssh-sign roles), or have the Operator change the role with task openbao:ssh:ca:role"; exit 13; }
   done
 
   rc=0

@@ -44,6 +44,40 @@ dur_secs() { # <5m|6h|90d|3600> -> seconds, or fail (a number and s, m, h or d; 
   esac
 }
 
+# Principal patterns of an SSH CA role (task openbao:ssh:ca:role, dcf-ssh-sign): the characters of a
+# principal (letters, digits . _ @ -), a * for any run of them and <guid> for exactly a lowercase
+# 8-4-4-4-12 GUID. A pattern is matched whole, never as a part. One definition for the task (what a
+# role may admit) and the command (what it signs).
+pattern_ok() { # <pattern>
+  local rest="${1//<guid>/}" first='^[A-Za-z0-9*<]' chars='^[A-Za-z0-9._@*-]*$'
+  [ -n "$1" ] && [[ "$rest" =~ $chars ]] && [[ "$1" =~ $first ]] && [ "${#1}" -le 160 ]
+}
+pattern_regex() { # <pattern> -> an anchored extended regex on stdout
+  local re="$1"
+  re="${re//./\\.}"
+  re="${re//\*/.*}"
+  local guid='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+  re="${re//<guid>/$guid}"
+  printf '^%s$' "$re"
+}
+principal_matches() { # <principal> <comma separated patterns>: 0 when any pattern covers it
+  local p="$1" pat re
+  local -a pats
+  IFS=, read -ra pats <<<"$2"
+  for pat in "${pats[@]}"; do
+    pattern_ok "$pat" || continue
+    re="$(pattern_regex "$pat")"
+    [[ "$p" =~ $re ]] && return 0
+  done
+  return 1
+}
+# No certificate ever names the principal operator (the Operator's own login is not a user to log in
+# as): a role may not admit it and no role signs it, in any capitalisation.
+admits_operator() { # <comma separated patterns>
+  principal_matches operator "${1,,}"
+}
+is_operator_principal() { [ "${1,,}" = operator ]; }
+
 # Bracketed paste off (ESC [ ? 2004 l). A shell such as pwsh (PSReadLine) leaves it on while a child
 # runs, so a pasted share arrives as ESC[200~<share>ESC[201~ and bao's hidden prompt, which reads
 # raw bytes, sends the markers with the key ("'key' must be a valid hex or base64 string"). Only

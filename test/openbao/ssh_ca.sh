@@ -13,7 +13,7 @@
 #     one secret may not sign or read the CA (13); sealed is 11 (last: a dev server cannot be
 #     unsealed again);
 #   - a second role (the office's: `register`, principals writer@<handle>-<tag>, namespace
-#     ledger-<room>): its certificate verifies against its own line, a principal only the other role
+#     ledger, shared by every register, so the principal pattern restricts): its certificate verifies against its own line, a principal only the other role
 #     allows is refused in either direction, `dcf-ssh-sign roles` lists both, one per line;
 #   - the CA's private key cannot be read back: not by the Operator's token, not by a root token,
 #     not through any task's output nor dcf-secret; the Operator's token cannot change the CA or a role;
@@ -135,6 +135,35 @@ check "a principal outside the role is exit 13" [ "$rc" = 13 ]
 check "with the one line naming the role" contains "$err" "outside the role 'default'"
 rc=0; sign sign --principals "relay@$guid" --key-id x --ttl 9999d <"$work/key.pub" >/dev/null 2>&1 || rc=$?
 check "a lifetime beyond the role's maximum is refused (exit 2), nothing signed" [ "$rc" = 2 ]
+# the default role takes only lowercase 8-4-4-4-12 GUIDs after relay@ and fed-
+ugd=abcdef01-2345-6789-abcd-ef0123456789
+sign sign --principals "relay@$ugd" --key-id x <"$work/key.pub" >/dev/null 2>&1
+check "a lowercase GUID with hex letters is signed" [ "$?" = 0 ]
+for bad in "relay@${ugd^^}" "relay@${ugd%-*}" "relay@${ugd}0" "relay@${ugd}.x" "fed-${ugd^^}"; do
+  rc=0; sign sign --principals "$bad" --key-id x <"$work/key.pub" >/dev/null 2>&1 || rc=$?
+  check "'$bad' (uppercase, short or extra text after the GUID) is exit 13" [ "$rc" = 13 ]
+done
+# no certificate names the principal operator
+for p in operator Operator; do
+  rc=0; err="$(sign sign --principals "$p" --key-id x <"$work/key.pub" 2>&1 >/dev/null)" || rc=$?
+  check "the principal '$p' is exit 13 under the default role" [ "$rc" = 13 ]
+done
+check "and the line says no certificate names it" contains "$err" "no certificate names the principal operator"
+tok="$root"
+for al in '*' 'op*' 'operator'; do
+  rc=0; t ssh:ca:role NAME=anyone ALLOWED="$al" >/dev/null 2>&1 || rc=$?
+  check "task openbao:ssh:ca:role ALLOWED=$al (would admit operator) is refused" [ "$rc" != 0 ]
+done
+check "and made no role" [ "$(as BAO_TOKEN="$root" bao list -format=json ssh-ca/roles | jq -r '.[]' | grep -c anyone || true)" = 0 ]
+# a key id never carries a token's name: a call straight to the API with no key_id
+nametok="$(as BAO_TOKEN="$root" bao token create -policy=operator -display-name=alice-private-name -field=token)"
+as BAO_TOKEN="$nametok" bao write -field=signed_key ssh-ca/sign/default public_key=@"$work/key.pub" valid_principals="relay@$guid" ttl=60 >"$work/noid-cert.pub"
+noid="$(ssh-keygen -L -f "$work/noid-cert.pub" | sed -n 's/^ *Key ID: "\(.*\)"$/\1/p')"
+noid_re='^default-[0-9a-f]{64}$'
+noid_ok=no; [[ "$noid" =~ $noid_re ]] && noid_ok=yes
+check "a certificate signed without a key id has the role's name and the key's hash as its key id" [ "$noid_ok" = yes ]
+check "and no token name or user name in it" excludes "$noid" alice
+tok="$optok"
 tok=""
 rc=0; sign sign --principals "relay@$guid" --key-id x <"$work/key.pub" >/dev/null 2>&1 || rc=$?
 check "with no token, sign is exit 12" [ "$rc" = 12 ]
@@ -151,8 +180,9 @@ check "the backup role's token may not sign either (13)" [ "$rc" = 13 ]
 tok="$optok"
 for v in DEVHOST_JOB_CHILD CLAUDECODE; do
   rc=0; err="$(env "$v=1" BAO_TOKEN="$optok" dcf-ssh-sign sign --principals "relay@$guid" --key-id x <"$work/key.pub" 2>&1 >/dev/null)" || rc=$?
-  check "dcf-ssh-sign refuses inside an agent's job ($v): exit 3" [ "$rc" = 3 ]
+  check "dcf-ssh-sign sign refuses inside an agent's job ($v): exit 3" [ "$rc" = 3 ]
   check "with the line that says so" contains "$err" "agent's job"
+  check "but ca, a public read, works there" [ "$(env "$v=1" BAO_TOKEN="$optok" dcf-ssh-sign ca)" = "$ca" ]
   rc=0; err="$(env "$v=1" BAO_TOKEN="$root" task -t "$tf" ssh:ca:init 2>&1 >/dev/null)" || rc=$?
   check "task openbao:ssh:ca:init refuses inside an agent's job ($v)" contains "$err" "agent's job"
   rc=0; err="$(env "$v=1" BAO_TOKEN="$root" task -t "$tf" ssh:ca:role NAME=x ALLOWED='x@*' 2>&1 >/dev/null)" || rc=$?
@@ -178,7 +208,7 @@ rc=0; t ssh:ca:role NAME=register ALLOWED='bad;one' >/dev/null 2>&1 || rc=$?
 check "ca:role with a bad pattern is refused" [ "$rc" != 0 ]
 tok="$optok"
 ssh-keygen -q -t ed25519 -N '' -C writer -f "$work/wkey"
-room_ns=ledger-room1
+room_ns=ledger # one namespace for the register kind: the principal pattern restricts, not the namespace
 sign sign --role register --principals 'writer@alice-laptop' --key-id 'writer-alice-laptop' <"$work/wkey.pub" >"$work/wkey-cert.pub"
 check "the register role signs writer@<handle>-<tag>" [ -s "$work/wkey-cert.pub" ]
 check "with the default lifetime of the role (30 days)" contains "$(ssh-keygen -L -f "$work/wkey-cert.pub")" 'Valid: from'
@@ -187,8 +217,8 @@ ssh-add -D >/dev/null 2>&1
 ssh-add "$work/wkey" >/dev/null 2>&1
 printf 'a ledger entry' >"$work/entry"
 ssh-keygen -Y sign -U -f "$work/wkey-cert.pub" -n "$room_ns" "$work/entry" >/dev/null 2>&1
-check "ssh-keygen -Y verify accepts it against writer@* cert-authority,namespaces=ledger-<room>" ssh-keygen -Y verify -f "$work/allowed-reg" -I 'writer@alice-laptop' -n "$room_ns" -s "$work/entry.sig" <"$work/entry"
-check "and not in another register's namespace" not ssh-keygen -Y verify -f "$work/allowed-reg" -I 'writer@alice-laptop' -n ledger-room2 -s "$work/entry.sig" <"$work/entry"
+check "ssh-keygen -Y verify accepts it against writer@* cert-authority,namespaces=ledger" ssh-keygen -Y verify -f "$work/allowed-reg" -I 'writer@alice-laptop' -n "$room_ns" -s "$work/entry.sig" <"$work/entry"
+check "and not in another kind's namespace" not ssh-keygen -Y verify -f "$work/allowed-reg" -I 'writer@alice-laptop' -n relay-test -s "$work/entry.sig" <"$work/entry"
 check "and not under the relay line (relay and register certificates never stand in for each other)" not ssh-keygen -Y verify -f "$work/allowed" -I 'writer@alice-laptop' -n "$room_ns" -s "$work/entry.sig" <"$work/entry"
 rc=0; err="$(sign sign --role register --principals "relay@$guid" --key-id x <"$work/key.pub" 2>&1 >/dev/null)" || rc=$?
 check "a relay principal under the register role: exit 13" [ "$rc" = 13 ]
