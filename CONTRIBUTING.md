@@ -373,11 +373,13 @@ it; no CLA, no separate signing.
 
 You should not have to think about it:
 
-- `task repo:setup` activates the tracked [`.gitconfig`](.gitconfig) for
-  your clone (`git config --local include.path ../.gitconfig`). That turns
-  on the git hook `.githooks/prepare-commit-msg`, which adds the trailer to
-  every commit automatically, and defines `git cs` as `commit -s`. Only
-  this clone's `.git/config` is touched, never your global git config.
+- `task repo:setup` sets `core.hooksPath` to `.githooks` and the `git cs`
+  alias in your clone's git config (the values the tracked
+  [`.gitconfig`](.gitconfig) documents). That turns on the git hook
+  `.githooks/prepare-commit-msg`, which adds the trailer to every commit
+  automatically, and defines `git cs` as `commit -s`. It also removes the
+  `include.path ../.gitconfig` that earlier versions wrote. Only this
+  clone's git config is touched, never your global git config.
 - VS Code's Source Control view signs off too
   ([`.vscode/settings.json`](.vscode/settings.json) sets `git.alwaysSignOff`).
 - Edits made in the GitHub web editor are signed off by the repository
