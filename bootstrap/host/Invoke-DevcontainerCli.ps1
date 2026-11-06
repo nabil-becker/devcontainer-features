@@ -63,6 +63,12 @@
     Not granted on windows-wslc (wslc run has no such options): a warning, and the start goes on
     without FUSE.
 
+.PARAMETER Audio
+    DCF_HOST_AUDIO: wslg asks for the workstation's microphone through WSLg's PulseAudio socket (the
+    audio Feature): on windows-docker and windows-wsl-docker `up` binds the default WSL distro's
+    /mnt/wslg to /mnt/wsl/wslg and mounts it at /mnt/wslg. Empty = $env:DCF_HOST_AUDIO, else none
+    (nothing runs). Never fails a start: a host that cannot carry it is a warning.
+
 .PARAMETER NodeVersion
     Portable Node.js version (Windows). Empty = $env:DEVCONTAINER_NODE_VERSION
     or the module default.
@@ -84,6 +90,7 @@ param(
     [string]$SshAgentMode,
     [string]$CloudFolder,
     [string]$Fuse,
+    [string]$Audio,
     [string]$NodeVersion,
     [string]$CliVersion,
     [switch]$Force
@@ -98,6 +105,7 @@ if ($HostMounts) { $env:HOST_MOUNTS = $HostMounts }
 if ($SshAgentMode) { $env:SSH_AGENT_MODE = $SshAgentMode }
 if ($CloudFolder) { $env:DCF_HOST_CLOUD_FOLDER = $CloudFolder }
 if ($Fuse) { $env:DCF_HOST_FUSE = $Fuse }
+if ($Audio) { $env:DCF_HOST_AUDIO = $Audio }
 
 $params = @{
     Subcommand      = $Subcommand

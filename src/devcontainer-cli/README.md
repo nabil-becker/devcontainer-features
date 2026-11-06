@@ -23,7 +23,7 @@ Installs @devcontainers/cli as /usr/local/bin/devcontainer, backed by a private,
 
 ```text
   host: task devcontainer:* (launcher; bootstrap vendored into the repo)
-     |  adds mounts: ~/.git-dirs, ssh agent socket, cloud folder
+     |  adds mounts: ~/.git-dirs, ssh agent socket, cloud folder, WSLg audio (opt-in)
      v
   devcontainer CLI  --needs--> Docker daemon
   (private Node in /opt/devcontainer-cli,    (docker-in-docker, or
@@ -582,6 +582,46 @@ the host type needs; ADR 0024 decides it, `docs/proposals/host-profile.md` is th
   repository's own line only; there `${localEnv:DCF_HOST_HOME}` is empty and the line must use `${localEnv:USERPROFILE}`
   (Windows host) or `${localEnv:HOME}`.
 
+## Audio (opt-in)
+
+`DCF_HOST_AUDIO=wslg` (a Task var, `.devcontainer/.env` or the environment; PowerShell `-Audio`) gives the
+container the workstation's microphone through WSLg's PulseAudio socket, for the `audio` Feature (which installs the
+recorders and fixes `PULSE_SERVER=unix:/mnt/wslg/PulseServer`). Since 1.21.0; backlog item `audio-feature`.
+
+- **Why a bind.** WSLg puts its socket at `/mnt/wslg/PulseServer` in the user's WSL distros, but the container
+  engine's own distro (Rancher Desktop's, proven on 2026-11-06) does not see `/mnt/wslg`: a container mounting it gets
+  an empty folder. Every WSL2 distro shares `/mnt/wsl`, so the launcher binds the default distro's `/mnt/wslg` there.
+- **What `up` does.** Before `devcontainer up`, on `windows-docker` and `windows-wsl-docker` (the PowerShell launcher;
+  the bash twin from inside a distro: `windows-wsl-docker`, through WSL interop): one `wsl.exe -u root -e sh -c
+  '<one line>'` in the default distro, which skips when `/mnt/wsl/wslg` is already a mount point holding the socket
+  (`mountpoint -q`), says `nopulse` when that distro has no `/mnt/wslg/PulseServer`, and otherwise runs `mkdir -p
+  /mnt/wsl/wslg && mount --bind /mnt/wslg /mnt/wsl/wslg`. Then it adds `--mount
+  type=bind,source=/mnt/wsl/wslg,target=/mnt/wslg` and sets `DCF_HOST_AUDIO=wslg`, which the repository's
+  `containerEnv` passes on (`"DCF_HOST_AUDIO": "${localEnv:DCF_HOST_AUDIO}"`; the bootstrap's template has it).
+  `PULSE_SERVER` is the audio Feature's own `containerEnv`, because `devcontainer up` has no option for container
+  environment variables.
+- **Root in the default distro, and not for ever.** The bind is made as root in the user's default WSL distro and
+  lives until WSL restarts (`wsl --shutdown`, a reboot). Every `up` checks it and redoes it, so start through
+  `task devcontainer:up`: after a WSL restart, a start that bypasses the launcher (VS Code's Reopen in Container, a
+  plain `docker start`) finds no `/mnt/wsl/wslg` and the engine may refuse to start the container until the next
+  `task devcontainer:up`.
+- **Never fails a start.** Unset or `none` (the default) runs nothing, adds nothing and passes `none`. `wslg` where
+  it cannot be carried passes `none` with one warning naming why: another host type (`linux`, `macos`), `windows-wslc`
+  (not verified: whether `wslc run` can bind a path of the WSL VM is unknown), `HOST_MOUNTS=false`, no `wsl.exe`, a
+  default distro without `/mnt/wslg/PulseServer` (WSLg off, WSL1, or the engine's own distro set as the default), or
+  a failed bind. An unknown value warns the same way. A repository that mounts `/mnt/wslg` itself keeps its line, as
+  with the other host mounts.
+- **Rebuild after turning it on.** A mount belongs to the container: `task devcontainer:rebuild`.
+- **See it.** `task devcontainer:host` prints `DCF_HOST_AUDIO : wslg asked for: ...` or why not, and runs nothing.
+  Inside, `task audio:check` (the audio Feature) says what is missing.
+- **Privacy.** With `wslg`, every process in the container can open the microphone while it runs, as a Windows
+  desktop app can. Claude Code's `/voice` sends the recorded audio to Anthropic for transcription. Whether dictated
+  audio may go to a model provider is the consuming repository's ruling, not the launcher's: the setting is per
+  machine and off by default on purpose.
+- **Not verified on a real host by the tests** (they mock `wsl.exe`): the bind through `wsl.exe` from PowerShell and
+  from a distro's interop, Docker Desktop's engine seeing `/mnt/wsl/wslg` (only Rancher Desktop was proven by hand),
+  and the engine's behaviour when the bind source is gone after a WSL restart.
+
 ## Anti-patterns
 
 ### Don't switch off the build lock on an engine without BuildKit build contexts
@@ -623,6 +663,12 @@ so the same script serves the container and the host-side tasks.
 
 ## Changes
 
+### [1.21.0] - 2026-11-06
+
+#### Added
+
+- **Audio on request (both launchers)**: `DCF_HOST_AUDIO=wslg` in a Windows WSL2 workstation's `.devcontainer/.env` gives the container its microphone through WSLg's PulseAudio socket, for the new `audio` Feature (Claude Code's `/voice`). Before `up`, on the `windows-docker` and `windows-wsl-docker` host types, the launcher binds the default WSL distro's `/mnt/wslg` to `/mnt/wsl/wslg` as root (skipped when already there; a WSL restart drops it and the next `up` redoes it), mounts it at `/mnt/wslg`, and sets `DCF_HOST_AUDIO=wslg` for `containerEnv`; anywhere else, or when that distro has no WSLg socket, it warns once and starts the container without audio (`DCF_HOST_AUDIO=none`). `task devcontainer:host` says what it would do. Unset or `none` (the default) runs nothing and adds nothing: nothing changes unless you opt in. It gives every process in the container the microphone; whether dictated audio may go to a model provider is your repository's ruling. To use it: re-vendor the bootstrap, add `"DCF_HOST_AUDIO": "${localEnv:DCF_HOST_AUDIO}"` to `containerEnv` (the bootstrap's template has it), add the `audio` Feature once it is released, set the variable and run `task devcontainer:rebuild`.
+
 ### [1.20.0] - 2026-11-05
 
 #### Added
@@ -639,12 +685,6 @@ so the same script serves the container and the host-side tasks.
 #### Deprecated
 
 - `task devcontainer:ssh-key-import` (the key into ssh-agent's key volume) still works and says it is deprecated; it goes with ssh-agent 2.0. Use `devcontainer:openbao-ssh-import`.
-
-### [1.18.3] - 2026-11-03
-
-#### Changed
-
-- The README now has a "How it fits" section with a small diagram of how the Feature sits in a devcontainer, a table of the data it keeps and the storage tier of each, and "Used in" links to the reference architectures that use it. Documentation only: the Feature itself is unchanged. Nothing to do.
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/devcontainer-cli/CHANGELOG.md).
 

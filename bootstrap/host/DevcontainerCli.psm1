@@ -32,7 +32,7 @@
     (loaded by Task's dotenv: or by bootstrap.ps1) can drive it:
       DEVCONTAINER_DOCKER_PATH, DEVCONTAINER_NODE_VERSION,
       DEVCONTAINER_CLI_VERSION, HOST_TYPE, HOST_TYPE_PRIORITY, HOST_MOUNTS, SSH_AGENT_MODE,
-      DCF_HOST_CLOUD_FOLDER, DCF_HOST_FUSE, DEVCONTAINER_ENGINE_WAIT. Explicit parameters win over the environment.
+      DCF_HOST_CLOUD_FOLDER, DCF_HOST_FUSE, DCF_HOST_AUDIO, DEVCONTAINER_ENGINE_WAIT. Explicit parameters win over the environment.
 
     DCF_HOST_MACHINE is always the launcher's own value: the workstation's machine name
     ($env:COMPUTERNAME on Windows, else the host name before its first dot), cut to letters, digits,
@@ -48,6 +48,11 @@
     the lines (Get-FuseSlotMissing). Not granted on windows-wslc (or an engine named wslc): wslc
     run has no --device, --cap-add or --security-opt option and would refuse the start, so `up`
     warns once and starts the container without FUSE (Get-FuseRefusal, Write-FuseRefusedWarning).
+
+    Audio on request (the audio Feature): DCF_HOST_AUDIO=wslg on windows-docker or windows-wsl-docker
+    makes `up` bind the default WSL distro's /mnt/wslg to /mnt/wsl/wslg (as root, skipped when already
+    there) and mount that at /mnt/wslg, and sets DCF_HOST_AUDIO=wslg; otherwise none, with one warning
+    when asked for. Unset or none runs nothing (Initialize-HostAudio).
 
     Host mounts: `up` (so `rebuild`) adds the mounts the host type needs with
     `--mount type=bind,source=...,target=...` (Get-HostMount; slice 3: the
@@ -259,7 +264,7 @@ function Resolve-DockerPath {
 $script:HostTypeIds = @('windows-docker', 'windows-wsl-docker', 'windows-wslc', 'linux', 'macos')
 $script:HostProfileCache = @{}
 
-function Clear-HostProfileCache { <# .SYNOPSIS Forgets the resolved host profile (tests; the cache lives one launcher run). #> $script:HostProfileCache = @{} }
+function Clear-HostProfileCache { <# .SYNOPSIS Forgets the resolved host profile and the audio decision (tests; both live one launcher run). #> $script:HostProfileCache = @{}; $script:HostAudio = $null }
 
 # --- evidence, one small function each so a test can replace it -------------
 function Get-HostPlatform {
@@ -498,6 +503,8 @@ function Resolve-HostProfile {
         Home = $hostHome; SshAgent = $agent.Mode; SshSocket = $agent.Socket
         CloudFolder = (Get-SettingOrEnv '' 'DCF_HOST_CLOUD_FOLDER')
         Fuse = ($fuseAsked -and -not $fuseRefusal); FuseRequested = $fuseAsked; FuseRefusal = $fuseRefusal
+        # wslg only after Initialize-HostAudio (up) bound the socket; `host` and the other subcommands say none.
+        Audio = $(if ($script:HostAudio) { $script:HostAudio } else { 'none' }); AudioRequest = (Get-AudioRequest)
     }
 }
 
@@ -574,6 +581,93 @@ function Write-FuseRefusedWarning {
     }
 }
 
+# Audio on request (the audio Feature; backlog audio-feature): DCF_HOST_AUDIO=wslg asks for the
+# workstation's microphone through WSLg's PulseAudio socket. The container engine's WSL distro does
+# not see /mnt/wslg, but every WSL2 distro shares /mnt/wsl, so before `up` the launcher binds the
+# default distro's /mnt/wslg to /mnt/wsl/wslg (as root, once: skipped when already there; a WSL
+# restart drops it and the next `up` redoes it) and mounts that at /mnt/wslg, where the Feature's
+# PULSE_SERVER points. DCF_HOST_AUDIO then says what the launcher did: wslg or none. Unset or none
+# asks for nothing and runs nothing. Never fails a start: anything missing is one warning and none.
+# The bash twin is resolve_audio and friends in devcontainer-cli.sh.
+$script:AudioSource = '/mnt/wsl/wslg'
+$script:AudioTarget = '/mnt/wslg'
+# Proven on Rancher Desktop (windows-docker); windows-wsl-docker's engine runs in a distro, which shares /mnt/wsl.
+$script:AudioHostTypes = @('windows-docker', 'windows-wsl-docker')
+# One line of sh for `wsl.exe -u root -e sh -c`: no double quotes and no newline to survive the Windows command line.
+$script:AudioBindScript = 't=/mnt/wsl/wslg; if mountpoint -q $t && [ -S $t/PulseServer ]; then echo present; elif [ ! -S /mnt/wslg/PulseServer ]; then echo nopulse; else mkdir -p $t && mount --bind /mnt/wslg $t && [ -S $t/PulseServer ] && echo bound; fi'
+# What Initialize-HostAudio decided in this launcher run (wslg or none); $null until it ran.
+$script:HostAudio = $null
+
+function Get-AudioRequest {
+    <# .SYNOPSIS What DCF_HOST_AUDIO asks for: 'wslg', 'none' (unset, empty or none) or 'unknown' (anything else). #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param()
+    $v = "$env:DCF_HOST_AUDIO".Trim().ToLowerInvariant()
+    if ($v -in '', 'none') { return 'none' }
+    if ($v -eq 'wslg') { return 'wslg' }
+    return 'unknown'
+}
+
+function Get-AudioRefusal {
+    <# .SYNOPSIS Why this host cannot carry WSLg's socket, or $null when it can: a host type not backed by WSL2 as proven, or HOST_MOUNTS=false. #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param([Parameter(Mandatory)][string]$Type)
+    if (-not (Test-HostMountsEnabled)) { return 'HOST_MOUNTS=false turns the launcher''s mounts off, the audio mount with them' }
+    if ($Type -eq 'windows-wslc') { return 'not verified on windows-wslc (whether wslc run can bind a path of the WSL VM is unknown), so nothing is mounted there' }
+    if ($Type -notin $script:AudioHostTypes) { return "$Type is not a Windows host type backed by WSL2 ($($script:AudioHostTypes -join ', ')); WSLg's socket is a WSL path" }
+    return $null
+}
+
+function Invoke-WslgBind {
+    <# .SYNOPSIS Runs the bind in the default WSL distro as root: 'present', 'bound', 'nopulse', 'nowsl' (no wsl.exe), or 'error: <output>'. A test replaces this. #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param()
+    if (-not (Get-Command wsl.exe -ErrorAction SilentlyContinue)) { return 'nowsl' }
+    $out = @(& wsl.exe -u root -e sh -c $script:AudioBindScript 2>&1 | ForEach-Object { "$_".Trim() } | Where-Object { $_ })
+    $last = if ($out.Count) { $out[-1] } else { '' }
+    if ($LASTEXITCODE -eq 0 -and $last -in 'present', 'bound', 'nopulse') { return $last }
+    return "error: exit $LASTEXITCODE$(if ($out.Count) { ': ' + ($out -join ' ') })"
+}
+
+function Initialize-HostAudio {
+    <#
+    .SYNOPSIS
+        `up`: when DCF_HOST_AUDIO=wslg and the host can carry it, makes WSLg's socket visible at
+        /mnt/wsl/wslg (Invoke-WslgBind, once per launcher run) and returns 'wslg'; otherwise 'none',
+        with one warning when audio was asked for. Unset or none: returns 'none' and runs nothing.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param()
+    if ($script:HostAudio) { return $script:HostAudio }
+    $script:HostAudio = 'none'
+    $ask = Get-AudioRequest
+    if ($ask -eq 'none') { return 'none' }
+    $noAudio = 'The container starts without audio; DCF_HOST_AUDIO=none in .devcontainer/.env on this machine drops this warning.'
+    if ($ask -eq 'unknown') {
+        Write-Warning "DCF_HOST_AUDIO='$env:DCF_HOST_AUDIO' is not known (none, wslg). $noAudio"
+        return 'none'
+    }
+    $type = (Get-CachedHostType).Type
+    $refusal = Get-AudioRefusal -Type $type
+    if ($refusal) {
+        Write-Warning "DCF_HOST_AUDIO=wslg, but no audio on this host ($type): $refusal. $noAudio"
+        return 'none'
+    }
+    $r = Invoke-WslgBind
+    switch ($r) {
+        'present' { Write-Host "audio: WSLg's PulseAudio socket is already shared at $($script:AudioSource)"; $script:HostAudio = 'wslg' }
+        'bound' { Write-Host "audio: bound the default WSL distro's /mnt/wslg to $($script:AudioSource) (as root; a WSL restart drops it and the next up redoes it)"; $script:HostAudio = 'wslg' }
+        'nopulse' { Write-Warning "DCF_HOST_AUDIO=wslg, but the default WSL distro has no /mnt/wslg/PulseServer (WSLg off or missing, WSL1, or the engine's own distro set as the default). $noAudio" }
+        'nowsl' { Write-Warning "DCF_HOST_AUDIO=wslg, but wsl.exe is not on PATH, so the default distro's WSLg socket cannot be shared. $noAudio" }
+        default { Write-Warning "DCF_HOST_AUDIO=wslg, but the bind in the default WSL distro failed ($r). $noAudio" }
+    }
+    return $script:HostAudio
+}
+
 # The machine name (docs/proposals/session-names.md, slice 1; the bash twin's sanitise_machine and
 # resolve_machine): DCF_HOST_MACHINE is the workstation's own name, $env:COMPUTERNAME on Windows,
 # else the host name up to the first dot, cut to letters, digits, dot, underscore and hyphen (anything
@@ -621,7 +715,7 @@ function Write-MachineSlotWarning {
 }
 
 function Initialize-HostEnvironment {
-    <# .SYNOPSIS Sets DCF_HOST_TYPE, DCF_HOST_HOME, DCF_HOST_SSH_AGENT, DCF_HOST_CLOUD_FOLDER and the FUSE grant (DCF_HOST_FUSE and DCF_HOST_FUSE_*) in this process, so the devcontainer CLI (and ${localEnv:...} in a repo's devcontainer.json) sees them. Returns the profile. #>
+    <# .SYNOPSIS Sets DCF_HOST_TYPE, DCF_HOST_HOME, DCF_HOST_SSH_AGENT, DCF_HOST_CLOUD_FOLDER, DCF_HOST_AUDIO and the FUSE grant (DCF_HOST_FUSE and DCF_HOST_FUSE_*) in this process, so the devcontainer CLI (and ${localEnv:...} in a repo's devcontainer.json) sees them. Returns the profile. #>
     [CmdletBinding()]
     param([string]$DockerPath)
     $p = Resolve-HostProfile -DockerPath $DockerPath
@@ -637,6 +731,8 @@ function Initialize-HostEnvironment {
     # The FUSE grant from the fixed list when asked for; removed otherwise, so a value left in the
     # user's environment or .env never reaches runArgs.
     [Environment]::SetEnvironmentVariable('DCF_HOST_FUSE', $(if ($p.Fuse) { '1' } else { '' }))
+    # What the launcher did for audio (wslg or none), for containerEnv; never the user's own value.
+    [Environment]::SetEnvironmentVariable('DCF_HOST_AUDIO', $p.Audio)
     $grant = Get-FuseRunArgument -Requested $p.Fuse
     foreach ($name in $script:FuseGrant.Keys) {
         # Remove-Item, not SetEnvironmentVariable(name, $null): PowerShell passes $null to a string
@@ -662,10 +758,10 @@ function Get-HostMount {
         The host mounts for a host type: objects with Name, Source, Target and Type.
         git-dirs is empty when the home is unknown; ssh-agent is present only with
         -SshAgent socket and a -SshSocket source; cloud-folder only with a -CloudFolder source,
-        always at /mnt/cloud-folder-host.
+        always at /mnt/cloud-folder-host; audio (/mnt/wsl/wslg at /mnt/wslg) only with -Audio wslg.
     #>
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$Type, [string]$HostHome, [string]$SshAgent = 'none', [string]$SshSocket, [string]$CloudFolder)
+    param([Parameter(Mandatory)][string]$Type, [string]$HostHome, [string]$SshAgent = 'none', [string]$SshSocket, [string]$CloudFolder, [string]$Audio = 'none')
     $mounts = @()
     if ($HostHome) {
         switch ($Type) {
@@ -681,6 +777,9 @@ function Get-HostMount {
     }
     if ($CloudFolder) {
         $mounts += [pscustomobject]@{ Name = 'cloud-folder'; Source = $CloudFolder; Target = $script:CloudFolderTarget; Type = 'bind' }
+    }
+    if ($Audio -eq 'wslg') {
+        $mounts += [pscustomobject]@{ Name = 'audio'; Source = $script:AudioSource; Target = $script:AudioTarget; Type = 'bind' }
     }
     return $mounts
 }
@@ -780,7 +879,7 @@ function Resolve-HostMount {
     $p = Resolve-HostProfile -DockerPath $DockerPath
     $configured = @(Get-ConfiguredMountTarget -WorkspaceFolder $WorkspaceFolder -Arguments $Arguments)
     $add = @(); $skip = @()
-    foreach ($m in @(Get-HostMount -Type $p.Type -HostHome $p.Home -SshAgent $p.SshAgent -SshSocket $p.SshSocket -CloudFolder $p.CloudFolder)) {
+    foreach ($m in @(Get-HostMount -Type $p.Type -HostHome $p.Home -SshAgent $p.SshAgent -SshSocket $p.SshSocket -CloudFolder $p.CloudFolder -Audio $p.Audio)) {
         if ($configured -contains $m.Target) { $skip += $m } else { $add += $m }
     }
     return [pscustomobject]@{ Enabled = $true; Add = $add; Skip = $skip }
@@ -791,7 +890,8 @@ function Initialize-HostMountSource {
     [CmdletBinding()]
     param([Parameter(Mandatory)]$Mount, [Parameter(Mandatory)][string]$Type)
     # A socket is not ours to create, nor is the user's cloud folder (an empty one would hide a wrong path).
-    if ($Mount.Name -in 'ssh-agent', 'cloud-folder') { return }
+    # Nor the audio source, a path of the WSL VM that Initialize-HostAudio made.
+    if ($Mount.Name -in 'ssh-agent', 'cloud-folder', 'audio') { return }
     # windows-wsl-docker driven from Windows has a distro path (/home/...) that Windows cannot create.
     if ($Type -eq 'windows-wsl-docker' -and (Get-HostPlatform) -eq 'windows') { return }
     try { if (-not (Test-Path -LiteralPath $Mount.Source)) { [void](New-Item -ItemType Directory -Path $Mount.Source -Force) } }
@@ -861,6 +961,15 @@ function Show-HostProfile {
     }
     elseif ($p.FuseRequested) { Write-Host "DCF_HOST_FUSE      : 1 asked for, not granted on $($p.Type): $($p.FuseRefusal)" }
     else { Write-Host 'DCF_HOST_FUSE      : (unset: no FUSE grant)' }
+    switch ($p.AudioRequest) {
+        'none' { Write-Host 'DCF_HOST_AUDIO     : (unset: no audio)' }
+        'unknown' { Write-Host "DCF_HOST_AUDIO     : '$env:DCF_HOST_AUDIO' is not known (none, wslg): no audio" }
+        default {
+            $refusal = Get-AudioRefusal -Type $p.Type
+            if ($refusal) { Write-Host "DCF_HOST_AUDIO     : wslg asked for, not on $($p.Type): $refusal" }
+            else { Write-Host "DCF_HOST_AUDIO     : wslg asked for: up binds the default WSL distro's /mnt/wslg to $($script:AudioSource) and mounts it at $($script:AudioTarget) (none when that distro has no WSLg socket)" }
+        }
+    }
     $r = Resolve-HostMount -WorkspaceFolder $WorkspaceFolder -Arguments $Arguments -DockerPath $DockerPath
     if (-not $r.Enabled) { Write-Host 'host mounts        : off (HOST_MOUNTS=false)'; return }
     if (-not ($r.Add.Count + $r.Skip.Count)) { Write-Host 'host mounts        : none'; return }
@@ -1405,6 +1514,8 @@ function Get-DevcontainerCliInvocation {
     # Host mounts go to `up` only (and so to rebuild): `build` mounts nothing and `exec`
     # runs in a container that exists. Initialize-HostEnvironment below sets DCF_HOST_*.
     if ($Subcommand -eq 'up') {
+        # Audio first: its mount is added only once the bind in the default distro is there.
+        [void](Initialize-HostAudio)
         $cliArgs += @(Get-HostMountArgument -WorkspaceFolder $WorkspaceFolder -Arguments $Arguments -DockerPath $DockerPath)
         Write-FuseRefusedWarning -DockerPath $DockerPath
         Write-FuseSlotWarning -WorkspaceFolder $WorkspaceFolder -Arguments $Arguments -DockerPath $DockerPath
@@ -2740,4 +2851,4 @@ function Invoke-DevcontainerCli {
     exit $rc
 }
 
-Export-ModuleMember -Function Get-HostTypeId, Get-DefaultHostTypePriority, Resolve-HostType, Resolve-SshAgent, Resolve-HostProfile, Initialize-HostEnvironment, Test-FuseRequested, Get-FuseRefusal, Get-FuseRunArgument, Get-FuseSlotMissing, Write-FuseSlotWarning, Write-FuseRefusedWarning, ConvertTo-MachineName, Get-HostMachineName, Test-MachineSlotMissing, Write-MachineSlotWarning, Get-DevcontainerConfigFile, Get-HostMount, Test-CloudFolderMount, ConvertTo-MountArgument, ConvertTo-JsonWithoutComment, Get-ConfiguredMountTarget, Test-HostMountsEnabled, Resolve-HostMount, Initialize-HostMountSource, Get-HostMountArgument, Show-HostProfile, Import-SshKey, Import-OpenBaoSshKey, Clear-HostProfileCache, Get-SettingOrEnv, ConvertFrom-TaskCliArgString, Get-PortableNodeDir, Invoke-DcfDownload, Get-DevcontainersCliEntrypoint, Remove-DevcontainersCli, Resolve-DockerPath, Get-WorkspaceFolderVariant, Get-RunningDevcontainerId, Stop-Devcontainer, Test-BuildSubcommand, Get-BuildLockStateDir, Get-BuildLockLabel, Get-BuildLockWaitMessage, Get-EngineBuildxVersion, Get-BuildLockSkipReason, Enter-DevcontainerBuildLock, Exit-DevcontainerBuildLock, Test-EngineSubcommand, Get-ContainerEngineCheck, Test-ContainerEngineResponding, Get-ContainerEngineError, Get-ContainerEngineStartHint, Wait-ContainerEngine, Write-ContainerEngineDiagnosis, Get-DevcontainerCliInvocation, Invoke-DevcontainerCliProcess, Get-LauncherCacheRoot, Get-CloudFolderRcloneVersion, Get-WorkstationRclone, Open-Browser, Invoke-CloudFolderRelayRequest, Invoke-CloudFolderLoginRelay, Invoke-CloudFolderLogin, Get-OpenBaoKeyFileDir, Get-OpenBaoRepoName, Get-OpenBaoKeyFilePath, Find-OpenBaoKeyFile, Protect-OpenBaoKeyFileBlob, Unprotect-OpenBaoKeyFileBlob, Save-OpenBaoKeyFile, Read-OpenBaoKeyFile, ConvertTo-OpenBaoKeyFileJson, Get-OpenBaoAgentJobVariable, Get-DevcontainerRemoteUser, Invoke-OpenBaoSetup, ConvertFrom-OpenBaoSetupOutput, Get-OpenBaoUnlockStatus, Invoke-OpenBaoUnlock, Invoke-OpenBaoKeyFileMake, Export-OpenBaoKeyFile, Import-OpenBaoKeyFile, Remove-OpenBaoKeyFile, Invoke-OpenBaoKeyFileTask, Invoke-DevcontainerCli
+Export-ModuleMember -Function Get-HostTypeId, Get-DefaultHostTypePriority, Resolve-HostType, Resolve-SshAgent, Resolve-HostProfile, Initialize-HostEnvironment, Test-FuseRequested, Get-FuseRefusal, Get-FuseRunArgument, Get-FuseSlotMissing, Write-FuseSlotWarning, Write-FuseRefusedWarning, Get-AudioRequest, Get-AudioRefusal, Invoke-WslgBind, Initialize-HostAudio, ConvertTo-MachineName, Get-HostMachineName, Test-MachineSlotMissing, Write-MachineSlotWarning, Get-DevcontainerConfigFile, Get-HostMount, Test-CloudFolderMount, ConvertTo-MountArgument, ConvertTo-JsonWithoutComment, Get-ConfiguredMountTarget, Test-HostMountsEnabled, Resolve-HostMount, Initialize-HostMountSource, Get-HostMountArgument, Show-HostProfile, Import-SshKey, Import-OpenBaoSshKey, Clear-HostProfileCache, Get-SettingOrEnv, ConvertFrom-TaskCliArgString, Get-PortableNodeDir, Invoke-DcfDownload, Get-DevcontainersCliEntrypoint, Remove-DevcontainersCli, Resolve-DockerPath, Get-WorkspaceFolderVariant, Get-RunningDevcontainerId, Stop-Devcontainer, Test-BuildSubcommand, Get-BuildLockStateDir, Get-BuildLockLabel, Get-BuildLockWaitMessage, Get-EngineBuildxVersion, Get-BuildLockSkipReason, Enter-DevcontainerBuildLock, Exit-DevcontainerBuildLock, Test-EngineSubcommand, Get-ContainerEngineCheck, Test-ContainerEngineResponding, Get-ContainerEngineError, Get-ContainerEngineStartHint, Wait-ContainerEngine, Write-ContainerEngineDiagnosis, Get-DevcontainerCliInvocation, Invoke-DevcontainerCliProcess, Get-LauncherCacheRoot, Get-CloudFolderRcloneVersion, Get-WorkstationRclone, Open-Browser, Invoke-CloudFolderRelayRequest, Invoke-CloudFolderLoginRelay, Invoke-CloudFolderLogin, Get-OpenBaoKeyFileDir, Get-OpenBaoRepoName, Get-OpenBaoKeyFilePath, Find-OpenBaoKeyFile, Protect-OpenBaoKeyFileBlob, Unprotect-OpenBaoKeyFileBlob, Save-OpenBaoKeyFile, Read-OpenBaoKeyFile, ConvertTo-OpenBaoKeyFileJson, Get-OpenBaoAgentJobVariable, Get-DevcontainerRemoteUser, Invoke-OpenBaoSetup, ConvertFrom-OpenBaoSetupOutput, Get-OpenBaoUnlockStatus, Invoke-OpenBaoUnlock, Invoke-OpenBaoKeyFileMake, Export-OpenBaoKeyFile, Import-OpenBaoKeyFile, Remove-OpenBaoKeyFile, Invoke-OpenBaoKeyFileTask, Invoke-DevcontainerCli
