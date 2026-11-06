@@ -1,564 +1,495 @@
-# Proposal: agents run as their own Linux users
+# Proposal: least privilege for agents, ending in one agent Linux user
 
-Status: proposed 2026-11-06. Awaits the architecture review and the Operator's ruling; build not
-started. Backlog: `agent-linux-user`, moved to Now by `amend-agent-linux-user` (2026-11-06);
-`key-file-rotate` waits on it.
+Status: proposed 2026-11-06, revised the same day (below). Awaits the Operator's ruling; build not
+started. Backlog: `agent-linux-user`, moved to Now by `amend-agent-linux-user` (2026-11-06), and
+`least-privilege-first`; `key-file-rotate` waits on it. Basis:
+[agent-least-privilege-inventory.md](agent-least-privilege-inventory.md) (the inventory).
 
-Who this serves: the Operator, through the host, who turned the OpenBao key file on in this devhost
-before agents had their own user (ADR-0056 decisions 8 and 9) and rotates it once they do; the
-maintainers of the office and of DSNP, who adopt the `agents`, `claude-code`, `git`, `gh`,
-`openbao` and `cloud-folder` Features and today keep secrets in a container where every agent can
-read them; and the engineers whose agents run in those devcontainers, who must not lose a working
-session, a commit or a file to a permission error.
+## Revision 2026-11-06
 
-How to read it: section 1 is the ask; section 2 what was checked in this devhost; section 3 the
-threat model, including what a separate user does not fix; section 4 the picture; sections 5 to 10
-the design, each with its options and a recommendation; section 11 what a consumer changes and
-what breaks; section 12 the slices; section 13 the unknowns, each as a test; section 14 the
-decisions for the Operator; section 15 what was found for the repository. The architecture review
-goes at the end, written by the host after this draft.
+**What changed.** The first draft gave every identity in the agent list and every back its own
+Linux user, with a shared group, name-derived uids, a hand-over to back users through `sudoers` and
+an `agents boundary` check. On 2026-11-06 the Operator ruled **least privilege first, MVP**:
+configure what already exists (each agent CLI's own OS sandbox, server-side GitHub rules, narrow
+tokens, OpenBao policies, a separate Linux user without `sudo` or `docker`) before building
+anything. This revision re-scopes the proposal to that MVP, in the inventory's delivery order:
+eight steps of configuration, of which only the last but two (one `agent` user) changes how an
+agent starts, and that one in its smallest form. Everything else of the first draft is kept as one
+line each in section 12 ("Later"). Custom brokers (draft #187, `docs/proposals/brokers.md` on
+`docs/broker-pattern/1`) are on hold and not part of this proposal; they are named only as the
+later route for a residual with no native control (section 3.3).
+
+**The architecture review below was of the earlier design** and is left as it was written. Its
+sixteen findings against this revision (the inventory's section 6.1 mapping, checked; where this
+revision differs from the inventory it says why):
+
+| Finding | Now | Why |
+|---|---|---|
+| 1 git dir `config` not protected by its owner | residual, maybe closed in the container | ownership is no longer the control; the sandbox's `denyWrite` is by path (step 3) if test T3 passes; the workstation's own git stays open (3.3) |
+| 2 every adapter verb as the agent's user | **closed by design** (the inventory said n/a) | step 6 does make one agent user, so it applies: `agents` calls every adapter verb through the switch, not only `start` (6.6) |
+| 3 backs' `sudoers` rule too wide | n/a | no back users, no `sudoers` rule; the backs run as the user that runs the hooks |
+| 4 cost report reads one user's transcripts | n/a | the agent user holds the whole Claude state volume (6.4), so all transcripts are in one place |
+| 5 Claude memory path moves (ADR-0049) | n/a | the volume is handed over whole; no path moves |
+| 6 Operator's long-lived processes miss the group | n/a | no new group: the agent's primary group is the remote user's own (6.5) |
+| 7 ADR-0055's unix-socket listener | closed (step 5, effective with step 6) | an OpenBao listener setting; useful once the agent is not the remote user |
+| 8 boundary check knows other Features | n/a | no `agents boundary` in the MVP; tests T1 and T9 check the paths (Later: a protected-paths contract) |
+| 9 per-user Claude login in the agents Feature | n/a | one agent user keeps the existing login (6.4) |
+| 10 token route rests on a long-lived daemon | n/a (the inventory said residual) | no `setup-token` route: the agent user keeps the existing login, so nothing is rotated into a running daemon |
+| 11 `agents boundary` and the linter contract | n/a | not built |
+| 12 shared names without an owner (`dcf-work`) | n/a | no shared group |
+| 13 plain-`claude` warning has no mechanism | closed | a `SessionStart` hook in the managed settings (step 6, claude-code) |
+| 14 tokens at rest outside ADR-0048 decision 1 | residual, named interim | the host's fine-grained GitHub token (step 1) until `openbao-agent-login`; decision 3 |
+| 15 openbao version disagreement | n/a | the share tasks' refusal by user is not in the MVP (Later) |
+| 16 cloud-folder `sync` and `host` modes | residual | step 7 sets access for `mount`; `sync` and `host` stay as they are (T12) |
+
+## Who this serves
+
+The Operator, through the host, who turned the OpenBao key file on before agents had their own user
+(ADR-0056 decisions 8 and 9) and rotates it once they do; the maintainers of the office and of DSNP,
+who adopt the `claude-code`, `gh`, `git`, `openbao`, `agents` and `cloud-folder` Features and today
+keep secrets in a container where every agent can read them; and the engineers whose agents run in
+those devcontainers, who must not lose a working session, a commit or a file to a permission error.
+
+How to read it: section 1 is the ask; section 2 what was checked; section 3 the threat model and
+what the MVP does not fix; section 4 the picture; sections 5 to 9 the eight MVP steps (each with its
+owning Feature, the setting, the version bump and what a consumer changes); section 10 the slices;
+section 11 the tests; section 12 what is kept for later; section 13 for the repository; section 14
+the decisions. The architecture review (of the earlier design) is at the end.
 
 ## 1. The ask
 
-The backlog item, as written: "Claude Code and the background agents run as the Operator's user,
-so any agent can read a key file kept in the container. Give agents a separate Linux user with no
-passwordless `sudo`, then check that user cannot read the key file." The Operator's amendment of
-2026-11-06 asks for agents to run "as their own independent Linux users", next, with the scope
-unchanged.
+The backlog item: "Claude Code and the background agents run as the Operator's user, so any agent
+can read a key file kept in the container. Give agents a separate Linux user with no passwordless
+`sudo`, then check that user cannot read the key file." The Operator's amendment of 2026-11-06 asked
+for "their own independent Linux users"; the ruling of the same day put least privilege through
+existing controls first and asked for the MVP.
 
-Rulings it rests on:
+Rulings it rests on: **ADR-0056 decisions 8 and 9** (the key file is on before agents have their own
+user; `key-file-rotate` after); **ADR-0048** decision 1 (OpenBao is the master of every token) and
+decision 4 (share tasks refuse inside an agent's job, today by variables); **ADR-0032** (Feature
+settings go to Claude Code's managed settings, `/etc/claude-code/managed-settings.d/`, not the
+user's file); **ADR-0036** (an agent's `identity`); **ADR-0020** (every container sees all of
+`/git-dirs`); **ADR-0040** (the host commits, pushes and opens pull requests; the Operator merges);
+**ADR-0055** (root-token generation on the loopback listener); **NFR-5, NFR-12, NFR-13** (Features
+user-neutral; a contract works on two vendors; manage the environment, use the CLI's own features).
 
-- **ADR-0056 decisions 8 and 9.** Until agents run as their own Linux user, any agent could harvest
-  the quorum (the OpenBao key file's two shares cross the container's memory at each unlock) and
-  use the Operator's token. The Operator chose to turn `unlock: keyfile` on anyway and to rotate
-  the key file and the shares once this is done (`key-file-rotate`).
-- **ADR-0048 decision 4.** Every task that handles a share or a token refuses inside an agent's
-  job. Today that refusal reads environment variables (`DEVHOST_JOB_CHILD`, `CLAUDECODE`,
-  `OPENBAO_AGENT_JOB_VARS`), so it stops only an agent that does not unset them.
-- **ADR-0036.** An agent in the list has an `identity`, the principal it acts as; two stateful
-  agents may not share one. A Linux user per identity is the same idea one level down.
-- **ADR-0020.** Every container sees all of `.git-dirs`; the git Feature's wrapper maps the
-  checkout's pointer onto `/git-dirs`.
-- **ADR-0040.** The host commits, pushes and opens pull requests; the Operator merges.
-- **ADR-0045.** Losing a machine loses nothing: a user's state lives in a Feature volume, never
-  only in a home folder.
-- **NFR-5, NFR-12, NFR-13.** Features stay user-neutral; a contract for agent CLIs works on two
-  vendors or names its fallback; a Feature manages the environment and uses the CLI's own
-  features.
-- **`openbao-agent-login`.** Each agent gets its own narrow AppRole, fetched in the tool's own
-  process; the office waits on it to drop its own key file and `secrets.env`.
+## 2. What was checked (2026-11-06)
 
-## 2. What was checked in this devhost (2026-11-06)
+The full table is the inventory's section 2; in short:
 
-Read-only checks in the running devhost, as the remote user. Nothing was changed.
-
-| Fact | Seen |
-|---|---|
-| Who runs what | Every process but `dockerd` and the init runs as `vscode` (uid 1000): the host session (`agents start` then `claude --remote-control`), its tool calls, the backs, `bao server`, the OpenBao renewer, `rclone mount`, `ssh-agent`, the pwsh of the launcher's `exec` |
-| `sudo` | `sudo -n true` succeeds: `/etc/sudoers.d/vscode`, from the base image, gives the remote user passwordless `sudo` |
-| Groups | `vscode` is in `docker` (the docker-in-docker daemon runs as root, so the socket is root) |
-| OpenBao state | `$OPENBAO_STATE_DIR` is `vscode` 755; `token`, `audit.log`, `server.hcl`, `keyfile-pending`, `renewer.pid` and the folder `approle/` (the backs' ids) are 600 or 700, owned by `vscode` |
-| Claude Code state | one volume, `CLAUDE_CONFIG_DIR=/var/lib/devcontainer-features/claude-code`, owned by `vscode`; `.credentials.json` 600; transcripts under `projects/`; the background daemon's state under `daemon/` |
-| gh, rclone | `GH_CONFIG_DIR` (`hosts.yml` 600) and `RCLONE_CONFIG`'s folder (700), both `vscode` |
-| git | `GIT_CONFIG_GLOBAL` in the git volume, 644, holding `safe.directory` for the checkout and its git dir |
-| ssh-agent | socket `agent.sock` 600 `vscode`, in a 1777 folder |
-| agents leases | `/var/lib/devcontainer-features/agents` 1777, `leases/` 0777 (ADR-0036 accepted that for a single-tenant container) |
-| The checkout and `/git-dirs` | 9p (drvfs) bind mounts with `metadata`: files that never had Linux owners show as `root` 777; files made in the container keep their Linux owner and mode (`.env` is `vscode` 644). Every repository under `.git-dirs` is there, 777 |
-| The shared folder | `rclone mount` as `vscode`, FUSE without `allow_other`; `/etc/fuse.conf` has no `user_allow_other`. Today no other user, root included, could open `/mnt/cloud-folder` |
-| Kernel | `kernel.yama.ptrace_scope` 1; `dev.tty.legacy_tiocsti` 0 (an agent cannot push keystrokes into the Operator's terminal) |
-| umask | 022 |
-
-Two things follow. First, the users alone do not stop much while every agent sits in the `docker`
-group or holds `sudo`: either is root. Second, the shared folder, which the backs and the host
-read and write, would vanish for any user but `vscode` until the mount is changed.
+- Every actor (the host session, its cons, the four backs, a consumer's agent) is one user,
+  `vscode` (uid 1000), with passwordless `sudo` and the `docker` group. Either is root.
+- Everything a credential lives in (`$OPENBAO_STATE_DIR`, its `approle/`, `GH_CONFIG_DIR`,
+  `rclone.conf`, the ssh-agent socket, `$CLAUDE_CONFIG_DIR`) is that user's, so every agent reads it.
+- The checkout and `/git-dirs` are 9p mounts showing `root` 777; files made in the container keep
+  their Linux owner. Every repository's git dir is writable, `config` and `hooks/` included.
+- Claude Code 2.1.311's sandbox can start here (`bwrap` works as `vscode`) but is **not turned on**;
+  no managed settings exist here (`/etc/claude-code/` is absent).
+- Outbound HTTPS is open; OpenBao answers on loopback; Codex is not installed.
+- `task repo:govern` already applies a `protect-main` ruleset here (no deletion, no force push,
+  linear history, pull requests with one approval including code owners, the four required
+  checks), and `.github/CODEOWNERS` covers `*`. The ruleset's bypass list has the repository Admin
+  role in `pull_request` mode (section 13).
 
 ## 3. Threat model
 
 ### 3.1 Who and what
 
 The attacker is an agent: a Claude Code session, a con inside it, a back, or anything they start,
-doing what it should not, because a prompt, a file or a tool output told it to, or by mistake. The
+doing what it should not because a prompt, a file or a tool output told it to, or by mistake. The
 Operator, the workstation's Windows account and the container engine are trusted. A kernel escape
-from a privileged container is out of scope (this devhost runs `--privileged` for docker-in-docker
-on hosts that allow it).
+from a privileged container is out of scope.
 
-### 3.2 What an agent user must not be able to read or do
+### 3.2 What an agent must not read or do, and which step closes it
 
-| # | Must not | Today | Closed by |
+| # | Must not | Closed by (step) | Left open |
 |---|---|---|---|
-| T1 | Read the Operator's OpenBao token (`$OPENBAO_STATE_DIR/token`) or act as the Operator in OpenBao | can | the file stays 600 under the Operator's user |
-| T2 | Read the quorum while the launcher's unlock passes it on standard input, or the server's memory | can (same user; `sudo` for memory) | another uid cannot read `/proc/<pid>/fd`, `mem` or `environ`; no `sudo` |
-| T3 | Read the backs' AppRole ids (`approle/<back>/`) or another agent's | can | each set owned by its own user, 700 |
-| T4 | Read the office's own key file and `secrets.env` (not the OpenBao key file) | can | moved under the Operator's user, 600 (section 11) |
-| T5 | Use the Operator's GitHub login, cloud-folder login, or SSH agent | can | `hosts.yml`, `rclone.conf`, `agent.sock` stay the Operator's |
-| T6 | Become root: `sudo`, the `docker` group, a setuid helper of ours | can (`sudo`, `docker`) | not in `sudoers`, not in `docker`; section 7 |
-| T7 | Read another agent's Claude Code state (transcripts, login) | can | one state folder per user, 700 |
-| T8 | Write the Operator's Feature state (`git` global config, `gh`, OpenBao, `rclone`) | can | owned by the Operator's user, not group-writable |
+| A1 | Change GitHub rules, merge to `main`, release, or push to `main` | 1: ruleset, narrow token | the admin bypass while the token acts as the Operator (decision 4) |
+| A2 | Read the Operator's OpenBao token, the AppRole ids, `hosts.yml`, `rclone.conf`; use `agent.sock` or `docker.sock` | 2: sandbox `denyRead`, no unix sockets (tool calls); 6: modes under another user (the process) | until step 6, the CLI's own process, hooks and MCP servers (T1) |
+| A3 | Lift its own limits (settings, permission mode, unsandboxed commands) | 2: managed `allowManagedPermissionRulesOnly`, `disableBypassPermissionsMode`, `allowUnsandboxedCommands: false` | none inside Claude Code |
+| A4 | Write what the Operator runs later (`.githooks/`, `Taskfile.yml`, `.devhost/`, `.claude/settings.json`) or the git dir's `config` and `hooks/` | 3: managed `denyWrite` | the CLI's own process; the workstation's git; review is the only check on a branch (3.3) |
+| A5 | Use the backs' reach beyond their job | 4: narrow `claude -p` flags, the tester under `bwrap` | the backs share the host's user (step 6), so the host can read their AppRole ids; each AppRole's policy bounds it |
+| A6 | Act as the Operator in OpenBao | 5: a per-agent AppRole with a read-only policy | the loopback listener answers anyone until step 6 and the unix listener |
+| A7 | Become root (`sudo`, `docker`) | 6: the `agent` user has neither | the Operator's terminal keeps both, by design (decision 9) |
+| A8 | Write the shared folder's records, sign with SSH keys | 7: mount access for the agent user; no key loaded by default | the backs' writes where records live in the shared folder |
+| A9 | The same with a second CLI | 8: Codex `workspace-write` | CLIs without a sandbox |
 
-### 3.3 What a separate user does not fix
+### 3.3 What the MVP does not fix
 
-Stated plainly, so nobody reads the boundary as wider than it is:
+Stated plainly, so nobody reads the boundary as wider than it is (the inventory's section 5):
 
-- **Code the Operator runs later.** The checkout is shared and writable by agents (that is their
-  job). The Operator runs `task` from it in a terminal that holds the token and `sudo`; Windows
-  runs `task dc:*` from the same folder, through OneDrive, as the Windows account that opens the
-  OpenBao key file. An agent that edits `Taskfile.yml`, `.githooks/` or the vendored launcher on
-  any branch the checkout is on gets its code run as the Operator at the next command. Review
-  catches it only once it reaches a pull request. Section 15 proposes a separate item.
-- **The git dir's config.** The git dir under `/git-dirs` is also the workstation's. A
-  `core.fsmonitor`, `core.hooksPath` or `core.sshCommand` written into its `config` runs on the
-  workstation the next time Windows git touches that repository. Section 9 makes `config` the
-  Operator's; that is test U9.
-- **Every repository's git dir** is in every container (ADR-0020). An agent in this devhost can
-  write the office's git config. Unchanged by this proposal; the same file rule narrows it.
-- **The loopback OpenBao listener** answers anyone in the container. Without a token an agent can
-  still start or cancel a root-token attempt (ADR-0055), so it can disturb a recovery, never
-  finish one (test U8).
-- **Process lists.** `/proc/<pid>/cmdline` is world-readable; the rule that no secret is ever an
-  argument stays.
-- **Cons share their parent's user.** A con is a subagent inside its parent's process; it cannot
-  be given a user of its own. Its boundary is its parent agent's.
-- **A `claude` the Operator starts in their own terminal** (or the VS Code extension) runs as the
-  Operator's user and has everything. Section 8 makes it say so.
+- **The docker socket.** Whoever may talk to the daemon is root. Native controls only hide the
+  socket (sandbox, group). Narrowing what a permitted caller may ask for needs rootless docker or an
+  allow-list proxy, which is a custom broker (on hold).
+- **The shared git dir.** `config` and `hooks/` are one set of files for this container, every other
+  container of the repository and Windows git. The sandbox may protect them from tool calls (T3);
+  nothing native protects them from the workstation's git or a second container (ADR-0020). The
+  workstation-side check (the launcher compares `config` before `task dc:*`) is custom, so it waits.
+- **Code the Operator runs later.** A branch checked out in the shared checkout is run by the
+  Operator's `task`, by `.githooks/`, and by Windows `task dc:*`. The ruleset and CODEOWNERS stop it
+  reaching `main`; nothing local stops it running.
+- **A tool call versus the process around it.** Claude's sandbox wraps tool calls, not the session's
+  own process, its hooks or its MCP servers (T1). Step 6 is what puts a boundary around those.
+- **Cons share their parent.** A con is a subagent in its parent's process; its boundary is the
+  parent's, and a GitHub rule is the only thing between a con and `main`.
+- **`sudo` inside the sandbox fails** (`no_new_privs`). That is a control, and a cost: anything the
+  host did by `sudo` moves to the Operator's terminal; a `sandbox.excludedCommands` entry would
+  reopen the hole.
+- **A domain allow-list keeps a data channel to every allowed domain** (a gist on github.com).
+- **Codex is configured from its documentation**, not run here (T5).
 
 ## 4. The picture
 
 ```
- workstation (Windows, the Operator's account)
-   %LOCALAPPDATA%\...\openbao\*.keyfile (DPAPI)      task dc:* --- devcontainer exec (as remote user) ---+
-                                                                                                         |
- container ----------------------------------------------------------------------------------------------v--------
-                                                                         can read / use:
-                                                                         Op    host  rev   scribe
- the Operator's user  vscode, uid 1000, sudo, docker
-   task dc:shell, VS Code terminal, launcher exec (keyfile unlock stdin)
-   bao server + renewer, rclone mount, ssh-agent, dockerd socket
-   OpenBao token, audit.log, server.hcl ................................ x     -     -     -
-   GH_CONFIG_DIR (Operator), rclone.conf, agent.sock, docker.sock ...... x     -     -     -
-   git global config (GIT_CONFIG_GLOBAL) ............................... rw    r     r     r
-
- agent-host  uid 2xxxx, group dcf-work, no sudo
-   claude --remote-control (the host) -> its cons, its tool calls, its hooks
-   claude-code/users/agent-host  (login, transcripts, daemon) .......... x     x     -     -
-   gh/users/agent-host, openbao/agents/agent-host (its AppRole) ........ x     x     -     -
-
- agent-reviewer  (a resident from the agent list) ..... same shape ..... x     -     x     -
-
- back-scribe  uid 2xxxx, group dcf-work, no sudo
-   devhost-run-job scribe, claude -p, its AppRole ids, key on tmpfs .... x     -     -     x
-
- shared, group dcf-work, read and write
-   the checkout, its git dir (not config), /mnt/cloud-folder ........... rw    rw    rw    rw
-
- x = read (and use);  r = read only;  rw = read and write;  - = refused by the kernel
+ the Operator's user  vscode (remote user): sudo, docker, OpenBao token, hosts.yml,
+ |                    rclone.conf, agent.sock; task dc:shell, VS Code, the launcher's exec
+ |
+ |  step 6: sudo -n -u agent  (agents start, every adapter verb)
+ v
+ agent  (one user: no sudo, no docker; primary group = vscode's; umask 002)
+ |  its own: Claude state volume (handed over whole), GH_CONFIG_DIR with the narrow token (step 1),
+ |           its AppRole ids (step 5), the backs' AppRole ids (shared, bounded by policy)
+ |
+ +-- claude (the host session)  --- managed settings (steps 2, 3), root-owned, cannot be lifted
+ |     +-- tool calls  ====> bubblewrap sandbox: denyRead credentials, denyWrite hooks/Taskfile/
+ |     |                     .devhost/git config, network allow-list, no unix sockets
+ |     +-- cons (subagents: same process, same sandbox)
+ |     +-- Stop hook -> devhost-run-job (runner, outside the sandbox)
+ |           +-- scribe/secretary/librarian: claude -p, narrow --allowedTools (step 4), sandboxed
+ |           +-- tester: bash under bwrap, credentials hidden (step 4)
+ |
+ GitHub: protect-main ruleset, CODEOWNERS, the host's fine-grained token (step 1)
+ OpenBao: per-agent AppRole, read-only policy (step 5); unix listener for the Operator (step 5/6)
 ```
 
-`x` for the Operator in every row is deliberate: the Operator's user keeps `sudo` (decision 5),
-so trust runs one way. An agent cannot read the Operator's things; the Operator can read an
-agent's.
+## 5. Steps 1 to 3: GitHub, then Claude Code's own sandbox and managed settings
 
-## 5. How many users
+Order: the inventory's, kept. Steps 1 to 5 are settings only: no new user, no new script, no change
+to how an agent starts. Step 1 comes first because GitHub is where an agent's mistake becomes
+permanent and the ruleset already exists. Steps 2 and 3 share one claude-code release, but step 2
+waits for tests T1 and T3 (section 11): if the sandbox does not wrap the file tools and the backs,
+or does not protect a git dir reached through a `.git` pointer file, the settings are chosen
+differently (decision 2).
 
-| Option | What it isolates | Cost |
-|---|---|---|
-| A. One shared agent user (`agent`) for every agent and back | the Operator's secrets from all agents (T1, T2, T5, T6, T8) | agents and backs read each other's state and the backs' ids (T3, T7 open); one Claude login |
-| **B. One user per identity in the agent list, and one per back** | all of T1 to T8 | one Claude login (or one token, section 8.4) and one GitHub credential per user; the backs need a hand-over from the hook (section 8.3) |
-| C. One user per running session | the same as B, plus two runs of one agent apart | uids churn, so a volume's files lose their owner; a con still cannot have one; a resumed session must find its old uid. Rejected |
+### Step 1. GitHub ruleset and a narrow token
 
-**Recommendation: B**, delivered as A first where it is cheaper (slice 2 makes one user per
-identity; a list with one agent is option A). It is what the Operator asked for ("independent"),
-it is ADR-0036's identity one level down, and it is the shape `openbao-agent-login` needs: an
-AppRole per agent whose ids only that agent can read. A con is never a user (section 3.3).
+| | |
+|---|---|
+| Removes | GitHub admin power in the agent's hands (inventory G6, G7) |
+| Change | keep `protect-main` (already applied by `task repo:govern`); add a tag ruleset protecting release tags and require the release workflow's environment reviewers (both in `Set-RepoGovernance.ps1`); the host's GitHub login becomes a **fine-grained personal access token**: Contents write, Pull requests write, Metadata read, this repository only, an expiry; no Administration, Workflows, Actions or Secrets |
+| Owning Feature | none for the ruleset (the repository; `task repo:govern`); `gh` stores the token in `GH_CONFIG_DIR` as today |
+| Setting | `task repo:govern`; `gh auth login --with-token` from the Operator's terminal |
+| Bump | gh: none (a NOTES patch, "logging in with a fine-grained token", if the slice writes one); no Feature changes |
+| A consumer changes | runs its own governance (or the ruleset by hand) and makes a fine-grained token for its repository (T8) |
+| Residual | the token is at rest in `hosts.yml` until `openbao-agent-login` (decision 3); the token acts as the Operator, so the ruleset's Admin bypass still lets it merge (decision 4, T6) |
 
-Two agents may share a user only by sharing an `identity`, which ADR-0036 already allows for
-ephemeral agents and one stateful one.
+### Step 2. Claude Code's sandbox through the managed drop-in, permissions locked
 
-## 6. Making the users
+| | |
+|---|---|
+| Removes | secrets readable by a tool call, the docker and ssh-agent sockets, open egress, the agent lifting its own limits (G3, G11, G12, G14) |
+| Change | the claude-code Feature writes, beside `additionalDirectories`, into the drop-in it already owns (`/etc/claude-code/managed-settings.d/50-devcontainer-features-claude-code.json`, ADR-0032): `sandbox.enabled: true`, `sandbox.failIfUnavailable: true`, `sandbox.allowUnsandboxedCommands: false`, `sandbox.filesystem.denyRead` (the consumer's list), `sandbox.filesystem.allowWrite` (the checkout, the scratchpad, `/tmp`), `sandbox.network.allowedDomains` with `allowManagedDomainsOnly: true`, `allowLocalBinding: false`, no `allowUnixSockets`; and `allowManagedPermissionRulesOnly: true`, `disableBypassPermissionsMode: "disable"`, `allowManagedHooksOnly` where the consumer has no hooks of its own |
+| Owning Feature | claude-code |
+| Setting | new options `sandbox` (boolean, default false), `sandboxDenyRead`, `sandboxAllowWrite`, `sandboxAllowedDomains` (comma-separated, like `additionalDirectories`), `lockPermissions` (boolean, default false) |
+| Bump | claude-code minor (1.10.0): opt-in, inert until set |
+| A consumer changes | sets the options; lists its credential paths (the NOTES give this collection's: `$OPENBAO_STATE_DIR`, `/var/lib/devcontainer-features/{gh,cloud-folder,ssh-agent}`, `$CLAUDE_CONFIG_DIR/.credentials.json`, `/var/run/docker.sock`, `~/.ssh`) and its domains; moves anything it did by `sudo` from an agent session to the Operator's terminal |
+| Residual | the CLI's own process, hooks and MCP servers (T1); a data channel to an allowed domain |
 
-### 6.1 When
+The credential paths are listed by the consumer in this MVP rather than shipped by each Feature:
+each Feature writing its own protected paths for the sandbox would put CLI knowledge in it
+(NFR-13), and a CLI-neutral protected-paths file is a build (section 12).
 
-| Option | For | Against |
-|---|---|---|
-| a. At install time, from a Feature option (`agentUsers: host,reviewer`) | no `sudo` needed at start; works where the remote user has none | a second list beside `agents.yml` (two sources for one fact); a new agent needs a rebuild; the workspace is not mounted at build, so the list cannot be read |
-| **b. At start, from the agent list** | one source; a new agent needs no rebuild | needs root at start (the remote user's `sudo`, or a root start hook: test U6) |
-| c. At the first `task agents -- <name>` only | lazy | residents start at the container start; the backs' users must exist before the first turn |
+### Step 3. Write-deny on what the Operator runs later and on the git dir
 
-**Recommendation: b, with c as the fallback.** The `agents` Feature's start hook (`agents up
---post-start`) creates every identity's user before any resident starts, and `agents start`
-creates a missing one. The install step makes only what does not depend on the list: the group
-`dcf-work`, the helper of section 8, and the `sudoers` file of section 8.3. A consumer whose
-remote user has no `sudo` at start gets one line ("agent users need root at start; agents run as
-the remote user") and today's behaviour.
+| | |
+|---|---|
+| Removes | writes into `.githooks/`, `Taskfile.yml`, `.devhost/`, `.claude/settings.json`, the git dir's `config` and `hooks/`, and `GIT_CONFIG_GLOBAL` (G4, G5) |
+| Change | `sandbox.filesystem.denyWrite` of those paths in the same drop-in; for the git dir, its real path (`/git-dirs/<owner>/<repo>/config` and `hooks/`) and other repositories' git dirs, with `objects`, `refs`, `logs`, `index`, `HEAD`, `packed-refs` and `worktrees` left writable; this repository's git dir loses `merge.devhost-todo.driver` (if present) and the `include.path`, and `core.hooksPath` moves to the global config through the git Feature's existing `hooksPath` option |
+| Owning Feature | claude-code (the drop-in); git (existing `hooksPath` option); this repository's `task repo:setup` |
+| Setting | new option `sandboxDenyWrite`; git's `hooksPath`; `task repo:setup` stops writing the git dir's `config` |
+| Bump | claude-code: the same minor as step 2; git: none |
+| A consumer changes | lists its own files to protect; sets `hooksPath` instead of a hooks path in the git dir |
+| Residual | the workstation's git and other containers (3.3); which git commands write `config` and so fail under the rule (`git push -u`, `git branch --track`, `git worktree add` with per-worktree config) is test T10 |
 
-The backs' users (`back-scribe`, `back-secretary`, `back-librarian`, `back-tester`) are made the
-same way from `DEVHOST_BACKS`, by the devhost's own start hook.
+The sandbox's built-in protections already cover `.git/config` and `.git/hooks` under the working
+directory, and `.claude/commands`, `.claude/agents`, `.mcp.json`, shell rc files; whether that
+reaches a git dir behind a pointer file is exactly T3.
 
-### 6.2 Names
+## 6. Steps 4 to 6: the backs, OpenBao, one agent user
 
-`agent-<identity>`, lowercased, and `back-<name>`. An identity that differs only in case from
-another, or makes a name longer than 32 characters, is refused by `agents check` with its line.
-Login shell: the remote user's. Password: locked. Home: `/home/<user>`, in the image, so lost at a
-rebuild, which is right: nothing of value lives there (state is in the Features' volumes, NFR-1).
+### Step 4. The backs' `claude -p` narrowed, the tester under `bwrap`
 
-### 6.3 uids and gids that survive a rebuild
+| | |
+|---|---|
+| Removes | the backs' reach beyond their job (inventory 3.3) |
+| Change | `job_claude` in `run-job.sh` keeps `--settings '{"disableAllHooks": true}'`; the managed drop-in applies to `claude -p` as well (T1 confirms; if not, the job passes the same sandbox keys in `--settings`); the scribe, which today runs with default permissions, gets `--allowedTools "Read"` and `--disallowedTools "Bash" "Edit" "Write"` (its runner, not the model, signs and appends); the secretary and librarian keep their narrow `Edit` rules; the tester runs its suite under `bwrap` with the checkout read-write and the credential folders hidden (`--tmpfs` over them), the docker socket bound only if T4 shows the suite needs it |
+| Owning Feature | devhost (local) |
+| Setting | `job_claude` flags; each job's `--allowedTools`; the tester's command line |
+| Bump | devhost minor (1.15.0); local, not published |
+| A consumer changes | nothing (the devhost is this repository's) |
+| Residual | the runner and the backs share the host's user (after step 6, `agent`); the tester keeps docker if T4 fails, and docker is root |
 
-The volumes keep numeric owners. A rebuild that hands `agent-host` a different uid would leave its
-Claude state owned by nobody.
+### Step 5. A per-agent OpenBao AppRole
 
-| Option | Stable across rebuilds | Stable across list edits |
-|---|---|---|
-| i. Next free uid, in list order | only if the order never changes | no |
-| **ii. Derived from the name: `20000 + (cksum of the user name mod 10000)`** | yes | yes |
-| iii. Recorded in a volume (name to uid) | yes | yes, but the agents Feature has no volume on purpose (ADR-0036) |
-| iv. A required `uid:` key per agent | yes | yes, but every list must carry numbers |
+| | |
+|---|---|
+| Removes | one OpenBao identity, the Operator's token, for every agent (G8) |
+| Change | the host gets its own AppRole with a read-only policy on its paths, a token TTL of minutes, `secret_id_num_uses`, bound to `127.0.0.1/32`, and logs in itself (the backlog item `openbao-agent-login`); the backs keep theirs (they exist); once step 6 is in, the unauthenticated root-token endpoints move to a `listener "unix"` at mode 0600 owned by the Operator's user (ADR-0055 decision 6, review finding 7) |
+| Owning Feature | openbao |
+| Setting | `task openbao:approle:issue` (`bao write auth/approle/role/<agent> token_policies=... token_ttl=...`); a server listener setting |
+| Bump | openbao minor (1.6.0) for the agent login; the listener in the same or the next minor |
+| A consumer changes | issues a role per agent; the office moves its board tool to its role and drops its own key file and `secrets.env` |
+| Residual | the ids are readable by whoever runs as the agent's user (by design: they are its login) |
 
-**Recommendation: ii, with an optional `uid:` key** to settle a collision. `cksum` is POSIX and on
-every base image (NFR-10). A collision with an existing user or another agent is refused by
-`agents check`, naming both. The group `dcf-work` has a fixed gid (19999 by default, a Feature
-option for an image that already uses it). Test U11 checks the collision rate on realistic names.
+### Step 6. One `agent` Linux user, without `sudo` or `docker`
 
-## 7. Who owns what
+The smallest form of the first draft: **one user for the host, its cons and the backs**, not one per
+identity (that is a later option, section 12). Steps 1 to 5 already take away the credentials and the
+write targets from tool calls; this step adds the kernel's boundary around what the sandbox does not
+wrap: the CLI's own process, its hooks, its MCP servers and the backs' runner.
 
-| Thing | Owner after this | Mode | Notes |
-|---|---|---|---|
-| The checkout (bind mount; OneDrive on the workstation) | as created; group `dcf-work` | files 664, folders 775 (umask 002 for agents) | section 9; behaviour per engine is test U1 |
-| The git dir under `/git-dirs` | as created; `core.sharedRepository=group` | git sets group modes itself | `config` stays the Operator's, 644 (test U9) |
-| `GIT_CONFIG_GLOBAL` (git volume) | the Operator's user | 644 | holds `safe.directory`, hooks path, the credential helper line; no secret (checked in slice 4) |
-| Claude Code state | one folder per user: `claude-code/users/<user>/`, 700 | | today's top-level state moves to the default agent's folder once (decision 6) |
-| gh | the Operator's login stays at `GH_CONFIG_DIR`; each agent its own `gh/users/<user>/` | 700 | section 8.5 |
-| OpenBao server, token, audit log, `approle/` of the Operator | the Operator's user | 600 / 700 | unchanged; T1, T2 |
-| A back's AppRole ids | `back-<name>`, under `openbao/backs/<name>/` | 700 | moved from `approle/<back>/` |
-| An agent's AppRole ids (`openbao-agent-login`) | `agent-<identity>`, under `openbao/agents/<identity>/` | 700 | the agent may hold its own narrow login; OpenBao's policy is the boundary |
-| ssh-agent socket | the Operator's user | 600 | agents get no socket; `SSH_AUTH_SOCK` is unset for them |
-| `rclone.conf`, the cloud-folder login | the Operator's user | 600 | unchanged |
-| `/mnt/cloud-folder` (the shared folder) | mounted by the Operator's user, `--allow-other --default-permissions --gid dcf-work --umask 0007` | 770 / 660 | needs `user_allow_other` in `/etc/fuse.conf` (test U5) |
-| devhost state (`runs.jsonl`, the jobs' offsets, logs) | group `dcf-work`; one subfolder per back owned by it | 2775 / 664 | |
-| agentic-register store | `back-scribe` writes; group `dcf-work` reads | 750 / 640 | `devhost-ledger show` for everyone |
-| agents leases and markers | the Operator's user (the `agents` command runs as it) | 755 | agent users cannot take another's lease |
-| `/var/run/docker.sock` | root, group `docker`; agents not in it | 660 | decision 4 |
-| `sudoers` | no entry for an agent or back user, except the hand-over of section 8.3 | 440 | T6 |
+| | |
+|---|---|
+| Removes | root for the agent (`sudo`, `docker`) and the agent's reach into the Operator's state outside a tool call (G1, G2, G13) |
+| Change | below, 6.1 to 6.7 |
+| Owning Feature | agents (the user and the switch); claude-code, gh, ssh-agent, openbao, cloud-folder (one drop-in each); git (`core.sharedRepository`) |
+| Setting | agents options `runAs` (`remote-user`, the default, or `agent`) and `agentUid` |
+| Bump | agents minor (2.2.0); claude-code, gh, ssh-agent, openbao, cloud-folder, git minors for their drop-ins (inert unless `runAs` is `agent`) |
+| A consumer changes | sets `"runAs": "agent"` and rebuilds; checks which agent tasks use `docker` or `sudo` (T13) and moves them to the Operator's terminal or CI; logs the agent's `gh` in with the narrow token |
+| Residual | host, cons and backs read each other's state and the backs' AppRole ids (bounded by policy); the Operator's terminal keeps root (decision 9) |
 
-## 8. Launching an agent as its user
+**6.1 Made at install time.** With one fixed name, the user no longer depends on the agent list, so
+the `agents` Feature's `install.sh` makes it at build time as root: `agent`, uid `agentUid` (default
+2000, an option for an image that uses it), primary group the `_REMOTE_USER`'s primary group,
+password locked, home in the image (nothing of value lives there; state is in the volumes, NFR-1),
+not in `sudoers`, not in `docker`. No `sudo` is needed at start and no uid derivation. Where
+`_REMOTE_USER` is unset or root, the option is refused with one line and agents run as today.
 
-### 8.1 The switch
+**6.2 The switch.** `agents start` and every other adapter verb (`list`, `logs`, `stop`, `reset`,
+`attach`, the lease's liveness check, the post-start join; review finding 2) run the adapter through
+`sudo -n -u agent -- /usr/local/libexec/agents/agent-env -- <adapter> ...`. `sudo` resets the
+environment; `agent-env` rebuilds it: the container's variables minus each Feature's secret-bearing
+ones and the patterns `*TOKEN*`, `*SECRET*`, `*PASSWORD*`, `*_KEY` (decision 13), umask 002, then the
+drop-ins of 6.3. An `agents start` run as `agent` is refused with one line (decision 12). Leases stay
+the caller's.
 
-`agents` runs as whoever calls it (the Operator's user in a terminal, the start hook, the
-launcher's `devcontainer exec`), resolves the agent's user, and runs the adapter as that user
-through one helper the Feature installs:
-
-```
- task agents -- host        (the Operator's user, or the launcher's exec, or the start hook)
-   agents start host
-     lease taken             (as the caller: leases are the Operator's)
-     sudo -n -u agent-host -- /usr/local/libexec/agents/agent-env agent-host -- \
-         agent-adapter-claude start host . -- --remote-control
-       agent-env: HOME, USER, LOGNAME, SHELL of agent-host; umask 002; cd the folder;
-                  the container's variables minus the deny list; the drop-ins of section 8.2
-       agent-adapter-claude: claude --remote-control ...   (now uid agent-host)
-```
-
-| Option for the switch | For | Against |
-|---|---|---|
-| **`sudo -n -u <user>` from the caller** | the remote user already has it; the start hook too; `sudo` logs it | needs `sudo` (a consumer without it stays on today's behaviour) |
-| `runuser` or `setpriv` as root | no `sudoers` involved | needs root first, so `sudo` anyway from a terminal |
-| A setuid helper of our own | no `sudo` | a root binary we would have to maintain; rejected (T6) |
-| `ssh` to localhost per user | clean session | an sshd and keys per user; rejected |
-
-**Recommendation: `sudo -n -u`.** `sudo` resets the environment by default, which is what we
-want: the helper rebuilds it on purpose. Which variables pass is decision 3: the container's
-variables minus a deny list (each Feature names its secret-bearing variables, plus the patterns
-`*TOKEN*`, `*SECRET*`, `*PASSWORD*`, `*_KEY`), or an allow list. The boundary check (section 10)
-prints the name of every passed variable that matches a pattern.
-
-An agent cannot start another agent in the first version: `agents start` run by an agent user is
-refused with one line (decision 8). The host does not start agents today; when it must, a rule
-for the helper alone is the later step.
-
-### 8.2 Per-user state: drop-ins, not knowledge in the agents Feature
-
-The agents Feature knows no CLI and no other Feature (NFR-13). A Feature that needs per-user state
-installs a drop-in, `/usr/local/share/agents-feature/user-env.d/<feature>.sh`, which `agent-env`
-sources with the user's name: it may set or unset variables and name folders to create (made by
-`agents` as root, owned by the user, 700). The ones this collection ships:
+**6.3 Drop-ins.** The agents Feature knows no CLI (NFR-13). A Feature that must change something for
+the agent user ships `/usr/local/share/agents-feature/user-env.d/<feature>.sh`:
 
 | Feature | Drop-in |
 |---|---|
-| `claude-code` | `CLAUDE_CONFIG_DIR=.../claude-code/users/<user>`; the Claude credential (section 8.4) |
-| `gh` | `GH_CONFIG_DIR=.../gh/users/<user>` |
-| `ssh-agent` | unset `SSH_AUTH_SOCK` |
-| `openbao` | unset `BAO_TOKEN`; point the token helper at `openbao/agents/<identity>/token`; `DCF_SECRET_AS` defaults to the agent's role once `openbao-agent-login` ships |
-| `cloud-folder` | unset `RCLONE_CONFIG` |
-| `devhost` (local) | the backs' hand-over (section 8.3) |
+| claude-code | nothing to move (6.4); the `SessionStart` warning of 6.7 |
+| gh | `GH_CONFIG_DIR=/var/lib/devcontainer-features/gh/agent` (700, `agent`), holding the step 1 token |
+| ssh-agent | unset `SSH_AUTH_SOCK` |
+| openbao | unset `BAO_TOKEN`; the token helper reads the agent's own token file (a new variable, review finding 15) |
+| cloud-folder | unset `RCLONE_CONFIG` |
 
-The other way considered: the integration contract's `env` verb (ADR-0036). It is per agent and
-named in the list; per-user state must apply to every agent without the list naming it, so a
-drop-in folder fits better and stays a plain file contract. Both work on any CLI (NFR-12).
+**6.4 Claude Code's state.** The Claude state volume (`$CLAUDE_CONFIG_DIR`) is handed to `agent`
+once (`chown -R`), so the host keeps its login, its transcripts, its memory (ADR-0049's path does not
+move) and the cost report still reads everything. The running daemon is restarted as `agent`. The
+Operator's own `claude` in a terminal then has no login there; it is not the way agents start
+(6.7).
 
-### 8.3 The backs
+**6.5 The shared checkout.** Files the agent makes keep `agent` as owner on the 9p mounts (section 2).
+So the Operator's editor can still change them, `agent`'s primary group is the remote user's own,
+`agent` runs with umask 002, and the git Feature sets git's own `core.sharedRepository=group` in the
+checkout's git dir (NFR-13). The Operator's new files are 644 by default; an agent that must change
+one is refused and says so (a profile umask 002 for the Operator is the alternative, decision 10).
+All of this matters only if T2 shows modes hold on these mounts; where they do not, every file is
+777 already and the rule costs nothing. `safe.directory` in the global config already lists the
+checkout and its git dir.
 
-The backs start from the host's Claude hooks (`Stop`, `SubagentStop`), so they start as
-`agent-host`. The runner hands each back over to its own user:
+**6.6 The backs.** They start from the host's `Stop` and `SubagentStop` hooks, so they run as
+`agent`: no hand-over, no `sudoers` rule. Their AppRole folders (`approle/<back>/`) are handed to
+`agent`; the Operator's token and `approle/` of the Operator stay `vscode` 600/700. The scribe's mirror
+and the secretary's `TODO.md` in the shared folder need write there (step 7).
 
-```
- agent-host: Stop hook -> devhost-run-job scribe
-   condenses the stretch it would have given the back (as today) into a hand-over file,
-   mode 640, group dcf-work, in a fresh folder
-   sudo -n -u back-scribe -- devhost-run-job --handover <file> scribe      (the one sudoers rule)
- back-scribe: logs in with its own AppRole ids, fetches its key onto tmpfs (as today, now
-   unreadable by agent-host), runs claude -p, signs into the register
-```
+**6.7 The Operator's own session and the check.** The Operator's terminal, VS Code and the launcher's
+`exec` stay `vscode`, with `sudo`, `docker` and every login; the share tasks run there. A `claude`
+started as the remote user while `runAs` is `agent` prints one line from a `SessionStart` hook in the
+managed settings ("this session runs as the Operator's user and can read its secrets; start agents
+with task agents"); it warns, never blocks (decision 11, review finding 13). The backlog's check
+("the agent user cannot read the key file") is test T9: a Feature test scenario in agents that, as
+`agent`, expects refusal for `sudo -n true`, `$OPENBAO_STATE_DIR/token`, the Operator's `hosts.yml`,
+`rclone.conf`, `agent.sock` and `docker.sock`, and is shown able to fail (once with a planted 644
+token). `key-file-rotate` starts when T9 is green in this devhost.
 
-The `sudoers` rule names the exact command per back: `%dcf-work ALL=(back-scribe) NOPASSWD:
-/usr/local/bin/devhost-run-job --handover * scribe`, and the same for the other three. The runner
-validates the hand-over file (a path in its own folder, nothing else). The tester back runs the
-suite; without the `docker` group it reports "skipped" as it does today where there is no daemon
-(decision 4).
+## 7. Step 7: the shared folder and the ssh-agent
 
-### 8.4 Claude Code's login, per user
+| | |
+|---|---|
+| Removes | the agent's reach into the shared folder's login and records, and into loaded SSH keys (G9, G10) |
+| Change | `rclone mount` stays the Operator's user; a new access level for the agent user: `none` (today's: FUSE without `allow_other`, no other user can open it), `read` (`--allow-other --default-permissions`, files 644, folders 755, owner the Operator), `write` (the same with group write for the remote user's group); `user_allow_other` in `/etc/fuse.conf` when not `none`. The host's tool calls get `sandbox.filesystem.denyWrite` of the mount point (step 3), so only the backs' runner writes. ssh-agent: no key loaded at start; `task ssh-agent:key:load` at a sitting with a lifetime (`ssh-add -t`); `mode: none` for a consumer whose agents need no SSH |
+| Owning Feature | cloud-folder; ssh-agent (existing options) |
+| Setting | cloud-folder option `agentAccess` (`none`, `read`, `write`; default `none`); ssh-agent's existing `mode` |
+| Bump | cloud-folder minor (1.4.0); ssh-agent none (a NOTES patch at most) |
+| A consumer changes | picks `read` where no back writes records there, `write` where one does (this devhost, while the ledger mirror and `TODO.md` live in the shared folder); chooses `mode: none` or key loading per sitting |
+| Residual | `write` lets the agent change shared records; `sync` and `host` modes are not covered (review finding 16, T12); within a loaded sitting the Operator's processes may sign (agents get no socket) |
 
-Each user has its own `CLAUDE_CONFIG_DIR`, so each needs a login.
+## 8. Step 8: the second vendor (NFR-12)
 
-| Option | For | Against |
-|---|---|---|
-| a. The Operator logs each user in once (`task agents:login -- <name>`, which runs `claude` as that user) | Claude Code's own login and refresh; one revocable login per agent | one browser login per agent and per back, again after a volume reset |
-| **b. One long-lived token from `claude setup-token`, kept by the Operator's user, passed to each agent in `CLAUDE_CODE_OAUTH_TOKEN` by the claude-code drop-in** | one step for all; nothing per user to log in | every agent can read the token in its own environment (it is the agent's credential anyway); whether `--bg`, the daemon and `--remote-control` accept it is test U3 |
-| c. One credentials file shared by group | none to log in | Claude Code rewrites the file on refresh, so owner and mode drift; two users refreshing at once; rejected |
+| | |
+|---|---|
+| Removes | the same gaps for Codex as steps 2 and 3 for Claude Code |
+| Change | Codex's own sandbox: `sandbox_mode = "workspace-write"`, `[sandbox_workspace_write] network_access = false` and `writable_roots` (the checkout, the scratchpad), `approval_policy = "on-request"`; fixed by a managed `requirements.toml` so the agent cannot choose `danger-full-access` |
+| Owning Feature | none carries Codex today; the agents NOTES document the settings, and the consumer writes `CODEX_HOME/config.toml` and `requirements.toml`; when a Codex adapter or Feature ships, it writes them (its own minor) |
+| Setting | Codex's `sandbox_mode`, `network_access`, `writable_roots`, `approval_policy`, `requirements.toml` |
+| Bump | agents patch (NOTES) now |
+| A consumer changes | writes the two files for each Codex agent |
+| Residual | from Codex's documentation, not run here: what it protects on this layout (git dir behind a pointer, `/git-dirs`) and whether it runs under the devcontainer's seccomp is T5; a CLI with no sandbox (Gemini, Copilot) has only step 6 |
 
-**Recommendation: b if test U3 passes, else a.** Either lives in the claude-code Feature's drop-in,
-never in the agents spec (NFR-13). The token itself goes to OpenBao when the Operator's secrets
-move there (ADR-0048 decision 1); until then a file under the Operator's user, 600.
+## 9. What breaks, and the versions
 
-### 8.5 GitHub, for the host's commits and pull requests
+Every step is opt-in: no option changes behaviour until a consumer sets it, so every step is a
+minor (or no Feature change). What an adopter notices:
 
-The host pushes and opens pull requests (ADR-0040), so `agent-host` needs a GitHub credential;
-the Operator's `hosts.yml` is out of its reach (T5).
+| Step | What changes for whoever turns it on |
+|---|---|
+| 1 | the host cannot change repository settings or rulesets; a release tag is protected |
+| 2 | `sudo` from a tool call fails; a domain not in the list fails; a permission prompt cannot be bypassed |
+| 3 | an agent cannot edit hooks, `Taskfile.yml`, `.devhost/` or the git dir's `config`; the commands T10 lists need their alternatives (`push.autoSetupRemote`, an explicit remote) |
+| 4 | none for users; a back that relied on Bash now fails its job and says so |
+| 6 | agent sessions lose `sudo`, `docker` and the Operator's logins; `task test` in an agent session reports "skipped" without docker; files are owned by `agent` |
+| 7 | the shared folder is readable (or writable) by the agent user |
 
-| Option | For | Against |
-|---|---|---|
-| a. Copy the Operator's token into the agent's gh folder | works at once | the same reach as today on GitHub; two copies of one token |
-| **b. A fine-grained token or a GitHub App installation token per agent, limited to its repositories (contents, pull requests), in its own gh folder** | narrow; revocable per agent; the audit names the agent | the Operator makes one per agent once |
-| c. Fetched per call from OpenBao (the board tool's way, `openbao-agent-login`) | nothing at rest | waits on `openbao-agent-login` |
+Making `runAs: agent` the default is a major (agents 3.0.0) and is not part of this proposal
+(section 12).
 
-**Recommendation: b now, c when `openbao-agent-login` ships.** The git credential helper line in
-the global config (`gh auth git-credential`) stays; it reads whichever `GH_CONFIG_DIR` the user
-has.
-
-### 8.6 Remote Control, the workstation, and the Operator's own session
-
-- **Remote Control** is unchanged in mechanism: the host session runs `--remote-control` as
-  `agent-host`, with its own Claude login, so the phone reaches the same session as before.
-- **From the workstation** nothing changes: `task devcontainer:agent -- host` runs `task agents --
-  host` through `devcontainer exec` as the remote user, and `agents` switches.
-- **Attaching to a resident** runs `claude attach` as the agent's user, in the Operator's terminal
-  (`sudo -n -u`; the terminal stays the Operator's, and the kernel refuses keystroke injection,
-  section 2). Test U4.
-- **The Operator's interactive session stays the remote user**, with `sudo`, `docker`, the token
-  and every login: `task dc:shell`, the VS Code terminal, the launcher's `exec`. It is where the
-  gate's tasks run (`openbao:unseal`, the key file's tasks, `ssh-agent:key:load`), and the only
-  place they work: their refusal stops reading environment variables and checks the user (an agent
-  user is refused even with every variable unset).
-- **A `!` command in the host** runs as `agent-host`: no `sudo`, no token. The Operator who needs
-  either opens `task dc:shell`.
-- **A plain `claude` in the Operator's terminal** runs as the Operator and has everything. The
-  claude-code Feature prints one line when `claude` starts as the remote user while agent users are
-  on: "this session runs as the Operator's user and can read its secrets; start agents with task
-  agents". It warns, never blocks (decision 7).
-
-## 9. The shared checkout: file modes and git
-
-Two users now write the same files. Without a rule, a file the host makes (644, owner
-`agent-host`) cannot be changed by the Operator's editor, and the reverse.
-
-| Option | How | For | Against |
-|---|---|---|---|
-| **i. A shared group and umask 002** | every agent user and the Operator's user in `dcf-work`; agents run with umask 002; the checkout's folders set to group `dcf-work` with the setgid bit, so new files inherit it; the Operator's shells get umask 002 from a profile drop-in | plain Unix; works on a disk that keeps owners | setgid on the 9p mount is test U1; the Operator's editor (VS Code server) must also use umask 002 |
-| ii. The agents' primary group is the Operator's (`vscode`) | no new group | nothing to set on folders | gives every agent the Operator's group on every group-readable file |
-| iii. Rely on the mount ignoring owners | files without Linux metadata show as `root` 777 today | nothing to do | only true for old files on one engine; a new file keeps its owner (section 2) |
-
-**Recommendation: i.** It is per engine: on wslc and docker on WSL the 9p mount stores Linux
-owners; Docker Desktop's file sharing may not (test U1). Where owners are not kept, every file is
-writable by everyone already, and the rule costs nothing.
-
-**git.** The git dir is written by both users (objects, refs, the index). git has its own setting
-for exactly this, `core.sharedRepository=group`: it creates objects and refs group-writable
-itself (NFR-13: use the tool's feature). `git-setup` sets it in the checkout's git dir. Windows git
-reads the same config and ignores the setting (test U2).
-
-**The git dir's `config`** is the one file an agent must not write (section 3.3): it stays owned by
-the Operator's user, 644. What an agent loses: `git push -u` and `git branch --track` cannot record
-the upstream, and `git worktree add` cannot turn on per-worktree config. Test U9 lists every
-command the host and cons use that writes it; `push.autoSetupRemote` and an explicit remote in
-`git push` cover the common case.
-
-**`safe.directory`.** git refuses a repository whose top folder or git dir another user owns. The
-global config, readable by every user, already lists the checkout and its git dir; `git-setup`
-adds each worktree root a con makes (or `*` in this devhost, where every folder is the Operator's
-or an agent's; decision in slice 4 by the Operator's existing option `safeDirectory`). The bot
-identity (ADR-0016, `commitWhenEnv: CLAUDECODE`) is unchanged.
-
-**Worktrees** in a con's scratchpad (`/tmp/claude-<uid>/...`) are per uid already; their entries in
-the git dir's `worktrees/` follow the group rule.
-
-## 10. The check
-
-The backlog asks for "a test that the agent user cannot read the key file". The OpenBao key file
-itself is on the workstation (DPAPI), out of any container user's reach; what the container holds
-is what it unlocks. So the check is a list, run as each agent user, every line expected to fail:
-
-```
- agents boundary [<name>]          (also: task agents:boundary; the briefing shows one line)
-   read  $OPENBAO_STATE_DIR/token, audit.log, server.hcl, keyfile-pending   -> refused
-   read  $OPENBAO_STATE_DIR/approle/* and another agent's or back's ids     -> refused
-   read  /proc/<bao server pid>/environ, mem; /proc/<unlock pid>/fd/0       -> refused
-   read  the Operator's GH_CONFIG_DIR/hosts.yml, RCLONE_CONFIG              -> refused
-   use   SSH_AUTH_SOCK of the Operator; /var/run/docker.sock                -> refused
-   run   sudo -n true                                                       -> refused
-   write the git dir's config; GIT_CONFIG_GLOBAL                            -> refused
-   read  every path in AGENTS_BOUNDARY_PATHS (a consumer's own: the office's key file, secrets.env)
-   read  another agent's CLAUDE_CONFIG_DIR                                  -> refused
-   and, expected to work: write the checkout, the git dir's objects, /mnt/cloud-folder
-```
-
-- **Shown able to fail** (P4): the Feature test runs it twice, once as built (all refused) and
-  once after `chmod 644` of a planted token (red, naming the line).
-- **When it runs**: in the Feature tests; at the container start for every agent user (a failing
-  line is one warning, never fatal); on demand. `key-file-rotate` starts when this is green in this
-  devhost for the host and the four backs.
-- **Exit codes** follow the linter CLI contract (ADR-0035): 0 all refused, 1 a line readable, 2
-  usage, 3 agent users not on.
-
-## 11. What a consumer changes, and what breaks
-
-**Opt-in first.** A new option on the `agents` Feature, `runAs`: `remote-user` (the default;
-today's behaviour) or `agent-user` (one user per identity). Every Feature change below is inert
-until a consumer sets it, so every slice up to the default flip is a minor.
-
-What a consumer does to turn it on:
-
-1. Set `"runAs": "agent-user"` on the `agents` Feature and rebuild.
-2. Make sure the remote user has passwordless `sudo` at start (the base images do), or accept the
-   one-line refusal.
-3. Give each agent its Claude credential (`task agents:login -- <name>`, or the token of 8.4) and,
-   for an agent that pushes, its GitHub token (8.5).
-4. Move what agents must not read under the Operator's user, 600, and list it in
-   `AGENTS_BOUNDARY_PATHS`. **The office**: its own key file and `secrets.env`. Its board tool runs
-   inside an agent session and reads them, so the office takes this step together with
-   `openbao-agent-login` (the tool then logs in as its own role), or gives that one file to the one
-   agent user that runs the board as a stopgap.
-5. **DSNP**: check which agent tasks use `docker` or `sudo` (test U12); those move to the
-   Operator's terminal or to CI.
-6. Run `task agents:boundary` and read it.
-
-**What breaks, and so needs a major**, when the default becomes `agent-user`:
-
-| Change | Why it breaks | Version |
-|---|---|---|
-| The default user of every agent changes | files they make are owned by a new uid; `sudo`, `docker` and the Operator's logins vanish from agent sessions; a `!` command loses them too | agents 3.0.0 |
-| Claude Code state moves to `users/<user>/` | an unmigrated tool reading `$CLAUDE_CONFIG_DIR/projects` sees an empty folder | claude-code 2.0.0 (already the major that drops `claude-host`) |
-| The share-handling tasks refuse by user, not by variable | a script that ran them from an agent session with the variables unset stops | openbao, at its next major |
-| `GH_CONFIG_DIR` per user | an agent's `gh` has no login until 8.5 is done | gh, at the flip (minor while opt-in) |
-
-## 12. Slices, in delivery order
+## 10. Slices, in delivery order
 
 Each with its version bump, CHANGELOG entry and `task docs`; the host commits, pushes and opens
 them; the Operator merges and releases.
 
-0. **Records** (with the ruling): an ADR "agents run as their own Linux users"; the lexicon gains
-   **Agent user** and **The Operator's user** (the remote user, which keeps `sudo`); ADR-0056
-   decision 8 gets its "until" date when slice 6 is green.
-1. **agents minor: the check first.** `agents boundary` and `task agents:boundary`, run as the
-   current user. Red in today's devhost on every line, which is the evidence of section 3 and shows
-   the check can fail.
-2. **agents minor: the users.** Option `runAs`; group `dcf-work`; users from the list at start
-   (6.1), uids by name (6.3), `uid:` key; `agent-env` and the drop-in folder (8.1, 8.2); leases
-   owned by the caller; `agents check` shows each agent's user; an agent user's `agents start` is
-   refused. Docker scenario: two agents, two uids, the boundary green for a planted token.
-3. **claude-code minor.** The drop-in: `users/<user>/`; the credential of 8.4; the one-time move of
-   today's state to the default agent (decision 6); the warning of 8.6.
-4. **git minor.** `core.sharedRepository=group`; the git dir's `config` kept the Operator's;
-   `safe.directory` for worktrees; umask 002 for the Operator's shells. Test: two users commit in
-   turn on one checkout.
-5. **gh, ssh-agent, cloud-folder, openbao minors.** Their drop-ins; cloud-folder's
-   `allow_other` mount for `dcf-work`; openbao's share tasks refuse by user, the backs' and agents'
-   AppRole folders (prepares `openbao-agent-login`).
-6. **devhost (local) and this devhost's `.devcontainer`.** Back users, the hand-over of 8.3, the
-   devhost state folders by group; `runAs: agent-user` here; the briefing shows the boundary line.
-   Then the Operator runs `key-file-rotate` (a backlog item for the Operator).
-7. **The flip, later**: agents 3.0.0 and claude-code 2.0.0 make `agent-user` the default, after
-   the office and DSNP have run it opt-in.
+0. **Tests T1 to T8** in a scratch devhost (section 11), reported in this proposal; T1 and T3 decide
+   step 2's settings. Records with the ruling: an ADR "least privilege first: agents run in their
+   CLI's sandbox, then as one agent user", amending ADR-0048 decision 1 (the named interim token)
+   and ADR-0036 (identity gains a Linux user only later); the lexicon gains **Agent user**.
+1. **Step 1**: `Set-RepoGovernance.ps1` (tag ruleset, release environment), the host's fine-grained
+   token. No Feature.
+2. **Steps 2 and 3**: claude-code 1.10.0 (sandbox and lock options); `task repo:setup` stops writing
+   the git dir's `config`; this devhost turns them on.
+3. **Step 4**: devhost 1.15.0.
+4. **Step 5**: openbao 1.6.0 with `openbao-agent-login`.
+5. **Step 6**: agents 2.2.0 and the drop-in minors (claude-code, gh, ssh-agent, openbao,
+   cloud-folder, git); T9 green; then the Operator runs `key-file-rotate`.
+6. **Step 7**: cloud-folder 1.4.0.
+7. **Step 8**: agents NOTES patch; T5's result decides whether more is needed.
 
-Model sizing: slices 1 to 5 and 7 reach every consumer of those Features: the strongest model.
-Slices 0 and 6: Sonnet.
+Model sizing: slices 2, 4, 5 and 6 reach every consumer of those Features: Opus. Slices 0, 1, 3 and 7:
+Sonnet.
 
-## 13. Unknowns, each as a test
+## 11. Tests
 
-| # | Unknown | The test |
+Slice 0 (from the inventory's section 8; T1 and T3 gate step 2):
+
+| # | Unknown | Test | Pass means |
+|---|---|---|---|
+| T1 | Does Claude's sandbox wrap Bash calls, file tools and the backs' `claude -p`, and does `permissions.deny` or `sandbox.filesystem.denyRead` win for a Read? | in a scratch devhost, a managed drop-in with `sandbox.enabled` and a `denyRead` of a temp file; from a session `cat` it and Read it; run a back's `claude -p`; read the exit text, never the contents | all three refuse, the back with the managed drop-in alone |
+| T2 | Do `chown` and modes hold on the 9p `/git-dirs` and checkout? | in a temp folder on `/git-dirs` (not a repository's), `chown`, `chmod 600`, then `sudo -u nobody test -r` | refused; if not, step 6 protects nothing on these mounts and 6.5 is moot |
+| T3 | Does the sandbox's write protection cover a git dir reached by a `.git` pointer, and a nested repository's `.git/config`? | with the sandbox on, `touch` and `mv` over `config` and `hooks/` of a temp git dir behind a pointer file; `git config --local x.y z` | refused for `config` and `hooks/`; allowed for `objects/` and `refs/` |
+| T4 | Can the tester run the suite under `bwrap` with docker-in-docker? | `bwrap` with the socket bound and the credentials hidden, `task test FEATURE=git` | passes; if not, the tester is the one actor left with docker |
+| T5 | What does Codex's `workspace-write` protect on this layout, and does it run under the devcontainer's seccomp? | Codex in a scratch container, a `config.toml`, the writes of T3 | the same refusals, or a list of what differs |
+| T6 | Does the narrow token still do what the host does, and refuse the rest? | the token of step 1: `git push`, `gh pr create`, `gh pr ready`; then `gh api` to change a ruleset, and `gh pr merge` on an unapproved pull request | the first three work; the ruleset change is refused; the merge result decides decision 4 |
+| T7 | Does a sandboxed call reach OpenBao on loopback, and can a back's runner still log in? | with step 2's drop-in, `curl` loopback from a tool call, then `devhost-run-job scribe` | the tool call is refused; the runner logs in |
+| T8 | Does a fine-grained token for the office's repository cover its pull-request workflow? | the office runs T6 in its repository | same as T6 |
+
+Later slices (kept from the first draft's tests, where one agent user still needs them):
+
+| # | Unknown | Test |
 |---|---|---|
-| U1 | Do the checkout and `/git-dirs` keep Linux owners, modes and the setgid bit per engine (wslc, docker on WSL, Docker Desktop, a Linux bind)? | on each host type: two users create, edit and rename files in a folder with setgid `dcf-work`; `stat` after a container restart |
-| U2 | Does `core.sharedRepository=group` in a git dir shared with Windows leave Windows git working? | set it, then `git status`, `commit`, `gc` from Windows git on the same repository |
-| U3 | Does Claude Code accept `CLAUDE_CODE_OAUTH_TOKEN` for `--bg`, its daemon, `attach` and `--remote-control`? Can two users' daemons run at once? | as two agent users with the token only: start a background session each, attach, reach one from the phone |
-| U4 | Does `claude attach` under `sudo -n -u` in the Operator's terminal behave (resize, keys, detach)? | attach to a resident from `task dc:shell` and from the launcher |
-| U5 | Does `rclone mount --allow-other` work in the container with `user_allow_other`, and does `--default-permissions` with `--gid` hold? | mount; read and write as an agent user; refused as a user outside `dcf-work` |
-| U6 | Which user runs a Feature's `postStartCommand`, and can it `useradd` (`sudo -n`) on wslc, docker and the CI images (`debian:latest` has no `sudo`)? | a scenario printing `id` and the result of `useradd` in the hook |
-| U7 | Can another uid read the unlock process's standard input or the server's memory? | as an agent user, during `openbao-setup unlock --stdin`: open `/proc/<pid>/fd/0`, `mem`, `environ` |
-| U8 | What can an agent do on the loopback listener without a token (ADR-0055)? Does a unix-socket listener for the Operator help? | start and cancel a root-token attempt as an agent user; the same against a server with a `unix` listener owned by the Operator's user |
-| U9 | Which git commands the host and cons use write the git dir's `config`? | run the host's usual sequence (branch, worktree add and remove, commit, push, push -u) with `config` read-only; list each failure |
-| U10 | Do Claude hooks (`Stop`, `SubagentStop`) run the hand-over `sudo` non-interactively, inside their timeout? | a stub back that records its uid |
-| U11 | Collision rate of the name-derived uids | the agent and back names of this collection and both consumers, plus 1,000 random names |
-| U12 | What in the office and DSNP agent sessions uses `docker`, `sudo` or the Operator's logins today? | their ledgers and session transcripts searched for `sudo`, `docker`, `gh auth`; one session each run with `runAs: agent-user` |
-| U13 | Does the VS Code server, and the Claude Code extension, start anything as the remote user that an agent then drives? | list the extension's processes and their uid with agent users on |
+| T9 | The boundary: can `agent` read what it must not? (the backlog's check) | the agents scenario of 6.7, red once with a planted token, then green |
+| T10 | Which git commands the host and cons use write the git dir's `config`? (first draft U9) | the host's usual sequence with `config` write-denied; list each failure |
+| T11 | Does `claude attach` under `sudo -n -u agent` behave in the Operator's terminal? (U4) | attach to a resident from `task dc:shell` and from the launcher |
+| T12 | Does `rclone mount --allow-other --default-permissions` hold for `read` and `write`; what do `sync` and `host` modes give the agent user? (U5, review finding 16) | mount each way; read and write as `agent` |
+| T13 | What in the office and DSNP agent sessions uses `docker`, `sudo` or the Operator's logins? (U12) | their ledgers and transcripts searched; one session each with `runAs: agent` |
+| T14 | Does `core.sharedRepository=group` leave Windows git working on the shared git dir? (U2) | `git status`, `commit`, `gc` from Windows git |
+
+## 12. Later (kept so nothing is lost)
+
+One line each; none is in the MVP.
+
+- **One user per identity in the agent list** (first draft option B), with name-derived uids
+  (`20000 + cksum mod 10000`) and an optional `uid:` key; made at start from the list.
+- **One user per back** (`back-scribe` and the others) and the runner's hand-over through a narrow
+  `sudoers` rule (review finding 3's shape: only the hooks' user, no wildcard, standard input).
+- **A shared group `dcf-work`** with a fixed gid, setgid folders and a shared `src/common` script
+  (review finding 12); needed only when there is more than one agent user.
+- **Per-user Claude logins**: `claude setup-token` in `CLAUDE_CODE_OAUTH_TOKEN` (test U3, review
+  finding 10) or an adapter verb `login` (review finding 9).
+- **Per-user Claude state** under `claude-code/users/<user>/` and the cost report across users
+  (review findings 4, 5).
+- **`agents boundary`** as a command with each Feature's protected paths in `boundary.d/` and the
+  linter contract (review findings 8, 11); the same file could feed the sandbox's `denyRead`.
+- **The share tasks refuse by user** (caller must own `$OPENBAO_STATE_DIR`) beside the variables in
+  an openbao minor, the variables dropped at its major (review finding 15).
+- **The default flip**: agents 3.0.0 makes `runAs: agent` the default; claude-code 2.0.0.
+- **An agent that starts another agent** (a rule for the helper alone).
+- **A GitHub App** (or a machine user) for the host, so its identity is not the Operator's and the
+  ruleset's Admin bypass does not apply to it; then installation tokens minted through OpenBao.
+- **Custom brokers** (#187, on hold): the route for what has no native control: an allow-list in
+  front of the docker daemon, git operations that must not touch the git dir's `config`.
+- **The workstation-side `config` check** in the launcher (review finding 1), with the launcher
+  installed per user and refreshed only from `main` (section 13).
+- **Mounting only the repository's own git dir** instead of all of `/git-dirs` (reopens ADR-0020).
+
+## 13. For the repository (found while writing)
+
+- **The `protect-main` ruleset lets the Admin role bypass in `pull_request` mode**
+  (`Set-RepoGovernance.ps1`). The host's pull requests are opened as the Operator, who cannot
+  approve their own, so the bypass is how they merge today. It also means any token acting as the
+  Operator, a fine-grained one included, can merge an unapproved pull request if it has Contents and
+  Pull requests write (T6 confirms). Decision 4.
+- **The launcher runs from the checkout.** Windows `task dc:*` runs `Taskfile.yml` and the vendored
+  launcher on whatever branch an agent left, as the account that opens the OpenBao key file; no
+  Linux user or sandbox closes that. Worth its own backlog item: a per-user installed launcher
+  refreshed only from `main`.
+- **`task repo:setup` writes the git dir's `config`** (`include.path`, hooks path, alias). Under
+  step 3 that file is write-denied to agents; the hooks path belongs in the global config through the
+  git Feature's `hooksPath`.
+- **The shared folder is unreachable by any other user today** (FUSE without `allow_other`),
+  root included; the cloud-folder NOTES could say so.
+- **`dcf-persist` hands a folder to "the current user"**: called as `agent` it would try `sudo` and
+  fail quietly. Its NOTES should say which user it serves.
 
 ## 14. Decisions for the Operator
 
-1. **One user per identity in the agent list, and one per back** (option B), not one shared agent
-   user. *Recommendation: yes; a one-agent list is the shared case.*
-2. **Users made at start from the agent list, with uids derived from the name** (and an optional
-   `uid:` key), not a Feature option at install time. *Recommendation: yes.*
-3. **Environment for an agent: the container's variables minus a deny list** (each Feature's
-   secret variables plus the patterns of 8.1), not an allow list. A deny list keeps a consumer's
-   own variables working; an allow list is safer and breaks more. *Recommendation: deny list, with
-   the boundary check naming every passed variable that matches a pattern.*
-4. **Agents get no `docker` group.** In this devhost the tester back and `task test` in an agent
-   session then report "skipped"; the Feature tests run in CI (the required `tests` check) and in
-   the Operator's terminal. Giving agents `docker` makes them root and the rest of this proposal
-   moot where docker-in-docker is on. *Recommendation: no docker for agents.*
-5. **The Operator's user keeps passwordless `sudo`.** The setup hooks rely on it (`dcf-persist`),
-   and trust runs one way (section 4). The residual (code an agent plants and the Operator runs) is
-   section 3.3's, and is not closed by a password on `sudo`. *Recommendation: keep it.*
-6. **Today's Claude Code sessions go to the default agent's user** (`host` here) at the one-time
-   move, so the host keeps its history; other users start empty. *Recommendation: yes.*
-7. **A `claude` started as the Operator's user warns, never blocks.** *Recommendation: warn.*
-8. **An agent cannot start another agent** in the first version. *Recommendation: yes; revisit
-   when an agent needs to.*
-9. **Claude login: one `setup-token` token for all agent users**, if test U3 passes, else one login
-   per user. *Recommendation: the token.*
-10. **GitHub: a narrow token per agent** (fine-grained or a GitHub App), moving to OpenBao with
-    `openbao-agent-login`. *Recommendation: yes; the Operator makes the host's once.*
-11. **Opt-in now (`runAs`, minors), default flip later** in agents 3.0.0 and claude-code 2.0.0,
-    after the office and DSNP have run it. *Recommendation: yes.*
-12. **`key-file-rotate` starts when `agents boundary` is green in this devhost for the host and the
-    four backs** (end of slice 6). *Recommendation: yes.*
-
-## 15. For the repository (found while writing)
-
-- **The launcher runs from the checkout.** `task dc:*` on Windows runs `Taskfile.yml` and the
-  vendored launcher from the OneDrive checkout, on whatever branch an agent left it, as the
-  Windows account that opens the OpenBao key file. No Linux user closes that. Worth its own
-  backlog item: the launcher runs from a copy installed per user (as Node.js is cached under
-  `%LOCALAPPDATA%`), refreshed only from `main` or by the Operator.
-- **The git dir's `config` is the workstation's too** (section 3.3): an agent-written
-  `core.fsmonitor` runs on Windows. Slice 4 closes it inside the container; the same write from the
-  workstation side (a workstation session) is outside this proposal.
-- **ADR-0020's whole `.git-dirs` mount** lets an agent here write any repository's git dir; with
-  agent users the `config` rule applies to all of them, but objects and refs stay writable.
-  Mounting only the repository's own git dir would narrow it; it reopens ADR-0020's option 2.
-- **The share tasks' refusal reads variables** (`openbao-lib.sh`): an agent that unsets
-  `CLAUDECODE` passes it today. Slice 5 checks the user instead.
-- **The shared folder is unreachable by any other user today** (FUSE without `allow_other`),
-  including root; the cloud-folder NOTES could say so.
-- **`dcf-persist` hands a folder to "the current user"**: called as an agent user it would try
-  `sudo` and fail quietly. Per-user folders are made by `agents` (8.2), not by `dcf-persist`; its
-  NOTES should say which user it serves.
+1. **The MVP in the inventory's order** (GitHub; sandbox and locked permissions; write-deny; the
+   backs; a per-agent AppRole; one agent user; the shared folder and ssh-agent; Codex), every step
+   opt-in. *Recommendation: yes.*
+2. **Tests T1 and T3 run first and gate step 2**: if the sandbox does not cover file tools and the
+   backs (T1) or the git dir behind a pointer (T3), step 2's settings are re-chosen before release.
+   *Recommendation: yes.*
+3. **The host's GitHub login becomes a fine-grained token**, at rest in `hosts.yml`, as a named,
+   bounded interim exception to ADR-0048 decision 1 that ends when `openbao-agent-login` ships.
+   *Recommendation: accept.*
+4. **The ruleset's Admin bypass** (section 13): keep it for now and accept that the host's token can
+   merge, or take it out and merge through a second reviewer. *Recommendation: keep it for the MVP,
+   measure it in T6, and move the host to a GitHub App identity (Later).*
+5. **Strict sandbox**: `failIfUnavailable: true` and `allowUnsandboxedCommands: false` whenever the
+   sandbox option is on, so a session never silently runs unsandboxed and `sudo` moves to the
+   Operator's terminal. *Recommendation: yes.*
+6. **Credential paths listed by the consumer** in claude-code's options (the NOTES give this
+   collection's list), not shipped per Feature, for the MVP. *Recommendation: yes; a protected-paths
+   contract later.*
+7. **One `agent` user** for the host, its cons and the backs, not one per identity or per back.
+   *Recommendation: yes; per identity is a later option.*
+8. **The user is made at install time** (`runAs`, `agentUid` default 2000), and the Claude state
+   volume is handed to it whole, so the host keeps its login, history and memory. *Recommendation:
+   yes.*
+9. **The Operator's user keeps passwordless `sudo` and `docker`**; trust runs one way.
+   *Recommendation: keep.*
+10. **Shared files**: `agent`'s primary group is the remote user's, umask 002 for `agent`, git's
+    `core.sharedRepository=group`; the Operator's own umask unchanged. *Recommendation: yes, if T2
+    shows modes hold.*
+11. **A `claude` started as the Operator's user warns, never blocks.** *Recommendation: warn.*
+12. **An agent cannot start another agent.** *Recommendation: yes; revisit when one must.*
+13. **The agent's environment: the container's variables minus a deny list** (each Feature's secret
+    variables and the patterns of 6.2). *Recommendation: deny list.*
+14. **No `docker` for the agent user**; the tester runs under `bwrap` and, if T4 fails, reports
+    "skipped" here while the suite runs in CI and the Operator's terminal. *Recommendation: yes.*
+15. **The shared folder's `agentAccess` is `write` in this devhost** while the backs write records
+    there, `read` for a consumer whose agents only read. *Recommendation: yes.*
+16. **`key-file-rotate` starts when T9 is green in this devhost.** *Recommendation: yes.*
 
 ## Architecture review (2026-11-06)
 
