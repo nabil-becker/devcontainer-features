@@ -16,15 +16,34 @@ die() { # <exit code> <line>
 # An agent's job: the devhost's backs run their CLI with DEVHOST_JOB_CHILD, and Claude Code sets
 # CLAUDECODE on every process it starts (its tool calls, subagents and headless runs).
 # OPENBAO_AGENT_JOB_VARS names more variables (space separated) for another agent CLI.
-guard() { # <task> <why>
+agent_job() { # the name of the variable that says this is an agent's job, or fail
   local v
   # shellcheck disable=SC2086  # a list of names
   for v in DEVHOST_JOB_CHILD CLAUDECODE ${OPENBAO_AGENT_JOB_VARS:-}; do
     if [ -n "${!v:-}" ]; then
-      die 3 "task openbao:$1 refuses to run inside an agent's job ($v is set): $2. Run it yourself in a plain terminal in the devcontainer"
+      printf '%s' "$v"
+      return 0
     fi
   done
+  return 1
 }
+guard() { # <task> <why>
+  local v
+  if v="$(agent_job)"; then
+    die 3 "task openbao:$1 refuses to run inside an agent's job ($v is set): $2. Run it yourself in a plain terminal in the devcontainer"
+  fi
+}
+dur_secs() { # <5m|6h|90d|3600> -> seconds, or fail (a number and s, m, h or d; bare is seconds)
+  [[ "$1" =~ ^([1-9][0-9]*)([smhd]?)$ ]] || return 1
+  local n="${BASH_REMATCH[1]}"
+  case "${BASH_REMATCH[2]}" in
+    '' | s) echo "$n" ;;
+    m) echo $((n * 60)) ;;
+    h) echo $((n * 3600)) ;;
+    d) echo $((n * 86400)) ;;
+  esac
+}
+
 # Bracketed paste off (ESC [ ? 2004 l). A shell such as pwsh (PSReadLine) leaves it on while a child
 # runs, so a pasted share arrives as ESC[200~<share>ESC[201~ and bao's hidden prompt, which reads
 # raw bytes, sends the markers with the key ("'key' must be a valid hex or base64 string"). Only
@@ -59,7 +78,7 @@ role_write() { # <role> <comma separated policies>
 
 # The Operator's policy, one definition for init, configure (an onboarding claim) and the OpenBao
 # key file's create and rotate.
-operator_policy() { # <kv mount>
+operator_policy() { # <kv mount> [<SSH CA mount>, default DCF_SSH_CA_MOUNT or ssh-ca]
   cat <<EOF
 # The Operator (userpass, or the operator AppRole of the OpenBao key file): the secrets, the snapshot read, sealing, reissuing the secret ids of
 # AppRole roles that already exist, and starting or cancelling a root-token generation (which only
@@ -107,6 +126,32 @@ path "auth/userpass/users" {
   capabilities = ["list"]
 }
 path "sys/rotate/root/verify" {
+  capabilities = ["read"]
+}
+$(ssh_ca_policy "${2:-}")
+EOF
+}
+
+# The part of the Operator's policy for the SSH certificate authority (task openbao:ssh:ca:init):
+# one definition, also printed for the owner of a server this Feature only has a client for. The
+# Operator may sign a user certificate with any role of the mount, read the CA's public key and
+# the roles (to list them and to check a principal against a role's patterns). NOT the mount, the
+# CA key (config/ca is read-only: OpenBao never returns the private key) and not a role: making
+# one is the root-token step of openbao:ssh:ca:init and :ca:role. The backs' AppRoles and an
+# agent's token have no path here, so they are refused.
+ssh_ca_policy() { # [<SSH CA mount>]
+  local m="${1:-${DCF_SSH_CA_MOUNT:-ssh-ca}}"
+  cat <<EOF
+path "$m/sign/*" {
+  capabilities = ["update"]
+}
+path "$m/config/ca" {
+  capabilities = ["read"]
+}
+path "$m/roles" {
+  capabilities = ["list"]
+}
+path "$m/roles/*" {
   capabilities = ["read"]
 }
 EOF

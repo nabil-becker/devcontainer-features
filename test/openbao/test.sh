@@ -31,6 +31,13 @@ check "jq is installed (the onboarding scripts read bao's JSON with it)" command
 check "openbao-ssh on PATH" command -v openbao-ssh
 check "the ssh record tasks are in the Taskfile" bash -c "grep -q '^  ssh:new:' /usr/local/share/go-task/includes.d/openbao.yml && grep -q '^  ssh:import:' /usr/local/share/go-task/includes.d/openbao.yml && grep -q '^  ssh:retire:' /usr/local/share/go-task/includes.d/openbao.yml && grep -q '^  ssh:age:' /usr/local/share/go-task/includes.d/openbao.yml"
 check "env.sh is installed for them" test -f /usr/local/share/openbao-feature/env.sh
+check "dcf-ssh-sign on PATH" command -v dcf-ssh-sign
+check "the SSH CA tasks are in the Taskfile" bash -c "grep -q '^  ssh:ca:init:' /usr/local/share/go-task/includes.d/openbao.yml && grep -q '^  ssh:ca:role:' /usr/local/share/go-task/includes.d/openbao.yml && grep -q '^  ssh:ca:import:' /usr/local/share/go-task/includes.d/openbao.yml"
+# dcf-ssh-sign with no server: unreachable, exit 10 (a closed port); and a wrong call is exit 2
+# shellcheck disable=SC2016  # expansion is meant to happen inside the inner bash
+check "dcf-ssh-sign status without a server is unreachable (exit 10)" bash -c 'out="$(env -u CLAUDECODE -u DEVHOST_JOB_CHILD BAO_ADDR=http://127.0.0.1:1 dcf-ssh-sign status 2>/dev/null)"; rc=$?; [ "$rc" = 10 ] && [ "$out" = unreachable ]'
+# shellcheck disable=SC2016  # expansion is meant to happen inside the inner bash
+check "dcf-ssh-sign with no command is exit 2" bash -c 'env -u CLAUDECODE -u DEVHOST_JOB_CHILD dcf-ssh-sign >/dev/null 2>&1; [ "$?" = 2 ]'
 check "the server-mode tasks are in the Taskfile" bash -c "grep -q '^  init:' /usr/local/share/go-task/includes.d/openbao.yml && grep -q '^  unseal:' /usr/local/share/go-task/includes.d/openbao.yml && grep -q '^  seal:' /usr/local/share/go-task/includes.d/openbao.yml && grep -q '^  server:status:' /usr/local/share/go-task/includes.d/openbao.yml && grep -q '^  password:' /usr/local/share/go-task/includes.d/openbao.yml && grep -q '^  approle:issue:' /usr/local/share/go-task/includes.d/openbao.yml && grep -q '^  approle:revoke:' /usr/local/share/go-task/includes.d/openbao.yml"
 check "the onboarding tasks are in the Taskfile" bash -c "grep -q '^  onboard:export:' /usr/local/share/go-task/includes.d/openbao.yml && grep -q '^  onboard:claim:' /usr/local/share/go-task/includes.d/openbao.yml && grep -q '^  wrap:' /usr/local/share/go-task/includes.d/openbao.yml && grep -q '^  unwrap:' /usr/local/share/go-task/includes.d/openbao.yml"
 check "client mode (the default) runs no server" bash -c "openbao-setup start; ! pgrep -x bao"

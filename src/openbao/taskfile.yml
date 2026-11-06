@@ -222,3 +222,39 @@ tasks:
     desc: 'List each SSH key record with its creation date, its age in days (or its retirement date) and its fingerprint; warns about a live key older than SSH_KEY_MAX_AGE_DAYS (default 365): rotate it with task ssh-agent:key:rotate NAME=ssh/<key>.'
     cmds:
       - openbao-run openbao-ssh age
+
+  ssh:ca:init:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'The SSH certificate authority, the Operator only, in a plain terminal (refuses inside an agent''s job; server mode asks for two unseal shares at a hidden prompt, a root token used for this step alone and revoked after; against a server elsewhere it runs with the token you hold, which needs the rights to enable a mount): enables an ssh secrets engine at MOUNT= (default ssh-ca, DCF_SSH_CA_MOUNT), generates the CA inside OpenBao (ed25519; its private key never leaves OpenBao and no task or dcf-secret returns it), makes the default role (DCF_SSH_CA_ROLE, default "default"): ed25519 keys only, user certificates only, host certificates off, no extensions, no critical options, ALLOWED= principal patterns (default relay@*,fed-*), TTL= default lifetime (default 2160h, 90 days), MAX_TTL= (default the same as TTL), and gives the Operator''s policy the sign path (no AppRole, no agent token has it). Idempotent: a second run reports the CA''s fingerprint and changes nothing. Compare the fingerprint with the other side''s out of band, never from a shared folder. Callers use dcf-ssh-sign.'
+    interactive: true
+    env:
+      OPENBAO_TASK_ALLOWED: '{{.ALLOWED | default ""}}'
+      OPENBAO_TASK_TTL: '{{.TTL | default ""}}'
+      OPENBAO_TASK_MAX_TTL: '{{.MAX_TTL | default ""}}'
+      OPENBAO_TASK_MOUNT: '{{.MOUNT | default ""}}'
+    cmds:
+      - openbao-server ssh-ca-init
+
+  ssh:ca:role:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Another signing role on the SSH CA (or a change to one, the default role included): NAME=<role> ALLOWED=<principals or patterns, comma separated, * as a wildcard, e.g. writer@*> [TTL=<dur, default 2160h>] [MAX_TTL=<dur, default TTL>] [MOUNT=]. The same defaults and refusals as the default role: ed25519 keys only, user certificates only, no extensions, no critical options; only the Operator''s policy may sign, with any role (dcf-ssh-sign sign --role <name>). A role of exact names is enforced by the server; a pattern is checked by dcf-ssh-sign before it signs and by the verifier''s cert-authority line (see the NOTES). Same terminal, shares and refusals as openbao:ssh:ca:init, which has to have run first; with the role already as asked it changes nothing.'
+    interactive: true
+    requires:
+      vars: [NAME, ALLOWED]
+    env:
+      OPENBAO_TASK_NAME: '{{.NAME}}'
+      OPENBAO_TASK_ALLOWED: '{{.ALLOWED}}'
+      OPENBAO_TASK_TTL: '{{.TTL | default ""}}'
+      OPENBAO_TASK_MAX_TTL: '{{.MAX_TTL | default ""}}'
+      OPENBAO_TASK_MOUNT: '{{.MOUNT | default ""}}'
+    cmds:
+      - openbao-server ssh-ca-role
+
+  ssh:ca:import:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Optional, instead of the generated CA of openbao:ssh:ca:init, for one CA across several instances: the CA''s ed25519 private key on stdin (never an argument; no passphrase; refused when the mount already has a CA, which is never replaced), written into OpenBao at MOUNT= (default ssh-ca) and compared by fingerprint with what OpenBao returns; the key is held in memory only, never in a file or a log, and cannot be read back from OpenBao afterwards. Same terminal, shares and refusals as openbao:ssh:ca:init (in server mode the key is piped in and the shares are typed at the terminal). Run openbao:ssh:ca:init next for the default role and the Operator''s policy. Delete your copy of the key afterwards.'
+    interactive: true
+    env:
+      OPENBAO_TASK_MOUNT: '{{.MOUNT | default ""}}'
+    cmds:
+      - openbao-server ssh-ca-import

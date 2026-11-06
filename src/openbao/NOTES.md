@@ -31,8 +31,8 @@ checks the tarball with `sha256sum -c`, and installs the binary only if the
 check passes. It runs `bao version` at the end, so the version is in the
 build log. It installs no OpenBao server and no `vault` command.
 
-Besides the binary, `install.sh` puts four scripts on PATH (nothing is downloaded for them):
-`dcf-secret` (the interface callers use to read and write secrets, see below), `openbao-setup`
+Besides the binary, `install.sh` puts these scripts on PATH (nothing is downloaded for them):
+`dcf-secret` (the interface callers use to read and write secrets, see below), `dcf-ssh-sign` (the interface callers use to have a user certificate signed by the SSH certificate authority in OpenBao, see "SSH certificate authority"), `openbao-setup`
 (the post-create hook, see State) and `dcf-persist` (a verbatim copy of `src/common/dcf-persist.sh`,
 which makes the state directory usable and says what backs it). It writes the option defaults the
 hook reads to `/usr/local/share/openbao-feature/options.env`.
@@ -879,6 +879,103 @@ time: a record that holds the same key is skipped, one that holds another key is
   become `register/<principal>` with purpose `register`; each back then reads its own through its
   AppRole.
 
+## SSH certificate authority
+
+An SSH certificate authority whose private key lives in OpenBao and never leaves it. It was asked
+for by two consumers: AOF (the agentic-operating-framework's tooling agent), whose packet-relay
+signs each stack instance's relay key so that the receiving stack can trust it (rulings D94 and
+D95), and the KGO Office, which wants register writer keys (the signed ledgers and the backlog kept
+with `agentic-register`) to be trusted by one CA once per register instead of one key at a time. Both
+verify with stock OpenSSH: `ssh-keygen -Y verify` against `cert-authority` lines.
+
+```text
+dcf-ssh-sign sign --principals <p1,p2,...> --key-id <id> [--ttl <dur>] [--role <name>]
+                                  the public key (one ssh-ed25519 line) on stdin, the certificate on
+                                  stdout (one line, an ssh-ed25519-cert-v01 certificate), nothing else
+dcf-ssh-sign ca                   the CA's public key, one line (ssh-ed25519 AAAA...)
+dcf-ssh-sign ca --fingerprint     its SHA256 fingerprint, as ssh-keygen -lf prints it
+dcf-ssh-sign roles                the signing roles, one per line
+dcf-ssh-sign status               one word: ready, sealed, unreachable, logged-out, denied or not-initialised
+```
+
+- **The engine.** `task openbao:ssh:ca:init` enables an `ssh` secrets engine at `ssh-ca`
+  (`MOUNT=` or `DCF_SSH_CA_MOUNT` name another) and has OpenBao generate the CA (`ed25519`). The
+  engine only ever returns the public key: no task, no `dcf-secret` name and no API path gives the
+  private one back. It also makes the **default role** and gives the Operator's policy the sign
+  path. It is idempotent: a second run reports the CA's fingerprint and the role as already asked and
+  changes nothing (and, in server mode, needs no terminal and no shares for that). The Operator's
+  policy of a server made before 1.6.0 gets the sign path when `openbao:ssh:ca:init` runs.
+- **Server mode needs the shares for this, like making an AppRole role.** Enabling a mount, writing
+  the CA and a role are things the Operator's token may not do (a token that could write a role could
+  widen it). So in server mode `init`, `role` and `import` use a root token made from two unseal
+  shares typed at the hidden prompt, used for that step alone and revoked after: a plain terminal,
+  refused inside an agent's job. In client mode (a server elsewhere) they run with the token you
+  hold, which the server's owner has to allow to enable a mount and write its CA and roles; the
+  task prints the paths the server's Operator policy needs for `dcf-ssh-sign`.
+- **Roles.** A role is a named set of principal patterns, with the same defaults and refusals for
+  each: `ed25519` subject keys only, user certificates only, host certificates off, **no extensions
+  and no critical options**, a default lifetime (`TTL=`, default `2160h`, 90 days) and a maximum
+  (`MAX_TTL=`, default the same as `TTL`, so a longer certificate takes a conscious change). The
+  default role (named `default`, `DCF_SSH_CA_ROLE` renames it) is a role like any other: it has
+  `relay@*,fed-*`, the two principal forms AOF uses (`relay@<lowercase GUID>` and
+  `fed-<lowercase GUID>`), and `ALLOWED=` on `init` overrides that. `task openbao:ssh:ca:role
+  NAME=<role> ALLOWED=<patterns> [TTL=] [MAX_TTL=]` makes another or changes one: for the Office,
+  `NAME=register ALLOWED='writer@*'` for principals `writer@<handle>-<machine tag>`.
+  `dcf-ssh-sign sign --role <name>` picks it, and a principal outside that role's patterns is exit 13,
+  so a relay certificate and a register certificate never stand in for each other.
+- **Where the patterns are enforced.** OpenBao matches a role's `allowed_users` exactly and has no
+  wildcard. A role of exact names (`ALLOWED=relay@a,fed-b`) is enforced by the server itself. A role
+  with a `*` has `allowed_users: "*"` on the server, and its patterns are kept in the KV store as
+  `ssh-ca/roles/<role>` (field `allowed`); `dcf-ssh-sign` checks them before it signs, and refuses
+  with 13. The boundary a verifier relies on is its own `cert-authority` line, which restricts the
+  principals (`relay@*`) and the namespace: a verifier must always write that restriction (below).
+  Only the Operator's token can sign, so a caller that goes round `dcf-ssh-sign` is the Operator.
+- **Only the Operator signs.** The Operator's policy (`operator_policy` in `openbao-lib.sh`) is the
+  only one with `ssh-ca/sign/*` (update), the CA's public key (read) and the roles (list, read). The
+  backs' AppRole policies (one secret each, the backup role's snapshot read) and an agent's token have
+  no path there, so every `dcf-ssh-sign` subcommand with such a token is exit 13. `dcf-ssh-sign` also
+  refuses to run inside an agent's job (exit 3, like the Feature's other Operator commands:
+  `DEVHOST_JOB_CHILD`, `CLAUDECODE`, `OPENBAO_AGENT_JOB_VARS`), for every subcommand.
+  The Operator's policy names one CA mount, the one `openbao:ssh:ca:init` last ran for.
+- **Import, optional.** `task openbao:ssh:ca:import [MOUNT=] < ca_key` takes an existing ed25519 CA
+  private key on stdin (never an argument, no passphrase) for an Operator who wants one CA across
+  several instances. It is held in memory only, goes to OpenBao on `bao`'s stdin, is compared by
+  fingerprint with what OpenBao returns, and is refused when the mount already has a CA (a CA is
+  never replaced here). In server mode the key is piped in and the shares are typed at the terminal.
+  Delete your copy afterwards; run `openbao:ssh:ca:init` next for the default role.
+- **Exit codes**, `dcf-secret`'s, each with one plain line on stderr naming the fix: 0 done; 10 the
+  server is unreachable; 11 sealed, not initialised or no CA yet (names `openbao:ssh:ca:init`); 12 no
+  token, or it expired; 13 the token may not sign, or a principal is outside the role; 2 a wrong call
+  (also an unknown role, a private or RSA key on stdin, a `--ttl` above the role's maximum); 3
+  refused (inside an agent's job); 1 `bao` failed for a reason no signal explains (its message
+  follows). The codes come from `dcf-secret status`, the capabilities `bao token capabilities`
+  reports and whether the CA and the role can be read, never from the words of an error. No private
+  key is ever taken or printed, and nothing is read from a file or the environment instead of the
+  server.
+
+### Trusting an authority: compare the fingerprint out of band
+
+Trust between two authorities is set up once, by a fingerprint exchange, as with SSH's
+`known_hosts`. Each side runs `dcf-ssh-sign ca --fingerprint` and the two Operators compare the
+`SHA256:...` strings **out of band**: on a call, in person, in a channel that each side controls. The
+CA's public key, or its fingerprint, is **never trusted because it was found in a shared folder**,
+a repository, a registry or a message anyone else could have changed: whoever can write there could
+substitute their own key, and every certificate of theirs would then verify. Only after the
+fingerprints match does the Operator put the key in the verifying side's `allowed_signers`, as a
+line that restricts the principals and the namespace:
+
+```text
+relay@* cert-authority,namespaces="<ns>" ssh-ed25519 AAAA...          # AOF's relay
+writer@* cert-authority,namespaces="ledger-<room>" ssh-ed25519 AAAA... # the Office's register
+```
+
+A certificate then verifies with `ssh-keygen -Y verify -f allowed_signers -I relay@<guid> -n <ns>
+-s <signature>` (the signature made through an agent that holds the key and its certificate, `ssh-keygen
+-Y sign -U -f <key>-cert.pub -n <ns>`). It stops verifying when it expires, and with another
+namespace or under a line that covers another principal form. Revocation is OpenSSH's own: a
+`revoked_keys` file named in `RevokedKeys` (or the verifier's own list); a short `--ttl` is the
+other way to limit a certificate.
+
 ## Minimal `devcontainer.json`
 
 ```json
@@ -981,6 +1078,10 @@ registry, these appear under `openbao:`:
   The four refuse inside an agent's job.
 - `openbao:ssh:new`, `openbao:ssh:put`, `openbao:ssh:import`, `openbao:ssh:retire`,
   `openbao:ssh:age`: the SSH key records and the import (above).
+- `openbao:ssh:ca:init`, `openbao:ssh:ca:role`, `openbao:ssh:ca:import`: the SSH certificate authority
+  (above): the mount, the CA generated inside OpenBao, the default role and the Operator's sign
+  path; another role; a CA key piped in. Server mode: two unseal shares, a plain terminal; refuse
+  inside an agent's job. `dcf-ssh-sign` is the caller's command.
 - `openbao:setup`: re-run the post-create hook (`openbao-setup`): make the state directory usable,
   move a token left in `~/.vault-token` into it, report the token helper, the address and the saved login; in
   server mode also the start hook.

@@ -8,6 +8,52 @@ here; `task lint` fails when the entry is missing.
 
 Entries from 1.0.0 to 1.0.3 were generated from the commit history (`.github/scripts/changelog.py backfill`) and the "Changes in x.y.z" sections that NOTES.md used to hold; most list commit subjects as written then; the newest of them is in wording for users.
 
+## [1.6.0] - 2026-11-06
+
+### Added
+
+- **An SSH certificate authority in OpenBao**, for the two consumers that asked: AOF (the
+  agentic-operating-framework's tooling agent; its packet-relay signs each stack instance's relay key
+  with it, rulings D94 and D95) and the KGO Office (one CA for its register writer keys, so a register
+  trusts the CA once instead of every machine's key one by one). The CA's private key lives in OpenBao
+  and never leaves it: no task and no `dcf-secret` name returns it. Verification is stock OpenSSH:
+  `ssh-keygen -Y verify` against `cert-authority` lines, with expiry.
+  - **`task openbao:ssh:ca:init`** enables an `ssh` secrets engine at `ssh-ca` (`MOUNT=` or
+    `DCF_SSH_CA_MOUNT` name another), has OpenBao generate the CA (ed25519), makes the default role
+    and gives the Operator's policy the sign path. Idempotent: a second run reports the CA's
+    fingerprint and changes nothing. In server mode it uses a root token made from two unseal shares
+    for this step alone (like `openbao:approle:issue` with a policy path): a plain terminal, refused
+    inside an agent's job. Against a server elsewhere it runs with the token you hold and prints the
+    policy paths the server's owner adds.
+  - **Roles.** The default role (`default`, `DCF_SSH_CA_ROLE` renames it) has the principal forms AOF
+    uses, `relay@*` and `fed-*` (`ALLOWED=` overrides them), `TTL=` default 2160h (90 days), `MAX_TTL=`
+    default the same as `TTL`. **`task openbao:ssh:ca:role NAME=<role> ALLOWED=<patterns> [TTL=]
+    [MAX_TTL=]`** makes or changes another role on the same mount, with the same defaults and
+    refusals, for the Office's `register` (`writer@*`): ed25519 keys only, user certificates only, host
+    certificates off, no extensions, no critical options. A principal outside the named role is refused,
+    so relay and register certificates never stand in for each other.
+  - **`task openbao:ssh:ca:import < <key>`** (optional): an existing ed25519 CA key from stdin only,
+    for one CA across several instances; refused when the mount already has a CA.
+  - **`dcf-ssh-sign`**, the caller's command, in the style of `dcf-secret`: `sign --principals
+    <p1,p2,...> --key-id <id> [--ttl <dur>] [--role <name>]` (the public key on stdin, the one-line
+    certificate on stdout), `ca` (the public key), `ca --fingerprint` (as `ssh-keygen -lf` prints
+    it, for the Operators to compare out of band), `roles` (one per line) and `status` (one word).
+    `dcf-secret`'s exit codes (0, 10 unreachable, 11 sealed, not initialised or no CA, 12 no token,
+    13 the token may not sign or a principal is outside the role, 2 usage, 1 other) with one plain
+    line on stderr; 3 when it is run inside an agent's job. Only the Operator's policy may sign: the
+    backs' AppRoles and an agent's token are refused with 13. No private key is taken or printed.
+  - Action: none unless you want the CA. To use it, rebuild, then run `task openbao:ssh:ca:init`
+    (in server mode on a store made before 1.6.0 this also adds the sign path to the Operator's
+    policy, which an existing store otherwise keeps unchanged). Compare the CA's fingerprint with the
+    other side's out of band, never from a shared folder (see the NOTES, "SSH certificate authority").
+
+### Changed
+
+- The Operator's policy (`operator_policy`, written by `openbao:init`, the key file's `create` and
+  `rotate`, and now `openbao:ssh:ca:init`) gains the paths of the SSH CA mount: sign, read the CA's
+  public key, list and read roles; never write a role or the CA. `openbao-lib.sh` gains
+  `agent_job` (the variable that makes a job an agent's, which `guard` uses) and `dur_secs`.
+
 ## [1.5.0] - 2026-11-05
 
 ### Added
