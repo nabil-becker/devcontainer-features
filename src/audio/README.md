@@ -143,6 +143,10 @@ task audio:check     # audio: ready: capture source RDPSource through unix:/mnt/
 
 It records nothing. Then, in Claude Code, `/voice`.
 
+With the microphone off, `/voice` says it "could not find a working audio recorder" and suggests
+installing SoX: the tools are installed, the gate is closed. Run `audio-check`; when it says `off`,
+run `task audio:on` on the workstation and `/voice` again.
+
 ## Tasks
 
 - `audio:version`: the versions of `sox`, `pactl` and `arecord`, and `PULSE_SERVER` and
@@ -197,6 +201,7 @@ are the distribution's, so they move with the base image.
 #### Added
 
 - **The microphone is gated on the workstation** (with devcontainer-cli 1.22.0): the launcher no longer mounts WSLg's own directory at `/mnt/wslg` but an empty relay directory, so the real socket is never in the container, and the microphone is OFF until the engineer runs `task audio:on` on the workstation (default 15 minutes, `TTL=<duration>`, at most 2 hours), which starts a relay for that long; `task audio:off` ends it at once. When it ends, the socket file is gone. No process in the container can switch it on or off, and neither needs a rebuild. `audio-check` says `off (the workstation has not turned audio on)` when `/mnt/wslg` is mounted and has no socket, distinct from the `socket not reachable` (not set up) line, and with the audio on it adds the time left.
+- A note that with the microphone off, Claude Code's `/voice` blames a missing recorder and suggests installing SoX; `audio-check` says `off`, and `task audio:on` is the fix.
 - `DCF_AUDIO_FEATURE=1` in `containerEnv`, which the bootstrap's root Taskfile reads to leave the workstation's `audio:on`, `audio:off` and `audio:status` out inside the container.
 
 #### Changed

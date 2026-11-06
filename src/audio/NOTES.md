@@ -123,6 +123,10 @@ task audio:check     # audio: ready: capture source RDPSource through unix:/mnt/
 
 It records nothing. Then, in Claude Code, `/voice`.
 
+With the microphone off, `/voice` says it "could not find a working audio recorder" and suggests
+installing SoX: the tools are installed, the gate is closed. Run `audio-check`; when it says `off`,
+run `task audio:on` on the workstation and `/voice` again.
+
 ## Tasks
 
 - `audio:version`: the versions of `sox`, `pactl` and `arecord`, and `PULSE_SERVER` and
