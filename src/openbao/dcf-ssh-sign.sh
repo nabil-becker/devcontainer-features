@@ -67,7 +67,9 @@ fix_no_ca() { say "the SSH CA is not set up at $camount in this server: the Oper
 
 command -v bao >/dev/null 2>&1 || die 10 "bao is not installed: add the openbao Feature to the devcontainer"
 command -v jq >/dev/null 2>&1 || die 1 "jq is not installed: rebuild the devcontainer (the openbao Feature installs it)"
-command -v ssh-keygen >/dev/null 2>&1 || die 1 "ssh-keygen is not installed (openssh-client)"
+# ssh-keygen (openssh-client) is needed only to check a public key and to print a fingerprint, so
+# status, roles and ca work on an image without it.
+need_keygen() { command -v ssh-keygen >/dev/null 2>&1 || die 1 "ssh-keygen is not installed (openssh-client)"; }
 [ -z "${DCF_SECRET_AS:-}" ] || die 2 "DCF_SECRET_AS (logging in as an AppRole) is not supported in this version of the openbao Feature"
 
 role_ok() { [[ "$1" =~ ^[a-z][a-z0-9_-]{0,63}$ ]]; }
@@ -151,6 +153,7 @@ cmd_sign() {
   if [ -n "$ttl" ]; then
     secs="$(dur_secs "$ttl")" || die 2 "'$ttl' is not a duration (a number and s, m, h or d: 90d, 12h, 3600)"
   fi
+  need_keygen
   [ ! -t 0 ] || die 2 "the public key is read from stdin: pipe it in (never as an argument)"
   # The one thing taken from stdin: a public key. A private key is refused and never echoed.
   pub="$(cat)"
@@ -203,6 +206,7 @@ cmd_ca() {
   pub="$(ca_pub)"
   [ -n "$pub" ] || ca_missing
   if [ "$fp" -eq 1 ]; then
+    need_keygen
     printf '%s\n' "$pub" | ssh-keygen -l -f - || die 1 "ssh-keygen could not read the CA's public key"
   else
     printf '%s\n' "$pub"
