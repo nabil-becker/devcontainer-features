@@ -49,10 +49,14 @@
     run has no --device, --cap-add or --security-opt option and would refuse the start, so `up`
     warns once and starts the container without FUSE (Get-FuseRefusal, Write-FuseRefusedWarning).
 
-    Audio on request (the audio Feature): DCF_HOST_AUDIO=wslg on windows-docker or windows-wsl-docker
-    makes `up` bind the default WSL distro's /mnt/wslg to /mnt/wsl/wslg (as root, skipped when already
-    there) and mount that at /mnt/wslg, and sets DCF_HOST_AUDIO=wslg; otherwise none, with one warning
-    when asked for. Unset or none runs nothing (Initialize-HostAudio).
+    Audio on request, gated on the workstation (the audio Feature, ADR 0057): DCF_HOST_AUDIO=wslg on
+    windows-docker or windows-wsl-docker makes `up` create the relay directory /mnt/wsl/devhost-audio
+    in the default WSL distro (as root) and mount it, empty, at /mnt/wslg, and sets
+    DCF_HOST_AUDIO=wslg; otherwise none, with one warning when asked for. Unset or none runs nothing
+    (Initialize-HostAudio). The microphone is OFF until `audio on [<duration>]` (task audio:on) starts
+    a socat relay in that directory from the default distro's /mnt/wslg/PulseServer, ended by the
+    duration (DCF_HOST_AUDIO_TTL, default 15m; at most DCF_HOST_AUDIO_TTL_MAX, default 2h) or by
+    `audio off`; `audio status` says whether it is on and the time left (Invoke-HostAudio).
 
     Host mounts: `up` (so `rebuild`) adds the mounts the host type needs with
     `--mount type=bind,source=...,target=...` (Get-HostMount; slice 3: the
@@ -581,20 +585,29 @@ function Write-FuseRefusedWarning {
     }
 }
 
-# Audio on request (the audio Feature; backlog audio-feature): DCF_HOST_AUDIO=wslg asks for the
-# workstation's microphone through WSLg's PulseAudio socket. The container engine's WSL distro does
-# not see /mnt/wslg, but every WSL2 distro shares /mnt/wsl, so before `up` the launcher binds the
-# default distro's /mnt/wslg to /mnt/wsl/wslg (as root, once: skipped when already there; a WSL
-# restart drops it and the next `up` redoes it) and mounts that at /mnt/wslg, where the Feature's
-# PULSE_SERVER points. DCF_HOST_AUDIO then says what the launcher did: wslg or none. Unset or none
+# Audio on request, gated on the workstation (the audio Feature; backlog audio-feature,
+# audio-gate-ttl; ADR 0057): DCF_HOST_AUDIO=wslg asks that the container may have the workstation's
+# microphone through WSLg's PulseAudio socket, but only while the engineer turned it on. The
+# container engine's WSL distro does not see /mnt/wslg, but every WSL2 distro shares /mnt/wsl, so
+# before `up` the launcher makes a relay directory there, /mnt/wsl/devhost-audio (as root through
+# wsl.exe), and mounts it at /mnt/wslg, where the Feature's PULSE_SERVER points. WSLg's own socket is
+# never mounted: the directory is empty, the microphone is OFF, until `audio on [<duration>]` starts
+# a socat relay in the default distro from <dir>/PulseServer to /mnt/wslg/PulseServer, ended by the
+# duration (timeout) or by `audio off`, and then the socket file is gone again. The switch lives on
+# the workstation, outside the container, so no process in the container can undo it, and changing
+# it needs no rebuild. DCF_HOST_AUDIO then says what the launcher did: wslg or none. Unset or none
 # asks for nothing and runs nothing. Never fails a start: anything missing is one warning and none.
-# The bash twin is resolve_audio and friends in devcontainer-cli.sh.
-$script:AudioSource = '/mnt/wsl/wslg'
+# The bash twin is audio_request and friends in devcontainer-cli.sh; the two scripts below are the
+# same text there (test/bootstrap/host_mounts_test.sh compares them).
+$script:AudioSource = '/mnt/wsl/devhost-audio'
 $script:AudioTarget = '/mnt/wslg'
+$script:AudioWslgSocket = '/mnt/wslg/PulseServer'
 # Proven on Rancher Desktop (windows-docker); windows-wsl-docker's engine runs in a distro, which shares /mnt/wsl.
 $script:AudioHostTypes = @('windows-docker', 'windows-wsl-docker')
-# One line of sh for `wsl.exe -u root -e sh -c`: no double quotes and no newline to survive the Windows command line.
-$script:AudioBindScript = 't=/mnt/wsl/wslg; if mountpoint -q $t && [ -S $t/PulseServer ]; then echo present; elif [ ! -S /mnt/wslg/PulseServer ]; then echo nopulse; else mkdir -p $t && mount --bind /mnt/wslg $t && [ -S $t/PulseServer ] && echo bound; fi'
+# One line of sh each for `wsl.exe -u root -e sh -c`: no double quotes and no newline to survive the Windows command line.
+$script:AudioPrepareScript = 't=/mnt/wsl/devhost-audio; if [ ! -S /mnt/wslg/PulseServer ]; then echo nopulse; elif [ -d $t ]; then echo present; else mkdir -p $t && chmod 755 $t && echo bound; fi'
+# sh -c <this> sh <on|off|status> <seconds> <dir> <WSLg socket>: prints on <seconds left>, off, nosocat, nopulse or failed.
+$script:AudioRelayScript = 'a=$1; t=$2; d=$3; w=$4; s=$d/PulseServer; p=$d.pid; stop() { [ -S $s ] && [ -s $p ] && kill -- -$(cat $p) 2>/dev/null; rm -f $s $d/expires $p; }; left() { [ -s $p ] && kill -0 $(cat $p) 2>/dev/null && [ -S $s ] && [ -s $d/expires ] && echo $(( $(cat $d/expires) - $(date +%s) )); }; case $a in on) command -v socat >/dev/null || { echo nosocat; exit 0; }; [ -S $w ] || { echo nopulse; exit 0; }; mkdir -p $d || exit 1; stop; echo $(( $(date +%s) + t )) > $d/expires; setsid sh -c ''echo $$ > $1; exec timeout $2 socat UNIX-LISTEN:$3,fork,mode=0666 UNIX-CONNECT:$4'' sh $p $t $s $w >/dev/null 2>&1 </dev/null & i=0; while [ ! -S $s ] && [ $i -lt 30 ]; do sleep 0.1; i=$((i+1)); done; if [ -S $s ]; then echo on $t; else stop; echo failed; fi ;; off) stop; echo off ;; status) r=$(left); case $r in '''') stop; echo off ;; *) echo on $r ;; esac ;; *) echo usage ;; esac'
 # What Initialize-HostAudio decided in this launcher run (wslg or none); $null until it ran.
 $script:HostAudio = $null
 
@@ -620,16 +633,24 @@ function Get-AudioRefusal {
     return $null
 }
 
+function Invoke-WslSh {
+    <# .SYNOPSIS Runs `sh -c <Script> sh <Arguments>` in the default WSL distro as root: the last line of its output, 'nowsl' (no wsl.exe), or 'error: <output>'. A test replaces this. #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param([Parameter(Mandatory)][string]$Script, [string[]]$Arguments = @())
+    if (-not (Get-Command wsl.exe -ErrorAction SilentlyContinue)) { return 'nowsl' }
+    $out = @(& wsl.exe -u root -e sh -c $Script sh @Arguments 2>&1 | ForEach-Object { "$_".Trim() } | Where-Object { $_ })
+    $last = if ($out.Count) { $out[-1] } else { '' }
+    if ($LASTEXITCODE -eq 0 -and $last) { return $last }
+    return "error: exit $LASTEXITCODE$(if ($out.Count) { ': ' + ($out -join ' ') })"
+}
+
 function Invoke-WslgBind {
-    <# .SYNOPSIS Runs the bind in the default WSL distro as root: 'present', 'bound', 'nopulse', 'nowsl' (no wsl.exe), or 'error: <output>'. A test replaces this. #>
+    <# .SYNOPSIS Makes the relay directory in the default WSL distro as root: 'present', 'bound' (made now), 'nopulse', 'nowsl' (no wsl.exe), or 'error: <output>'. A test replaces this. #>
     [CmdletBinding()]
     [OutputType([string])]
     param()
-    if (-not (Get-Command wsl.exe -ErrorAction SilentlyContinue)) { return 'nowsl' }
-    $out = @(& wsl.exe -u root -e sh -c $script:AudioBindScript 2>&1 | ForEach-Object { "$_".Trim() } | Where-Object { $_ })
-    $last = if ($out.Count) { $out[-1] } else { '' }
-    if ($LASTEXITCODE -eq 0 -and $last -in 'present', 'bound', 'nopulse') { return $last }
-    return "error: exit $LASTEXITCODE$(if ($out.Count) { ': ' + ($out -join ' ') })"
+    Invoke-WslSh -Script $script:AudioPrepareScript
 }
 
 function Initialize-HostAudio {
@@ -659,13 +680,93 @@ function Initialize-HostAudio {
     }
     $r = Invoke-WslgBind
     switch ($r) {
-        'present' { Write-Host "audio: WSLg's PulseAudio socket is already shared at $($script:AudioSource)"; $script:HostAudio = 'wslg' }
-        'bound' { Write-Host "audio: bound the default WSL distro's /mnt/wslg to $($script:AudioSource) (as root; a WSL restart drops it and the next up redoes it)"; $script:HostAudio = 'wslg' }
+        'present' { Write-Host "audio: the relay directory $($script:AudioSource) is there; the microphone is on only while task audio:on runs"; $script:HostAudio = 'wslg' }
+        'bound' { Write-Host "audio: made the relay directory $($script:AudioSource) in the default WSL distro (as root; a WSL restart drops it and the next up redoes it); the microphone is OFF until task audio:on"; $script:HostAudio = 'wslg' }
         'nopulse' { Write-Warning "DCF_HOST_AUDIO=wslg, but the default WSL distro has no /mnt/wslg/PulseServer (WSLg off or missing, WSL1, or the engine's own distro set as the default). $noAudio" }
-        'nowsl' { Write-Warning "DCF_HOST_AUDIO=wslg, but wsl.exe is not on PATH, so the default distro's WSLg socket cannot be shared. $noAudio" }
-        default { Write-Warning "DCF_HOST_AUDIO=wslg, but the bind in the default WSL distro failed ($r). $noAudio" }
+        'nowsl' { Write-Warning "DCF_HOST_AUDIO=wslg, but wsl.exe is not on PATH, so the default distro's WSLg socket cannot be reached. $noAudio" }
+        default { Write-Warning "DCF_HOST_AUDIO=wslg, but making the relay directory in the default WSL distro failed ($r). $noAudio" }
     }
     return $script:HostAudio
+}
+
+function ConvertTo-AudioSecond {
+    <# .SYNOPSIS A duration (90s, 15m, 2h; a bare number is minutes) as seconds; $null when it is not one. #>
+    [CmdletBinding()]
+    [OutputType([int])]
+    param([string]$Text)
+    $m = [regex]::Match("$Text".Trim().ToLowerInvariant(), '^(\d{1,6})([smh]?)$')
+    if (-not $m.Success) { return $null }
+    $n = [int]$m.Groups[1].Value
+    switch ($m.Groups[2].Value) { 's' { $n } 'h' { $n * 3600 } default { $n * 60 } }
+}
+
+function Format-AudioDuration {
+    <# .SYNOPSIS Seconds as 1h30m, 15m, 12m34s or 45s. #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param([Parameter(Mandatory)][int]$Seconds)
+    $h = [math]::Floor($Seconds / 3600); $m = [math]::Floor(($Seconds % 3600) / 60); $s = $Seconds % 60
+    if ($h -gt 0) { return "${h}h$(if ($m) { "${m}m" })" }
+    if ($m -gt 0) { return "${m}m$(if ($s) { "${s}s" })" }
+    "${s}s"
+}
+
+function Invoke-HostAudio {
+    <#
+    .SYNOPSIS
+        The workstation's switch for the microphone (task audio:on, audio:off, audio:status):
+        `on [<duration>]`, `off` or `status`, each one `wsl.exe` call into the default distro that
+        starts, ends or asks the socat relay there (never a process of this launcher). The duration
+        is DCF_HOST_AUDIO_TTL (default 15m) when not given, and at most DCF_HOST_AUDIO_TTL_MAX
+        (default 2h). Returns 0, or 1 after saying why on stderr.
+    #>
+    [CmdletBinding()]
+    [OutputType([int])]
+    param([string[]]$Arguments = @())
+    $action = if ($Arguments.Count) { $Arguments[0] } else { 'status' }
+    $type = (Get-CachedHostType).Type
+    $refusal = Get-AudioRefusal -Type $type
+    if ($refusal) { [Console]::Error.WriteLine("audio: not on this host ($type): $refusal."); return 1 }
+    if ((Get-AudioRequest) -ne 'wslg') { [Console]::Error.WriteLine('audio: note: DCF_HOST_AUDIO is not wslg here, so up mounts no relay directory in a container; set it in .devcontainer/.env and rebuild.') }
+    $relay = { param($a, $n) Invoke-WslSh -Script $script:AudioRelayScript -Arguments @($a, "$n", $script:AudioSource, $script:AudioWslgSocket) }
+    switch ($action) {
+        'on' {
+            $text = if ($Arguments.Count -gt 1 -and $Arguments[1]) { $Arguments[1] } elseif ($env:DCF_HOST_AUDIO_TTL) { $env:DCF_HOST_AUDIO_TTL } else { '15m' }
+            $max = ConvertTo-AudioSecond ($(if ($env:DCF_HOST_AUDIO_TTL_MAX) { $env:DCF_HOST_AUDIO_TTL_MAX } else { '2h' }))
+            if (-not $max) { $max = 7200 }
+            $secs = ConvertTo-AudioSecond $text
+            if (-not $secs) { [Console]::Error.WriteLine("audio: '$text' is not a duration (for example 90s, 15m, 2h; a bare number is minutes)."); return 1 }
+            if ($secs -gt $max) {
+                [Console]::Error.WriteLine("audio: $(Format-AudioDuration $secs) is more than the longest allowed, $(Format-AudioDuration $max) (DCF_HOST_AUDIO_TTL_MAX); using that.")
+                $secs = $max
+            }
+            if ((Invoke-WslgBind) -eq 'bound') { [Console]::Error.WriteLine("audio: made the relay directory $($script:AudioSource); a container that was already running does not see it: task devcontainer:up (or :rebuild) once.") }
+            $r = & $relay 'on' $secs
+            if ($r -like 'on*') { Write-Host "audio: ON for $(Format-AudioDuration $secs): the container's processes can record until then; task audio:off ends it."; return 0 }
+            $msg = switch -Wildcard ($r) {
+                'nosocat' { 'socat is not installed in the default WSL distro (sudo apt-get install socat there); nothing was turned on.' }
+                'nopulse' { 'the default WSL distro has no /mnt/wslg/PulseServer (WSLg off or missing, WSL1, or the engine''s own distro set as the default); nothing was turned on.' }
+                'nowsl' { 'wsl.exe is not on PATH (WSL interop off?); nothing was turned on.' }
+                default { "the relay did not start ($r); the microphone stays off." }
+            }
+            [Console]::Error.WriteLine("audio: $msg")
+            return 1
+        }
+        'off' {
+            $r = & $relay 'off' 0
+            if ($r -eq 'off') { Write-Host 'audio: OFF: the relay is ended and the socket is gone from the container.'; return 0 }
+            [Console]::Error.WriteLine($(if ($r -eq 'nowsl') { 'audio: wsl.exe is not on PATH (WSL interop off?).' } else { "audio: could not turn it off ($r)." }))
+            return 1
+        }
+        'status' {
+            $r = & $relay 'status' 0
+            if ($r -match '^on (\d+)$') { Write-Host "audio: ON, $(Format-AudioDuration ([int]$Matches[1])) left (task audio:off ends it)."; return 0 }
+            if ($r -eq 'off') { Write-Host 'audio: OFF (task audio:on starts it).'; return 0 }
+            [Console]::Error.WriteLine($(if ($r -eq 'nowsl') { 'audio: wsl.exe is not on PATH (WSL interop off?).' } else { "audio: could not tell ($r)." }))
+            return 1
+        }
+        default { [Console]::Error.WriteLine("audio: unknown action '$action' (on [<duration>], off, status)."); return 1 }
+    }
 }
 
 # The machine name (docs/proposals/session-names.md, slice 1; the bash twin's sanitise_machine and
@@ -758,7 +859,7 @@ function Get-HostMount {
         The host mounts for a host type: objects with Name, Source, Target and Type.
         git-dirs is empty when the home is unknown; ssh-agent is present only with
         -SshAgent socket and a -SshSocket source; cloud-folder only with a -CloudFolder source,
-        always at /mnt/cloud-folder-host; audio (/mnt/wsl/wslg at /mnt/wslg) only with -Audio wslg.
+        always at /mnt/cloud-folder-host; audio (the relay directory /mnt/wsl/devhost-audio at /mnt/wslg) only with -Audio wslg.
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Type, [string]$HostHome, [string]$SshAgent = 'none', [string]$SshSocket, [string]$CloudFolder, [string]$Audio = 'none')
@@ -890,7 +991,7 @@ function Initialize-HostMountSource {
     [CmdletBinding()]
     param([Parameter(Mandatory)]$Mount, [Parameter(Mandatory)][string]$Type)
     # A socket is not ours to create, nor is the user's cloud folder (an empty one would hide a wrong path).
-    # Nor the audio source, a path of the WSL VM that Initialize-HostAudio made.
+    # Nor the audio relay directory, a path of the WSL VM that Initialize-HostAudio made.
     if ($Mount.Name -in 'ssh-agent', 'cloud-folder', 'audio') { return }
     # windows-wsl-docker driven from Windows has a distro path (/home/...) that Windows cannot create.
     if ($Type -eq 'windows-wsl-docker' -and (Get-HostPlatform) -eq 'windows') { return }
@@ -967,7 +1068,7 @@ function Show-HostProfile {
         default {
             $refusal = Get-AudioRefusal -Type $p.Type
             if ($refusal) { Write-Host "DCF_HOST_AUDIO     : wslg asked for, not on $($p.Type): $refusal" }
-            else { Write-Host "DCF_HOST_AUDIO     : wslg asked for: up binds the default WSL distro's /mnt/wslg to $($script:AudioSource) and mounts it at $($script:AudioTarget) (none when that distro has no WSLg socket)" }
+            else { Write-Host "DCF_HOST_AUDIO     : wslg asked for: up makes the relay directory $($script:AudioSource) in the default WSL distro and mounts it at $($script:AudioTarget), empty: the microphone is off until task audio:on (none when that distro has no WSLg socket)" }
         }
     }
     $r = Resolve-HostMount -WorkspaceFolder $WorkspaceFolder -Arguments $Arguments -DockerPath $DockerPath
@@ -2774,6 +2875,13 @@ function Invoke-DevcontainerCli {
         return
     }
 
+    # `audio` is not a CLI subcommand: the workstation's switch for the microphone.
+    if ($Subcommand -eq 'audio') {
+        $rc = Invoke-HostAudio -Arguments $Arguments
+        if ($rc -ne 0) { exit $rc }
+        return
+    }
+
     # `cloud-folder-login` is not a CLI subcommand: the cloud-folder Feature's sign-in from here.
     if ($Subcommand -eq 'cloud-folder-login') {
         Invoke-CloudFolderLogin -WorkspaceFolder $WorkspaceFolder -Arguments $Arguments -NodeVersion $NodeVersion -CliVersion $CliVersion -DockerPath $DockerPath
@@ -2851,4 +2959,4 @@ function Invoke-DevcontainerCli {
     exit $rc
 }
 
-Export-ModuleMember -Function Get-HostTypeId, Get-DefaultHostTypePriority, Resolve-HostType, Resolve-SshAgent, Resolve-HostProfile, Initialize-HostEnvironment, Test-FuseRequested, Get-FuseRefusal, Get-FuseRunArgument, Get-FuseSlotMissing, Write-FuseSlotWarning, Write-FuseRefusedWarning, Get-AudioRequest, Get-AudioRefusal, Invoke-WslgBind, Initialize-HostAudio, ConvertTo-MachineName, Get-HostMachineName, Test-MachineSlotMissing, Write-MachineSlotWarning, Get-DevcontainerConfigFile, Get-HostMount, Test-CloudFolderMount, ConvertTo-MountArgument, ConvertTo-JsonWithoutComment, Get-ConfiguredMountTarget, Test-HostMountsEnabled, Resolve-HostMount, Initialize-HostMountSource, Get-HostMountArgument, Show-HostProfile, Import-SshKey, Import-OpenBaoSshKey, Clear-HostProfileCache, Get-SettingOrEnv, ConvertFrom-TaskCliArgString, Get-PortableNodeDir, Invoke-DcfDownload, Get-DevcontainersCliEntrypoint, Remove-DevcontainersCli, Resolve-DockerPath, Get-WorkspaceFolderVariant, Get-RunningDevcontainerId, Stop-Devcontainer, Test-BuildSubcommand, Get-BuildLockStateDir, Get-BuildLockLabel, Get-BuildLockWaitMessage, Get-EngineBuildxVersion, Get-BuildLockSkipReason, Enter-DevcontainerBuildLock, Exit-DevcontainerBuildLock, Test-EngineSubcommand, Get-ContainerEngineCheck, Test-ContainerEngineResponding, Get-ContainerEngineError, Get-ContainerEngineStartHint, Wait-ContainerEngine, Write-ContainerEngineDiagnosis, Get-DevcontainerCliInvocation, Invoke-DevcontainerCliProcess, Get-LauncherCacheRoot, Get-CloudFolderRcloneVersion, Get-WorkstationRclone, Open-Browser, Invoke-CloudFolderRelayRequest, Invoke-CloudFolderLoginRelay, Invoke-CloudFolderLogin, Get-OpenBaoKeyFileDir, Get-OpenBaoRepoName, Get-OpenBaoKeyFilePath, Find-OpenBaoKeyFile, Protect-OpenBaoKeyFileBlob, Unprotect-OpenBaoKeyFileBlob, Save-OpenBaoKeyFile, Read-OpenBaoKeyFile, ConvertTo-OpenBaoKeyFileJson, Get-OpenBaoAgentJobVariable, Get-DevcontainerRemoteUser, Invoke-OpenBaoSetup, ConvertFrom-OpenBaoSetupOutput, Get-OpenBaoUnlockStatus, Invoke-OpenBaoUnlock, Invoke-OpenBaoKeyFileMake, Export-OpenBaoKeyFile, Import-OpenBaoKeyFile, Remove-OpenBaoKeyFile, Invoke-OpenBaoKeyFileTask, Invoke-DevcontainerCli
+Export-ModuleMember -Function Get-HostTypeId, Get-DefaultHostTypePriority, Resolve-HostType, Resolve-SshAgent, Resolve-HostProfile, Initialize-HostEnvironment, Test-FuseRequested, Get-FuseRefusal, Get-FuseRunArgument, Get-FuseSlotMissing, Write-FuseSlotWarning, Write-FuseRefusedWarning, Get-AudioRequest, Get-AudioRefusal, Invoke-WslSh, Invoke-WslgBind, Initialize-HostAudio, ConvertTo-AudioSecond, Format-AudioDuration, Invoke-HostAudio, ConvertTo-MachineName, Get-HostMachineName, Test-MachineSlotMissing, Write-MachineSlotWarning, Get-DevcontainerConfigFile, Get-HostMount, Test-CloudFolderMount, ConvertTo-MountArgument, ConvertTo-JsonWithoutComment, Get-ConfiguredMountTarget, Test-HostMountsEnabled, Resolve-HostMount, Initialize-HostMountSource, Get-HostMountArgument, Show-HostProfile, Import-SshKey, Import-OpenBaoSshKey, Clear-HostProfileCache, Get-SettingOrEnv, ConvertFrom-TaskCliArgString, Get-PortableNodeDir, Invoke-DcfDownload, Get-DevcontainersCliEntrypoint, Remove-DevcontainersCli, Resolve-DockerPath, Get-WorkspaceFolderVariant, Get-RunningDevcontainerId, Stop-Devcontainer, Test-BuildSubcommand, Get-BuildLockStateDir, Get-BuildLockLabel, Get-BuildLockWaitMessage, Get-EngineBuildxVersion, Get-BuildLockSkipReason, Enter-DevcontainerBuildLock, Exit-DevcontainerBuildLock, Test-EngineSubcommand, Get-ContainerEngineCheck, Test-ContainerEngineResponding, Get-ContainerEngineError, Get-ContainerEngineStartHint, Wait-ContainerEngine, Write-ContainerEngineDiagnosis, Get-DevcontainerCliInvocation, Invoke-DevcontainerCliProcess, Get-LauncherCacheRoot, Get-CloudFolderRcloneVersion, Get-WorkstationRclone, Open-Browser, Invoke-CloudFolderRelayRequest, Invoke-CloudFolderLoginRelay, Invoke-CloudFolderLogin, Get-OpenBaoKeyFileDir, Get-OpenBaoRepoName, Get-OpenBaoKeyFilePath, Find-OpenBaoKeyFile, Protect-OpenBaoKeyFileBlob, Unprotect-OpenBaoKeyFileBlob, Save-OpenBaoKeyFile, Read-OpenBaoKeyFile, ConvertTo-OpenBaoKeyFileJson, Get-OpenBaoAgentJobVariable, Get-DevcontainerRemoteUser, Invoke-OpenBaoSetup, ConvertFrom-OpenBaoSetupOutput, Get-OpenBaoUnlockStatus, Invoke-OpenBaoUnlock, Invoke-OpenBaoKeyFileMake, Export-OpenBaoKeyFile, Import-OpenBaoKeyFile, Remove-OpenBaoKeyFile, Invoke-OpenBaoKeyFileTask, Invoke-DevcontainerCli

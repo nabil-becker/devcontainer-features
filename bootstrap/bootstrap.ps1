@@ -181,6 +181,7 @@ if ($DockerPath) { Write-Host "  engine    DEVCONTAINER_DOCKER_PATH=$DockerPath"
 $vendored = [ordered]@{
     'bootstrap/devcontainer.yml'                   = '{BD}/devcontainer.yml'
     'bootstrap/cloud-folder.yml'                   = '{BD}/cloud-folder.yml'
+    'bootstrap/audio.yml'                          = '{BD}/audio.yml'
     'bootstrap/host/DevcontainerCli.psm1'          = '{BD}/host/DevcontainerCli.psm1'
     'bootstrap/host/Invoke-DevcontainerCli.ps1'    = '{BD}/host/Invoke-DevcontainerCli.ps1'
     'bootstrap/host/Initialize-DevcontainerCli.ps1' = '{BD}/host/Initialize-DevcontainerCli.ps1'

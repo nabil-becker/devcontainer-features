@@ -21,6 +21,12 @@ includes:
   cloud-folder:
     taskfile: '{{if or (eq (.RCLONE_CONFIG | default "") "/var/lib/devcontainer-features/cloud-folder/rclone.conf") (eq (.DEVCONTAINER_IN_CONTAINER | default "") "1")}}./{{BOOTSTRAP_DIR}}/none.yml{{else}}./{{BOOTSTRAP_DIR}}/cloud-folder.yml{{end}}'
     optional: true
+  # task audio:on, audio:off and audio:status on the workstation (the microphone's switch, ADR 0057).
+  # Left out inside the container, where the audio Feature's own audio:check comes from features.yml
+  # (its containerEnv sets DCF_AUDIO_FEATURE=1). See {{BOOTSTRAP_DIR}}/audio.yml.
+  audio:
+    taskfile: '{{if or (eq (.DCF_AUDIO_FEATURE | default "") "1") (eq (.DEVCONTAINER_IN_CONTAINER | default "") "1")}}./{{BOOTSTRAP_DIR}}/none.yml{{else}}./{{BOOTSTRAP_DIR}}/audio.yml{{end}}'
+    optional: true
   # Tasks contributed by the Features installed in the devcontainer (dsc:*,
   # velero:*, ...). The file only exists inside the container; on the host it
   # is skipped. See the go-task Feature README.

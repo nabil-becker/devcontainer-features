@@ -31,7 +31,7 @@ python3 -I -c 'import socket, sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1
 make_bin() {
   local d="$1" t; shift
   mkdir -p "$d"
-  for t in grep awk head printf sed timeout cat; do ln -sf "$(command -v "$t")" "$d/$t"; done
+  for t in grep awk head printf sed timeout cat date dirname tr; do ln -sf "$(command -v "$t")" "$d/$t"; done
   for t in "$@"; do
     case "$t" in
       sox) printf '#!/bin/sh\necho "AUDIO DEVICE DRIVERS: alsa pulseaudio"\n' > "$d/sox" ;;
@@ -80,7 +80,31 @@ check 'socket missing: exit 1' 1 "$rc"
 has 'socket missing: names the path' 'socket not reachable: /nonexistent/PulseServer' "$out"
 has 'socket missing, none: how to opt in' 'set DCF_HOST_AUDIO=wslg in .devcontainer/.env' "$out"
 run "$T/full" PULSE_SERVER=unix:/nonexistent/PulseServer DCF_HOST_AUDIO=wslg
-has 'socket missing, wslg: the WSL restart hint' 'a WSL restart drops the bind' "$out"
+has 'socket missing, wslg, no directory: not set up, the WSL restart hint' 'a WSL restart drops that directory' "$out"
+check 'socket missing, wslg, no directory: not "off"' 0 "$(grep -c '^audio: off' <<<"$out")"
+# The workstation's gate (ADR 0057): a mounted /mnt/wslg without the socket is "off", distinct from "not set up".
+mkdir -p "$T/gate"
+run "$T/full" PULSE_SERVER="unix:$T/gate/PulseServer" DCF_HOST_AUDIO=wslg
+check 'gate off (directory there, no socket): exit 1' 1 "$rc"
+check 'gate off: says off, the workstation has not turned audio on' "audio: off (the workstation has not turned audio on): $T/gate/PulseServer is not there; on the workstation run task audio:on (task audio:on TTL=30m for longer), then try again; no rebuild is needed" "$out"
+check 'gate off: is not the "not set up" line' 0 "$(grep -c 'socket not reachable' <<<"$out")"
+run "$T/full" PULSE_SERVER="unix:$T/gate/PulseServer" DCF_HOST_AUDIO=none
+has 'directory there, no socket, DCF_HOST_AUDIO=none: still not set up' 'socket not reachable' "$out"
+python3 -I -c 'import socket, sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "$T/gate/PulseServer"
+echo $(( $(date +%s) + 754 )) > "$T/gate/expires"
+run "$T/full" PULSE_SERVER="unix:$T/gate/PulseServer" DCF_HOST_AUDIO=wslg
+check 'gate on: exit 0' 0 "$rc"
+has 'gate on: ready, the workstation turned it on, the time left' "audio: ready: capture source RDPSource through unix:$T/gate/PulseServer (the workstation turned audio on; 12m" "$out"
+has 'gate on: seconds are shown too' 's left)' "$out"
+run "$T/full" PULSE_SERVER="unix:$T/gate/PulseServer" DCF_HOST_AUDIO=none
+check 'gate on, DCF_HOST_AUDIO=none: no time claimed' "audio: ready: capture source RDPSource through unix:$T/gate/PulseServer" "$out"
+echo $(( $(date +%s) - 5 )) > "$T/gate/expires"
+run "$T/full" PULSE_SERVER="unix:$T/gate/PulseServer" DCF_HOST_AUDIO=wslg
+check 'gate on, an expired expires file: ready, no time claimed' "audio: ready: capture source RDPSource through unix:$T/gate/PulseServer" "$out"
+rm -f "$T/gate/expires"
+run "$T/full" PULSE_SERVER="unix:$T/gate/PulseServer" DCF_HOST_AUDIO=wslg
+check 'gate on, no expires file (an older launcher): ready' "audio: ready: capture source RDPSource through unix:$T/gate/PulseServer" "$out"
+
 run "$T/full" PULSE_SERVER=unix:/nonexistent/PulseServer
 has 'socket missing, unset: not started by the launcher' 'DCF_HOST_AUDIO is unset' "$out"
 
