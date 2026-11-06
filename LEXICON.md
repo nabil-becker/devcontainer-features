@@ -382,6 +382,11 @@ The words of the secrets split: OpenBao keeps every secret, `ssh-agent` only use
   (the host engine cannot pass a socket in) or `key` (the Operator set `SSH_AGENT_MODE=key`, so the
   socket mount is skipped). Not the same as the SSH agent mode, which says what the container may
   do about it.
+- **Host audio**: the opt-in `DCF_HOST_AUDIO=wslg` setting in the workstation's `.devcontainer/.env`:
+  on a WSL-backed Windows host type the launcher shares WSLg's folder into `/mnt/wsl/wslg` from the
+  default distro (skipped when already shared), and mounts it into the container, where
+  the `audio` Feature (which sets `PULSE_SERVER`) sees the Windows microphone as `RDPSource`. Off by default, and a missing
+  WSLg warns and starts the container without audio (ADR-0057).
 - **SSH agent mode**: the one setting a user touches for the `ssh-agent` Feature, `SSH_AGENT_MODE`
   in the workstation's `.devcontainer/.env`, mapped by `"mode": "${localEnv:SSH_AGENT_MODE:auto}"`;
   values `auto` (follow the host socket), `socket`, `key` and `none`; an empty or unknown value
