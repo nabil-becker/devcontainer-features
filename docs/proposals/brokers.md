@@ -711,3 +711,352 @@ Slices 0, 3, 5 and 6: Sonnet, with the strongest model for the refusal list revi
   alone"): fine for a person, but a broker must never follow it (section 10.5).
 - **`dcf-secret` reserves `DCF_SECRET_AS`** and refuses it; `openbao-agent-login` and the brokers
   both need it, so it is one item serving two.
+
+## Architecture review (2026-11-06)
+
+Reviewed cold against the proposal; `docs/principles/non-functional-requirements.md`; `docs/adr/`
+(0002, 0011, 0012, 0016, 0017, 0020, 0034, 0035, 0040, 0045, 0048, 0050, 0053, 0055, 0056); the two
+ADR-0058 drafts (`docs/adr/0058-an-openbao-ssh-*` on `origin/feature/openbao-ssh-ca/1`, the audio
+gate's on `origin/feature/audio-gate-ttl/1`); `docs/proposals/agents-v2.md` section 14;
+`LEXICON.md`; `docs/proposals/agent-linux-user.md` and its architecture review on
+`origin/docs/agent-linux-user/1`; and the code the design leans on: `src/git/` (1.4.6: the wrapper,
+`git-setup.sh`, `install.sh`, the options), `src/openbao/openbao-lib.sh`, `dcf-secret.sh`,
+`openbao-server.sh`, `src/common/`, `Taskfile.yml` (`repo:setup`, `common:check`), `.gitconfig`,
+`.gitattributes`, `.githooks/`, and the devhost's `verify.py`. The security claims were checked
+against the documented behaviour of `sudo`, git and OpenBao, not run (a read-only review); the
+config keys of this repository's git dir were listed, without values that could hold a secret.
+Who it serves: the Operator, who rules on it together with `agent-linux-user`; the maintainers of
+the office and DSNP, who adopt it opt-in; the authors of Features, who inherit the pattern.
+
+**Verdict:** fit with changes
+
+The pattern is right for this collection: one account and one allow-list per resource, fixed at
+build time, reached through the existing wrapper, judged by `sudo`'s kernel-backed `SUDO_UID`, and
+opt-in per Feature. It closes what a Linux user alone cannot (the git dir's `config`, the backs'
+wildcard rule, tokens per agent). But several of its security claims hold only with changes the
+design does not yet make: git's repository config outranks the broker's own (finding 1), and this
+repository's git dir already holds two settings that run work-tree code (findings 1 and 2); a
+brokered hook calls `git` and so the broker again (finding 3); `secure_path` is missing from the
+rule (finding 4); and the push rules are advisory while any agent holds a GitHub credential, which
+`agent-linux-user` 8.5 gives the host (finding 7). Findings 1 to 7 must be settled before slice 2;
+the rest are corrections, placement and records.
+
+### Requirements (NFRs), one line each
+
+- **NFR-1 owns-its-state**: met, with a correction: the audit log, the credential file and the hooks
+  folder are in the git Feature's volume (6, 10.1), but the AppRole ids go to
+  `$OPENBAO_STATE_DIR/brokers/<name>/` (12.2), the openbao Feature's volume; section 15 says
+  otherwise. Finding 15.
+- **NFR-2 registered-taskfile**: met if the five `broker:*` tasks get a `desc` (15); see finding 15
+  for where `broker:approle` belongs.
+- **NFR-3 verified-and-pinned**: met; `sudo` comes from the distribution's signed packages, as other
+  Features' `apt-get install` fallbacks do (15).
+- **NFR-4 augments-not-replaces**: met; the real tool stays, the shim is the existing wrapper (3, 15).
+- **NFR-5 idempotent-and-user-neutral**: met in intent (6, 15): the account is made at build with
+  `_REMOTE_USER` for the group, which also avoids `agent-linux-user` review finding 6 (long-lived
+  processes missing a group made at start). The fixed range collides with `dcf-work`'s gid
+  (finding 12).
+- **NFR-6 one-way-to-configure**: met as a written exception (6, 15): run-time settings come from a
+  root-owned file, never the caller's environment. Right, since the caller is who it guards against.
+- **NFR-7 agent-ready**: met (7, 15): one-line refusals, exit 3; the share-asking tasks
+  `interactive: true`.
+- **NFR-8 documented-to-the-standard**: met in plan (15: a "Broker" section in each NOTES).
+- **NFR-9 says-why-it-exists**: does not apply (no published alternative).
+- **NFR-10 tested-on-base-images**: met in plan (6: the harness, 15, U5), red for a planted fault.
+- **NFR-11 linter-cli-contract**: needs a written exception. `<id>:broker:check` (15) is a probe of
+  the running container, not a tool over paths: no `-`, no `path:line`. The same call as
+  `agent-linux-user` review finding 11: name the exception, keep one line per finding, `--format
+  json` and the exit codes.
+- **NFR-12 vendor-neutral-contracts**: partly met. A shim on PATH is CLI-neutral (15), but `sudo`
+  cannot run under a CLI's own sandbox (finding 9), and the matrix has no row for it.
+- **NFR-13 manages-the-environment-not-the-cli**: met for the core (15): the broker decides who may
+  run which of the tool's own verbs and uses `sudo`, git's `--end-of-options` and OpenBao's engines.
+  Not met in two places: the branch rule is a way-of-working rule placed in a published Feature
+  (finding 13), and the design drops git's own `core.sharedRepository` where it still needs it
+  (finding 5).
+
+### Decisions (ADRs)
+
+No accepted ADR is contradicted outright; the slice-0 ADR must say what it amends.
+**ADR-0012** is amended: for brokered calls the identity is enforced and `--author` refused (10.4),
+where ADR-0012 fills only what is unset so a command "can still set its own identity".
+**ADR-0016** is refined: a brokered call carries the bot identity because of who calls, not
+because `CLAUDECODE` is set; a direct call keeps ADR-0016's rule. **ADR-0020** is amended: the
+broker ignores the `.git` pointer the wrapper maps (10.5) and chowns one folder of the shared mount,
+so a second container of the same repository with the broker off can no longer write it (10.1
+states this for other repositories only). **ADR-0048 decision 1** is departed from by the default
+`brokerCredentials: file` (finding 14). **ADR-0011**'s "MCP: none for now" is what section 13's
+front door needs an ADR against (13 says so). **ADR-0058 on `feature/openbao-ssh-ca/1`** needs more
+than decision 1 amended (finding 11). **ADR-0035** gets the exception of the NFR-11 line.
+Consistent: **ADR-0040** (push stays the host's, merge has no verb), **ADR-0050** (role creation
+with a root token from two shares, reissue with the Operator's login: checked against
+`openbao-lib.sh`, threshold 2 per ADR-0056), **ADR-0053** (`pr ready` for the host), **ADR-0002**
+(the trailer refusal), **ADR-0045** (the audit log is tier 4 and rebuildable). The two ADR-0058
+drafts collide on the number (section 20 says so); neither conflicts with this design beyond
+finding 11. The proposal's own factual claims about the code hold (`dirs.env`, `identity.env`,
+`commitWhenEnv`, the wrapper's "a pointer that works is left alone", `common:check` covering every
+`src/common/*.sh` copy, `DCF_SECRET_AS` refused with exit 2, AppRole tokens of 5 minutes bound to
+`127.0.0.1/32`), except the two corrected in findings 1 and 16.
+
+### Agent CLIs
+
+Every CLI in the matrix (section 14.1) runs shell commands, so a shim on PATH reaches all of them,
+and the shared code knows no CLI (NFR-12, 15). Two things the matrix does not record decide whether
+it works: whether a CLI calls `git` by PATH or bundles its own (U6 asks this for Claude Code only),
+and whether its shell tools run sandboxed (finding 9). The MCP front door (13) would be met by two
+vendors, as the proposal says, and is rightly deferred.
+
+### Findings
+
+1. **git's repository config outranks the broker's global config, and this repository's already
+   runs work-tree hooks (10.1, 10.2, 10.3).** git reads system, then global, then the repository's
+   `config`, then the command line; a later one wins. The broker puts its `core.hooksPath` in
+   `GIT_CONFIG_GLOBAL` (10.1), so a `core.hooksPath` in the git dir's own `config` beats it. This
+   repository's git dir has exactly that: `task repo:setup` writes `core.hooksPath .githooks`
+   directly (the Taskfile says so; the key is in the config today). Under the broker that runs
+   `.githooks/` from the work tree as `dcf-git`, which section 10.3 exists to prevent, and the
+   trust check of 10.2 does not list `core.hooksPath` among the settings it refuses. A list of
+   refused keys is also the opposite of the allow-list the proposal rests on: it misses
+   `merge.<driver>.driver` (finding 2), `diff.<driver>.command`, `trailer.<token>.cmd` (run by
+   `commit --trailer`, which 10.4 allows), `gpg.program` and `gpg.ssh.*` (run by
+   `log.showSignature`), `core.askPass`, `sequence.editor`, `pager.<cmd>`,
+   `interactive.diffFilter`, `remote.<name>.uploadpack` and `receivepack`, `url.<base>.insteadOf`,
+   `protocol.*.allow` and the submodule keys. Recommended change: pass every setting the broker
+   enforces on the command line (`GIT_CONFIG_COUNT`/`KEY`/`VALUE` in the environment it builds, which
+   outrank every file), and make the trust check an allow-list of the keys a git dir's `config` may
+   hold (`core.repositoryformatversion`, `filemode`, `bare`, `logallrefupdates`, `symlinks`,
+   `ignorecase`, `extensions.*`, `remote.origin.url` and `fetch`, `branch.*.remote` and `merge`,
+   `user.*`), refusing every other key with the repair task.
+
+2. **This repository's git dir holds a merge driver that runs a script from the work tree (10.2,
+   20).** Its `config` defines `merge.devhost-todo.driver` as `python3 -I .github/scripts/...`, a
+   path in the checkout an agent can write, and the driver is chosen by `.gitattributes`, also in
+   the work tree. `.gitattributes` says the driver is no longer needed, but the config still names
+   it. No verb in 10.4 merges today, so it does not fire yet; it will the day `rebase`, `merge`,
+   `stash` or `switch -m` is added (finding 8), and it fires now for the Operator's direct calls.
+   Recommended change: add to section 20 a backlog item to remove the driver from this repository's
+   git dir and from `task repo:setup`, and let finding 1's allow-list refuse any `merge.*` key.
+
+3. **A brokered hook calls `git`, which re-enters the broker (7, 9, 10.3).** The broker builds
+   `PATH` "of the account", and `/usr/local/bin/git` is the shim. `prepare-commit-msg` runs
+   `git var` and `git interpret-trailers`, and `devhost-verify` runs git as a subprocess: each would
+   go through the shim as `dcf-git`, which is neither the Operator's user (so not direct) nor a
+   mapped agent identity, while `dcf-git` is in `dcf-work` (6), so `sudo` lets it in and the policy
+   then refuses verbs the hooks need. The commit fails, or loses its sign-off. Recommended change:
+   section 9 adds a third case to the shim, "the caller is the broker's own account: exec the real
+   tool", and the broker's `PATH` puts the real tool's folder before the shim's.
+
+4. **The rule has no `secure_path`, so the broker starts with the caller's `PATH` (6, 8).** With
+   `env_reset`, `sudo` keeps the caller's `PATH` unless `secure_path` is set (it also passes `TERM`
+   and the `env_check` variables, such as `LANG` and `TZ`, when they look safe). Debian's packaged
+   `/etc/sudoers` sets `secure_path`, but the shared code installs `sudo` itself where it is absent
+   and a base image may ship its own `sudoers`. Until step 7 rebuilds the environment,
+   `dcf-broker.sh` would find `getent`, `id` or `stat` on the caller's `PATH`: the caller's code as
+   `dcf-git`. Recommended change: the rule's `Defaults!` line gains
+   `secure_path="/usr/sbin:/usr/bin:/sbin:/bin"`, the broker sets `PATH` and calls helpers by full
+   path in its first lines, and U2 also exports a planted `PATH`.
+
+5. **The git dir still needs `core.sharedRepository=group` (2, 4.2, 9, 10.1).** Section 2 says the
+   broker replaces that half of `agent-linux-user` section 9. But two users still write the git dir:
+   `dcf-git` and the Operator's user (2770, group `dcf-git`). git replaces most files by rename,
+   which the folder's group bit allows, but appends to reflogs (`logs/HEAD`, `logs/refs/...`) in
+   place: a reflog the Operator's direct call created at umask 022 cannot be appended by `dcf-git`,
+   and the reverse. Recommended change: keep `core.sharedRepository=group` in the git dir (git's own
+   feature, NFR-13), with the group `dcf-git`, set by the broker's post-create step, and add the
+   reflog case to U3.
+
+6. **Submodules and nested repositories run a config the agent wrote (10.4, 10.5).** An agent can
+   create `sub/.git/config` with `core.fsmonitor` in the work tree and ask the broker to `add sub`
+   (a path inside the checkout, allowed): git records a gitlink, and later `status` and `diff` start
+   a git in `sub` as `dcf-git`. git's ownership check (`safe.directory`) is what stops that child
+   (the folder is the agent's, not `dcf-git`'s), and it stops it only while `safe.directory` names
+   exact paths: `agent-linux-user` section 9 already floats `*` for this devhost. Recommended change:
+   the broker's config never sets `safe.directory=*`, passes `submodule.recurse=false` and
+   `diff.ignoreSubmodules=all`, and the policy refuses `add` of a path that holds a `.git` entry;
+   each a refusal test.
+
+7. **The push rules hold only while no agent holds a GitHub credential (10.4, 11, 16).** The real
+   `/usr/bin/git` stays runnable by every user, and an agent can clone into its own folder and push
+   with any credential it holds. `agent-linux-user` 8.5 gives `agent-host` a GitHub token of its own
+   for pushes and pull requests until `openbao-agent-login`; with it, "push for the host only, never
+   to `main`" is advisory and only the forge's ruleset (`task repo:govern`) holds. Recommended change:
+   section 16 states that the git broker's push policy is a boundary only when no agent user holds a
+   GitHub credential, so a consumer turns on the gh broker in the same step (or keeps only a token
+   that cannot push), and `agent-linux-user` 8.5 says it is the interim until then.
+
+8. **The first allow-list leaves out verbs tools and the host use every day (10.4, U6).** Read
+   verbs and options tools call: `config --get`, `remote -v` or `get-url`, `symbolic-ref`,
+   `for-each-ref`, `cat-file`, `describe`, the global `--no-optional-locks`. Write verbs the host
+   uses: `rebase` onto the base branch, `merge` of it, `pull`, `stash`, `restore` of the work tree,
+   `reset --soft`, `cherry-pick`. Each refusal is friction, and each merge-type verb reaches merge
+   drivers and more hooks (finding 2). Recommended change: U6 records every git call one host session
+   and one con make (from the audit log with the broker in a log-only mode) before slice 2 fixes the
+   list, and slice 2 adds the read forms and the merge-type verbs only after finding 1's allow-list
+   is in.
+
+9. **`sudo` cannot run inside a CLI's own sandbox (8, 14, NFR-12).** Sandboxes built on bubblewrap
+   or seccomp set the kernel's `no_new_privs` flag (Claude Code's Linux sandbox uses bubblewrap;
+   Codex's `workspace-write` uses Landlock and seccomp), and under it `sudo` refuses to start. Every
+   brokered call from a sandboxed tool call would then fail. The daemon of section 14, reached over a
+   Unix socket and judged by `SO_PEERCRED`, needs no setuid step and works there if the sandbox lets
+   the socket through. Recommended change: section 14 names the daemon as the fallback for sandboxed
+   CLIs as well as for the budget, the shim prints a refusal that names the sandbox when
+   `no_new_privs` is set, and the matrix of agents-v2 section 14 gains a row "shell tools run under
+   `no_new_privs`".
+
+10. **The OpenBao path puts a GitHub App's private key in the broker's memory (12.3, decision 10).**
+    The KV route reads the App's key into `dcf-git`'s process to sign the JWT that mints the
+    installation token. A code path that runs as `dcf-git` (a missed config key, a git bug) then
+    leaks a key that mints tokens for every repository and permission the App has, for as long as
+    the key lives, where the proposal says "none" has to change first. Separately, a credential
+    passed on git's command line (`-c http.extraHeader=...`) is readable by every user in
+    `/proc/<pid>/cmdline`. Recommended change: 12.3 prefers minting inside OpenBao (the plugin, U12)
+    and, until then, records the KV route as exposing the App key to the account, with the App
+    limited to the policy's repositories; and 7 requires a credential to reach git only through a
+    credential helper on standard input or an environment variable, never an argument.
+
+11. **An SSH certificate for GitHub needs more of ADR-0058 amended than decision 1 (12.3).**
+    GitHub's SSH certificate authorities accept a user certificate only with an extension named
+    `login@` plus GitHub's host name, carrying the user's login; the draft ADR-0058's decision 10
+    makes every role carry "no extensions". Its CA also signs register and relay records verified with `ssh-keygen -Y`, so a
+    login certificate from the same CA mixes two trusts. Recommended change: 12.3 names decisions 1
+    and 10, and puts a broker's login certificates on a mount of their own (`MOUNT=`), so the
+    records' CA stays signing-only.
+
+12. **The reserved id range contains `dcf-work`'s gid (decision 7).** Decision 7 reserves 19900 to
+    19999 for broker uids and gids; `agent-linux-user` 6.3 gives `dcf-work` the fixed gid 19999 by
+    default. Recommended change: one list in `src/common`'s NOTES owns every fixed id of both
+    proposals (`dcf-work`, each broker account), with the shared script `agent-linux-user` review
+    finding 12 proposes; the broker range ends at 19998.
+
+13. **The branch rule is a way-of-working rule, placed in a published Feature (10.4, decision 8).**
+    `<type>/<id>/<n>` is this collection's rule (ADR-0017, the lexicon's "Branch rule"), already
+    enforced by the `pre-push` git hook through `devhost-branches`, which the broker runs from the
+    base branch anyway. A consumer of the git Feature need not follow it. Recommended change: the git
+    policy refuses only the base branch (an option, default `main`) and the force, delete, tag and
+    mirror forms by default; a branch pattern is an option (`brokerBranchPattern`, empty for any),
+    which this devhost sets.
+
+14. **`brokerCredentials: file` as the default keeps a token at rest outside OpenBao (12.1).**
+    ADR-0048 decision 1 makes OpenBao the master of every token the collection stores, gh tokens
+    named. A file per broker is better than a file per agent, but it is still that. Recommended
+    change: the slice-0 ADR states `file` as a named, bounded exception to ADR-0048 decision 1 for
+    consumers without an OpenBao server, as `agent-linux-user` review finding 14 does for the
+    per-agent tokens.
+
+15. **Who owns the broker's OpenBao role is split across Features (12.2, 15).** The ids sit in the
+    openbao Feature's volume while section 15 says they are in the broker's; `task
+    <id>:broker:approle` in the git Feature calls `openbao:approle:issue`, another Feature's task.
+    Recommended change: the git Feature only ships its policy file (`/usr/local/share/dcf-brokers/
+    git/openbao.hcl`); creating the role is `openbao:approle:issue ROLE=broker-git POLICY=<that
+    file>`, the ids go to `openbao/brokers/<name>/` beside the backs' (`agent-linux-user` section 7),
+    and section 15's NFR-1 line says so.
+
+16. **The include and the hooks are described wrongly in sections 10.2 and 20.** `include.path
+    ../.gitconfig` resolves next to the git dir's `config`, so with the git dir under `/git-dirs`
+    it names `/git-dirs/<owner>/.gitconfig`, not the checkout's `.gitconfig` (the Taskfile says the
+    include "never loads"). That folder is `root` 777 in the container today and the file does not
+    exist, so any process can create it and every git call, the Operator's included, would read it.
+    The hooks of `.githooks/` are also guards over data the committer controls (`devhost-verify`
+    reads `.devhost/allowed-secrets.txt` from the work tree), and "a hook may run only programs from
+    the image" cannot be shown by a refusal test, only by review. Recommended change: section 20's
+    item is reworded to the real path and raised to a fix now (drop the include from `repo:setup`
+    and the git dirs), and 10.3 says that base-branch hooks stop planted code, not a determined
+    caller's bypass of a guard, with "programs from the image" a review rule for `.githooks/`.
+
+17. **`fetch` must not move the ref the hooks are read from (10.3, 10.4).** Hooks are filled from
+    `origin/main`, which `fetch` updates. "`origin` only" leaves a refspec open: `fetch origin
+    <branch>:refs/remotes/origin/main` points it at a topic branch, and the next start fills the
+    hooks from it. Recommended change: `fetch` takes no refspec (the configured one only), and the
+    hooks folder records the commit it was filled from, shown by `broker:check`.
+
+18. **The callers group is wider than the callers (6, 8, decision 3).** The rule grants
+    `%dcf-work`, and section 6 adds every broker account to `dcf-work` to read the checkout, so
+    `dcf-gh` may call the git broker and the reverse; the policy's `*` then admits them. The hooks
+    folder is "root 755" in 4.2 but "only it and root can write" in 10.3: if `dcf-git` can write
+    it, any write as `dcf-git` becomes code at the next commit. Recommended change: the `sudoers`
+    rule names the users the manifest's callers resolve to (or a group `dcf-callers` of agent and
+    back users only), `callers=*` means agent and back users, never an account, and the hooks folder
+    is root's, 755, filled by a root step.
+
+19. **Section 2 cites the wrong finding for docker.** Finding 4 of `agent-linux-user`'s review is
+    the cost report reading one user's transcripts; "the `docker` group is root" is that proposal's
+    decision 4 and section 3.3. Finding 1 is also closed only inside the container: a file Windows
+    git writes in the git dir shows as `root` 777 (4.2, 10.2), and until `broker:repair` an agent
+    can edit it and Windows git will run it. Recommended change: correct the table's row 3 to
+    "decision 4", and keep that review's launcher-side check of the git dirs' `config` (its finding
+    1) as the workstation half.
+
+20. **The git broker stands on U3.** In this devhost every folder under `/git-dirs` shows as `root`
+    777; if `chown` and modes do not hold on that mount (U3, and `agent-linux-user` U1), sections 10.1
+    and 10.2 have no control at all. Recommended change: run U3 and U9 before slice 1 is built, and
+    name in 18 what the git broker does if they fail (refuse `broker: on` on a git dir whose owner
+    cannot be set, with one line).
+
+### Lexicon
+
+The proposal uses Wrapper, Shared script, Git hook, Branch rule, Back identity, The gate and the
+`agent-linux-user` terms (Agent user, The Operator's user, Back user) as defined, and avoids
+"gate" and bare "hook" on purpose; it slips twice ("the post-start hook" in 10.3 and 16 is a
+devcontainer hook). Of the new terms: **Broker**, **Broker policy**, **Broker manifest** and
+**Refusal test** are needed. **Service account** collides with Kubernetes' service account, which
+section 11's kube row uses in the same document: say **Broker account**. **Shim** names a role of a
+file the lexicon already calls Wrapper: add a sentence to Wrapper ("when a Feature's broker is on,
+the wrapper hands brokered calls to it") instead of a second word. **Caller** is an everyday word
+across NOTES and scripts; define **Broker caller**, or none. **Direct call** is fine.
+
+### Placement
+
+| Element | Layer | Why |
+|---|---|---|
+| `dcf-broker-install.sh`, `dcf-broker.sh`, `dcf-broker-test.sh` | shared scripts in `src/common` | one implementation, vendored and checked by `common:check` (correct) |
+| `broker`, `brokerCredentials` | each Feature's options | opt-in per resource (correct) |
+| Manifest, policy, refusal tests | the Feature that owns the resource | it knows its tool (correct) |
+| Branch pattern, base branch name | git Feature options, set by the consumer | finding 13 |
+| Fixed ids, `dcf-work` | `src/common` NOTES and shared script | finding 12, shared with `agent-linux-user` |
+| Config-key allow-list, enforced settings on the command line | git Feature's broker | finding 1 |
+| Operator's direct path; the account's own direct path | the wrapper | sections 9 and finding 3 |
+| Push to `main` refused | the forge's ruleset first; the broker as a second line | NFR-13: the forge's own feature holds even without the broker (finding 7) |
+| Broker AppRole creation, ids | openbao Feature task and volume; the Feature ships only a policy file | finding 15 |
+| Backs' hand-over rule | devhost local Feature on the shared code | backs are a devhost concept (correct, 11) |
+| `secure_path`, `env_reset`, `closefrom` | the shared code's `sudoers` writer | finding 4 |
+| Workstation-side check of git dirs' `config` | launcher (devcontainer-cli) | finding 19; `agent-linux-user` review finding 1 |
+| MCP front door | a Feature option, after an ADR amending ADR-0011 | correct (13) |
+| Docker tester | CI and the Operator's terminal, no broker | correct (decision 11) |
+
+### Consistency with `agent-linux-user`
+
+The two overlap on the git dir, the backs' hand-over, GitHub credentials and fixed ids, and differ
+on three points. Which document should own each:
+
+| Element | `agent-linux-user` | Brokers | Owner |
+|---|---|---|---|
+| Users, `runAs`, `dcf-work`, `agent-env`, drop-ins | defines | uses | `agent-linux-user` |
+| Git dir ownership and modes | 9: group `dcf-work`, `config` the Operator's (its review: not a control) | 10.1: `dcf-git` owns, 2770 | brokers, with `core.sharedRepository` kept (finding 5); `agent-linux-user` 9 states that without the broker the `config` threat stays open |
+| Backs' hand-over rule | 8.3: wildcard rule, every agent (review finding 3: narrow it) | 11: an instance of the pattern | brokers' shared code; the devhost slice of `agent-linux-user` builds on it; rule granted to `agent-host` only (finding 18) |
+| The host's GitHub credential | 8.5: a token per agent | push belongs to `dcf-git`, PRs to `dcf-gh` | brokers once on; 8.5 marked interim (finding 7) |
+| Fixed ids | 6.3: `dcf-work` gid 19999 | decision 7: 19900 to 19999 | `src/common`, one list (finding 12) |
+| `safe.directory` | 9: may be `*` here | broker's own config | never `*` where the broker is on (finding 6) |
+| Workstation-side `config` check | review finding 1: launcher | claims closed | both: the broker in the container, the launcher on the workstation (finding 19) |
+| `DCF_SECRET_AS` login | 8.2, `openbao-agent-login` | 12.2 | `openbao-agent-login`, one item for both (20) |
+
+### Open questions for the Operator
+
+- **Decide the two proposals together (decision 1), with the owner table above.** *Recommendation:
+  yes; brokers own the git dir and the backs' rule, `agent-linux-user` owns the users.*
+- **Is the git broker required where agents run as their own users?** With `runAs: agent-user` and
+  `broker: off`, the git dir's `config` stays writable by agents (that review's finding 1).
+  *Recommendation: allowed for consumers, with the residual stated; required in this devhost before
+  `key-file-rotate`.*
+- **The host's GitHub credential once the git broker is on (finding 7).** *Recommendation: no agent
+  keeps a token that can push; the gh broker ships with the git broker for a consumer that wants the
+  push rules to hold, and `agent-linux-user` 8.5 is the interim.*
+- **The default of `brokerCredentials` (finding 14).** *Recommendation: `file`, as a named, bounded
+  exception to ADR-0048 decision 1, for consumers without a server; `openbao` where one runs.*
+- **The branch rule in the published git Feature (finding 13, decision 8).** *Recommendation: an
+  option, default "any branch but the base", set to `<type>/<id>/<n>` here.*
+- **The GitHub App key in the broker's memory (finding 10).** *Recommendation: accept the KV route
+  only for an App narrowed to the policy's repositories, recorded as such, and move to minting
+  inside OpenBao when U12 passes.*
+- **Who may call a broker (finding 18, decision 3).** *Recommendation: the users the manifest names,
+  never the broker accounts; the backs' hand-over only `agent-host`.*
