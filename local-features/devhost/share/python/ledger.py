@@ -387,6 +387,13 @@ def add_runs(records: list[dict], who: str, key: str | None = None) -> list[str]
     return [_add(name, who, key, "run", d) for d in records]
 
 
+def mirror_timeout() -> int:
+    try:
+        return max(1, int(os.environ.get("DEVHOST_MIRROR_TIMEOUT", "") or 300))
+    except ValueError:
+        return 300
+
+
 def mirror() -> str:
     """Bring the register's mirror level (`agentic-register mirror`), only when its folder is there: a shared
     folder that is not mounted leaves an empty mount point, and a copy written into it would be hidden as
@@ -404,7 +411,16 @@ def mirror() -> str:
         raise RegisterError(f"the register {name} has no mirror (the registers option)")
     if not Path(target).is_dir():
         raise RegisterError(f"the mirror folder {target} is not there (the shared folder not mounted?); not mirrored")
-    done = _ar(["mirror", "--register", name], timeout=1800)
+    # Bounded: the scribe holds its job lock while it mirrors, and a slow folder (rclone's FUSE mount reads a
+    # file in about half a second) must not hold it for half an hour. The copy is only adds, so a cut-off run
+    # is safe and the next one carries on. DEVHOST_MIRROR_TIMEOUT, seconds (default 300).
+    limit = mirror_timeout()
+    try:
+        done = _ar(["mirror", "--register", name], timeout=limit)
+    except RegisterError as exc:
+        if "timed out" in str(exc):
+            raise RegisterError(f"mirror stopped after {limit}s (DEVHOST_MIRROR_TIMEOUT)") from exc
+        raise
     line = (done.stdout.strip().splitlines() or done.stderr.strip().splitlines() or ["mirror said nothing"])[-1]
     if done.returncode != 0:
         raise RegisterError(line)

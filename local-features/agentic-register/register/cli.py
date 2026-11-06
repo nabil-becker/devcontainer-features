@@ -586,8 +586,13 @@ def cmd_mirror(a) -> int:
             raise SystemExit(f"agentic-register: register {n} has no mirror; give it one in the registers option")
         store, mirror = adapters.DirStore(store_path(a)), adapters.DirStore(m)
         anchors, kinds, guard = anchors_of(a), rtype(a).kinds, guard_of(a)
-        into_store = adapters.sync([adapters.raws(mirror)], store, anchors, c, n, kinds, guard=guard)
-        into_mirror = adapters.sync([adapters.raws(store)], mirror, anchors, c, n, kinds, guard=guard)
+        # By name first: the mirror is often a network folder where every read costs, and an entry is
+        # its id's hash, so a name both sides have is the same entry. Only what the mirror alone has is
+        # read (it is checked in the store's context); the mirror's own entries are not read again, as
+        # the store (now holding everything valid) is the context for what goes the other way.
+        only_mirror = set(mirror.ids()) - set(store.ids())
+        into_store = adapters.sync([adapters.raws(mirror, only=only_mirror)], store, anchors, c, n, kinds, guard=guard)
+        into_mirror = adapters.sync([adapters.raws(store)], mirror, anchors, c, n, kinds, guard=guard, read_sink=False)
         r = into_mirror.ledger
         guarded = sum(code == "guarded" for x in (into_store, into_mirror) for code, _ in x.refused.values())
         rows.append({"register": n, "store": str(store.path), "mirror": str(mirror.path),

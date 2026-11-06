@@ -11,6 +11,7 @@ import shutil
 import unittest
 import subprocess
 import sys
+import time
 
 import helpers as h
 
@@ -181,6 +182,26 @@ class Writes(h.RepoCase):
             self.assertIn("mirror ok", self.ledger.mirror())
         finally:
             os.environ.pop("FAKE_MIRROR", None)
+
+    def test_a_slow_mirror_is_stopped_at_the_time_limit(self):
+        (self.base / "mirror" / "ledger").mkdir(parents=True)
+        h.write(self.fake / "mirror-sleep", "30")
+        env = {"FAKE_MIRROR": str(self.base / "mirror" / "ledger"), "DEVHOST_MIRROR_TIMEOUT": "1"}
+        old = {k: os.environ.get(k) for k in env}
+        os.environ.update(env)
+        try:
+            start = time.monotonic()
+            with self.assertRaises(self.ledger.RegisterError) as caught:
+                self.ledger.mirror()
+            self.assertLess(time.monotonic() - start, 15, "the 30 s mirror was cut off at 1 s")
+            self.assertIn("mirror stopped after 1s", str(caught.exception))
+            os.environ["DEVHOST_MIRROR_TIMEOUT"] = "not a number"
+            self.assertEqual(self.ledger.mirror_timeout(), 300, "a bad value keeps the default")
+            os.environ.pop("DEVHOST_MIRROR_TIMEOUT")
+            self.assertEqual(self.ledger.mirror_timeout(), 300)
+        finally:
+            for k, v in old.items():
+                os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
 
     def test_the_stretch_cost_as_run_entries(self):
         sc = h.load("session_cost")
@@ -392,6 +413,18 @@ class ScribeRegister(h.RepoCase):
         log = (self.base / "state" / "scribe" / "job.log").read_text(encoding="utf-8")
         self.assertIn("mirror not level", log, "a missing mirror folder is logged, not fatal")
         self.assertEqual(list((self.base / "tmpfs").iterdir()), [])
+
+    def test_a_slow_mirror_does_not_hold_the_scribe_past_the_limit(self):
+        (self.base / "mirror" / "ledger").mkdir(parents=True)
+        h.write(self.ar / "mirror-sleep", "60")
+        start = time.monotonic()
+        done = self.run_scribe(FAKE_MIRROR=str(self.base / "mirror" / "ledger"), DEVHOST_MIRROR_TIMEOUT="2")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertLess(time.monotonic() - start, 40)
+        log = (self.base / "state" / "scribe" / "job.log").read_text(encoding="utf-8")
+        self.assertIn("mirror stopped after 2s (DEVHOST_MIRROR_TIMEOUT)", log)
+        self.assertIn("the next run tries again", log)
+        self.assertIn("logged in the register ledger", done.stdout, "the entries were signed before the mirror")
 
     def test_without_its_key_the_scribe_does_not_run(self):
         done = self.run_scribe(FAKE_SEALED="1")

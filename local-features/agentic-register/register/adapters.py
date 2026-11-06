@@ -36,8 +36,13 @@ class Store(Protocol):
     def ids(self) -> Iterable[str]: ...
 
 
-def raws(store: Store) -> Iterator[bytes]:
+def raws(store: Store, only: Iterable[str] | None = None) -> Iterator[bytes]:
+    """The bodies of the store's entries; with `only`, just those ids (a name filter, so the others
+    are never read: on a slow folder every read costs)."""
+    keep = None if only is None else set(only)
     for i in store.ids():
+        if keep is not None and i not in keep:
+            continue
         raw = store.get(i)
         if raw is not None:
             yield raw
@@ -282,14 +287,16 @@ class SyncReport:
 
 def sync(sources: Iterable[Iterable[bytes]], sink: Store, anchors: dict[str, str],
          checked=None, register: str = core.LEGACY_REGISTER, kinds: dict | None = None,
-         guard: Guard | None = None) -> SyncReport:
+         guard: Guard | None = None, read_sink: bool = True) -> SyncReport:
     """Check what the sources give plus what the sink holds, as entries of `register`; put the valid
     entries the sink lacks, parents first. Invalid, held and other registers' entries never reach it,
     nor does a ruled-out entry a counted prune names: a pruned line is never copied on. With a guard,
     each entry the sink lacks is put only if the guard lets its body through; one it refuses, and
     everything after it in this sync that descends from it, is reported refused (`guarded`)."""
     have = set(sink.ids())
-    everything = list(raws(sink))
+    # read_sink=False: the sink's entries are not read, only its names (`have`); for a sink whose
+    # entries the sources already contain, where reading them again only costs (a mirror on a network folder).
+    everything = list(raws(sink)) if read_sink else []
     for source in sources:
         everything.extend(source)
     led = core.read(everything, anchors, checked, register, kinds)

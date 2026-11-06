@@ -302,6 +302,9 @@ Oracle records this in the book, and Gordon makes it a default of the seed.
 
 ## Changes
 
+- 0.14.5 (local): `mirror` goes by name. It reads from the mirror only the entries the store lacks and
+  never re-reads the mirror's own (`raws(only=)`, `sync(read_sink=False)`); it read every entry of both
+  sides twice, which on a network folder took half an hour. See VENDORED.md.
 - 0.14.4: `--key` may name a private key without its `.pub` beside it: the public half is read from
   the OpenSSH key file itself, without its passphrase. A key file that holds none is refused in one
   line naming the `.pub` it needs, not a traceback; a passphrase-protected one without an SSH agent,

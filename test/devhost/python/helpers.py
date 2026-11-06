@@ -144,6 +144,8 @@ elif cmd == "add":
 elif cmd == "registers":
     print(json.dumps([{{"name": opt("--register", "ledger"), "mirror": os.environ.get("FAKE_MIRROR", "")}}]))
 elif cmd in ("mirror", "verify"):
+    if cmd == "mirror" and os.path.exists(os.path.join(d, "mirror-sleep")):
+        time.sleep(float(open(os.path.join(d, "mirror-sleep")).read()))   # a slow folder
     rc = int(open(os.path.join(d, cmd + "-rc")).read()) if os.path.exists(os.path.join(d, cmd + "-rc")) else 0
     print("agentic-register: " + cmd + (" refused 1, 1 fork(s)" if rc else " ok")); sys.exit(rc)
 """
