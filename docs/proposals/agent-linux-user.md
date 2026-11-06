@@ -559,3 +559,245 @@ Slices 0 and 6: Sonnet.
 - **`dcf-persist` hands a folder to "the current user"**: called as an agent user it would try
   `sudo` and fail quietly. Per-user folders are made by `agents` (8.2), not by `dcf-persist`; its
   NOTES should say which user it serves.
+
+## Architecture review (2026-11-06)
+
+Reviewed cold against the proposal, `docs/principles/non-functional-requirements.md`, `docs/adr/`
+(0012, 0016, 0020, 0024, 0026, 0028, 0031 to 0033, 0036, 0037, 0040, 0045, 0046, 0048, 0049, 0055,
+0056), `docs/proposals/agents-v2.md` section 14, `LEXICON.md`, and the code the design leans on:
+`src/agents/agents.sh` (2.1.3), `src/claude-code/agent-adapter-claude.sh` (1.9.9),
+`src/git/git-setup.sh`, `src/gh/gh-setup.sh`, `src/openbao/openbao-lib.sh`, `openbao-server.sh` and
+`openbao-token-helper.sh` (1.5.0), `src/cloud-folder/cloud-folder-setup.sh` (1.3.3), the shared
+`dcf-persist.sh`, and the devhost's `share/bin/run-job.sh`, `lib.sh` and
+`share/python/session_cost.py` (1.14.1). The runtime facts of section 2 were not re-run (read-only
+review of the tree). Who it serves: the Operator, who rules on it and rotates the OpenBao key file
+after it; the maintainers of the office and DSNP, who adopt it opt-in; the engineers whose agents
+must not lose work to a permission error.
+
+**Verdict:** fit with changes
+
+The threat model is honest (3.3 states what a user does not fix), option B is ADR-0036's identity
+one level down, the switch uses `sudo`'s own environment reset, and per-user state through
+drop-ins keeps CLI knowledge out of the agents Feature. Three findings must be settled before
+slice 2 is built: the git dir's `config` is not protected by its owner as designed (finding 1),
+every adapter verb, not only `start` and `attach`, has to run as the agent's user (finding 2), and
+the backs' `sudoers` rule is wider than the hand-over it is meant for (finding 3). The rest are
+placement and record fixes.
+
+### Requirements (NFRs), one line each
+
+- **NFR-1 owns-its-state**: met. Per-user state lives in the Features' volumes (`users/<user>/`,
+  sections 7 and 8.2); homes are image-only and hold nothing of value (6.2).
+- **NFR-2 registered-taskfile**: met if `agents:boundary` and the login task get a `desc` (sections
+  10, 8.4); see finding 9 for where the login task belongs.
+- **NFR-3, NFR-4, NFR-9**: do not apply (nothing downloaded, no official Feature for this).
+- **NFR-5 idempotent-and-user-neutral**: met in intent: users are made at start, never fatal, and the
+  remote user is resolved at run time (6.1). See finding 6: the install step can use the spec's
+  `_REMOTE_USER` for the group without assuming a user.
+- **NFR-6 one-way-to-configure**: partly met. `runAs` and the `dcf-work` gid option are named, their
+  override variables are not (section 11, 6.3). Finding 12.
+- **NFR-7 agent-ready**: partly met. `agents:boundary` is non-interactive; the per-user login (8.4
+  option a) opens a browser and must be `interactive: true`.
+- **NFR-8 documented-to-the-standard**: met if each slice's NOTES name the drop-in contract, the
+  per-user folders and the `runAs` limits; slices 1 to 6 do not list the NOTES.
+- **NFR-10 tested-on-base-images**: met in plan (slice 2's two-user scenario, 10's red-then-green
+  run). U6 must settle the CI images without `sudo` before the scenarios are written.
+- **NFR-11 linter-cli-contract**: needs a written exception or a fuller fit. `agents boundary`
+  borrows ADR-0035's exit codes (section 10) but is a runtime probe, not a path checker: no
+  `path:line: rule` line, no `--format json`. Finding 11.
+- **NFR-12 vendor-neutral-contracts**: met. The switch (`sudo -n -u` plus `HOME`) works on any CLI,
+  and every CLI in the matrix keeps its state under `HOME` or its own home variable
+  (`CLAUDE_CONFIG_DIR`, `COPILOT_HOME`, `CODEX_HOME`, `GEMINI_CLI_HOME`), so a drop-in per CLI
+  Feature suffices. The one Claude-only risk is named: section 14.1 says process env does not reach
+  a Claude background session, which is why U3 matters (finding 10).
+- **NFR-13 manages-the-environment-not-the-cli**: met for the core (which user an agent runs as is
+  environment; `core.sharedRepository` is git's own feature). Not met in three places: the
+  boundary list names other Features' paths (finding 8), `agents:login` runs `claude` from the
+  agents Feature (finding 9), and the plain-`claude` warning has no stated mechanism (finding 13).
+
+### Decisions (ADRs)
+
+No accepted ADR is contradicted outright. The slice-0 ADR must say what it amends:
+**ADR-0036** (the lease folder's 0777, accepted "for a single-tenant container", becomes the
+caller's 755; identity gains a Linux user), **ADR-0048 decision 4** (the refusal moves from
+variables to the user), **ADR-0056 decisions 8 and 9** (closed when slice 6 is green),
+**ADR-0049 decision 4** (the memory path moves, finding 5), **ADR-0033** (the adapter's
+`agents.tsv` becomes per user, finding 2), and that it reopens **ADR-0055 decision 6** (finding 7).
+It leaves **ADR-0020** as it is (3.3 and 15 state the residual), **ADR-0016** as it is (the bot
+identity still keys on `CLAUDECODE`, which agent users keep), and is consistent with **ADR-0040**
+(the host still does the git work, with its own credential, 8.5). Section 1 cites ADR-0045 for
+"state lives in a Feature volume, never only in a home folder"; that rule is NFR-1, ADR-0045 is the
+machine-loss rule. ADR-0046 is superseded by ADR-0048 and does not bear on this.
+
+### Findings
+
+1. **The git dir's `config` is not protected by being the Operator's file (sections 7, 9, 10).**
+   git writes `config` through `config.lock` and a rename, and `rename(2)` needs write permission
+   on the folder, not on the file. The git dir must be group-writable for objects, refs, `HEAD`
+   and the index (`core.sharedRepository=group` makes its folders 2775), so an agent user can
+   replace `config` with `git config`, `mv` or `rm`, whatever its owner and mode. The sticky bit
+   on the git dir would stop that, but also stops each user replacing the other's `HEAD`,
+   `index` and `packed-refs`, which git rewrites the same way. The workstation threat of 3.3
+   (`core.fsmonitor` run by Windows git) therefore stays open. Recommended change: drop the
+   ownership rule as a control and make test U9 a rename-over test; if it confirms the gap, close
+   the threat on the workstation side instead (the launcher checks the git dirs' `config` against
+   the last known copy before any `task dc:*` runs Windows git, with the item section 15 proposes
+   for the launcher) and say in 3.3 that the container cannot close it.
+
+2. **Every adapter verb has to run as the agent's user, not only `start` and `attach` (8.1, 8.6).**
+   The claude adapter keeps its records under `$CLAUDE_CONFIG_DIR/agent-adapter-claude/`
+   (`agents.tsv`, ADR-0033) and reads liveness from `claude agents --json`, which lists only the
+   sessions of the calling user's config folder and daemon. Run as the Operator's user, `list`,
+   `logs`, `stop`, `reset`, the lease's liveness check (`agents.sh` asks the adapter's list when a
+   holder's pid is gone) and the post-start join would all see no sessions, and `agents:up` would
+   start a second resident. Recommended change: section 8.1 states that `agents` calls every adapter
+   verb through `agent-env` as the agent's user, and slice 2's scenario checks `list`, `stop` and a
+   lease takeover across two users, not only a start.
+
+3. **The backs' `sudoers` rule is wider than the hand-over (8.3).** `%dcf-work ALL=(back-scribe)
+   NOPASSWD: devhost-run-job --handover * scribe` lets every agent user, the reviewer included,
+   run as `back-scribe`; `*` in a `sudoers` argument matches across spaces; and `run-job.sh`
+   already takes a job *path* (`*/*` or `*.sh`, sourced, relative to the agent-writable checkout).
+   An agent could then run its own code as a back and sign the ledger as the scribe. Recommended
+   change: grant the rule to the user that runs the hooks (`agent-host`), with no wildcard, the
+   hand-over on standard input (`devhost-run-job --handover-stdin scribe`), and the runner refusing
+   a job path whenever `SUDO_USER` is set.
+
+4. **The cost report and the briefing's spend read one user's transcripts (not in section 7).**
+   `session_cost.py` reads `$CLAUDE_CONFIG_DIR/projects/`; with one 700 folder per user, the host's
+   `task devhost:costs`, the briefing's month's spend and the ledger review see only the caller's
+   own sessions, and a back after the hand-over cannot measure the host's stretch. Recommended
+   change: add a row to section 7: the runner measures the stretch's cost as `agent-host` before
+   the hand-over and passes the numbers in the hand-over file, and the month's report runs as the
+   Operator's user (which reads every user's folder through `sudo`) or from the backs' `runs.jsonl`.
+
+5. **Claude Code's memory moves, and ADR-0049 decision 4 points at the old path (7, decision 6).**
+   ADR-0049 places memory at `claude-code/projects/*/memory/` and owes a tier-3 mirror of it. The
+   one-time move puts it under `users/agent-host/`, 700, and other agents start with none.
+   Recommended change: slice 3 names the new path in the claude-code NOTES and the mirror's
+   backlog item, and the slice-0 ADR records the amendment.
+
+6. **The Operator's long-lived processes would miss the group (6.1, 9).** Users and group membership
+   made at start reach new `devcontainer exec` shells, but the VS Code server and anything started
+   before the hook keep their old groups, so the Operator's editor could not write an agent's
+   group-writable file until the next start. The Feature spec hands `install.sh` the
+   `_REMOTE_USER` (the claude-code Feature already reads it), so the group and the remote user's
+   membership can be made at build time without assuming a user (NFR-5). Recommended change: the
+   install step creates `dcf-work` and adds `_REMOTE_USER` to it when set; the start hook only makes
+   the agent and back users.
+
+7. **ADR-0055's open unix-socket listener is decided by this proposal (3.3, U8).** ADR-0055 left
+   option 3 open because "it does not keep out agents, which run as the same user". With agent
+   users it does: a `listener "unix"` at mode 0600 owned by the Operator's user, carrying the
+   unauthenticated root-token endpoints, removes the "disturb a recovery" residual of 3.3.
+   Recommended change: slice 5 moves the setting to the Operator-owned unix listener and leaves the
+   TCP listener at the default, and the slice-0 ADR settles ADR-0055 decision 6 that way.
+
+8. **The boundary check knows other Features (section 10).** 8.2 says the agents Feature knows no
+   CLI and no other Feature, yet the check's list names `$OPENBAO_STATE_DIR/token`, `approle/`,
+   `GH_CONFIG_DIR/hosts.yml`, `RCLONE_CONFIG`, `SSH_AUTH_SOCK` and the git configs. Recommended
+   change: each Feature ships its protected paths beside its drop-in (`boundary.d/<feature>`, one
+   path or socket per line with the expectation), and `agents boundary` reads those plus
+   `AGENTS_BOUNDARY_PATHS`, as 8.2 already does for the environment.
+
+9. **The per-user Claude login is placed in the agents Feature (8.4 option a, 11 step 3).**
+   `task agents:login -- <name>` "runs `claude` as that user": the agents Feature would then know a
+   CLI (NFR-13). Recommended change: make it an optional adapter verb `login` (exit 3 where a CLI
+   has no login, NFR-12), which `agents login <name>` calls as the agent's user.
+
+10. **The token route of 8.4 rests on a Claude daemon that outlives the environment.** Section 14.1
+    of agents-v2 says the process environment does not reach a Claude background session; the
+    first `--bg` per user starts that user's daemon with whatever environment it had, and a
+    rotated `CLAUDE_CODE_OAUTH_TOKEN` will not reach a running daemon. Recommended change: U3 also
+    rotates the token and checks that a resident picks it up (or that the drop-in restarts that
+    user's daemon), before decision 9 is taken as the token.
+
+11. **`agents boundary` and the linter contract (section 10).** It cites ADR-0035's exit codes but
+    is a probe over the running container, not a tool over paths. Recommended change: write it as
+    a named exception in the agents NOTES (no paths, no `-`), and keep the rest of the contract:
+    one `<user>: <check>: <path>` line per readable item and `--format json`, so the briefing and
+    CI read it without parsing prose.
+
+12. **Shared names live in several Features without an owner (6.3, 7, 9).** `dcf-work` and its gid
+    are an agents option, but cloud-folder's mount (`--gid dcf-work`), git's shared repository,
+    the devhost's state folders and the Operator's umask all depend on them, and slice 4 puts the
+    Operator's umask drop-in in the git Feature. Recommended change: a shared script in
+    `src/common` (vendored, as `dcf-persist.sh` is) defines the group from one variable
+    (`DCF_WORK_GROUP`, `DCF_WORK_GID`), each Feature behaves as today when the group is absent, and
+    the umask drop-in moves to the agents Feature that turns agent users on.
+
+13. **The plain-`claude` warning has no mechanism (8.6, decision 7).** A wrapper around `claude`
+    would be the Feature intercepting the CLI. Claude Code has its own hook for this, and ADR-0032
+    already writes Feature settings into the managed settings folder. Recommended change: slice 3
+    ships the warning as a `SessionStart` hook in the managed settings, active only when `runAs` is
+    `agent-user` and the uid is the remote user's.
+
+14. **The token files at rest per agent sit outside ADR-0048 decision 1 (8.4, 8.5).** OpenBao is the
+    master of every token the collection stores, gh tokens named; option 8.5 b keeps a
+    fine-grained token per agent in a gh folder and 8.4 b a `setup-token` in a file until
+    `openbao-agent-login`. Recommended change: the slice-0 ADR states both as a bounded interim
+    exception to ADR-0048 decision 1, ending when `openbao-agent-login` ships, so no other store
+    cites it.
+
+15. **Section 11 and slice 5 disagree on openbao's version.** Section 11 lists "refuse by user, not
+    by variable" as breaking (openbao major); slice 5 ships it in a minor. Recommended change: the
+    minor adds the user check alongside the variables (refuse if either says agent), and only
+    dropping the variable check waits for the major. The user check itself should be
+    Feature-local: refuse unless the caller owns `$OPENBAO_STATE_DIR`, which needs no knowledge of
+    the agents Feature. The token helper reads a fixed `$OPENBAO_STATE_DIR/token` today, so the
+    drop-in of 8.2 needs a new variable for the token file rather than a second `OPENBAO_STATE_DIR`.
+
+16. **Two cloud-folder modes are not covered (7, U5).** The design treats `mount` only. `sync` mode
+    writes with umask 077 into a folder owned by the remote user, so agents could not read the
+    records there; `host` mode is a bind mount whose owners depend on the engine (as U1). The
+    office runs `host` mode. Recommended change: section 7's row covers all three modes (`sync` with
+    umask 007 and group `dcf-work`; `host` under U1), and U5 tests each.
+
+### Lexicon
+
+The proposal uses the Operator, host, con, back, resident, handle, identity, lease, CLI adapter,
+storage tier and custody as defined. Slice 0 adds **Agent user** and **The Operator's user**, which
+is right; "remote user" is used without a lexicon entry and should be defined inside "The Operator's
+user". The user name `agent-host` joins "agent" and the handle `host`, while "Host" is both the main
+session and, in ADR-0024, the workstation; the lexicon entry for Agent user should say the name is
+`agent-<identity>` and that `agent-host` means the agent whose identity is `host`. **Back identity**
+already means a back's AppRole; the Linux user of a back needs its own word (Back user) so the two
+are not confused. The **Tester** has no model, so it needs no Claude login (8.4 counts one per back).
+
+### Placement
+
+| Element | Layer | Why |
+|---|---|---|
+| `runAs`, users from the list, `agent-env`, the drop-in folder, refusal of `agents start` by an agent | agents Feature option and start hook | the environment: who an agent runs as (NFR-13) |
+| `uid:` per agent | agents list spec | a fact about the agent, CLI-neutral; acceptable |
+| `dcf-work` group and gid | shared script in `src/common`, read by each Feature | several Features depend on it (finding 12) |
+| Per-user state variables | each CLI or tool Feature's drop-in | each Feature knows its own state (8.2, correct) |
+| Protected paths for the check | each Feature, beside its drop-in | finding 8 |
+| Claude login per user | claude-code adapter verb `login` | finding 9 |
+| Claude credential in the environment | claude-code drop-in | correct (8.4) |
+| Plain-`claude` warning | claude-code managed settings hook | finding 13 |
+| `core.sharedRepository`, `safe.directory` for worktrees | git Feature | git's own features (correct) |
+| The Operator's umask 002 | agents Feature (not git) | finding 12 |
+| `allow_other` mount | cloud-folder Feature | correct; all modes, finding 16 |
+| Share-task refusal by user, agent token file | openbao Feature | correct; Feature-local check, finding 15 |
+| Back users, hand-over, `sudoers` rule | devhost local Feature | backs are a devhost concept (correct); rule shape, finding 3 |
+| Per-agent GitHub token | the Operator, stored by the gh drop-in | consumer act; ADR-0048 interim, finding 14 |
+| `AGENTS_BOUNDARY_PATHS`, moving the office's key file | consumer config | correct (section 11) |
+| Workstation-side git `config` check | launcher (devcontainer-cli) | finding 1; ADR-0024 puts the host there |
+
+### Open questions for the Operator
+
+- **The git dir's `config` (finding 1).** Accept that the container cannot protect it and close the
+  workstation threat in the launcher, or keep the ownership rule and accept the residual until U9
+  runs. *Recommendation: the launcher check, filed with section 15's launcher item; the ownership
+  rule is not a control.*
+- **ADR-0055 decision 6 (finding 7).** Move unauthenticated root-token generation to an
+  Operator-owned unix listener as part of slice 5. *Recommendation: yes.*
+- **Who reads the agents' transcripts for the cost report (finding 4).** The Operator's user through
+  `sudo`, or a group-readable `projects/` that reopens T7. *Recommendation: the Operator's user,
+  with the stretch's cost carried in the hand-over.*
+- **The interim token files (finding 14).** Accept per-agent GitHub and Claude tokens at rest in
+  the Features' volumes until `openbao-agent-login`, as a named exception to ADR-0048 decision 1.
+  *Recommendation: accept, bounded by that item.*
+- **Who may hand over to a back (finding 3).** Only `agent-host`, or every agent user.
+  *Recommendation: only the user that runs the hooks.*
