@@ -348,7 +348,7 @@ printf '#!/bin/sh\nfor a in "$@"; do echo "$a"; done > "$DCF_TEST_RECORD"\nenv |
 # shellcheck disable=SC2016  # the stub's own variables
 printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "%s/wsl-calls"\ncase "$FAKE_WSL" in fail) echo "mount: permission denied" >&2; exit 32 ;; *) echo "$FAKE_WSL" ;; esac\n' "$T" > "$bin/wsl.exe"
 chmod +x "$bin/wsl.exe"
-audio_mount='type=bind,source=/mnt/wsl/wslg,target=/mnt/wslg'
+audio_mount='type=bind,source=/mnt/wsl/devhost-audio,target=/mnt/wslg'
 wsl_calls() { if [ -f "$T/wsl-calls" ]; then wc -l < "$T/wsl-calls" | tr -d ' '; else echo 0; fi; }
 for v in unset none NONE; do
   rm -f "$T/wsl-calls"; ws="$(new_ws "$plain")"
@@ -367,9 +367,9 @@ for answer in bound present; do
   check "audio wslg ($answer): no warning" 0 "$(grep -c 'starts without audio' <<<"$out")"
 done
 # shellcheck disable=SC2016  # literal text, not ours to expand
-check 'audio wslg: wsl.exe as root in the default distro, the bind script' '-u root -e sh -c t=/mnt/wsl/wslg; if mountpoint -q $t' "$(head -n1 "$T/wsl-calls" | cut -c1-53)"
-check 'audio wslg present: says the socket is already shared' 1 "$(grep -c 'already shared at /mnt/wsl/wslg' <<<"$out")"
-check 'audio wslg: the mount source is not created' no "$([ -e /mnt/wsl/wslg ] && [ ! -d /mnt/wsl ] && echo yes || echo no)"
+check 'audio wslg: wsl.exe as root in the default distro, the prepare script' '-u root -e sh -c t=/mnt/wsl/devhost-audio; if [ ! -S /mnt/wslg/Pu' "$(head -n1 "$T/wsl-calls" | cut -c1-65)"
+check 'audio wslg present: says the directory is there and the microphone is gated' 1 "$(grep -c 'relay directory /mnt/wsl/devhost-audio is there; the microphone is on only while task audio:on runs' <<<"$out")"
+check 'audio wslg: the mount is never WSLg itself' 0 "$(grep -c -x -- 'type=bind,source=/mnt/wsl/wslg,target=/mnt/wslg' <<<"$args")"
 for answer in nopulse fail; do
   rm -f "$T/wsl-calls"; ws="$(new_ws "$plain")"; run wsl "$ws" FAKE_WSL="$answer" DCF_HOST_AUDIO=wslg -- up
   check "audio wslg ($answer): one warning" 1 "$(grep -c 'starts without audio' <<<"$out")"
@@ -377,7 +377,7 @@ for answer in nopulse fail; do
   check "audio wslg ($answer): DCF_HOST_AUDIO=none" 'DCF_HOST_AUDIO=none' "$(cat "$T/rec.env")"
   check "audio wslg ($answer): the start goes on" up "$(head -n1 <<<"$args")"
 done
-check 'audio wslg nopulse... the last warning names the failed bind' 1 "$(grep -c 'bind in the default WSL distro failed (error: exit 32' <<<"$out")"
+check 'audio wslg fail: the last warning names the failed bind' 1 "$(grep -c 'making the relay directory in the default WSL distro failed (error: exit 32' <<<"$out")"
 rm -f "$T/wsl-calls"; ws="$(new_ws "$plain")"; run linux "$ws" FAKE_WSL=bound DCF_HOST_AUDIO=wslg -- up
 check 'audio wslg on linux: refused, wsl.exe not run' 0 "$(wsl_calls)"
 check 'audio wslg on linux: one warning naming the host type' 1 "$(grep -c 'no audio on this host (linux)' <<<"$out")"
@@ -393,7 +393,7 @@ check 'audio wslg, exec: wsl.exe not run, no mount' '0 0' "$(wsl_calls) $(grep -
 rm -f "$T/wsl-calls"; ws="$(new_ws '{ "mounts": ["source=/x,target=/mnt/wslg,type=bind"] }')"; run wsl "$ws" FAKE_WSL=bound DCF_HOST_AUDIO=wslg -- up
 check 'audio wslg, the repository mounts /mnt/wslg itself: skipped' 0 "$(grep -c -x -- "$audio_mount" <<<"$args")"
 rm -f "$T/wsl-calls"; ws="$(new_ws "$plain")"; run wsl "$ws" FAKE_WSL=bound DCF_HOST_AUDIO=wslg -- host
-check 'host: says what wslg would do, runs nothing' "0 1" "$(wsl_calls) $(grep -c "^DCF_HOST_AUDIO     : wslg asked for: up binds" <<<"$out")"
+check 'host: says what wslg would do, runs nothing' "0 1" "$(wsl_calls) $(grep -c "^DCF_HOST_AUDIO     : wslg asked for: up makes the relay directory" <<<"$out")"
 run linux "$ws" DCF_HOST_AUDIO=wslg -- host
 check 'host on linux: says why not' 1 "$(grep -c '^DCF_HOST_AUDIO     : wslg asked for, not on linux' <<<"$out")"
 run wsl "$ws" -- host
@@ -401,6 +401,71 @@ check 'host, unset: no audio' 'DCF_HOST_AUDIO     : (unset: no audio)' "$(grep '
 rm -f "$bin/wsl.exe"
 ws="$(new_ws "$plain")"; run wsl "$ws" DCF_HOST_AUDIO=wslg -- up
 check 'audio wslg with no wsl.exe: one warning, none' "1 DCF_HOST_AUDIO=none" "$(grep -c 'wsl.exe is not on PATH' <<<"$out") $(cat "$T/rec.env")"
+# --- The workstation's switch: `audio on [<duration>]`, `audio off`, `audio status` run the relay
+# script once in the default distro through wsl.exe (a fake one that records its arguments and
+# answers FAKE_WSL), refuse where there is no WSL, cap the duration, say plainly what happened.
+ln -sf "$(command -v tr)" "$bin/tr"
+# shellcheck disable=SC2016  # the stub's own variables
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "%s/wsl-calls"\nfor last; do :; done\ncase "$FAKE_WSL" in fail) echo "boom" >&2; exit 5 ;; *) echo "$FAKE_WSL" ;; esac\n' "$T" > "$bin/wsl.exe"
+chmod +x "$bin/wsl.exe"
+last_call() { tail -n1 "$T/wsl-calls" | sed 's/^.* sh \(on\|off\|status\) /\1 /'; }
+ws="$(new_ws "$plain")"
+rm -f "$T/wsl-calls"; run wsl "$ws" 'FAKE_WSL=on 1' DCF_HOST_AUDIO=wslg -- audio on
+check 'audio on, no duration: the default 15m (900 s) with the relay directory and the WSLg socket' 'on 900 /mnt/wsl/devhost-audio /mnt/wslg/PulseServer' "$(last_call)"
+check 'audio on: says ON with the time and how to end it' 1 "$(grep -c 'audio: ON for 15m: .*task audio:off ends it' <<<"$out")"
+check 'audio on: starts no container, no CLI' '' "$args"
+for pair in '90s:90' '5m:300' '2h:7200' '10:600' '1H:3600' ' 45 :2700'; do
+  rm -f "$T/wsl-calls"; run wsl "$ws" 'FAKE_WSL=on 1' DCF_HOST_AUDIO=wslg DCF_HOST_AUDIO_TTL_MAX=3h -- audio on "${pair%%:*}"
+  check "audio on '${pair%%:*}': ${pair##*:} seconds" "on ${pair##*:} /mnt/wsl/devhost-audio /mnt/wslg/PulseServer" "$(last_call)"
+done
+rm -f "$T/wsl-calls"; run wsl "$ws" 'FAKE_WSL=on 1' DCF_HOST_AUDIO=wslg -- audio on 5h
+check 'audio on over the maximum: cut to the default 2h' 'on 7200 /mnt/wsl/devhost-audio /mnt/wslg/PulseServer' "$(last_call)"
+check 'audio on over the maximum: says so' 1 "$(grep -c 'is more than the longest allowed, 2h (DCF_HOST_AUDIO_TTL_MAX); using that' <<<"$out")"
+rm -f "$T/wsl-calls"; run wsl "$ws" 'FAKE_WSL=on 1' DCF_HOST_AUDIO=wslg DCF_HOST_AUDIO_TTL_MAX=20m -- audio on 1h
+check 'audio on: DCF_HOST_AUDIO_TTL_MAX moves the cap' 'on 1200 /mnt/wsl/devhost-audio /mnt/wslg/PulseServer' "$(last_call)"
+rm -f "$T/wsl-calls"; run wsl "$ws" 'FAKE_WSL=on 1' DCF_HOST_AUDIO=wslg DCF_HOST_AUDIO_TTL=30m -- audio on
+check 'audio on: DCF_HOST_AUDIO_TTL moves the default' 'on 1800 /mnt/wsl/devhost-audio /mnt/wslg/PulseServer' "$(last_call)"
+for bad in soon 5x -3 1.5h 5mm 0; do
+  rm -f "$T/wsl-calls"; run wsl "$ws" 'FAKE_WSL=on 1' DCF_HOST_AUDIO=wslg -- audio on "$bad"
+  check "audio on '$bad' (not a duration): refused, wsl.exe not run" "1 0" "$(grep -c 'is not a duration' <<<"$out") $(wsl_calls)"
+done
+rm -f "$T/wsl-calls"; run wsl "$ws" FAKE_WSL=nosocat DCF_HOST_AUDIO=wslg -- audio on 5m
+check 'audio on, no socat: says what to install' 1 "$(grep -c 'socat is not installed in the default WSL distro (run task audio:setup on the workstation)' <<<"$out")"
+run wsl "$ws" FAKE_WSL=nopulse DCF_HOST_AUDIO=wslg -- audio on 5m
+check 'audio on, no WSLg socket: says so, nothing turned on' 1 "$(grep -c 'has no /mnt/wslg/PulseServer.*nothing was turned on' <<<"$out")"
+run wsl "$ws" FAKE_WSL=failed DCF_HOST_AUDIO=wslg -- audio on 5m
+check 'audio on, the relay did not start: the microphone stays off' 1 "$(grep -c 'the relay did not start (failed); the microphone stays off' <<<"$out")"
+run wsl "$ws" FAKE_WSL=fail DCF_HOST_AUDIO=wslg -- audio on 5m
+check 'audio on, wsl.exe fails: its output is in the message' 1 "$(grep -c 'the relay did not start (error: exit 5: boom)' <<<"$out")"
+rm -f "$T/wsl-calls"; run wsl "$ws" FAKE_WSL=off DCF_HOST_AUDIO=wslg -- audio off
+check 'audio off: the relay script with off' 'off 0 /mnt/wsl/devhost-audio /mnt/wslg/PulseServer' "$(last_call)"
+check 'audio off: says the socket is gone' 1 "$(grep -c 'audio: OFF: the relay is ended and the socket is gone' <<<"$out")"
+rm -f "$T/wsl-calls"; run wsl "$ws" 'FAKE_WSL=on 754' DCF_HOST_AUDIO=wslg -- audio status
+check 'audio status on: the time left' 1 "$(grep -c 'audio: ON, 12m34s left' <<<"$out")"
+run wsl "$ws" FAKE_WSL=off DCF_HOST_AUDIO=wslg -- audio status
+check 'audio status off: says how to turn it on' 1 "$(grep -c 'audio: OFF (task audio:on starts it)' <<<"$out")"
+run wsl "$ws" 'FAKE_WSL=on 5400' DCF_HOST_AUDIO=wslg -- audio status
+check 'audio status: 1h30m' 1 "$(grep -c 'ON, 1h30m left' <<<"$out")"
+run wsl "$ws" FAKE_WSL=off -- audio status
+check 'audio, DCF_HOST_AUDIO unset: a note that up mounts nothing' 1 "$(grep -c 'DCF_HOST_AUDIO is not wslg here' <<<"$out")"
+run wsl "$ws" FAKE_WSL=off DCF_HOST_AUDIO=wslg -- audio dance
+check 'audio, unknown action: refused' 1 "$(grep -c "unknown action 'dance'" <<<"$out")"
+rm -f "$T/wsl-calls"; run linux "$ws" FAKE_WSL=off DCF_HOST_AUDIO=wslg -- audio on
+check 'audio on, linux: refused, wsl.exe not run' "1 0" "$(grep -c 'audio: not on this host (linux)' <<<"$out") $(wsl_calls)"
+rm -f "$bin/wsl.exe"
+run wsl "$ws" DCF_HOST_AUDIO=wslg -- audio status
+check 'audio, no wsl.exe: says so' 1 "$(grep -c 'wsl.exe is not on PATH' <<<"$out")"
+
+# The script strings: the prepare and relay scripts carry no double quote (Windows' argument
+# quoting) and the PowerShell twin holds the very same text.
+psm1="$here/../../bootstrap/host/DevcontainerCli.psm1"
+for name in audio_prepare_script:AudioPrepareScript audio_relay_script:AudioRelayScript; do
+  sh_text="$(bash -c 'source <(sed -n "/^'"${name%%:*}"'=/p" "$1"); eval "printf %s \"\$'"${name%%:*}"'\""' _ "$cli_sh")"
+  ps_text="$(sed -n "s/^\$script:${name##*:} = '\(.*\)'\$/\1/p" "$psm1" | sed "s/''/'/g")"
+  check "${name%%:*}: no double quote" 0 "$(grep -c '"' <<<"$sh_text")"
+  check "${name%%:*}: the PowerShell twin has the same text" "$sh_text" "$ps_text"
+done
+
 # shellcheck disable=SC2016  # literal text, not ours to expand
 check 'the bootstrap template passes DCF_HOST_AUDIO on' 1 "$(grep -cF '"DCF_HOST_AUDIO": "${localEnv:DCF_HOST_AUDIO}"' "$here/../../bootstrap/devcontainer.json")"
 

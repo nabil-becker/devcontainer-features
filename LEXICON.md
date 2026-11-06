@@ -383,10 +383,14 @@ The words of the secrets split: OpenBao keeps every secret, `ssh-agent` only use
   socket mount is skipped). Not the same as the SSH agent mode, which says what the container may
   do about it.
 - **Host audio**: the opt-in `DCF_HOST_AUDIO=wslg` setting in the workstation's `.devcontainer/.env`:
-  on a WSL-backed Windows host type the launcher shares WSLg's folder into `/mnt/wsl/wslg` from the
-  default distro (skipped when already shared), and mounts it into the container, where
-  the `audio` Feature (which sets `PULSE_SERVER`) sees the Windows microphone as `RDPSource`. Off by default, and a missing
-  WSLg warns and starts the container without audio (ADR-0057).
+  on a WSL-backed Windows host type the launcher makes the relay folder `/mnt/wsl/devhost-audio` in
+  the default distro and mounts it at `/mnt/wslg`, where the `audio` Feature (which sets
+  `PULSE_SERVER`) sees the Windows microphone as `RDPSource` while the audio gate is on. Off by
+  default, and a missing WSLg warns and starts the container without audio (ADR-0057, ADR-0058).
+- **Audio gate**: the workstation-side switch on the container's microphone: with host audio on, the
+  container gets a relay folder at `/mnt/wslg`, never WSLg's own, and `task audio:on TTL=<duration>`
+  runs a relay to the real socket until the TTL ends or `task audio:off`. Off by default, and no gate
+  inside the container counts (ADR-0058).
 - **SSH agent mode**: the one setting a user touches for the `ssh-agent` Feature, `SSH_AGENT_MODE`
   in the workstation's `.devcontainer/.env`, mapped by `"mode": "${localEnv:SSH_AGENT_MODE:auto}"`;
   values `auto` (follow the host socket), `socket`, `key` and `none`; an empty or unknown value

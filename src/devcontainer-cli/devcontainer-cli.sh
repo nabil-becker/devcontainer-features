@@ -26,6 +26,8 @@
 #       `host` is not one either: it prints the resolved host type, the engine
 #       command, the DCF_HOST_* values and the host mounts `up` would add (and
 #       those it would skip), and starts nothing (devcontainer:host).
+#       `audio on [<duration>]`, `audio off` and `audio status` are not either: the workstation's
+#       switch for the microphone (task audio:on, audio:off, audio:status; see "Audio" below).
 #       `cloud-folder-login` is not one either: the cloud-folder Feature's sign-in from the
 #       workstation (relay, --paste, --workstation-rclone; see "cloud-folder login" below).
 #       `openbao-unlock` and `openbao-keyfile` (devcontainer:openbao:unlock, :keyfile:*) refuse in
@@ -65,12 +67,16 @@
 #                              three are removed from the CLI's environment. Never by default.
 #                              Not granted when the engine is wslc (no --device, --cap-add or
 #                              --security-opt option): a warning, the start goes on without.
-#   DCF_HOST_AUDIO             wslg = the machine gives the container its microphone through WSLg's
-#                              PulseAudio socket (the audio Feature): on windows-wsl-docker `up`
-#                              binds the default WSL distro's /mnt/wslg to /mnt/wsl/wslg as root
-#                              (wsl.exe through interop; skipped when already there), mounts it
-#                              at /mnt/wslg and sets DCF_HOST_AUDIO=wslg; otherwise none, with one
+#   DCF_HOST_AUDIO             wslg = the machine may give the container its microphone through
+#                              WSLg's PulseAudio socket (the audio Feature), gated on the workstation
+#                              (ADR 0057): on windows-wsl-docker `up` makes a relay directory
+#                              /mnt/wsl/devhost-audio in the default WSL distro (as root; wsl.exe
+#                              through interop), mounts it at /mnt/wslg and sets DCF_HOST_AUDIO=wslg;
+#                              the real socket is never mounted and the microphone is OFF until
+#                              `audio on` (below) starts a relay in it. Otherwise none, with one
 #                              warning when asked for. Unset or none = nothing runs. Never fails a start.
+#   DCF_HOST_AUDIO_TTL         how long `audio on` stays on without a duration (default 15m).
+#   DCF_HOST_AUDIO_TTL_MAX     the longest `audio on` may ask for (default 2h; more is cut to it).
 #   DEVCONTAINER_ENGINE_WAIT   seconds to wait for the container engine to answer before
 #                              up, build, exec, set-up and run-user-commands (default 60;
 #                              0 = no wait, no check). See "engine wait" below.
@@ -407,20 +413,33 @@ resolve_fuse() {
 # fuse_run_args: the run arguments of the grant, one per line (none when not asked for).
 fuse_run_args() { [ "${HT_FUSE:-}" = 1 ] || return 0; printf '%s\n' "${fuse_args[@]}"; }
 
-# Audio on request (the audio Feature; backlog audio-feature): DCF_HOST_AUDIO=wslg asks for the
-# workstation's microphone through WSLg's PulseAudio socket. The container engine's WSL distro does
-# not see /mnt/wslg, but every WSL2 distro shares /mnt/wsl, so before `up` the launcher binds the
-# default distro's /mnt/wslg to /mnt/wsl/wslg (as root through wsl.exe, once: skipped when already
-# there; a WSL restart drops it and the next `up` redoes it) and mounts that at /mnt/wslg, where the
-# Feature's PULSE_SERVER points. DCF_HOST_AUDIO then says what the launcher did: wslg or none.
+# Audio on request, gated on the workstation (the audio Feature; backlog audio-feature,
+# audio-gate-ttl; ADR 0057): DCF_HOST_AUDIO=wslg asks that the container may have the workstation's
+# microphone through WSLg's PulseAudio socket, but only while the engineer turned it on. The
+# container engine's WSL distro does not see /mnt/wslg, but every WSL2 distro shares /mnt/wsl, so
+# before `up` the launcher makes a relay directory there, /mnt/wsl/devhost-audio (as root through
+# wsl.exe), and mounts it at /mnt/wslg, where the Feature's PULSE_SERVER points. WSLg's own socket
+# is never mounted: the directory is empty, the microphone is OFF, until `audio on [<duration>]`
+# starts a socat relay in the default distro from <dir>/PulseServer to /mnt/wslg/PulseServer, ended
+# by the duration (timeout) or by `audio off`, and then the socket file is gone again. The switch
+# lives on the workstation, outside the container, so no process in the container can undo it, and
+# changing it needs no rebuild. DCF_HOST_AUDIO then says what the launcher did: wslg or none.
 # Unset or none asks for nothing and runs nothing. Never fails a start: anything missing is one
 # warning and none. Here only windows-wsl-docker (from inside a distro, wsl.exe through interop)
 # can carry it. DCF_HOST_WSL_EXE replaces wsl.exe (tests). The PowerShell twin is Initialize-HostAudio.
-audio_source=/mnt/wsl/wslg
+audio_source=/mnt/wsl/devhost-audio
 audio_target=/mnt/wslg
-# One line of sh, the same as $script:AudioBindScript in DevcontainerCli.psm1.
+audio_wslg_socket=/mnt/wslg/PulseServer
+# One line of sh each, the same as $script:AudioPrepareScript and $script:AudioRelayScript in
+# DevcontainerCli.psm1 (test/bootstrap/host_mounts_test.sh compares them). No double quotes: the
+# PowerShell twin passes them through Windows' argument quoting.
 # shellcheck disable=SC2016  # expanded by the distro's sh
-audio_bind_script='t=/mnt/wsl/wslg; if mountpoint -q $t && [ -S $t/PulseServer ]; then echo present; elif [ ! -S /mnt/wslg/PulseServer ]; then echo nopulse; else mkdir -p $t && mount --bind /mnt/wslg $t && [ -S $t/PulseServer ] && echo bound; fi'
+audio_prepare_script='t=/mnt/wsl/devhost-audio; if [ ! -S /mnt/wslg/PulseServer ]; then echo nopulse; elif [ -d $t ]; then echo present; else mkdir -p $t && chmod 755 $t && echo bound; fi'
+# sh -c <this> sh <on|off|status> <seconds> <dir> <WSLg socket>: prints on <seconds left>, off,
+# nosocat, nopulse or failed. The relay is socat in its own process group under timeout; its pid is
+# <dir>.pid (outside the mounted directory). A stopped relay leaves no socket file.
+# shellcheck disable=SC2016  # expanded by the distro's sh
+audio_relay_script='a=$1; t=$2; d=$3; w=$4; s=$d/PulseServer; p=$d.pid; stop() { [ -S $s ] && [ -s $p ] && kill -- -$(cat $p) 2>/dev/null; rm -f $s $d/expires $p; }; left() { [ -s $p ] && kill -0 $(cat $p) 2>/dev/null && [ -S $s ] && [ -s $d/expires ] && echo $(( $(cat $d/expires) - $(date +%s) )); }; case $a in on) command -v socat >/dev/null || { echo nosocat; exit 0; }; [ -S $w ] || { echo nopulse; exit 0; }; mkdir -p $d || exit 1; stop; echo $(( $(date +%s) + t )) > $d/expires; setsid sh -c '"'"'echo $$ > $1; exec timeout $2 socat UNIX-LISTEN:$3,fork,mode=0666 UNIX-CONNECT:$4'"'"' sh $p $t $s $w >/dev/null 2>&1 </dev/null & i=0; while [ ! -S $s ] && [ $i -lt 30 ]; do sleep 0.1; i=$((i+1)); done; if [ -S $s ]; then echo on $t; else stop; echo failed; fi ;; off) stop; echo off ;; status) r=$(left); case $r in '"''"') stop; echo off ;; *) echo on $r ;; esac ;; *) echo usage ;; esac'
 # What init_audio decided in this run (wslg or none); empty until it ran.
 audio_result=''
 
@@ -441,21 +460,26 @@ audio_refusal() {
   esac
 }
 
-# wslg_bind: runs the bind in the default WSL distro as root; prints present, bound, nopulse,
-# nowsl (no wsl.exe) or "error: <output>".
-wslg_bind() {
-  local exe="${DCF_HOST_WSL_EXE:-wsl.exe}" out rc last
+# wsl_sh <script> [args...]: runs `sh -c <script> sh <args>` in the default WSL distro as root; prints
+# the last line of its output, nowsl (no wsl.exe) or "error: <output>".
+wsl_sh() {
+  local exe="${DCF_HOST_WSL_EXE:-wsl.exe}" script="$1" out rc last
+  shift
   command -v "$exe" >/dev/null 2>&1 || { echo nowsl; return 0; }
-  out="$("$exe" -u root -e sh -c "$audio_bind_script" 2>&1)"; rc=$?
+  out="$("$exe" -u root -e sh -c "$script" sh "$@" 2>&1)"; rc=$?
   last="$(printf '%s\n' "$out" | tr -d '\r' | sed '/^[[:space:]]*$/d' | tail -n1)"
-  case "$rc:$last" in
-    0:present | 0:bound | 0:nopulse) echo "$last" ;;
-    *) echo "error: exit $rc${out:+: $(printf '%s' "$out" | tr -d '\r' | tr '\n' ' ')}" ;;
-  esac
+  if [ "$rc" -eq 0 ] && [ -n "$last" ]; then echo "$last"
+  else echo "error: exit $rc${out:+: $(printf '%s' "$out" | tr -d '\r' | tr '\n' ' ')}"; fi
+}
+
+# wslg_bind: makes the relay directory in the default WSL distro; prints present, bound, nopulse,
+# nowsl or "error: <output>".
+wslg_bind() {
+  wsl_sh "$audio_prepare_script"
 }
 
 # init_audio: `up` only, after resolve_host_type. Sets audio_result (once per run) to wslg when
-# DCF_HOST_AUDIO=wslg and the bind is there, else none (one warning on stderr when asked for).
+# DCF_HOST_AUDIO=wslg and the relay directory is there, else none (one warning on stderr when asked for).
 init_audio() {
   [ -z "$audio_result" ] || return 0
   audio_result=none
@@ -469,11 +493,75 @@ init_audio() {
   if [ -n "$r" ]; then echo "DCF_HOST_AUDIO=wslg, but no audio on this host ($HT_TYPE): $r. $no_audio" >&2; return 0; fi
   r="$(wslg_bind)"
   case "$r" in
-    present) echo "audio: WSLg's PulseAudio socket is already shared at $audio_source" >&2; audio_result=wslg ;;
-    bound) echo "audio: bound the default WSL distro's /mnt/wslg to $audio_source (as root; a WSL restart drops it and the next up redoes it)" >&2; audio_result=wslg ;;
+    present) echo "audio: the relay directory $audio_source is there; the microphone is on only while task audio:on runs" >&2; audio_result=wslg ;;
+    bound) echo "audio: made the relay directory $audio_source in the default WSL distro (as root; a WSL restart drops it and the next up redoes it); the microphone is OFF until task audio:on" >&2; audio_result=wslg ;;
     nopulse) echo "DCF_HOST_AUDIO=wslg, but the default WSL distro has no /mnt/wslg/PulseServer (WSLg off or missing, WSL1, or the engine's own distro set as the default). $no_audio" >&2 ;;
-    nowsl) echo "DCF_HOST_AUDIO=wslg, but wsl.exe is not on PATH (WSL interop off?), so the default distro's WSLg socket cannot be shared. $no_audio" >&2 ;;
-    *) echo "DCF_HOST_AUDIO=wslg, but the bind in the default WSL distro failed ($r). $no_audio" >&2 ;;
+    nowsl) echo "DCF_HOST_AUDIO=wslg, but wsl.exe is not on PATH (WSL interop off?), so the default distro's WSLg socket cannot be reached. $no_audio" >&2 ;;
+    *) echo "DCF_HOST_AUDIO=wslg, but making the relay directory in the default WSL distro failed ($r). $no_audio" >&2 ;;
+  esac
+}
+
+# audio_seconds <duration>: 90s, 15m, 2h or a bare number (minutes) as seconds; empty when not one.
+audio_seconds() {
+  local v
+  v="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+  [[ "$v" =~ ^([0-9]+)([smh]?)$ ]] || return 0
+  local n=$((10#${BASH_REMATCH[1]}))
+  case "${BASH_REMATCH[2]}" in s) echo "$n" ;; h) echo $((n * 3600)) ;; *) echo $((n * 60)) ;; esac
+}
+
+# audio_human <seconds>: 1h30m, 15m, 45s.
+audio_human() {
+  local s="$1" h m
+  h=$((s / 3600)); m=$(((s % 3600) / 60)); s=$((s % 60))
+  if [ "$h" -gt 0 ]; then printf '%sh' "$h"; [ "$m" -eq 0 ] || printf '%sm' "$m"
+  elif [ "$m" -gt 0 ]; then printf '%sm' "$m"; [ "$s" -eq 0 ] || printf '%ss' "$s"
+  else printf '%ss' "$s"; fi
+}
+
+# mode_audio on [<duration>] | off | status: the workstation's switch (task audio:on, :off, :status).
+# One-shot through wsl.exe in the default distro; the relay it starts lives there, never here.
+mode_audio() {
+  local action="${1:-status}" ttl_text='' secs max def r left
+  shift || true
+  resolve_host_type
+  r="$(audio_refusal)"
+  if [ -n "$r" ]; then echo "audio: not on this host ($HT_TYPE): $r." >&2; return 1; fi
+  if [ "$(audio_request)" != wslg ]; then echo "audio: note: DCF_HOST_AUDIO is not wslg here, so up mounts no relay directory in a container; set it in .devcontainer/.env and rebuild." >&2; fi
+  case "$action" in
+    on)
+      ttl_text="${1:-${DCF_HOST_AUDIO_TTL:-15m}}"
+      def="$(audio_seconds "${DCF_HOST_AUDIO_TTL:-15m}")"; [ -n "$def" ] || def=900
+      max="$(audio_seconds "${DCF_HOST_AUDIO_TTL_MAX:-2h}")"; [ -n "$max" ] || max=7200
+      secs="$(audio_seconds "$ttl_text")"
+      if [ -z "$secs" ] || [ "$secs" -lt 1 ]; then echo "audio: '$ttl_text' is not a duration (for example 90s, 15m, 2h; a bare number is minutes)." >&2; return 1; fi
+      if [ "$secs" -gt "$max" ]; then echo "audio: $(audio_human "$secs") is more than the longest allowed, $(audio_human "$max") (DCF_HOST_AUDIO_TTL_MAX); using that." >&2; secs="$max"; fi
+      r="$(wsl_sh "$audio_prepare_script")"
+      case "$r" in bound) echo "audio: made the relay directory $audio_source; a container that was already running does not see it: task devcontainer:up (or :rebuild) once." >&2 ;; esac
+      r="$(wsl_sh "$audio_relay_script" on "$secs" "$audio_source" "$audio_wslg_socket")"
+      case "$r" in
+        on*) echo "audio: ON for $(audio_human "$secs"): the container's processes can record until then; task audio:off ends it." ;;
+        nosocat) echo "audio: socat is not installed in the default WSL distro (run task audio:setup on the workstation); nothing was turned on." >&2; return 1 ;;
+        nopulse) echo "audio: the default WSL distro has no /mnt/wslg/PulseServer (WSLg off or missing, WSL1, or the engine's own distro set as the default); nothing was turned on." >&2; return 1 ;;
+        nowsl) echo "audio: wsl.exe is not on PATH (WSL interop off?); nothing was turned on." >&2; return 1 ;;
+        *) echo "audio: the relay did not start ($r); the microphone stays off." >&2; return 1 ;;
+      esac ;;
+    off)
+      r="$(wsl_sh "$audio_relay_script" off 0 "$audio_source" "$audio_wslg_socket")"
+      case "$r" in
+        off) echo "audio: OFF: the relay is ended and the socket is gone from the container." ;;
+        nowsl) echo "audio: wsl.exe is not on PATH (WSL interop off?)." >&2; return 1 ;;
+        *) echo "audio: could not turn it off ($r)." >&2; return 1 ;;
+      esac ;;
+    status)
+      r="$(wsl_sh "$audio_relay_script" status 0 "$audio_source" "$audio_wslg_socket")"
+      case "$r" in
+        "on "*) left="${r#on }"; echo "audio: ON, $(audio_human "$left") left (task audio:off ends it)." ;;
+        off) echo "audio: OFF (task audio:on starts it)." ;;
+        nowsl) echo "audio: wsl.exe is not on PATH (WSL interop off?)." >&2; return 1 ;;
+        *) echo "audio: could not tell ($r)." >&2; return 1 ;;
+      esac ;;
+    *) echo "audio: unknown action '$action' (on [<duration>], off, status)." >&2; return 1 ;;
   esac
 }
 
@@ -697,7 +785,7 @@ host_mount_args() {
     esac
     case "$name" in
       ssh-agent) ;; # a socket is not ours to create
-      audio) ;; # a path of the WSL VM that init_audio made
+      audio) ;; # the relay directory of the WSL VM that init_audio made
       cloud-folder) # the user's folder: never created (an empty one would hide a wrong path)
         # Only a path of this host can be checked; another form (a Windows path) goes to the engine as is.
         case "$source" in
@@ -742,7 +830,7 @@ mode_host() { # [workspace] [cli args...]
     *)
       local refusal; refusal="$(audio_refusal)"
       if [ -n "$refusal" ]; then echo "DCF_HOST_AUDIO     : wslg asked for, not on $HT_TYPE: $refusal"
-      else echo "DCF_HOST_AUDIO     : wslg asked for: up binds the default WSL distro's /mnt/wslg to $audio_source and mounts it at $audio_target (none when that distro has no WSLg socket)"; fi ;;
+      else echo "DCF_HOST_AUDIO     : wslg asked for: up makes the relay directory $audio_source in the default WSL distro and mounts it at $audio_target, empty: the microphone is off until task audio:on (none when that distro has no WSLg socket)"; fi ;;
   esac
   resolve_host_mounts "$ws" "$@"
   if [ "$HM_ENABLED" = false ]; then echo 'host mounts        : off (HOST_MOUNTS=false)'; return 0; fi
@@ -1496,6 +1584,8 @@ mode_run() {
   done
 
   [ "$subcommand" != host ] || { mode_host "$(resolve_workspace "${workspace:-.}")" "$@"; return; }
+
+  if [ "$subcommand" = audio ]; then mode_audio "$@"; return; fi
 
   if [ "$subcommand" = cloud-folder-login ]; then
     [ -n "$workspace" ] || die 'run: --workspace-folder is required for cloud-folder-login'

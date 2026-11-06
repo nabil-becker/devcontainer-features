@@ -31,7 +31,8 @@ launcher acting on request.
 2. The launcher (`devcontainer-cli`), only on WSL-backed Windows host types, shares WSLg into
    `/mnt/wsl/wslg` from the default distro before each start (skipped when already shared), adds
    the mount at `/mnt/wslg`, and reports the result as
-   `DCF_HOST_AUDIO`, as it does for the SSH socket.
+   `DCF_HOST_AUDIO`, as it does for the SSH socket. (Amended on 2026-11-06: the mount is a relay
+   directory the workstation gates, not WSLg's own directory; see ADR-0058.)
 3. It is opt-in and off by default: `DCF_HOST_AUDIO=wslg` in `.devcontainer/.env`. Without it the
    launcher changes nothing. If WSLg is absent the launcher warns and starts without audio; it
    never fails the start.
@@ -64,9 +65,16 @@ workaround, which this collection treats as a gap to close.
   Operator's workstation.
 - Each consuming repository decides whether dictated audio may go to the model provider.
 
+## Amendment: the workstation gates the microphone
+
+Refined by [ADR-0058](0058-the-microphone-is-gated-by-a-workstation-relay-with-a-ttl-and-is-off-by-default.md)
+(2026-11-06, `audio-gate-ttl`): the launcher mounts a relay directory the workstation gates with
+`task audio:on TTL=<duration>`, not WSLg's own directory, and the microphone is off by default.
+
 ## Change log
 
 | Date | Change |
 |---|---|
 | 2026-11-06 | First draft; accepted, the Operator approved the design. |
 | 2026-11-06 | `PULSE_SERVER` comes from the Feature, not the launcher, as built. |
+| 2026-11-06 | Amended (audio-gate-ttl): the workstation gates the microphone with a relay directory and a TTL; recorded in ADR-0058. |
