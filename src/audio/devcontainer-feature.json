@@ -1,0 +1,27 @@
+{
+  "id": "audio",
+  "version": "1.0.0",
+  "name": "Audio (microphone through the host's PulseAudio)",
+  "description": "The audio tools a recorder in the container needs to reach the host's microphone through PulseAudio, such as Claude Code's /voice dictation: sox with its PulseAudio backend (libsox-fmt-pulse, so `rec` works), pulseaudio-utils (pactl), alsa-utils with libasound2-plugins and an ALSA default (/etc/asound.conf, only when absent or written by this Feature) that routes `default` to PulseAudio, so `arecord` works too. PULSE_SERVER is fixed at unix:/mnt/wslg/PulseServer, where the devcontainer-cli launcher mounts WSLg's PulseAudio socket on a Windows WSL2 host when the machine opts in (DCF_HOST_AUDIO=wslg in .devcontainer/.env). Installs from the distribution's apt sources only and never fails a build: a missing package manager or a failed install is a warning. `audio-check` (task audio:check) says plainly what is missing. Plus the Feature Taskfile.",
+  "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/audio",
+  "licenseURL": "https://github.com/nabil-becker/devcontainer-features/blob/main/LICENSE",
+  "options": {
+    "installTaskfile": {
+      "type": "boolean",
+      "default": true,
+      "description": "Also install this Feature's Taskfile into /usr/local/share/go-task/includes.d so its tasks appear under the <id>: namespace of a root Taskfile that includes /usr/local/share/go-task/features.yml (see the go-task Feature)."
+    },
+    "alsaDefault": {
+      "type": "boolean",
+      "default": true,
+      "description": "Write /etc/asound.conf so ALSA's default device is PulseAudio (arecord, and any recorder that opens ALSA's default, then reach PULSE_SERVER). Never replaces an /etc/asound.conf this Feature did not write. false leaves ALSA alone."
+    }
+  },
+  "containerEnv": {
+    "PULSE_SERVER": "unix:/mnt/wslg/PulseServer"
+  },
+  "installsAfter": [
+    "ghcr.io/nabil-becker/devcontainer-features/go-task",
+    "ghcr.io/devcontainers/features/common-utils"
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "with_tasks": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "go-task": {},
+      "audio": {}
+    },
+    "remoteUser": "vscode"
+  },
+  "no_alsa_default": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "audio": {
+        "alsaDefault": false
+      }
+    },
+    "remoteUser": "vscode"
+  },
+  "no_taskfile": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "audio": {
+        "installTaskfile": false
+      }
+    },
+    "remoteUser": "vscode"
+  }
+}
