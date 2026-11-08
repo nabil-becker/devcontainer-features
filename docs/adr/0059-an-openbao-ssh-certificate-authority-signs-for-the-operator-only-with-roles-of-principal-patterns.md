@@ -1,4 +1,4 @@
-# ADR-0058: An OpenBao SSH certificate authority signs for the Operator only, with roles of principal patterns
+# ADR-0059: An OpenBao SSH certificate authority signs for the Operator only, with roles of principal patterns
 
 | | |
 |---|---|

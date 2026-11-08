@@ -887,7 +887,7 @@ signs each stack instance's relay key so that the receiving stack can trust it (
 D95), and the KGO Office, which wants register writer keys (the signed ledgers and the backlog kept
 with `agentic-register`) to be trusted by one CA once per register instead of one key at a time. Both
 verify with stock OpenSSH: `ssh-keygen -Y verify` against `cert-authority` lines. The decisions and
-the options weighed are in [ADR 0058](../../docs/adr/0058-an-openbao-ssh-certificate-authority-signs-for-the-operator-only-with-roles-of-principal-patterns.md).
+the options weighed are in [ADR 0059](../../docs/adr/0059-an-openbao-ssh-certificate-authority-signs-for-the-operator-only-with-roles-of-principal-patterns.md).
 
 ```text
 dcf-ssh-sign sign --principals <p1,p2,...> --key-id <id> [--ttl <dur>] [--role <name>]

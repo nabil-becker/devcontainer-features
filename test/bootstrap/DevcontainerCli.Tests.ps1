@@ -1405,7 +1405,7 @@ Describe 'FUSE on request (DCF_HOST_FUSE)' -Skip:$IsWindows {
     }
 }
 
-# Audio on request (the audio Feature), the counterpart of the audio part of
+# Audio on request, gated on the workstation (the audio Feature), the counterpart of the audio part of
 # test/bootstrap/host_mounts_test.sh: DCF_HOST_AUDIO=wslg on a WSL2-backed Windows host type runs
 # the bind once (Invoke-WslgBind, mocked) and adds /mnt/wsl/wslg at /mnt/wslg; unset or none runs
 # nothing and adds nothing; a host that cannot carry it warns once and passes none. The recorded
@@ -1416,7 +1416,7 @@ Describe 'Audio on request (DCF_HOST_AUDIO)' {
         $script:AudioSavedEnv = @{}
         foreach ($n in $script:AudioEnvNames) { $script:AudioSavedEnv[$n] = [Environment]::GetEnvironmentVariable($n) }
         $script:AudioSavedPath = $env:PATH
-        $script:AudioMount = 'type=bind,source=/mnt/wsl/wslg,target=/mnt/wslg'
+        $script:AudioMount = 'type=bind,source=/mnt/wsl/devhost-audio,target=/mnt/wslg'
         function Initialize-AudioEvidence {
             param([string]$Os = 'windows', [string]$Bind = 'bound')
             $script:aev = @{ Os = $Os; Bind = $Bind }
@@ -1494,7 +1494,7 @@ Describe 'Audio on request (DCF_HOST_AUDIO)' {
     It 'wslg, bind answering <Bind>: one warning, no mount, none' -ForEach @(
         @{ Bind = 'nopulse'; Says = 'has no /mnt/wslg/PulseServer' }
         @{ Bind = 'nowsl'; Says = 'wsl.exe is not on PATH' }
-        @{ Bind = 'error: exit 32: mount: permission denied'; Says = 'bind in the default WSL distro failed (error: exit 32' }
+        @{ Bind = 'error: exit 32: mount: permission denied'; Says = 'making the relay directory in the default WSL distro failed (error: exit 32' }
     ) {
         Initialize-AudioEvidence -Bind $Bind
         $env:HOST_TYPE = 'windows-docker'
@@ -1555,7 +1555,7 @@ Describe 'Audio on request (DCF_HOST_AUDIO)' {
         $text | Should -Match 'DCF_HOST_AUDIO     : \(unset: no audio\)'
         $env:DCF_HOST_AUDIO = 'wslg'
         $text = (Show-HostProfile -WorkspaceFolder $ws 6>&1 | Out-String)
-        $text | Should -Match 'DCF_HOST_AUDIO     : wslg asked for: up binds the default WSL distro''s /mnt/wslg to /mnt/wsl/wslg'
+        $text | Should -Match 'DCF_HOST_AUDIO     : wslg asked for: up makes the relay directory /mnt/wsl/devhost-audio'
         $text | Should -Not -Match 'target=/mnt/wslg'
         $env:HOST_TYPE = 'windows-wslc'
         Clear-HostProfileCache
@@ -1587,6 +1587,100 @@ Describe 'Audio on request (DCF_HOST_AUDIO)' {
         Get-Content "$rec.env" | Should -Be 'DCF_HOST_AUDIO=wslg'
         Should -Invoke -ModuleName DevcontainerCli Invoke-WslgBind -Times 1 -Exactly
         $env:PATH = $script:AudioSavedPath
+    }
+
+    It 'ConvertTo-AudioSecond reads <Text> as <Expected>' -ForEach @(
+        @{ Text = '90s'; Expected = 90 }, @{ Text = '5m'; Expected = 300 }, @{ Text = '2h'; Expected = 7200 }
+        @{ Text = '10'; Expected = 600 }, @{ Text = ' 1H '; Expected = 3600 }
+        @{ Text = 'soon'; Expected = $null }, @{ Text = '1.5h'; Expected = $null }, @{ Text = '-3'; Expected = $null }, @{ Text = '5mm'; Expected = $null }, @{ Text = ''; Expected = $null }
+    ) {
+        ConvertTo-AudioSecond $Text | Should -Be $Expected
+    }
+
+    It 'the relay script carries no double quote and the prepare script none either (Windows argument quoting)' {
+        $script:mod = Get-Module DevcontainerCli
+        & $script:mod { $script:AudioPrepareScript.Contains('"') -or $script:AudioRelayScript.Contains('"') } | Should -BeFalse
+    }
+}
+
+# The workstation's switch (task audio:on, :off, :status), the counterpart of the `audio on` part of
+# test/bootstrap/host_mounts_test.sh: one wsl.exe call into the default distro each (Invoke-WslSh,
+# mocked), a duration with a default and a maximum, and what is said when something is missing.
+Describe 'The microphone switch (audio on, off, status)' {
+    BeforeAll {
+        $script:SwEnvNames = 'HOST_TYPE', 'HOST_TYPE_PRIORITY', 'HOST_MOUNTS', 'DCF_HOST_AUDIO', 'DCF_HOST_AUDIO_TTL', 'DCF_HOST_AUDIO_TTL_MAX'
+        $script:SwSaved = @{}
+        foreach ($n in $script:SwEnvNames) { $script:SwSaved[$n] = [Environment]::GetEnvironmentVariable($n) }
+    }
+    BeforeEach {
+        foreach ($n in $script:SwEnvNames) { [Environment]::SetEnvironmentVariable($n, $null) }
+        $env:HOST_TYPE = 'windows-docker'
+        $env:DCF_HOST_AUDIO = 'wslg'
+        Clear-HostProfileCache
+        $script:swAnswer = 'on 1'
+        Mock -ModuleName DevcontainerCli Get-HostPlatform { 'windows' }
+        Mock -ModuleName DevcontainerCli Test-DockerResponding { $true }
+        Mock -ModuleName DevcontainerCli Get-WslcPath { 'C:\wslc.exe' }
+        Mock -ModuleName DevcontainerCli Invoke-WslSh { $script:swAnswer }
+    }
+    AfterAll {
+        foreach ($n in $script:SwEnvNames) { [Environment]::SetEnvironmentVariable($n, $script:SwSaved[$n]) }
+    }
+
+    It 'on with no duration: the default 15m, the relay directory and the WSLg socket go to the relay script' {
+        $out = Invoke-HostAudio -Arguments 'on' 6>&1 | Out-String
+        $out | Should -Match 'audio: ON for 15m: .*task audio:off ends it'
+        Should -Invoke -ModuleName DevcontainerCli Invoke-WslSh -Times 1 -Exactly -ParameterFilter { $Arguments -and ($Arguments -join ' ') -eq 'on 900 /mnt/wsl/devhost-audio /mnt/wslg/PulseServer' }
+    }
+
+    It 'on <Text> asks for <Seconds> seconds (DCF_HOST_AUDIO_TTL_MAX=3h)' -ForEach @(
+        @{ Text = '90s'; Seconds = 90 }, @{ Text = '5m'; Seconds = 300 }, @{ Text = '2h'; Seconds = 7200 }, @{ Text = '10'; Seconds = 600 }
+    ) {
+        $env:DCF_HOST_AUDIO_TTL_MAX = '3h'
+        [void](Invoke-HostAudio -Arguments 'on', $Text 6>$null)
+        Should -Invoke -ModuleName DevcontainerCli Invoke-WslSh -Times 1 -Exactly -ParameterFilter { $Arguments -and $Arguments[0] -eq 'on' -and $Arguments[1] -eq "$Seconds" }
+    }
+
+    It 'on over the maximum is cut to it, with a line saying so; DCF_HOST_AUDIO_TTL and _MAX move the defaults' {
+        [void](Invoke-HostAudio -Arguments 'on', '5h' 6>$null 2>$null)
+        Should -Invoke -ModuleName DevcontainerCli Invoke-WslSh -Times 1 -Exactly -ParameterFilter { $Arguments -and $Arguments[0] -eq 'on' -and $Arguments[1] -eq '7200' }
+        $env:DCF_HOST_AUDIO_TTL = '30m'
+        $env:DCF_HOST_AUDIO_TTL_MAX = '20m'
+        [void](Invoke-HostAudio -Arguments 'on' 6>$null 2>$null)
+        Should -Invoke -ModuleName DevcontainerCli Invoke-WslSh -Times 1 -Exactly -ParameterFilter { $Arguments -and $Arguments[0] -eq 'on' -and $Arguments[1] -eq '1200' }
+    }
+
+    It 'on <Text> (not a duration): returns 1 and runs nothing' -ForEach @(@{ Text = 'soon' }, @{ Text = '5x' }, @{ Text = '0' }, @{ Text = '1.5h' }) {
+        Invoke-HostAudio -Arguments 'on', $Text 6>$null 2>$null | Should -Be 1
+        Should -Invoke -ModuleName DevcontainerCli Invoke-WslSh -Times 0 -Exactly
+    }
+
+    It 'on, the distro answering <Answer>: returns 1' -ForEach @(@{ Answer = 'nosocat' }, @{ Answer = 'nopulse' }, @{ Answer = 'nowsl' }, @{ Answer = 'failed' }, @{ Answer = 'error: exit 5: boom' }) {
+        $script:swAnswer = $Answer
+        Invoke-HostAudio -Arguments 'on', '5m' 6>$null 2>$null | Should -Be 1
+    }
+
+    It 'off says the socket is gone; status says on with the time left, or off' {
+        $script:swAnswer = 'off'
+        (Invoke-HostAudio -Arguments 'off' 6>&1 | Out-String) | Should -Match 'audio: OFF: the relay is ended and the socket is gone'
+        (Invoke-HostAudio -Arguments 'status' 6>&1 | Out-String) | Should -Match 'audio: OFF \(task audio:on starts it\)'
+        $script:swAnswer = 'on 754'
+        (Invoke-HostAudio -Arguments 'status' 6>&1 | Out-String) | Should -Match 'audio: ON, 12m34s left'
+        $script:swAnswer = 'on 5400'
+        (Invoke-HostAudio -Arguments 'status' 6>&1 | Out-String) | Should -Match 'ON, 1h30m left'
+    }
+
+    It 'is refused on <Id>, with no wsl.exe call' -ForEach @(@{ Id = 'linux'; Os = 'linux' }, @{ Id = 'windows-wslc'; Os = 'windows' }) {
+        $script:swOs = $Os
+        Mock -ModuleName DevcontainerCli Get-HostPlatform { $script:swOs }
+        $env:HOST_TYPE = $Id
+        Clear-HostProfileCache
+        Invoke-HostAudio -Arguments 'on' 6>$null 2>$null | Should -Be 1
+        Should -Invoke -ModuleName DevcontainerCli Invoke-WslSh -Times 0 -Exactly
+    }
+
+    It 'an unknown action returns 1' {
+        Invoke-HostAudio -Arguments 'dance' 6>$null 2>$null | Should -Be 1
     }
 }
 

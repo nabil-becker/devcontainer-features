@@ -17,6 +17,12 @@ includes:
   cloud-folder:
     taskfile: '{{if or (eq (.RCLONE_CONFIG | default "") "/var/lib/devcontainer-features/cloud-folder/rclone.conf") (eq (.DEVCONTAINER_IN_CONTAINER | default "") "1")}}./bootstrap/none.yml{{else}}./bootstrap/cloud-folder.yml{{end}}'
     optional: true
+  # task audio:on, audio:off, audio:status on the workstation (the launcher's, bootstrap/audio.yml):
+  # the microphone's switch (ADR 0057); left out inside the container, where the audio Feature's own
+  # audio:check comes from features.yml (its containerEnv sets DCF_AUDIO_FEATURE=1).
+  audio:
+    taskfile: '{{if or (eq (.DCF_AUDIO_FEATURE | default "") "1") (eq (.DEVCONTAINER_IN_CONTAINER | default "") "1")}}./bootstrap/none.yml{{else}}./bootstrap/audio.yml{{end}}'
+    optional: true
   # Tasks contributed by the Features installed in this repo's devcontainer
   # (go-task:*, devcontainer-cli:*); absent on the host.
   features:
@@ -152,9 +158,10 @@ tasks:
       - bash test/phi-check/unit/phi_check_test.sh
 
   test:audio-unit:
-    desc: 'Docker-free tests of the audio Feature''s audio-check (src/audio/audio-check.sh): each missing piece gives its own line, in order, and exit 1 (rec, SoX''s PulseAudio backend, pactl; arecord only a note; no PULSE_SERVER; the socket missing, with the hint for DCF_HOST_AUDIO wslg, none and unset; PulseAudio not answering; only monitor sources), "ready" with the capture source and exit 0, and the Feature Taskfile running it; fake sox, pactl and arecord, a real unix socket; part of lint. Needs python3 (the socket) and task (the Taskfile part).'
+    desc: 'Docker-free tests of the audio Feature''s audio-check (src/audio/audio-check.sh) and the launcher''s relay: each missing piece gives its own line, in order, and exit 1 (rec, SoX''s PulseAudio backend, pactl; arecord only a note; no PULSE_SERVER; the socket missing, with the hint for DCF_HOST_AUDIO wslg, none and unset; PulseAudio not answering; only monitor sources), "ready" with the capture source and exit 0, and the Feature Taskfile running it; the workstation''s gate (a mounted /mnt/wslg with no socket is "off", not "not set up"; with the socket, "ready" and the time left from the relay''s expires file, none when expired or without wslg); fake sox, pactl and arecord, a real unix socket; then the relay script of the launcher (audio_relay_script) run for real with socat and a fake WSLg socket: off before anything, on with the socket (mode 666) carrying data, the time left, the socket gone after the duration and after off, on twice leaving one relay, a killed relay cleaned up by status, and a missing socat or WSLg socket answered with no socket made; part of lint. Needs python3 (the sockets), socat (the relay; skipped without) and task (the Taskfile part).'
     cmds:
       - bash test/audio/unit/audio_check_test.sh
+      - bash test/audio/unit/relay_test.sh
 
   test:agents-unit:
     desc: 'Docker-free tests of the agents Feature''s agents command: the agent list (the YAML subset, required keys, unknown keys warned, errors with file and line), AGENTS_FILE from the task variable, .env, .devcontainer/.env, the environment or the default (a missing file named with its source), each verb per kind (start, --resume, --new and its question, up, list, stop, logs), the no-terminal rule, the fallbacks when the adapter answers exit 3, a listing that fails (state error, nothing started, the hint, never a fresh session), an on-demand agent shown none unless running, reset (a dry run by default, duplicates stopped, --purge, only listed agents and their folders, unlisted sessions untouched, a session mid-turn not stopped, uncommitted changes a warning and with --purge a refusal, --force, refused inside a Claude Code session, --all), the once-per-container-start marker, and the Feature Taskfile; a fake adapter keeps sessions in a file and records every call; part of lint. Needs task for the Taskfile part.'

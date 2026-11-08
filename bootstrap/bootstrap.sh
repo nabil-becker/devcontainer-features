@@ -122,6 +122,7 @@ while read -r src dest; do
 done <<'EOF'
 bootstrap/devcontainer.yml @BDIR@/devcontainer.yml
 bootstrap/cloud-folder.yml @BDIR@/cloud-folder.yml
+bootstrap/audio.yml @BDIR@/audio.yml
 bootstrap/host/DevcontainerCli.psm1 @BDIR@/host/DevcontainerCli.psm1
 bootstrap/host/Invoke-DevcontainerCli.ps1 @BDIR@/host/Invoke-DevcontainerCli.ps1
 bootstrap/host/Initialize-DevcontainerCli.ps1 @BDIR@/host/Initialize-DevcontainerCli.ps1

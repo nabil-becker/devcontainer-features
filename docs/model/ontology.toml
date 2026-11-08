@@ -503,10 +503,20 @@ summary = "What the workstation offers the ssh-agent Feature: socket, none or ke
 [host-audio]
 type = "mechanism"
 term = "Host audio"
-summary = "Opt-in DCF_HOST_AUDIO=wslg: the launcher shares WSLg into the container so the audio Feature sees the Windows microphone."
+summary = "Opt-in DCF_HOST_AUDIO=wslg: the launcher mounts a relay folder the workstation gates (ADR-0058), so the audio Feature sees the Windows microphone while the gate is on."
 
 [[relation]]
 subject = "launcher"
+predicate = "uses"
+object = "host-audio"
+
+[audio-gate]
+type = "mechanism"
+term = "Audio gate"
+summary = "A workstation relay with a TTL between the container and WSLg's microphone socket; off by default."
+
+[[relation]]
+subject = "audio-gate"
 predicate = "uses"
 object = "host-audio"
 
