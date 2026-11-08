@@ -16,6 +16,8 @@ check "asound.conf routes the default to PulseAudio" grep -q 'pcm.!default { typ
 check "audio-check is installed and root-owned" bash -c "[ \"\$(stat -c %U /usr/local/bin/audio-check)\" = root ]"
 # shellcheck disable=SC2016  # expanded by the inner bash
 check "PULSE_SERVER is the fixed path" bash -c '[ "$PULSE_SERVER" = unix:/mnt/wslg/PulseServer ]'
+# shellcheck disable=SC2016  # expanded by the inner bash
+check "DCF_AUDIO_FEATURE tells the root Taskfile it is inside" bash -c '[ "$DCF_AUDIO_FEATURE" = 1 ]'
 check "audio-check fails with no socket mounted" bash -c "! audio-check"
 check "audio-check names the missing socket" bash -c "audio-check | grep -q 'socket not reachable: /mnt/wslg/PulseServer'"
 check "taskfile registered" test -f /usr/local/share/go-task/includes.d/audio.yml

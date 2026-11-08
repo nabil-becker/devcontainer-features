@@ -1,8 +1,8 @@
 {
   "id": "audio",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "name": "Audio (microphone through the host's PulseAudio)",
-  "description": "The audio tools a recorder in the container needs to reach the host's microphone through PulseAudio, such as Claude Code's /voice dictation: sox with its PulseAudio backend (libsox-fmt-pulse, so `rec` works), pulseaudio-utils (pactl), alsa-utils with libasound2-plugins and an ALSA default (/etc/asound.conf, only when absent or written by this Feature) that routes `default` to PulseAudio, so `arecord` works too. PULSE_SERVER is fixed at unix:/mnt/wslg/PulseServer, where the devcontainer-cli launcher mounts WSLg's PulseAudio socket on a Windows WSL2 host when the machine opts in (DCF_HOST_AUDIO=wslg in .devcontainer/.env). Installs from the distribution's apt sources only and never fails a build: a missing package manager or a failed install is a warning. `audio-check` (task audio:check) says plainly what is missing. Plus the Feature Taskfile.",
+  "description": "The audio tools a recorder in the container needs to reach the host's microphone through PulseAudio, such as Claude Code's /voice dictation: sox with its PulseAudio backend (libsox-fmt-pulse, so `rec` works), pulseaudio-utils (pactl), alsa-utils with libasound2-plugins and an ALSA default (/etc/asound.conf, only when absent or written by this Feature) that routes `default` to PulseAudio, so `arecord` works too. PULSE_SERVER is fixed at unix:/mnt/wslg/PulseServer, where the devcontainer-cli launcher mounts a relay directory on a Windows WSL2 host when the machine opts in (DCF_HOST_AUDIO=wslg in .devcontainer/.env); the microphone is OFF there until the engineer turns it on on the workstation (task audio:on, with a time limit; task audio:off ends it), and the socket is only present while it is on. Installs from the distribution's apt sources only and never fails a build: a missing package manager or a failed install is a warning. `audio-check` (task audio:check) says plainly what is missing, and \"off\" when the workstation has not turned audio on. Plus the Feature Taskfile.",
   "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/audio",
   "licenseURL": "https://github.com/nabil-becker/devcontainer-features/blob/main/LICENSE",
   "options": {
@@ -18,7 +18,8 @@
     }
   },
   "containerEnv": {
-    "PULSE_SERVER": "unix:/mnt/wslg/PulseServer"
+    "PULSE_SERVER": "unix:/mnt/wslg/PulseServer",
+    "DCF_AUDIO_FEATURE": "1"
   },
   "installsAfter": [
     "ghcr.io/nabil-becker/devcontainer-features/go-task",
