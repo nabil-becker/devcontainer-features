@@ -1,6 +1,7 @@
 # Proposal: least privilege for agents, ending in one agent Linux user
 
-Status: proposed 2026-11-06, revised the same day (below). Awaits the Operator's ruling; build not
+Status: proposed 2026-11-06, revised the same day (below); accepted 2026-11-08 (the Operator
+accepted all sixteen recommendations of section 14, and step 2 with the two-list rule below); build not
 started. Backlog: `agent-linux-user`, moved to Now by `amend-agent-linux-user` (2026-11-06), and
 `least-privilege-first`; `key-file-rotate` waits on it. Basis:
 [agent-least-privilege-inventory.md](agent-least-privilege-inventory.md) (the inventory).
@@ -454,6 +455,15 @@ One line each; none is in the MVP.
   fail quietly. Its NOTES should say which user it serves.
 
 ## 14. Decisions for the Operator
+
+Ruled 2026-11-08: the Operator accepted every recommendation below. On T1 and T3 coming out
+partial (decision 2), the Operator accepted step 2 with the **two-list rule**: every protected path
+goes both in the sandbox's filesystem lists (Bash) and in `permissions.deny` as `Read(//path)`,
+`Edit(//path)` and `Write(//path)` (the file tools); the git dir behind a `.git` pointer is listed
+explicitly (`/git-dirs/<owner>/<repo>/config` and `hooks`), since the defaults do not follow the
+pointer; `allowRead` stays out of the drop-in. The backs do not rely on the managed layer alone until
+the managed-drop-in test (the inventory's "Test results (2026-11-08)") passes; the Operator runs it
+in a scratch container.
 
 1. **The MVP in the inventory's order** (GitHub; sandbox and locked permissions; write-deny; the
    backs; a per-agent AppRole; one agent user; the shared folder and ssh-agent; Codex), every step
