@@ -393,6 +393,8 @@ Slice 0 (from the inventory's section 8; T1 and T3 gate step 2):
 | T7 | Does a sandboxed call reach OpenBao on loopback, and can a back's runner still log in? | with step 2's drop-in, `curl` loopback from a tool call, then `devhost-run-job scribe` | the tool call is refused; the runner logs in |
 | T8 | Does a fine-grained token for the office's repository cover its pull-request workflow? | the office runs T6 in its repository | same as T6 |
 
+Results of T1 and T3 (2026-11-08): see the inventory's "Test results (2026-11-08)" in `agent-least-privilege-inventory.md`; both partial.
+
 Later slices (kept from the first draft's tests, where one agent user still needs them):
 
 | # | Unknown | Test |
