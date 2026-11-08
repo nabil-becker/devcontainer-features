@@ -529,3 +529,365 @@ ruling.
 16. **Order: step 6 as accepted (with `dcf-work`) and `key-file-rotate` first; the per-identity steps after T2, T15 and T16.** *Recommendation: yes.*
 17. **Claude sign-in: one stack token from OpenBao per user environment; a per-user login only if T15 requires it** (Q3). *Recommendation: yes.*
 18. **GitHub: one bot per stack, held by whoever pushes (a helper or the host agent's user); no token per agent** (Q2). *Recommendation: yes.*
+
+## Architecture review (2026-11-08)
+
+Reviewed cold against this document; `docs/principles/non-functional-requirements.md`; `docs/adr/`
+(0016, 0020, 0032, 0033, 0036, 0040, 0048, 0049, 0050, 0055, 0056, 0059);
+`docs/proposals/agents-v2.md` section 14; `LEXICON.md`; the accepted [agent-linux-user.md](agent-linux-user.md) (section 14, its
+revision table and its architecture review of 2026-11-06); the inventory with its test results of
+2026-11-08; the held `brokers.md` on `docs/broker-pattern/1` with its review; and the two BRDs, by
+requirement identifier only. Facts were checked against the tree at 89903cb (`src/agents/agents.sh`
+and `install.sh` 2.1.3, `src/claude-code/` 1.9.9, `src/common/` 1.0.4, `src/openbao/` 1.6.0,
+`src/cloud-folder/` and `src/ssh-agent/` options) and, read-only, against this devhost: `mount`, the
+modes (never contents) of the claude-code volume, the docker socket's mode, and the settings schema
+and messages inside the installed Claude Code binary (2.1.311). Nothing was run as another user;
+no test of the revision was run. Who it serves: the Operator, who has provisionally accepted the 18
+decisions and rules after this review; the maintainers of the office and of AOF, whose agents will
+run under the user model and the helper gate.
+
+**Verdict:** fit with changes
+
+The traceability is complete for both BRDs' requirements and acceptance tests, the agreements and
+differences are read correctly, and the shape (step 6 first, then users per identity, declared
+groups, per-user state, a narrow gate instead of the held brokers) is the right smallest revision.
+But four security claims of the helper gate and one of the sandbox do not hold as written, and must
+be settled before 6b or 6e is built: the base branch is read from a git dir every agent can write
+(finding 1); `allowUnixSockets` is ignored on Linux (finding 2); gate variables reach a shell
+through the Taskfile's templating (finding 3); a helper spans every level so the scope check is the
+consumer's alone (finding 4); and helpers run and write inside folders the caller controls
+(finding 5). Decision 17 cannot meet Remote Control (finding 10), and the key-file claim of 1.3 is
+wider than step 6 makes it (finding 11). The rest are corrections, placement and records.
+
+### Requirements (NFRs), one line each
+
+- **NFR-1 owns-its-state**: partly met. Claude homes stay in the claude-code volume (6d), per-user
+  gh folders in gh's (3.1); the gate's audit log, the helper users' AppRole files and the trusted
+  snapshot of finding 1 have no stated home (2.2). Placement table below.
+- **NFR-2 registered-taskfile**: met in plan; the new verbs (boundary, migrate, sync, login) each
+  need a task with a `desc` (3.1).
+- **NFR-3 verified-and-pinned**: applies only to the `acl` package (and `bindfs`, Q7), distribution
+  packages like git's apt fallback; say so in the agents NOTES. Otherwise nothing is downloaded.
+- **NFR-4, NFR-9**: do not apply.
+- **NFR-5 idempotent-and-user-neutral**: partly met. The agents Feature's `postStartCommand` runs as
+  the remote user, not root, so "the start hook makes them as root" (6b) means through the
+  Operator's `sudo`; and setup must stay never fatal while decision 11 refuses: consistent only if
+  the refusal is in `agents start`, not in the start hook (6b, 5 decision 11).
+- **NFR-6 one-way-to-configure**: partly met. `runAs: per-agent`, `uidRange`, `agentMounts`,
+  ssh-agent's `per-user` and the new socket setting have no named override variables (3.1).
+- **NFR-7 agent-ready**: met, except that the per-user `login` verb (finding 10) opens a browser and
+  must be `interactive: true`.
+- **NFR-8 documented-to-the-standard**: met in plan if each Feature's NOTES carry its drop-in, the
+  gate entry format and the number registry (Q5); 3.1 does not list the NOTES.
+- **NFR-10 tested-on-base-images**: met in plan (T15 to T20, the refusal harness reused from #187);
+  the Feature scenarios need two users and a planted fault each, and T16 cannot run in CI where the
+  sandbox does not start.
+- **NFR-11 linter-cli-contract**: met as the named exception of 6f (earlier review finding 11).
+- **NFR-12 vendor-neutral-contracts**: not met as written: the gate needs each CLI's sandbox to let a
+  named socket through, and only Claude Code was looked at (finding 19).
+- **NFR-13 manages-the-environment-not-the-cli**: met for users, groups, ACLs, rclone's own mount
+  options, ssh-agent and the gate (it runs a consumer's reviewed task, not a CLI capability). The
+  socket setting is a Claude-only key and belongs to the claude-code Feature, as 3.1 already places
+  it; decision 7 should say so.
+
+### Decisions (ADRs)
+
+No accepted ADR is contradicted outright, but the revision needs a new ADR (or the slice-0 ADR of
+the accepted proposal, widened) that records what it overturns (D7, D8 in part, D10, D15, step 2's
+text, 6.1's fallback, the 2026-11-06 brokers hold) and what it amends: **ADR-0036** (the lease
+folder's 0777 accepted "for a single-tenant container"; per-agent mode is multi-tenant, finding 7);
+**ADR-0033** (`agents.tsv` lives under each user's Claude home, so the adapter's records split per
+user, as the accepted 6.2 already handles by running every verb as the user); **ADR-0048** decision 1
+(the helper users' push tokens and the per-user Claude credentials at rest, finding 10) and decision
+4 (refusal by user, 5+); **ADR-0049** decision 4 (the host's memory path moves, finding 9);
+**ADR-0050** decision 2 (every new role needs a root token from the shares, finding 15); **ADR-0056**
+decisions 8 and 9 (finding 11); **ADR-0016** (helper commits, finding 22); **ADR-0032** (managed
+settings are machine-wide, finding 23). It leaves **ADR-0020** as it is, with its cost stated
+(every agent user sees every repository's git dir under `/git-dirs`); **ADR-0055** decision 6 is
+already settled by step 5 as accepted; **ADR-0040** is unaffected here (the consumers' helpers push
+for them); **ADR-0059** is consistent (the SSH CA stays the Operator's; register keys are not
+certificates).
+
+### Findings
+
+1. **"The base branch as committed" is read from a git dir every agent can write (2.2 step 4, 6b,
+   the #187 table).** Step 3 leaves `objects/` and `refs/` writable, 6a makes the git dir
+   group-writable for `dcf-work`, and on `/git-dirs` (9p) every folder shows as root 777 (#187
+   review finding 20). An agent can then `git update-ref refs/remotes/origin/main <its commit>` or
+   fetch with a refspec onto that ref (#187 review finding 17), and its commit becomes "the base
+   branch": the gate runs its task code as the helper, and 6b makes the groups and gate entries it
+   wrote. Running git as root or a helper in that git dir also reads its `config` (#187 review
+   finding 1: `core.fsmonitor` and the rest run code). #187 could read `origin/main` because its git
+   dir belonged to `dcf-git`; the table drops that ownership ("not needed") and keeps the read
+   ("reused"), so the premise is gone. Recommended change: one **trusted snapshot**, made at start
+   and by the Operator's `agents sync` through `sudo`: resolve the base branch's commit from the
+   remote, fetch it into a root-owned bare repository outside `/git-dirs` with no repository config
+   honoured, export it with `git archive` into a root-owned read-only folder that records the
+   commit, and let both 6b (users, groups, gate entries) and the gate's task code read only that
+   folder; the gate refuses when it is missing.
+
+2. **`allowUnixSockets` is ignored on Linux (decision 7, 2.1 step 2, 2.2 "why a socket").** The
+   settings schema in Claude Code 2.1.311 says: "macOS only: Unix socket paths to allow. Ignored on
+   Linux (seccomp cannot filter by path)." On Linux the only switch is `allowAllUnixSockets`, which
+   lifts the socket filter for every socket (and, per the same schema, AF_VSOCK). As written, a
+   sandboxed Bash call reaches neither the gate nor a per-user ssh-agent socket; the working
+   alternative leaves the docker socket, the Operator's `agent.sock` and OpenBao's unix listener
+   fenced only by kernel modes. The binary also prints that socket blocking is disabled when its
+   seccomp helper is missing and carries on, so accepted step 2's "no unix sockets" (A2) is
+   fail-open today and untested (T1 did not probe a socket). Recommended change: decision 7 becomes
+   "`allowAllUnixSockets: true` only when `runAs` is not `remote-user`", every socket an agent must
+   not reach goes into the two lists (a `denyRead` masks the path), and T16 checks a sandboxed call
+   reaches the gate, is refused on the docker socket and another user's ssh-agent socket, what
+   AF_VSOCK reaches on WSL, and, without the switch, that socket blocking is active at all.
+
+3. **Gate variables reach a shell through the Taskfile's templating (2.2 step 3).** go-task
+   substitutes `{{.VAR}}` into the command text, so a value carrying `$(...)`, a backtick, `;` or a
+   newline runs as the helper unless every task author quotes it (this repository's own
+   `taskfile.yml` files use `shellQuote` for that reason). "By kind" is not defined, and the office
+   needs free text (R3.5). Recommended change: the gate hands variables to the task as environment
+   variables, never as task variables; kinds are a closed set with fixed patterns (identifier,
+   integer, date, a value from the entry's own list); free text travels only on standard input; and
+   the refusal harness plants a substitution, a backtick and a newline in every kind.
+
+4. **One helper user spans every level, so the scope check is the consumer's alone (2.2 bullet 2,
+   2.4).** A helper in every room group can read and write every room on every call; one injection
+   or bug in one room's call reaches all of them. An unprivileged listener cannot narrow its own
+   groups (`setgroups` needs `CAP_SETGID`). R3.2 asks the helper to refuse outside the caller's
+   scope. Recommended change: where a helper writes a level's files, make one helper user per helper
+   and level (`helper-<name>-<level>`, a member of that level's group only, its listener admitting
+   only that level's callers), so the kernel holds the scope and the consumer's check is the second
+   line; a helper that must span levels (the office's `save`) is named in 2.4 as the one that does.
+
+5. **Helpers run and write inside folders the caller controls (2.2 step 7, R3.3, R3.4).** With the
+   working folder in the caller's level, relative lookups, `python -m`, dotenv files and the
+   repository config git finds there are agent-planted code; and a helper writing into a level
+   follows a symbolic link the caller planted to another level the helper can write
+   (`protected_symlinks` covers only sticky, world-writable folders). The client's "no link out of
+   its tree" check is not a control (the caller can skip the client); what makes R3.3 hold is that
+   the helper only ever receives bytes on standard input. Recommended change: every entry runs with
+   its working folder in the trusted snapshot (finding 1), the gate resolves the caller's level root
+   itself from the caller's group and passes it as a variable, and the shared gate code ships a
+   writer that opens under that root with `openat2` (`RESOLVE_BENEATH`, `RESOLVE_NO_SYMLINKS`) for
+   every write into a level, which consumer tasks are required to use.
+
+6. **`SO_PEERCRED` semantics are not written down (2.2 step 1).** The credentials are the connecting
+   process's at `connect()` and travel with the descriptor; the pid in them can be reused. The
+   design keys on the uid (right), but nothing says one request per connection, nothing refuses root
+   or the Operator's uid (they run tasks directly, as #187 section 9 does), the client is not said
+   to use `SOCK_CLOEXEC`, and a detached job is tracked by pid. A descriptor the Operator's process
+   connected and an agent inherited would make the agent the Operator. Recommended change: the
+   gate's specification states one request per connection, refusal of uid 0 and of the remote
+   user's uid, close-on-exec in the client, and long jobs tracked by pid plus start time (as
+   ADR-0036's lease does); T16 tests an inherited descriptor and a recycled pid.
+
+7. **Denial of service between agents (2.2, 6b).** All callers share one listener per helper; there
+   is no limit on concurrent calls, body size, run time or detached jobs, and the audit log has no
+   cap. ADR-0036's lease folder is 0777 without the sticky bit (`agents.sh` lines 892 and 899,
+   `install.sh` line 39), so in per-agent mode one agent user can delete another's lease and make
+   `agents up` start a second resident. Recommended change: the gate enforces per-caller and
+   per-helper caps (concurrent calls, body bytes, wall time for entries not marked `detach`,
+   detached jobs), each refusal naming its cap, caps its audit log as #187 section 6 does, and
+   per-agent mode gives leases the sticky bit or a folder per user, amending ADR-0036.
+
+8. **One shared primary group and umask 002 make every agent's files writable by every agent (6a,
+   6b).** Every agent, back and helper user joins `dcf-work`, umask 002 stays, and 6b gives users no
+   private primary group. Files made outside a setgid level folder (a worktree, `.claude/`, the
+   checkout's root, AOF's per-agent worktree folders) are then writable by all of them, so AOF req
+   6 and acceptance 5 and office R5.3 fail; git's `core.sharedRepository=group` sets the git dir's
+   modes without help from the umask. Recommended change: each agent, back and helper user gets a
+   private primary group with `dcf-work` supplementary and umask 022; group write comes only from
+   setgid level folders (and default ACLs where T18 passes); per-agent worktree folders are the
+   agent's, 2750.
+
+9. **The Operator's Claude state is readable by every user today (6d).** In this devhost the
+   claude-code volume's root and `projects/` are 755, memory files 644 and shell snapshots 644
+   (modes counted, nothing read). 6d keeps the root the Operator's "with the Operator's memory", so
+   every agent user would read it (R6.1). Copying the host's state into `users/agent-host/` also
+   duplicates the login, whose refresh token then breaks on one side; and the host's memory path
+   does move, against "ADR-0049's path does not move". Recommended change: 6d's migration makes the
+   volume root 711 and the Operator's own content unreadable to others (checked by the boundary
+   command), moves rather than copies the host's state, without the credentials file, and names
+   ADR-0049 decision 4's new path.
+
+10. **Remote Control needs a full-scope login, which a `setup-token` is not (Q3, decision 17).**
+    Claude Code 2.1.311 says "Remote Control requires a full-scope login token. Long-lived tokens
+    (from ...)" and "setup-token sessions default to user:inference only". A stack token therefore
+    cannot meet R6.3 or office acceptance 7. A token in each user's environment also falls to D13's
+    `*TOKEN*` deny list and breaks AOF's "No secret in an argument, the environment or a log".
+    Recommended change: decision 17 becomes "residents that need Remote Control sign in per user
+    through an adapter verb `login` (earlier review finding 9), the credentials file a named interim
+    exception to ADR-0048 decision 1; the stack token only for backs and staff, passed through
+    `CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR` (present in 2.1.311), never the environment", with T15
+    confirming.
+
+11. **"Step 6 as accepted already takes [the key file] out of every agent's reach" is wider than it
+    is (1.3, 2.3 item 2).** Step 6 removes the direct reads (T9). It does not stop the agent user's
+    unsandboxed processes (hooks that run checkout scripts, MCP servers, the backs' runner) from
+    replacing what the Operator's user runs without asking: the git dir's `config` by rename (the
+    accepted review's finding 1; root 777 on `/git-dirs`), whose `core.fsmonitor` VS Code's git runs
+    as the Operator; `.githooks/`; `Taskfile.yml`. A `claude` started as the Operator's user only
+    warns (D11). `dcf-work` has no bearing on it. Recommended change: keep the order (rotation after
+    step 6 removes the direct route), state the claim as "direct reads closed; the route through
+    code the Operator's user runs stays (3.3)", add two probes to T9 as the agent user outside the
+    sandbox (rename over the git dir's `config`; write in `.githooks/`), and have the git wrapper
+    pass `core.fsmonitor=false` and the global `core.hooksPath` on the command line
+    (`GIT_CONFIG_COUNT`) for the Operator's user before the rotation is called the end of ADR-0056
+    decision 8.
+
+12. **setgid, ACLs and Windows writes on the 9p mounts (6c, T18, Q7).** Here the checkout and
+    `/git-dirs` are 9p drvfs with `metadata` and without `posixacl`, and `setfacl` is not installed
+    in the image; a file Windows writes (Windows git, an editor, the sync client) carries no
+    metadata and shows as root 777 (#187 review finding 19, office R2.6). The floor's ACL reads
+    cannot hold there, setgid owners erode whenever Windows writes, and a per-file ACL on a file git
+    replaces by rename is lost even on a volume. Recommended change: T18 tests, on this mount, setgid
+    inheritance, `setfacl` and a file written from Windows; 6c says that on drvfs cross-level reads
+    are reported unprotected, never by ACL, and that the boundary command re-runs at every start;
+    ACLs only as default ACLs on folders of volumes, with `acl` installed by the agents Feature.
+
+13. **The two BRDs differ on fail closed for unprotected paths, and 6f implements one (6f, decision
+    11).** AOF's "Fail closed" stops the start when a permission is missing; the office's BRD-8
+    chose to report. Recommended change: an agents option `unprotectedPaths` (`refuse`, the default,
+    or `report`), which the office sets to `report`.
+
+14. **`agents check` already exists and `agents sync` does not (6b, 6f).** `check` is the list
+    check (`agents.sh` `cmd_check`, task `agents:check`); there is no `sync` verb; and syncing "from
+    the Operator's own working copy" reads a file an agent can replace. Recommended change: keep the
+    accepted name `agents boundary` for the check of 6f, and add `agents sync` as a new verb that
+    reads only finding 1's snapshot and shows the change to users, groups and gate entries before it
+    applies.
+
+15. **5+ issues roles, and each role needs a root token from the shares (5+, decision 9).**
+    ADR-0050 decision 2: the Operator's token only reissues an existing role's secret. With a user
+    per exec, housekeeper and helper, a room added later means a root ceremony. Recommended change: 5+ issues
+    every missing role of the list in one root-token step per list change, and the new ADR cites
+    ADR-0050 for it.
+
+16. **7b lets each user read its own register key from OpenBao, so the ssh-agent adds nothing (7b,
+    decision 13).** If the user's AppRole fetches the key, the key's bytes are in the user's hands;
+    office R4.4 asks "usable only", AOF req 3 asks "the agent makes its own". Recommended change: in
+    `per-user` mode a loader run as root at start (through the Operator's `sudo`; ssh-agent accepts
+    a root peer) fetches each key with its own role and loads it into the user's socket, and the
+    user's policy has no read on its register key; AOF's own key files stay AOF's.
+
+17. **The shared folder's helpers and second remote are missing (7a, R2.2, R2.3).** With the main
+    mount at `none` (FUSE without `allow_other`) no helper user can open the shared folder, yet R2.2
+    writes go through helpers; two rclone mounts of one remote folder keep separate caches, so a
+    reader of a results folder may not see a helper's rewrite; and cloud-folder mounts one remote
+    (`remoteType`, `remotePath`), so R2.3's "second remote" is a new capability, not a sub-mount.
+    Recommended change: 7a names a read-write sub-mount for each helper group that writes there, T12
+    adds a write through one mount read through another, and R2.3's row reads "cloud-folder: a
+    second remote" as its own change.
+
+18. **Two secrets in the environment against a row marked covered (2.2 step 5, Q3).** The gate's
+    fixed environment carries "the helper's AppRole", and Q3 puts the stack token into each user's
+    environment; the AOF row "No secret in an argument, the environment or a log" says covered.
+    Recommended change: the gate passes the helper's AppRole as a file only the helper reads (the
+    `DCF_SECRET_AS` route), and that row reads partly until it does.
+
+19. **The gate's reach from each CLI is unexamined (NFR-12, 2.2).** Claude Code on Linux is all or
+    nothing (finding 2); Codex's `workspace-write` seccomp is undocumented for named sockets;
+    Copilot and Gemini have no sandbox. Recommended change: agents-v2 section 14.1 gains the rows
+    "shell tools run under `no_new_privs`" (#187 review finding 9) and "shell tools may connect to a
+    named unix socket", and T5 checks Codex.
+
+20. **Callers wider than the callers (6a, 2.2, 6g).** Helpers and back users join `dcf-work`, so
+    they can connect to every gate socket (#187 review finding 18), and nothing says who may call
+    `handover <back>` (the accepted review's finding 3). Recommended change: the sockets' group is a
+    callers group of agent and back users only, no helper a member; `handover <back>` is allowed only
+    from the agent that back serves.
+
+21. **The hand-over's input is the agent's word, and decision 14 renames an amendment (6g, 2.4).**
+    The back records the stretch and the cost the agent hands it; a back is an agent in the lexicon,
+    so a gate entry that starts one is an agent starting an agent. Recommended change: 2.4 gains "a
+    back records the stretch and its cost as the agent hands them over", and decision 14 is worded
+    as an amendment of D12 for backs.
+
+22. **Helper commits fall outside ADR-0016's bot identity (R5.1, Q10).** The office's `save` merges
+    and commits as its helper, without `CLAUDECODE`, so the wrapper's `commitWhenEnv` identity does
+    not apply, and Q10's trailer from `id -un` names the helper. Recommended change: the gate sets the
+    consumer's `commitWhenEnv` variable for entries marked as committing and exports the caller's
+    user name for the trailer.
+
+23. **A consumer's per-agent deny rules cannot move into the managed list (2.1 step 2, R2.5).**
+    Managed settings are one machine-wide file (ADR-0032), so a rule that differs per agent would
+    apply to every agent. Recommended change: 2.1 says only rules common to every agent move to the
+    managed list, and a consumer with per-agent rules keeps `lockPermissions` off (the kernel is then
+    the first line, which is what the BRD asks).
+
+24. **Derived uids are unspecified and may be reused (6b, Q5).** "Derived inside the stack's range"
+    names no rule; an order-based one shifts owners when an entry is added, and a removed entry's
+    uid handed to a new user inherits its files on the volumes. Recommended change: in per-agent mode
+    `uid:` is required on every entry (the registry's block makes it a lookup), and the boundary
+    command reports files owned by a uid no entry holds.
+
+25. **Traceability gaps and one placement contradiction (1.1, 1.3).** The office's decisions are
+    cited but have no rows: BRD-6 (the floor or the Operator refreshes each room's cloned
+    repositories) is a write into every room that 6c does not give the floor; office acceptance 1 is
+    marked closable by 6c without 2.4's limit that committed files are readable through the objects
+    (which R5.2 accepts). The relay user is both "a user the agent list can declare" and "made by
+    AOF's relay Feature". Recommended change: add one row per BRD-1 to BRD-12 decision (BRD-6 with a
+    route: a helper or a write ACL), add the objects limit to R2.1's and acceptance 1's rows, and let
+    the Feature that runs a non-agent process make its user from the registry (as #187's manifest
+    did), the agent list declaring only agent, back and helper users.
+
+### Lexicon
+
+The document uses the Operator, host, con, back, resident, identity, agent list, stretch, lease and
+back identity as defined. Two words collide: **the gate** is defined (OpenBao's unseal and login),
+and "the gate" alone is used throughout 2.2 for the helper gate; **Guard** is defined as the back
+guard, and 2.2 and Q4 use "guard helper" and "guards" for commit-time content checks. New terms
+need entries: **Agent user** and **The Operator's user** (owed by the accepted slice 0), **Back
+user**, **Helper user**, **Helper gate** (always in full), **Level group**, and the **trusted
+snapshot** of finding 1. "Hand-over" (to a back) sits next to the defined "Hand-off" (a reply); the
+entry for Back user should say which is which.
+
+### Placement
+
+| Element | Layer | Why |
+|---|---|---|
+| `runAs: per-agent`, users and groups from the snapshot, refusal, `unprotectedPaths` | agents Feature option and start step (through the Operator's `sudo`) | the environment: who an agent runs as (NFR-13) |
+| `user:`, `uid:`, `group:`, `groups:`, gate entries per agent | agent list spec | CLI-neutral facts about an agent; the allowlist is per caller (R3.1) |
+| trusted snapshot, `agents sync` | agents Feature, root step | finding 1; one source for 6b and the gate |
+| `dcf-work`, callers group, number registry, gate server, client, writer, refusal harness | shared scripts in `src/common`, vendored into agents | several Features depend on them (earlier finding 12) |
+| gate audit log, helper AppRole files | agents Feature volume; openbao volume per helper, 700 | NFR-1 |
+| socket switch (`allowAllUnixSockets`), extra managed deny lines | claude-code option in its managed drop-in | a Claude-only key (NFR-13), finding 2 |
+| Claude home per user, `login` verb | claude-code drop-in and adapter | each Feature knows its own state; earlier finding 9 |
+| setgid folders, default ACLs, the `acl` package | agents Feature, from the list | the kernel's own features; finding 12 |
+| `agentMounts`, helper mounts, a second remote | cloud-folder | rclone's own options; finding 17 |
+| per-user sockets and the root loader | ssh-agent | finding 16 |
+| roles per user, share tasks refusing by user | openbao | ADR-0050; finding 15 |
+| bot identity for helper commits | git's `commitWhenEnv`, set by the gate | finding 22 |
+| a non-agent user (the relay) | the Feature that runs it | finding 25 |
+| ownership map, scope check, per-agent deny rules | the consumer | the BRDs' own section 5 |
+
+### Consistency with the accepted proposal, the inventory and #187
+
+- The accepted proposal's review findings 1 (git dir `config`), 3 (who may hand over), 4 (cost
+  report across users), 5 (memory path), 6 (group at build) and 12 (shared names) come back with
+  per-agent users; the document cites 3, 4, 6, 8, 9, 11 and 16 but not 1 and 5 (findings 9, 11).
+- The inventory's T1 (the sandbox does not wrap the file tools) does not touch the gate (only Bash
+  reaches a socket); its T3 (the git dir behind a pointer needs explicit lists) applies to every
+  repository each agent user can reach under `/git-dirs` (ADR-0020).
+- From #187 the document keeps the right parts and cites its review findings 4, 9, 12 and 18 (the
+  last for the hand-over only), but drops the git-dir ownership that its base-branch read relied on
+  and does not carry its review findings 1 and 17 (finding 1), nor 18 for the gate's sockets
+  (finding 20).
+
+### Open questions for the Operator
+
+- **Decision 7 (finding 2).** Replace the two socket paths, which Linux ignores, by
+  `allowAllUnixSockets` in per-agent mode with every forbidden socket in the two lists.
+  *Recommendation: yes; kernel modes are the fence once agents have their own users.*
+- **Decision 17 (finding 10).** A per-user interactive login for residents that need Remote
+  Control, the stack token only for backs and staff through a file descriptor. *Recommendation:
+  yes.*
+- **Helpers per level (finding 4).** One helper user per helper and level, or one helper trusting
+  the consumer's scope check. *Recommendation: per level for every helper that writes a level;
+  `save` the named exception.*
+- **The trusted snapshot offline (finding 1).** When the remote cannot be reached at start, keep the
+  last snapshot (its commit shown by the boundary command) or refuse every gate call.
+  *Recommendation: keep the last snapshot; never fall back to the local refs.*
+- **What the rotation closes (finding 11).** Rotate after step 6 as planned, saying the indirect
+  route stays, or wait for the git wrapper's forced settings. *Recommendation: rotate after step 6
+  and T9 with its two new probes; record the indirect route in the ADR-0056 follow-up.*
+- **Unprotected paths (finding 13).** *Recommendation: `refuse` by default, `report` for the office.*
