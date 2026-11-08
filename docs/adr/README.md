@@ -107,3 +107,4 @@ numbering and a row below.
 | [0056](0056-an-openbao-key-file-on-the-workstation-unseals-openbao-and-logs-the-operator-in.md) | An OpenBao key file on the workstation unseals OpenBao and logs the Operator in | accepted | 2026-11-05 |
 | [0057](0057-microphone-audio-reaches-the-container-through-an-opt-in-launcher-setting-and-an-audio-feature.md) | Microphone audio reaches the container through an opt-in launcher setting and an `audio` Feature | accepted | 2026-11-06 |
 | [0058](0058-the-microphone-is-gated-by-a-workstation-relay-with-a-ttl-and-is-off-by-default.md) | The microphone is gated by a workstation relay with a TTL and is off by default | accepted | 2026-11-06 |
+| [0059](0059-an-openbao-ssh-certificate-authority-signs-for-the-operator-only-with-roles-of-principal-patterns.md) | An OpenBao SSH certificate authority signs for the Operator only, with roles of principal patterns | accepted | 2026-11-06 |

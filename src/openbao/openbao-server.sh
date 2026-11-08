@@ -25,6 +25,12 @@
 #   openbao-server restore                FROM=<file> (OPENBAO_TASK_FROM): install a snapshot, with
 #                                         a throwaway init on an empty server or a root token from
 #                                         the shares on a store in use, then unseal and reissue
+#   openbao-server ssh-ca-init            the SSH certificate authority: the ssh mount (DCF_SSH_CA_MOUNT), its
+#                                         CA generated inside OpenBao, the default role, the sign path in the
+#                                         Operator's policy (OPENBAO_TASK_ALLOWED, _TTL, _MAX_TTL, _MOUNT);
+#                                         idempotent; server mode: a root token from two shares
+#   openbao-server ssh-ca-role            another signing role (OPENBAO_TASK_NAME, _ALLOWED, _TTL, _MAX_TTL)
+#   openbao-server ssh-ca-import          the CA's private key from stdin instead of a generated one
 #   openbao-server after-write            what a task that writes a secret ends with: the backup (when
 #                                         a destination is set) or the reminder; always exit 0
 #
@@ -49,7 +55,7 @@ st_rc=0
 st_json=""
 
 usage() {
-  say "usage: openbao-server init|unseal|seal|status|password|approle-issue|approle-revoke|backup|backup-role|restore|after-write (the tasks of the openbao Feature run it)"
+  say "usage: openbao-server init|unseal|seal|status|password|approle-issue|approle-revoke|backup|backup-role|restore|ssh-ca-init|ssh-ca-role|ssh-ca-import|after-write (the tasks of the openbao Feature run it)"
   exit 2
 }
 
@@ -1096,6 +1102,189 @@ cmd_restore() {
   [ -f "$dir/backup-choice" ] || echo "openbao: this volume has no backup choice yet: task openbao:backup DEST=<folder> takes a backup, and the backupDest option names a default" >&2
 }
 
+# ------------------------------------------------------------------ SSH certificate authority ----
+# task openbao:ssh:ca:init, :ca:role and :ca:import. The CA is an SSH secrets engine mount
+# (DCF_SSH_CA_MOUNT, default ssh-ca) whose signing key is generated inside OpenBao, or imported once
+# from stdin, and never leaves it (the engine returns only the public key). A signing role is a
+# named set of principal patterns: ed25519 subject keys only, user certificates only, no
+# extensions and no critical options, a default lifetime and a maximum one. The default role
+# (DCF_SSH_CA_ROLE, default "default", patterns relay@<guid>,fed-<guid>) is made by init and is a role like
+# any other (:ca:role changes it or adds more). OpenBao matches a role's allowed_users exactly,
+# with no wildcard, so a role whose patterns have a * or a <guid> is stored with allowed_users "*" and its
+# patterns are kept in the KV store as ssh-ca/roles/<role> (field allowed); dcf-ssh-sign checks
+# them before it signs, and the verifier's cert-authority line is the boundary that counts (the
+# NOTES say so). A role of exact names is enforced by the server itself.
+# Making the mount, the CA or a role writes things the Operator's token may not (and the
+# Operator's policy gets the sign path here), so in server mode it is the shares' step, like
+# making an AppRole role (as_root: a plain terminal, refused inside an agent's job, two unseal
+# shares, a root token used for this step only). Against a server elsewhere (client mode) the step
+# runs with the token you hold, which the server's owner must have given the rights.
+camount="${DCF_SSH_CA_MOUNT:-ssh-ca}"
+dcf_secret_bin="${DCF_SECRET_BIN:-dcf-secret}"
+ca_default_role="${DCF_SSH_CA_ROLE:-default}"
+ca_default_allowed='relay@<guid>,fed-<guid>'
+ca_key_id_format='{{role_name}}-{{public_key_hash}}' # no name of a token or a person in a key id
+ca_default_ttl=2160h # 90 days
+
+ca_mount_ok() { [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] && [ "$1" != "$mount" ] && [ "$1" != sys ] && [ "$1" != auth ]; }
+ca_allowed_ok() { # a comma separated list of principals or patterns (pattern_ok in openbao-lib.sh)
+  local p
+  local -a ps
+  [ -n "$1" ] || return 1
+  IFS=, read -ra ps <<<"$1"
+  for p in "${ps[@]}"; do pattern_ok "$p" || return 1; done
+}
+ca_server_allowed() { # what the server's allowed_users holds for these patterns
+  case "$1" in *'*'* | *'<guid>'*) echo '*' ;; *) echo "$1" ;; esac
+}
+ca_fp() { printf '%s\n' "$1" | ssh-keygen -l -f - 2>/dev/null | awk '{print $2}'; }
+ca_pub_now() { bao read -field=public_key "$camount/config/ca" 2>/dev/null | head -n 1; }
+
+# The role as asked, with the token in use: everything there already, so there is nothing to do.
+ca_role_current() { # <role> <patterns> <ttl secs> <max secs>
+  local json
+  json="$(bao read -format=json "$camount/roles/$1" 2>/dev/null)" || return 1
+  jq -e --arg au "$(ca_server_allowed "$2")" --arg kf "$ca_key_id_format" --argjson t "$3" --argjson m "$4" '.data |
+    .key_type == "ca" and .allow_user_certificates == true and .allow_host_certificates == false and
+    .allow_user_key_ids == true and .allow_empty_principals == false and .allowed_users == $au and
+    .key_id_format == $kf and
+    .ttl == $t and .max_ttl == $m and (.allowed_extensions // "") == "" and
+    (.allowed_critical_options // "") == "" and ((.allowed_user_key_lengths // {}) | keys) == ["ssh-ed25519"]' >/dev/null <<<"$json" || return 1
+  [ "$(bao kv get -mount="$mount" -field=allowed "ssh-ca/roles/$1" 2>/dev/null)" = "$2" ]
+}
+
+ca_report() { # <public key> <what>
+  say "SSH CA at $camount: $(ca_fp "$1") ($2). Compare this fingerprint with the other side's out of band (dcf-ssh-sign ca --fingerprint), never from a shared folder or a message that anyone else could have changed"
+}
+
+# What runs with the token for this step (the root token in server mode, the caller's own in client
+# mode). KEY and KEY_PUB hold an imported key; nothing else secret is in reach.
+ssh_ca_apply() { # <init|role|import> <role> <patterns> <ttl secs> <max secs>
+  local what="$1" role="$2" patterns="$3" ttl="$4" max="$5" type pub err
+  type="$(bao read -format=json "sys/mounts/$camount" 2>/dev/null | jq -r '.data.type // empty' 2>/dev/null)"
+  if [ -z "$type" ]; then
+    err="$(bao secrets enable -path="$camount" ssh 2>&1 >/dev/null)" || { say "could not enable the ssh secrets engine at $camount: $err"; return 1; }
+    say "enabled the ssh secrets engine at $camount"
+  elif [ "$type" != ssh ]; then
+    say "$camount is a $type mount, not an ssh one: DCF_SSH_CA_MOUNT (or MOUNT=) names another"
+    return 1
+  fi
+  pub="$(ca_pub_now)"
+  case "$what" in
+    import)
+      [ -z "$pub" ] || { say "$camount already has a CA ($(ca_fp "$pub")): it is never replaced here"; return 1; }
+      err="$(printf '%s' "$KEY" | bao write "$camount/config/ca" private_key=- public_key="$KEY_PUB" 2>&1 >/dev/null)" || { say "OpenBao did not take the key as the CA: $err"; return 1; }
+      pub="$(ca_pub_now)"
+      [ -n "$pub" ] && [ "$(ca_fp "$pub")" = "$(ca_fp "$KEY_PUB")" ] || { say "the CA was written, but what OpenBao returns does not match the key that was read: look at $camount/config/ca before using it"; return 1; }
+      ca_report "$pub" "imported; the private key is only in OpenBao now, delete your copy"
+      return 0
+      ;;
+    init)
+      if [ -z "$pub" ]; then
+        err="$(bao write "$camount/config/ca" generate_signing_key=true key_type=ssh-ed25519 2>&1 >/dev/null)" || { say "OpenBao could not generate the CA: $err"; return 1; }
+        pub="$(ca_pub_now)"
+        [ -n "$pub" ] || { say "the CA was generated but its public key cannot be read back"; return 1; }
+        ca_report "$pub" "generated in OpenBao, ed25519; its private key never leaves it"
+      else
+        ca_report "$pub" "already there, left as it is"
+      fi
+      ;;
+    role)
+      [ -n "$pub" ] || { say "there is no CA at $camount yet: task openbao:ssh:ca:init makes it (and the default role)"; return 1; }
+      ;;
+  esac
+  # The role: only what is asked and nothing wider.
+  jq -n --arg au "$(ca_server_allowed "$patterns")" --arg kf "$ca_key_id_format" --argjson t "$ttl" --argjson m "$max" '{
+    key_type: "ca", allow_user_certificates: true, allow_host_certificates: false, allow_user_key_ids: true,
+    allow_empty_principals: false, allowed_users: $au, key_id_format: $kf, allowed_extensions: "", allowed_critical_options: "",
+    default_extensions: {}, default_critical_options: {}, allowed_user_key_lengths: {"ssh-ed25519": 0},
+    ttl: $t, max_ttl: $m}' | bao write "$camount/roles/$role" - >/dev/null || { say "could not write the role $role at $camount"; return 1; }
+  # The patterns, where dcf-ssh-sign reads them (see above).
+  bao kv put -mount="$mount" "ssh-ca/roles/$role" allowed="$patterns" ttl="$ttl" max_ttl="$max" >/dev/null || { say "could not write the role's patterns to $mount/ssh-ca/roles/$role (is the $mount KV mount there?)"; return 1; }
+  say "role $role at $camount: ed25519 keys only, user certificates only, no extensions, no critical options, a key id of the role name and the key's hash; principals $patterns; lifetime $ttl s by default, $max s at most"
+  if [ "$mode_now" = server ]; then
+    # The Operator may sign with every role of the mount from now on (an existing store keeps its
+    # policy until this runs).
+    operator_policy "$mount" "$camount" | bao policy write operator - >/dev/null || { say "could not write the Operator's policy"; return 1; }
+  fi
+}
+
+cmd_ssh_ca() { # <init|role|import>
+  local what="$1" role patterns ttl max ttl_s max_s rc=0 pub
+  guard "ssh:ca:$what" "it changes the certificate authority and, in server mode, uses a root token made from the unseal shares, which must never land in a transcript"
+  [ -z "${OPENBAO_TASK_MOUNT:-}" ] || camount="$OPENBAO_TASK_MOUNT"
+  ca_mount_ok "$camount" || die 2 "'$camount' is not a mount name for the CA (letters, digits, - and _; not the $mount KV mount, sys or auth)"
+  command -v jq >/dev/null 2>&1 || die 1 "jq is not installed: rebuild the devcontainer (the openbao Feature installs it)"
+  command -v ssh-keygen >/dev/null 2>&1 || die 1 "ssh-keygen is not installed (openssh-client)"
+  case "$what" in
+    init)
+      role="$ca_default_role"
+      patterns="${OPENBAO_TASK_ALLOWED:-$ca_default_allowed}"
+      ;;
+    role)
+      role="${OPENBAO_TASK_NAME:-}"
+      patterns="${OPENBAO_TASK_ALLOWED:-}"
+      [ -n "$role" ] && [ -n "$patterns" ] || die 2 "NAME=<role> ALLOWED=<principals or patterns, comma separated> are required (TTL=<dur> and MAX_TTL=<dur> optional)"
+      ;;
+    import) role="" patterns="" ;;
+  esac
+  if [ "$what" != import ]; then
+    role_ok "$role" || die 2 "'$role' is not a role name (lower case letters, digits, - and _, starting with a letter)"
+    ca_allowed_ok "$patterns" || die 2 "ALLOWED='$patterns' is not a comma separated list of principals or patterns (letters, digits, . _ @ -, * for any run of them, <guid> for a lowercase 8-4-4-4-12 GUID)"
+    ! admits_operator "$patterns" || die 2 "ALLOWED='$patterns' would admit the principal operator: no certificate names it, under any role (a narrower pattern, e.g. writer@*)"
+    ttl="${OPENBAO_TASK_TTL:-$ca_default_ttl}"
+    ttl_s="$(dur_secs "$ttl")" || die 2 "TTL='$ttl' is not a duration (a number and s, m, h or d: 90d, 2160h)"
+    max="${OPENBAO_TASK_MAX_TTL:-}"
+    if [ -n "$max" ]; then max_s="$(dur_secs "$max")" || die 2 "MAX_TTL='$max' is not a duration (a number and s, m, h or d)"; else max_s="$ttl_s"; fi
+    [ "$max_s" -ge "$ttl_s" ] || die 2 "MAX_TTL ($max) is shorter than TTL ($ttl): the default lifetime cannot exceed the maximum"
+  fi
+  if [ "$what" = import ]; then
+    [ ! -t 0 ] || die 2 "the CA's private key is read from stdin: pipe it in (never as an argument)"
+    KEY="$(tr -d '\r'; printf x)"
+    KEY="${KEY%x}"
+    [ -z "$KEY" ] || [ "${KEY: -1}" = $'\n' ] || KEY="$KEY"$'\n'
+    head -n 1 <<<"$KEY" | grep -q -- '^-----BEGIN .*PRIVATE KEY-----' || { KEY=""; die 2 "stdin is not a private key (no -----BEGIN ... PRIVATE KEY----- line)"; }
+    KEY_PUB="$(printf '%s' "$KEY" | ssh-keygen -y -P '' -f /dev/stdin 2>/dev/null | awk '{print $1" "$2}')"
+    [ -n "$KEY_PUB" ] && [ "$KEY_PUB" != " " ] || { KEY=""; die 2 "ssh-keygen cannot read that key (a passphrase on it? remove it from a copy first: ssh-keygen -p -N '' -f <copy>)"; }
+    [[ "$KEY_PUB" == ssh-ed25519\ * ]] || { KEY=""; die 2 "the CA key must be an ed25519 key (ssh-keygen -t ed25519), the role signs ed25519 keys only"; }
+  fi
+
+  # The server and the token first (dcf-secret status: its line and its exit code), then whether
+  # there is anything to do: with the CA and the role as asked there, nothing is asked of anyone.
+  "$dcf_secret_bin" status >/dev/null || exit $?
+  pub="$(ca_pub_now)"
+  case "$what" in
+    import)
+      [ -z "$pub" ] || { KEY=""; die 3 "$camount already has a CA ($(ca_fp "$pub")): it is never replaced here"; }
+      ;;
+    init | role)
+      if [ -n "$pub" ] && ca_role_current "$role" "$patterns" "$ttl_s" "$max_s"; then
+        [ "$what" = role ] || ca_report "$pub" "already there, left as it is"
+        say "role $role at $camount is already as asked: nothing changed"
+        return 0
+      fi
+      ;;
+  esac
+
+  if [ "$mode_now" = server ]; then
+    if [ "$what" = import ]; then
+      # The key came on stdin; the shares are typed at the terminal.
+      (exec </dev/tty) 2>/dev/null || { KEY=""; die 3 "task openbao:ssh:ca:import needs a terminal for the unseal shares (the key is piped in, the shares are typed): run it in a plain terminal in the devcontainer"; }
+      exec </dev/tty
+    fi
+    as_root "ssh:ca:$what" "the SSH certificate authority at $camount (the mount, the CA, a role and the Operator's policy)" ssh_ca_apply "$what" "$role" "$patterns" "${ttl_s:-0}" "${max_s:-0}" || rc=$?
+    KEY=""
+    [ "$rc" -eq 0 ] || die 1 "the SSH CA step failed (the messages above say why); the root token is revoked"
+  else
+    ssh_ca_apply "$what" "$role" "$patterns" "${ttl_s:-0}" "${max_s:-0}" || { KEY=""; die 1 "the SSH CA step failed (the messages above say why); the token you hold needs the rights to enable a mount, write its CA and roles and write to $mount/ssh-ca (the server's owner gives them)"; }
+    KEY=""
+    say "against a server of yours elsewhere, its Operator's policy needs these paths for dcf-ssh-sign (its owner adds them; this Feature cannot):"
+    ssh_ca_policy "$camount" >&2
+  fi
+  [ "$what" = import ] && say "next: task openbao:ssh:ca:init makes the default role and gives the Operator's policy the sign path"
+  return 0
+}
+
 [ $# -ge 1 ] || usage
 cmd="$1"
 shift
@@ -1111,6 +1300,9 @@ case "$cmd" in
   backup) cmd_backup ;;
   backup-role) cmd_backup_role ;;
   restore) cmd_restore ;;
+  ssh-ca-init) cmd_ssh_ca init ;;
+  ssh-ca-role) cmd_ssh_ca role ;;
+  ssh-ca-import) cmd_ssh_ca import ;;
   after-write) cmd_after_write ;;
   backup-timer-start) cmd_backup_timer_start ;;
   backup-timer-run) cmd_backup_timer_run ;;
