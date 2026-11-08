@@ -915,6 +915,13 @@ with `agentic-register`) to be trusted by one CA once per register instead of on
 verify with stock OpenSSH: `ssh-keygen -Y verify` against `cert-authority` lines. The decisions and
 the options weighed are in [ADR 0059](../../docs/adr/0059-an-openbao-ssh-certificate-authority-signs-for-the-operator-only-with-roles-of-principal-patterns.md).
 
+**Not for github.com.** The CA is for keys that something you run verifies (`ssh-keygen -Y verify`,
+`cert-authority` lines). github.com trusts an SSH certificate authority only through its
+organisation feature on GitHub Enterprise Cloud, and that covers git access over SSH; whether GitHub
+shows a commit signed with such a certificate as verified is not checked (backlog
+`openbao-cert-github-check`). For git hosted on github.com, use a GitHub App token or a key GitHub
+knows; the CA suits a self-hosted forge.
+
 ```text
 dcf-ssh-sign sign --principals <p1,p2,...> --key-id <id> [--ttl <dur>] [--role <name>]
                                   the public key (one ssh-ed25519 line) on stdin, the certificate on
@@ -1241,6 +1248,7 @@ create and rotate; an existing store keeps its policy until one of those runs).
   trusts the CA once instead of every machine's key one by one). The CA's private key lives in OpenBao
   and never leaves it: no task and no `dcf-secret` name returns it. Verification is stock OpenSSH:
   `ssh-keygen -Y verify` against `cert-authority` lines, with expiry.
+  Not for github.com: GitHub trusts an SSH CA only through its Enterprise Cloud organisation feature, for git access; whether it verifies commits signed with these certificates is not checked. The NOTES say so.
   - **`task openbao:ssh:ca:init`** enables an `ssh` secrets engine at `ssh-ca` (`MOUNT=` or
     `DCF_SSH_CA_MOUNT` name another), has OpenBao generate the CA (ed25519), makes the default role
     and gives the Operator's policy the sign path. Idempotent: a second run reports the CA's

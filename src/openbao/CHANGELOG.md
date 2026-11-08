@@ -18,6 +18,7 @@ Entries from 1.0.0 to 1.0.3 were generated from the commit history (`.github/scr
   trusts the CA once instead of every machine's key one by one). The CA's private key lives in OpenBao
   and never leaves it: no task and no `dcf-secret` name returns it. Verification is stock OpenSSH:
   `ssh-keygen -Y verify` against `cert-authority` lines, with expiry.
+  Not for github.com: GitHub trusts an SSH CA only through its Enterprise Cloud organisation feature, for git access; whether it verifies commits signed with these certificates is not checked. The NOTES say so.
   - **`task openbao:ssh:ca:init`** enables an `ssh` secrets engine at `ssh-ca` (`MOUNT=` or
     `DCF_SSH_CA_MOUNT` name another), has OpenBao generate the CA (ed25519), makes the default role
     and gives the Operator's policy the sign path. Idempotent: a second run reports the CA's

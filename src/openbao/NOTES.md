@@ -889,6 +889,13 @@ with `agentic-register`) to be trusted by one CA once per register instead of on
 verify with stock OpenSSH: `ssh-keygen -Y verify` against `cert-authority` lines. The decisions and
 the options weighed are in [ADR 0059](../../docs/adr/0059-an-openbao-ssh-certificate-authority-signs-for-the-operator-only-with-roles-of-principal-patterns.md).
 
+**Not for github.com.** The CA is for keys that something you run verifies (`ssh-keygen -Y verify`,
+`cert-authority` lines). github.com trusts an SSH certificate authority only through its
+organisation feature on GitHub Enterprise Cloud, and that covers git access over SSH; whether GitHub
+shows a commit signed with such a certificate as verified is not checked (backlog
+`openbao-cert-github-check`). For git hosted on github.com, use a GitHub App token or a key GitHub
+knows; the CA suits a self-hosted forge.
+
 ```text
 dcf-ssh-sign sign --principals <p1,p2,...> --key-id <id> [--ttl <dur>] [--role <name>]
                                   the public key (one ssh-ed25519 line) on stdin, the certificate on
