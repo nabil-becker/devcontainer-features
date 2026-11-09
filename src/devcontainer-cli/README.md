@@ -177,6 +177,24 @@ from a host, use the `devcontainer:*` tasks (next section).
   path on the host than inside the container cannot be resolved.
 - The CLI's own dependencies are resolved by npm at build time and are not
   locked here, so supply-chain trust in them is npm's, not this Feature's.
+- The launcher's `exec` into the container (the OpenBao unlock and key-file
+  tasks) runs as the remote user from the container's `devcontainer.metadata`
+  label, and `devcontainer up` writes that label with devcontainer.json's text
+  unresolved: `"remoteUser": "${localEnv:DEVCONTAINER_USER:host}"` stays
+  literal there. Since 1.22.1 the launcher resolves `${localEnv:...}` itself
+  (from its environment, else the default after the colon) and falls back to
+  the container's own user for any other `${...}`. Before 1.22.1 the `exec`
+  failed with "unable to find user ${localEnv:...}", reported as "no
+  openbao-setup that knows the OpenBao key file", and the unlock after `up`
+  failed silently. On 1.22.0 or earlier, refresh the bootstrap, or make
+  `remoteUser` a literal.
+- `openbao: could not ask the container for OpenBao's unlock status: docker
+  exec as user 'X' failed (exit N): ...`: the engine refused the `exec`, so
+  OpenBao itself never answered. Check that user X exists in the container
+  (`docker exec -u X <id> id`). Run the launcher through `task`: its `dotenv:`
+  loads `.devcontainer/.env`, while run directly it does not, and a
+  `${localEnv:NAME:default}` falls back to its default even when `.env` sets
+  NAME.
 
 ## Host-side counterpart
 
@@ -363,14 +381,20 @@ When the mode is `keyfile` and the server is sealed or the token is missing or d
 server's key file and streams it into `openbao-setup unlock --stdin`, then prints one line
 (`openbao: unsealed, logged in (the OpenBao key file).`, or why not). Silent when the mode is `off` or
 `operator`, when the status says `ready`, and when the container has no `openbao-setup` that
-answers. With no key file for that server it says so in one line and names
+answers. When asking itself fails (the engine refuses the `exec`, for example a user the container
+does not have), it says so in one line, with the exit code and the first line of the error, also
+after `up`. With no key file for that server it says so in one line and names
 `task dc:openbao:keyfile:create` (or two custody shares at `task openbao:unseal` in the container,
 then `task dc:openbao:keyfile:rotate`); the start goes on and OpenBao stays sealed. A failing step
 never fails the `up`.
 
 **How it travels.** Through the engine's own `exec -i -u <remote user> <container>
 /usr/local/bin/openbao-setup ...` (the remote user from the container's `devcontainer.metadata`
-label), not `devcontainer exec`, which runs the user's profile first; the bytes are written to its
+label: `remoteUser`, else `containerUser`; the label keeps devcontainer.json's text as written, so
+a `${localEnv:NAME}` or `${localEnv:NAME:default}` in it is resolved here as the devcontainers CLI
+does at `up`, from the launcher's environment (under `task`, with the `.env` files loaded), else the
+default; any other `${...}` gives way to the container's own user, and `-u` is never sent with a
+`${` in it), not `devcontainer exec`, which runs the user's profile first; the bytes are written to its
 standard input from memory. Never an argument, an environment variable, a temporary file or a log
 line. Not verified on a real host: `wslc exec -i -u`.
 
@@ -697,6 +721,17 @@ so the same script serves the container and the host-side tasks.
 
 ## Changes
 
+### [1.22.1] - 2026-11-09
+
+#### Fixed
+
+- **The OpenBao key file works with a variable remote user (Windows launcher)**: with `"remoteUser": "${localEnv:NAME:default}"` in devcontainer.json, `task dc:openbao:unlock` and `task dc:openbao:keyfile:create` said "this devcontainer has no openbao-setup that knows the OpenBao key file" (create exited 4) and the unlock after `up` did nothing, because the launcher ran `docker exec -u '${localEnv:NAME:default}'` with the text as written. The launcher now resolves `${localEnv:NAME}` and `${localEnv:NAME:default}` as the devcontainers CLI does at `up` (the launcher's environment, which under `task` includes the `.env` files, else the default); any other `${...}` falls back to the container's own user, never reaching `-u`.
+- When asking the container for OpenBao's unlock status fails for another reason than a missing or older `openbao-setup`, the launcher now says so in one line, with the exit code and the error's first line (for example `docker exec as user 'X' failed (exit 1): unable to find user X: no matching entries in passwd file`), on `task dc:openbao:unlock`, on `keyfile:create`/`rotate` (exit 1) and after `up`, instead of the misleading "no openbao-setup" or silence.
+
+#### Changed
+
+- **Act:** none beyond the next bootstrap refresh (re-run the bootstrap to vendor the new launcher); no rebuild.
+
 ### [1.22.0] - 2026-11-06
 
 #### Added
@@ -714,13 +749,6 @@ so the same script serves the container and the host-side tasks.
 #### Added
 
 - **Audio on request (both launchers)**: `DCF_HOST_AUDIO=wslg` in a Windows WSL2 workstation's `.devcontainer/.env` gives the container its microphone through WSLg's PulseAudio socket, for the new `audio` Feature (Claude Code's `/voice`). Before `up`, on the `windows-docker` and `windows-wsl-docker` host types, the launcher binds the default WSL distro's `/mnt/wslg` to `/mnt/wsl/wslg` as root (skipped when already there; a WSL restart drops it and the next `up` redoes it), mounts it at `/mnt/wslg`, and sets `DCF_HOST_AUDIO=wslg` for `containerEnv`; anywhere else, or when that distro has no WSLg socket, it warns once and starts the container without audio (`DCF_HOST_AUDIO=none`). `task devcontainer:host` says what it would do. Unset or `none` (the default) runs nothing and adds nothing: nothing changes unless you opt in. It gives every process in the container the microphone; whether dictated audio may go to a model provider is your repository's ruling. To use it: re-vendor the bootstrap, add `"DCF_HOST_AUDIO": "${localEnv:DCF_HOST_AUDIO}"` to `containerEnv` (the bootstrap's template has it), add the `audio` Feature once it is released, set the variable and run `task devcontainer:rebuild`.
-
-### [1.20.0] - 2026-11-05
-
-#### Added
-
-- **The OpenBao key file (Windows launcher)**: with the openbao Feature 1.5.0 or later set to `unlock: keyfile`, every `task dc:up` (so `start`, `shell`, `exec`, `agent`, `claude`, `rebuild`) unseals OpenBao and logs you in with nothing typed, from a DPAPI-protected key file in `%LOCALAPPDATA%\devcontainer-features-keys\openbao\` (it also opens with a domain's DPAPI backup key). It is streamed into the container on stdin through the engine's `exec`, never as an argument, an environment variable or a file. New tasks: `dc:openbao:unlock`, `dc:openbao:keyfile:create`, `:rotate`, `:export`, `:import`, `:forget`; `create` and `rotate` take two steps (OpenBao's rekey verification): the key file is saved first, then confirmed with its own shares 4 and 5, and only then are the three custody shares printed; a failed save or confirm cancels the rotation (with its own nonce; another rotation is never cancelled) and keeps the old shares and key file; a lost confirm answer is settled by `keyfile status`'s pending verification nonce; the nonce carries a confirm token, so it is never printed or logged; the container's warnings are shown. The four that handle shares or the file refuse inside an agent's job (`CLAUDECODE`, `DEVHOST_JOB_CHILD`, `OPENBAO_AGENT_JOB_VARS`). Nothing changes for a repository whose openbao Feature is not in keyfile mode (one silent status call after `up`). To use it: re-vendor the bootstrap, set `unlock: keyfile`, rebuild, then run `task dc:openbao:keyfile:create` once in a plain terminal and store the three custody shares it prints.
-- The bash launcher (Linux, macOS, a WSL distro) refuses those tasks in one line: the OpenBao key file is Windows-only for now.
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/devcontainer-cli/CHANGELOG.md).
 

@@ -17,7 +17,11 @@
 # settled by keyfile status's pending verification nonce, the part of ours before its first colon
 # (ours: cancel; empty with five shares: applied, also for
 # rotate where five shares hold both ways; another: never cancelled), the warnings shown, error then code on failure; export/import round trip, a wrong passphrase,
-# the checkout refused; forget; the step wired after `up` only; the bash launcher's one refusal line.
+# the checkout refused; forget; the step wired after `up` only; the bash launcher's one refusal line;
+# the remote user (a ${localEnv:NAME:default} in the label resolved here, a literal kept, an unknown
+# ${...} giving way to containerUser or the container's own user, never "-u ${"); a failing status
+# call (exec -u with an unknown user) named in one line with its exit and stderr's first line, while
+# exit 4 and a missing openbao-setup keep the old "not there".
 # The stub engine is a shell script, so the Describes that use it run where bash runs (Linux, macOS,
 # CI); the DPAPI round trip runs only on Windows:
 #   pwsh -NoProfile -Command "Invoke-Pester -Path test/bootstrap/OpenBaoKeyFile.Tests.ps1 -Output Detailed"
@@ -44,15 +48,21 @@ BeforeAll {
 #!/usr/bin/env bash
 case "$1" in
   ps) [ "${FAKE_RUNNING:-1}" = 1 ] && echo cid1; exit 0 ;;
-  inspect) printf '%s\n' '[{"Config":{"Labels":{"devcontainer.metadata":"[{\"remoteUser\":\"vscode\"}]"}}}]'; exit 0 ;;
+  inspect)
+    if [ -n "${FAKE_INSPECT:-}" ]; then printf '%s\n' "$FAKE_INSPECT"; exit 0; fi
+    printf '%s\n' '[{"Config":{"Labels":{"devcontainer.metadata":"[{\"remoteUser\":\"vscode\"}]"}}}]'; exit 0 ;;
   exec) ;;
   *) exit 0 ;;
 esac
 printf '%s\n' "$*" >> "$FAKE_ARGV"
 env >> "$FAKE_ENVLOG"
 shift
-while [ $# -gt 0 ]; do case "$1" in -i) shift ;; -u) shift 2 ;; *) break ;; esac; done
+user=
+while [ $# -gt 0 ]; do case "$1" in -i) shift ;; -u) user=$2; shift 2 ;; *) break ;; esac; done
 [ "$1" = cid1 ] || exit 125
+case "$user" in
+  *'${'* | "${FAKE_BAD_USER:-/none/}") echo "Error response from daemon: unable to find user $user: no matching entries in passwd file" >&2; exit 1 ;;
+esac
 shift
 if [ "${FAKE_NO_SETUP:-}" = 1 ] || [ "$1" != /usr/local/bin/openbao-setup ]; then
   echo 'OCI runtime exec failed: exec: "/usr/local/bin/openbao-setup": no such file or directory' >&2; exit 127
@@ -82,7 +92,7 @@ echo "usage: openbao-setup ..." >&2; exit 2
         $w.Engine = $engine
         $w.Saved = @{}
         foreach ($k in 'DEVCONTAINER_DOCKER_PATH', 'XDG_DATA_HOME', 'LOCALAPPDATA', 'TMPDIR', 'TEMP', 'TMP', 'FAKE_ARGV', 'FAKE_ENVLOG', 'FAKE_STDIN',
-            'FAKE_STATUS', 'FAKE_STATUS_RC', 'FAKE_RUNNING', 'FAKE_NO_SETUP', 'FAKE_UNLOCK_OUT', 'FAKE_UNLOCK_RC', 'FAKE_MAKE_OUT', 'FAKE_MAKE_RC', 'FAKE_CONFIRM', 'FAKE_KF_STATUS', 'FAKE_KEYFILE',
+            'FAKE_STATUS', 'FAKE_STATUS_RC', 'FAKE_RUNNING', 'FAKE_NO_SETUP', 'FAKE_UNLOCK_OUT', 'FAKE_UNLOCK_RC', 'FAKE_MAKE_OUT', 'FAKE_MAKE_RC', 'FAKE_CONFIRM', 'FAKE_KF_STATUS', 'FAKE_KEYFILE', 'FAKE_INSPECT', 'FAKE_BAD_USER', 'DCF_TEST_REMOTE_USER',
             'CLAUDECODE', 'DEVHOST_JOB_CHILD', 'OPENBAO_AGENT_JOB_VARS', 'MY_AGENT_JOB') {
             $w.Saved[$k] = [Environment]::GetEnvironmentVariable($k)
         }
@@ -90,19 +100,28 @@ echo "usage: openbao-setup ..." >&2; exit 2
         $env:XDG_DATA_HOME = (Join-Path $t 'data'); $env:LOCALAPPDATA = (Join-Path $t 'localappdata')
         $env:TMPDIR = $w.Tmp; $env:TEMP = $w.Tmp; $env:TMP = $w.Tmp
         $env:FAKE_ARGV = $w.Argv; $env:FAKE_ENVLOG = $w.EnvLog; $env:FAKE_STDIN = $w.Stdin
-        foreach ($k in 'FAKE_STATUS_RC', 'FAKE_RUNNING', 'FAKE_NO_SETUP', 'FAKE_UNLOCK_OUT', 'FAKE_UNLOCK_RC', 'FAKE_MAKE_OUT', 'FAKE_MAKE_RC', 'FAKE_CONFIRM', 'FAKE_KF_STATUS', 'FAKE_KEYFILE', 'CLAUDECODE', 'DEVHOST_JOB_CHILD', 'OPENBAO_AGENT_JOB_VARS', 'MY_AGENT_JOB') {
-            [Environment]::SetEnvironmentVariable($k, $null)
+        foreach ($k in 'FAKE_STATUS_RC', 'FAKE_RUNNING', 'FAKE_NO_SETUP', 'FAKE_UNLOCK_OUT', 'FAKE_UNLOCK_RC', 'FAKE_MAKE_OUT', 'FAKE_MAKE_RC', 'FAKE_CONFIRM', 'FAKE_KF_STATUS', 'FAKE_KEYFILE', 'FAKE_INSPECT', 'FAKE_BAD_USER', 'DCF_TEST_REMOTE_USER', 'CLAUDECODE', 'DEVHOST_JOB_CHILD', 'OPENBAO_AGENT_JOB_VARS', 'MY_AGENT_JOB') {
+            # Removed, not set to $null: PowerShell 7.6 passes $null as "" and .NET 9 keeps an empty variable.
+            Remove-Item -LiteralPath "Env:$k" -ErrorAction SilentlyContinue
         }
         $env:FAKE_STATUS = (Get-Status)
         return $w
     }
     function Clear-World($w) {
-        foreach ($k in $w.Saved.Keys) { [Environment]::SetEnvironmentVariable($k, $w.Saved[$k]) }
+        foreach ($k in $w.Saved.Keys) {
+            if ($null -eq $w.Saved[$k]) { Remove-Item -LiteralPath "Env:$k" -ErrorAction SilentlyContinue }
+            else { [Environment]::SetEnvironmentVariable($k, $w.Saved[$k]) }
+        }
         Remove-Item -LiteralPath $w.T -Recurse -Force -ErrorAction SilentlyContinue
     }
     function Get-Status([string]$Mode = 'keyfile', [bool]$Sealed = $true, [string]$Token = 'missing', [bool]$Initialized = $true, [string]$Server = 'clu-1') {
         $ready = $Mode -eq 'keyfile' -and -not $Sealed -and $Token -eq 'live'
         ConvertTo-Json -Compress -InputObject @{ v = 1; mode = $Mode; initialized = $Initialized; sealed = $Sealed; token = $Token; renewer = $false; ready = $ready; server = $Server }
+    }
+    # The engine's inspect answer: the devcontainer.metadata label's entries and the image's Config.User.
+    function Get-Inspect([object[]]$Meta, [string]$ConfigUser = '') {
+        $label = ConvertTo-Json -Compress -AsArray -InputObject @($Meta)
+        ConvertTo-Json -Compress -Depth 5 -AsArray -InputObject @([ordered]@{ Config = [ordered]@{ User = $ConfigUser; Labels = @{ 'devcontainer.metadata' = $label } } })
     }
     function Get-Log([string]$Path) { if (Test-Path -LiteralPath $Path) { [IO.File]::ReadAllText($Path) } else { '' } }
     # Runs $Body; returns Rc (its output), Host (Write-Host lines) and Err (the console's stderr).
@@ -256,6 +275,127 @@ Describe 'The unlock step after up' -Skip:(-not $script:HasBash -or $IsWindows) 
         $r = Invoke-Captured { Invoke-OpenBaoUnlock -WorkspaceFolder $script:W.Ws -Explicit }
         $r.Rc | Should -Be 1
         $r.Err | Should -Match 'No running devcontainer'
+    }
+}
+
+Describe 'The remote user the unlock runs as' -Skip:(-not $script:HasBash -or $IsWindows) {
+    BeforeEach { $script:W = Initialize-World; Use-ProtectorStandIn }
+    AfterEach { Clear-World $script:W }
+
+    It 'resolves ${localEnv:NAME:default} to the default when NAME is unset' {
+        $env:FAKE_INSPECT = Get-Inspect @(@{ remoteUser = '${localEnv:DCF_TEST_REMOTE_USER:host}' })
+        Get-DevcontainerRemoteUser -Engine $script:W.Engine -ContainerId cid1 | Should -Be 'host'
+    }
+
+    It 'resolves ${localEnv:NAME:default} to NAME''s value when it is set' {
+        $env:FAKE_INSPECT = Get-Inspect @(@{ remoteUser = '${localEnv:DCF_TEST_REMOTE_USER:host}' })
+        $env:DCF_TEST_REMOTE_USER = 'alice'
+        Get-DevcontainerRemoteUser -Engine $script:W.Engine -ContainerId cid1 | Should -Be 'alice'
+    }
+
+    It 'keeps a literal remoteUser as it is, the last entry winning over containerUser' {
+        $env:FAKE_INSPECT = Get-Inspect @(@{ containerUser = 'root' }, @{ remoteUser = 'node' }, @{ remoteUser = 'vscode' }) -ConfigUser 'root'
+        Get-DevcontainerRemoteUser -Engine $script:W.Engine -ContainerId cid1 | Should -Be 'vscode'
+    }
+
+    It 'falls back to containerUser when ${localEnv:NAME} is unset with no default' {
+        $env:FAKE_INSPECT = Get-Inspect @(@{ containerUser = 'dev'; remoteUser = '${localEnv:DCF_TEST_REMOTE_USER}' })
+        Get-DevcontainerRemoteUser -Engine $script:W.Engine -ContainerId cid1 | Should -Be 'dev'
+    }
+
+    It 'falls back to the container''s own user for a ${...} only the devcontainers CLI knows' {
+        $env:FAKE_INSPECT = Get-Inspect @(@{ remoteUser = '${containerEnv:USER}' }) -ConfigUser 'node'
+        Get-DevcontainerRemoteUser -Engine $script:W.Engine -ContainerId cid1 | Should -Be 'node'
+    }
+
+    It 'leaves -u out, never sending ${, when nothing resolves' {
+        $env:FAKE_INSPECT = Get-Inspect @(@{ remoteUser = '${containerEnv:USER}' })
+        Get-DevcontainerRemoteUser -Engine $script:W.Engine -ContainerId cid1 | Should -BeExactly ''
+        $env:FAKE_STATUS = Get-Status -Sealed $false -Token 'live'
+        $r = Invoke-Captured { Invoke-OpenBaoUnlock -WorkspaceFolder $script:W.Ws }
+        $r.Rc | Should -Be 0
+        "$($r.Host)$($r.Err)" | Should -BeNullOrEmpty
+        (Get-Log $script:W.Argv).Trim() | Should -Be 'exec -i cid1 /usr/local/bin/openbao-setup unlock --status'
+    }
+
+    It 'unlocks as the resolved user when remoteUser is ${localEnv:NAME:default}' {
+        $env:FAKE_INSPECT = Get-Inspect @(@{ remoteUser = '${localEnv:DCF_TEST_REMOTE_USER:host}' })
+        Save-TestKeyFile
+        $r = Invoke-Captured { Invoke-OpenBaoUnlock -WorkspaceFolder $script:W.Ws }
+        $r.Rc | Should -Be 0
+        $r.Host | Should -Be 'openbao: unsealed, logged in (the OpenBao key file).'
+        $r.Err | Should -BeNullOrEmpty
+        Get-Log $script:W.Argv | Should -Match 'exec -i -u host cid1 /usr/local/bin/openbao-setup unlock --status'
+        Get-Log $script:W.Argv | Should -Match 'exec -i -u host cid1 /usr/local/bin/openbao-setup unlock --stdin'
+        Get-Log $script:W.Argv | Should -Not -Match '\$\{'
+    }
+}
+
+Describe 'When asking for the unlock status fails' -Skip:(-not $script:HasBash -or $IsWindows) {
+    BeforeEach { $script:W = Initialize-World; Use-ProtectorStandIn; Save-TestKeyFile }
+    AfterEach { Clear-World $script:W }
+
+    It 'after up, says why in one line (the exit code and stderr''s first line) and sends nothing' {
+        $env:FAKE_BAD_USER = 'vscode'
+        $r = Invoke-Captured { Invoke-OpenBaoUnlock -WorkspaceFolder $script:W.Ws }
+        $r.Rc | Should -Be 1
+        $r.Host | Should -BeNullOrEmpty
+        $r.Err.Trim() | Should -Be "openbao: could not ask the container for OpenBao's unlock status: docker exec as user 'vscode' failed (exit 1): unable to find user vscode: no matching entries in passwd file."
+        Get-Log $script:W.Argv | Should -Not -Match 'unlock --stdin'
+    }
+
+    It 'with -Explicit, says the same instead of "no openbao-setup"' {
+        $env:FAKE_BAD_USER = 'vscode'
+        $r = Invoke-Captured { Invoke-OpenBaoUnlock -WorkspaceFolder $script:W.Ws -Explicit }
+        $r.Rc | Should -Be 1
+        $r.Err | Should -Match "docker exec as user 'vscode' failed \(exit 1\): unable to find user vscode"
+        $r.Err | Should -Not -Match 'no openbao-setup that knows'
+    }
+
+    It 'names another failing exit and never prints stdout' {
+        $env:FAKE_STATUS = "$($script:Marker) on stdout"
+        $env:FAKE_STATUS_RC = '1'
+        $r = Invoke-Captured { Invoke-OpenBaoUnlock -WorkspaceFolder $script:W.Ws -Explicit }
+        $r.Rc | Should -Be 1
+        $r.Err.Trim() | Should -Be "openbao: could not ask the container for OpenBao's unlock status: docker exec as user 'vscode' failed (exit 1)."
+        "$($r.Host)$($r.Err)" | Should -Not -Match $script:Marker
+    }
+
+    It 'keyfile:create says why and exits 1, not 4' {
+        $env:FAKE_BAD_USER = 'vscode'
+        $r = Invoke-Captured { Invoke-OpenBaoKeyFileTask -WorkspaceFolder $script:W.Ws -Arguments @('create') }
+        $r.Rc | Should -Be 1
+        $r.Err.Trim() | Should -Be "openbao: could not ask the container for OpenBao's unlock status: docker exec as user 'vscode' failed (exit 1): unable to find user vscode: no matching entries in passwd file."
+        Get-Log $script:W.Argv | Should -Not -Match 'keyfile create'
+    }
+
+    It 'exit 4 (not applicable) keeps the old "not there": silent after up, the old line with -Explicit and on keyfile:create (exit 4)' {
+        $env:FAKE_STATUS = '{"v":1,"ok":false,"code":"not-applicable"}'
+        $env:FAKE_STATUS_RC = '4'
+        $r = Invoke-Captured { Invoke-OpenBaoUnlock -WorkspaceFolder $script:W.Ws }
+        $r.Rc | Should -Be 0
+        "$($r.Host)$($r.Err)" | Should -BeNullOrEmpty
+        $r = Invoke-Captured { Invoke-OpenBaoUnlock -WorkspaceFolder $script:W.Ws -Explicit }
+        $r.Rc | Should -Be 1
+        $r.Err.Trim() | Should -Match '^openbao: this devcontainer has no openbao-setup that knows the OpenBao key file'
+        $r = Invoke-Captured { Invoke-OpenBaoKeyFileTask -WorkspaceFolder $script:W.Ws -Arguments @('create') }
+        $r.Rc | Should -Be 4
+        $r.Err.Trim() | Should -Match '^openbao: this devcontainer has no openbao-setup that knows the OpenBao key file'
+    }
+
+    It 'a missing openbao-setup keeps the old "not there", with -Explicit too' {
+        $env:FAKE_NO_SETUP = '1'
+        $r = Invoke-Captured { Invoke-OpenBaoUnlock -WorkspaceFolder $script:W.Ws -Explicit }
+        $r.Rc | Should -Be 1
+        $r.Err.Trim() | Should -Match '^openbao: this devcontainer has no openbao-setup that knows the OpenBao key file'
+    }
+
+    It 'an engine that exits 127 or 126 saying nothing counts as no openbao-setup' -ForEach @(@{ rc = 126 }, @{ rc = 127 }) {
+        $why = InModuleScope DevcontainerCli -Parameters @{ Rc = $rc } {
+            param($Rc)
+            Get-OpenBaoExecFailure -Result ([pscustomobject]@{ Code = $Rc; Out = ''; Err = '' }) -Container ([pscustomobject]@{ Engine = 'podman'; User = 'host' })
+        }
+        $why | Should -BeExactly ''
     }
 }
 

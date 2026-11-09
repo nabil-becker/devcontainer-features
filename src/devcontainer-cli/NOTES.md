@@ -156,6 +156,24 @@ from a host, use the `devcontainer:*` tasks (next section).
   path on the host than inside the container cannot be resolved.
 - The CLI's own dependencies are resolved by npm at build time and are not
   locked here, so supply-chain trust in them is npm's, not this Feature's.
+- The launcher's `exec` into the container (the OpenBao unlock and key-file
+  tasks) runs as the remote user from the container's `devcontainer.metadata`
+  label, and `devcontainer up` writes that label with devcontainer.json's text
+  unresolved: `"remoteUser": "${localEnv:DEVCONTAINER_USER:host}"` stays
+  literal there. Since 1.22.1 the launcher resolves `${localEnv:...}` itself
+  (from its environment, else the default after the colon) and falls back to
+  the container's own user for any other `${...}`. Before 1.22.1 the `exec`
+  failed with "unable to find user ${localEnv:...}", reported as "no
+  openbao-setup that knows the OpenBao key file", and the unlock after `up`
+  failed silently. On 1.22.0 or earlier, refresh the bootstrap, or make
+  `remoteUser` a literal.
+- `openbao: could not ask the container for OpenBao's unlock status: docker
+  exec as user 'X' failed (exit N): ...`: the engine refused the `exec`, so
+  OpenBao itself never answered. Check that user X exists in the container
+  (`docker exec -u X <id> id`). Run the launcher through `task`: its `dotenv:`
+  loads `.devcontainer/.env`, while run directly it does not, and a
+  `${localEnv:NAME:default}` falls back to its default even when `.env` sets
+  NAME.
 
 ## Host-side counterpart
 
@@ -342,14 +360,20 @@ When the mode is `keyfile` and the server is sealed or the token is missing or d
 server's key file and streams it into `openbao-setup unlock --stdin`, then prints one line
 (`openbao: unsealed, logged in (the OpenBao key file).`, or why not). Silent when the mode is `off` or
 `operator`, when the status says `ready`, and when the container has no `openbao-setup` that
-answers. With no key file for that server it says so in one line and names
+answers. When asking itself fails (the engine refuses the `exec`, for example a user the container
+does not have), it says so in one line, with the exit code and the first line of the error, also
+after `up`. With no key file for that server it says so in one line and names
 `task dc:openbao:keyfile:create` (or two custody shares at `task openbao:unseal` in the container,
 then `task dc:openbao:keyfile:rotate`); the start goes on and OpenBao stays sealed. A failing step
 never fails the `up`.
 
 **How it travels.** Through the engine's own `exec -i -u <remote user> <container>
 /usr/local/bin/openbao-setup ...` (the remote user from the container's `devcontainer.metadata`
-label), not `devcontainer exec`, which runs the user's profile first; the bytes are written to its
+label: `remoteUser`, else `containerUser`; the label keeps devcontainer.json's text as written, so
+a `${localEnv:NAME}` or `${localEnv:NAME:default}` in it is resolved here as the devcontainers CLI
+does at `up`, from the launcher's environment (under `task`, with the `.env` files loaded), else the
+default; any other `${...}` gives way to the container's own user, and `-u` is never sent with a
+`${` in it), not `devcontainer exec`, which runs the user's profile first; the bytes are written to its
 standard input from memory. Never an argument, an environment variable, a temporary file or a log
 line. Not verified on a real host: `wslc exec -i -u`.
 
