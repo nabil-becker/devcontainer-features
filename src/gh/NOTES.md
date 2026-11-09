@@ -97,6 +97,32 @@ refused. The login needs the `admin:ssh_signing_key` scope: `gh auth refresh -s
 admin:ssh_signing_key`. The `ssh-agent` Feature's `key:rotate` calls it (as `gh-ssh-key-add`) for
 its GitHub step.
 
+## Logging in with a fine-grained token
+
+For an agent's host, log in with a fine-grained personal access token instead of your own login
+(`gh auth login` in the browser gives gh your full power). Make it at GitHub, Settings, Developer
+settings, Fine-grained tokens: **this repository only**, an **expiry** (30 to 90 days), and
+Repository permissions **Contents: Read and write**, **Pull requests: Read and write**,
+**Metadata: Read-only** (added by itself). Nothing else: no Administration, Workflows, Actions or
+Secrets, so the token cannot change the repository's rules or workflows.
+
+Then, from your own terminal in the devhost (never in an agent's session; the token is read from
+stdin, not typed on a command line):
+
+```bash
+gh auth login --with-token < token.txt   # or: pbpaste / Get-Clipboard | gh auth login --with-token
+gh auth status
+```
+
+and delete the file. The token rests in `hosts.yml` under `GH_CONFIG_DIR`
+(`/var/lib/devcontainer-features/gh`, mode 600, in the Feature's volume). That is a bounded interim
+exception to ADR-0048 decision 1 (OpenBao is the master of every token): it ends when
+`openbao-agent-login` mints the token instead. Rotate it by logging in again before the expiry.
+
+What it does not do: the token acts as you. If you are a repository admin and the branch ruleset
+lets admins bypass through a pull request, the token can merge an unapproved pull request too; the
+ruleset and the narrow permissions stop it changing rules, releasing or deleting tags, not merging.
+
 ## Pairs with
 
 - `ghcr.io/devcontainers/features/github-cli` for the apt-installed gh.

@@ -458,6 +458,6 @@ tasks:
       - git config --get core.hooksPath
 
   repo:govern:
-    desc: 'Apply the GitHub governance settings (security features, squash-only merges, Actions allowlist, release environment, protect-main ruleset) with gh - see .github/scripts/Set-RepoGovernance.ps1. Idempotent; needs gh logged in as a repo admin.'
+    desc: 'Apply the GitHub governance settings (security features, squash-only merges, Actions allowlist, release environment with a required reviewer, protect-main and protect-release-tags rulesets) with gh - see .github/scripts/Set-RepoGovernance.ps1. Idempotent; needs gh logged in as a repo admin.'
     cmds:
       - pwsh -NoLogo -NoProfile -File '{{.ROOT_DIR}}/.github/scripts/Set-RepoGovernance.ps1'
