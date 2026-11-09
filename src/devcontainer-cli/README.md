@@ -177,6 +177,24 @@ from a host, use the `devcontainer:*` tasks (next section).
   path on the host than inside the container cannot be resolved.
 - The CLI's own dependencies are resolved by npm at build time and are not
   locked here, so supply-chain trust in them is npm's, not this Feature's.
+- The launcher's `exec` into the container (the OpenBao unlock and key-file
+  tasks) runs as the remote user from the container's `devcontainer.metadata`
+  label, and `devcontainer up` writes that label with devcontainer.json's text
+  unresolved: `"remoteUser": "${localEnv:DEVCONTAINER_USER:host}"` stays
+  literal there. Since 1.22.1 the launcher resolves `${localEnv:...}` itself
+  (from its environment, else the default after the colon) and falls back to
+  the container's own user for any other `${...}`. Before 1.22.1 the `exec`
+  failed with "unable to find user ${localEnv:...}", reported as "no
+  openbao-setup that knows the OpenBao key file", and the unlock after `up`
+  failed silently. On 1.22.0 or earlier, refresh the bootstrap, or make
+  `remoteUser` a literal.
+- `openbao: could not ask the container for OpenBao's unlock status: docker
+  exec as user 'X' failed (exit N): ...`: the engine refused the `exec`, so
+  OpenBao itself never answered. Check that user X exists in the container
+  (`docker exec -u X <id> id`). Run the launcher through `task`: its `dotenv:`
+  loads `.devcontainer/.env`, while run directly it does not, and a
+  `${localEnv:NAME:default}` falls back to its default even when `.env` sets
+  NAME.
 
 ## Host-side counterpart
 
