@@ -8,6 +8,17 @@ here; `task lint` fails when the entry is missing.
 
 Entries from 1.0.0 to 1.18.1 were generated from the commit history (`.github/scripts/changelog.py backfill`) and the "Changes in x.y.z" sections that NOTES.md used to hold; most list commit subjects as written then; the newest of them is in wording for users.
 
+## [1.22.1] - 2026-11-09
+
+### Fixed
+
+- **The OpenBao key file works with a variable remote user (Windows launcher)**: with `"remoteUser": "${localEnv:NAME:default}"` in devcontainer.json, `task dc:openbao:unlock` and `task dc:openbao:keyfile:create` said "this devcontainer has no openbao-setup that knows the OpenBao key file" (create exited 4) and the unlock after `up` did nothing, because the launcher ran `docker exec -u '${localEnv:NAME:default}'` with the text as written. The launcher now resolves `${localEnv:NAME}` and `${localEnv:NAME:default}` as the devcontainers CLI does at `up` (the launcher's environment, which under `task` includes the `.env` files, else the default); any other `${...}` falls back to the container's own user, never reaching `-u`.
+- When asking the container for OpenBao's unlock status fails for another reason than a missing or older `openbao-setup`, the launcher now says so in one line, with the exit code and the error's first line (for example `docker exec as user 'X' failed (exit 1): unable to find user X: no matching entries in passwd file`), on `task dc:openbao:unlock`, on `keyfile:create`/`rotate` (exit 1) and after `up`, instead of the misleading "no openbao-setup" or silence.
+
+### Changed
+
+- **Act:** none beyond the next bootstrap refresh (re-run the bootstrap to vendor the new launcher); no rebuild.
+
 ## [1.22.0] - 2026-11-06
 
 ### Added

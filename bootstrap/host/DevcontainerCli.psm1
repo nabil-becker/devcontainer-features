@@ -2305,20 +2305,57 @@ function Get-OpenBaoAgentJobVariable {
     return ''
 }
 
+function Resolve-DevcontainerLocalEnv {
+    <#
+    .SYNOPSIS
+        A devcontainer.json value with each ${localEnv:NAME} and ${localEnv:NAME:default} (and the
+        older ${env:...}) replaced as the devcontainers CLI does at up: NAME from this process's
+        environment, else the default (the part after NAME's colon, up to the next one), else empty.
+        Any other ${...} is left as it is. `devcontainer up` writes the devcontainer.metadata label
+        unresolved, so a value read from it needs this before it reaches the engine.
+    #>
+    [CmdletBinding()]
+    param([string]$Text)
+    if (-not $Text) { return '' }
+    return [regex]::Replace($Text, '\$\{(?:localEnv|env):([^}]*)\}', {
+            param($m)
+            $parts = $m.Groups[1].Value -split ':'
+            $value = if ($parts[0]) { [Environment]::GetEnvironmentVariable($parts[0]) } else { $null }
+            if ($null -ne $value) { return $value }
+            if ($parts.Count -gt 1) { return $parts[1] }
+            return ''
+        })
+}
+
 function Get-DevcontainerRemoteUser {
-    <# .SYNOPSIS The container's remoteUser (else containerUser) from the devcontainer.metadata label `devcontainer up` sets; empty when the engine does not say. #>
+    <#
+    .SYNOPSIS
+        The user to run `<engine> exec -u` as: the container's remoteUser (else containerUser) from the
+        devcontainer.metadata label `devcontainer up` sets, its ${localEnv:...} resolved here
+        (Resolve-DevcontainerLocalEnv), since the label keeps devcontainer.json's text as written. A
+        value that still holds a ${...} (one only the CLI knows) or resolves empty gives way to the
+        container's own user (Config.User, the user `exec` runs as without -u); empty when the engine
+        does not say, so -u is left out. Never returns a value containing "${".
+    #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Engine, [Parameter(Mandatory)][string]$ContainerId)
     try {
         $text = (& $Engine inspect $ContainerId 2>$null) -join "`n"
         if ($LASTEXITCODE -ne 0 -or -not $text) { return '' }
-        $label = @($text | ConvertFrom-Json)[0].Config.Labels.'devcontainer.metadata'
-        if (-not $label) { return '' }
-        $meta = @($label | ConvertFrom-Json | ForEach-Object { $_ })
-        $user = ''
-        foreach ($m in $meta) { if ($m.remoteUser) { $user = [string]$m.remoteUser } }
-        if (-not $user) { foreach ($m in $meta) { if ($m.containerUser) { $user = [string]$m.containerUser } } }
-        return $user
+        $config = @($text | ConvertFrom-Json)[0].Config
+        $label = $config.Labels.'devcontainer.metadata'
+        $meta = if ($label) { @($label | ConvertFrom-Json | ForEach-Object { $_ }) } else { @() }
+        $remote = ''; $container = ''
+        foreach ($m in $meta) {
+            if ($m.remoteUser) { $remote = [string]$m.remoteUser }
+            if ($m.containerUser) { $container = [string]$m.containerUser }
+        }
+        foreach ($candidate in @($remote, $container, [string]$config.User)) {
+            $user = (Resolve-DevcontainerLocalEnv -Text $candidate).Trim()
+            if ($user -and -not $user.Contains('${')) { return $user }
+            if ($candidate) { Write-Verbose "the container user '$candidate' does not resolve here; trying the next" }
+        }
+        return ''
     }
     catch { return '' }
 }
@@ -2398,12 +2435,47 @@ function Get-OpenBaoContainer {
     return [pscustomobject]@{ Engine = $engine; Id = $ids[0]; User = (Get-DevcontainerRemoteUser -Engine $engine -ContainerId $ids[0]) }
 }
 
-function Get-OpenBaoUnlockStatus {
-    <# .SYNOPSIS openbao-setup unlock --status in the container: the JSON object, or $null when there is no openbao-setup that knows it (silently). #>
+function Get-OpenBaoExecFailure {
+    <#
+    .SYNOPSIS
+        Why `openbao-setup unlock --status` could not be asked, in one line, or empty when its answer
+        only means "no openbao-setup that knows the key file here": exit 0, 4 (not applicable), 2 (an
+        older openbao-setup's usage), or no /usr/local/bin/openbao-setup (the engine names that path
+        with "not found" or "no such file or directory", or exits 126 or 127 saying nothing). Anything
+        else is the engine or the command failing, for example `exec -u` with a user the container does
+        not have: the exit code and stderr's first line (never stdout, which may hold secrets).
+    #>
     [CmdletBinding()]
-    param([Parameter(Mandatory)]$Container)
+    param([Parameter(Mandatory)]$Result, [Parameter(Mandatory)]$Container)
+    $err = "$($Result.Err)"
+    if ($Result.Code -in 0, 2, 4) { return '' }
+    if (($Result.Code -in @(126, 127)) -and -not $err.Trim()) { return '' }
+    if ($err.Contains($script:OpenBaoSetupPath) -and $err -match 'not found|no such file or directory') { return '' }
+    $first = @($err -split "`r?`n" | Where-Object { $_.Trim() }) | Select-Object -First 1
+    $first = "$first".Trim() -replace '^Error response from daemon:\s*', ''
+    $engine = [IO.Path]::GetFileNameWithoutExtension([string]$Container.Engine)
+    if (-not $engine) { $engine = 'docker' }
+    $who = if ($Container.User) { "as user '$($Container.User)'" } else { 'as the container''s default user' }
+    $line = "$engine exec $who failed (exit $($Result.Code))"
+    if ($first) { $line += ": $first" }
+    return $line
+}
+
+function Get-OpenBaoUnlockStatus {
+    <#
+    .SYNOPSIS
+        openbao-setup unlock --status in the container: the JSON object, or $null when there is no
+        answer. $null is silent when there is no openbao-setup that knows it; when the call itself
+        failed (Get-OpenBaoExecFailure), -Failure, if given, receives the one-line reason.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$Container, [ref]$Failure)
+    if ($Failure) { $Failure.Value = '' }
     $r = Invoke-OpenBaoSetup -Engine $Container.Engine -ContainerId $Container.Id -User $Container.User -Arguments @('unlock', '--status')
-    if ($r.Code -ne 0) { return $null }
+    if ($r.Code -ne 0) {
+        if ($Failure) { $Failure.Value = Get-OpenBaoExecFailure -Result $r -Container $Container }
+        return $null
+    }
     $s = ConvertFrom-OpenBaoSetupOutput -Text $r.Out
     if (-not $s -or -not $s.mode) { return $null }
     return $s
@@ -2428,7 +2500,8 @@ function Invoke-OpenBaoUnlock {
         `openbao-setup unlock --status`; when mode is keyfile and the server is not ready, opens this
         server's OpenBao key file and streams it into `openbao-setup unlock --stdin`; prints one line.
         Silent when mode is off or operator, when the status says ready, and when the container has no
-        openbao-setup that answers (a repository without the Feature, or an older one). Never throws.
+        openbao-setup that answers (a repository without the Feature, or an older one); one line, also
+        after `up`, when asking failed for another reason (Get-OpenBaoExecFailure). Never throws.
         Returns 0 (done, or nothing to do) or 1 (could not unlock); after `up` the code is ignored.
     #>
     [CmdletBinding()]
@@ -2440,11 +2513,17 @@ function Invoke-OpenBaoUnlock {
             if ($Explicit) { Write-OpenBaoLine -Problem "No running devcontainer for $folder. Start it with: task dc:start (which unlocks OpenBao itself)." }
             return [int]$Explicit.IsPresent
         }
-        $s = Get-OpenBaoUnlockStatus -Container $c
+        $why = ''
+        $s = Get-OpenBaoUnlockStatus -Container $c -Failure ([ref]$why)
     }
     catch {
         if ($Explicit) { Write-OpenBaoLine -Problem "could not ask the container: $($_.Exception.Message)" }
         return [int]$Explicit.IsPresent
+    }
+    if (-not $s -and $why) {
+        # Not "no openbao-setup here" but the call failing: one line, after up too, so it is not silent.
+        Write-OpenBaoLine -Problem "could not ask the container for OpenBao's unlock status: $why."
+        return 1
     }
     if (-not $s) {
         if ($Explicit) { Write-OpenBaoLine -Problem 'this devcontainer has no openbao-setup that knows the OpenBao key file (the openbao Feature 1.5.0 or later, in server mode).' }
@@ -2539,7 +2618,9 @@ function Invoke-OpenBaoKeyFileMake {
     $folder = (Resolve-Path -LiteralPath $WorkspaceFolder).Path
     $c = Get-OpenBaoContainer -WorkspaceFolder $folder -DockerPath $DockerPath
     if (-not $c) { Write-OpenBaoLine -Problem "No running devcontainer for $folder. Start it with: task dc:start"; return 1 }
-    $s = Get-OpenBaoUnlockStatus -Container $c
+    $why = ''
+    $s = Get-OpenBaoUnlockStatus -Container $c -Failure ([ref]$why)
+    if (-not $s -and $why) { Write-OpenBaoLine -Problem "could not ask the container for OpenBao's unlock status: $why."; return 1 }
     if (-not $s) { Write-OpenBaoLine -Problem 'this devcontainer has no openbao-setup that knows the OpenBao key file (the openbao Feature 1.5.0 or later, in server mode).'; return 4 }
     if ($s.mode -ne 'keyfile') { Write-OpenBaoLine -Problem "the openbao Feature here is set to unlock: $($s.mode); set its option unlock: keyfile (or OPENBAO_SETUP_UNLOCK=keyfile) and rebuild first."; return 4 }
     $repo = Get-OpenBaoRepoName -WorkspaceFolder $folder
@@ -2959,4 +3040,4 @@ function Invoke-DevcontainerCli {
     exit $rc
 }
 
-Export-ModuleMember -Function Get-HostTypeId, Get-DefaultHostTypePriority, Resolve-HostType, Resolve-SshAgent, Resolve-HostProfile, Initialize-HostEnvironment, Test-FuseRequested, Get-FuseRefusal, Get-FuseRunArgument, Get-FuseSlotMissing, Write-FuseSlotWarning, Write-FuseRefusedWarning, Get-AudioRequest, Get-AudioRefusal, Invoke-WslSh, Invoke-WslgBind, Initialize-HostAudio, ConvertTo-AudioSecond, Format-AudioDuration, Invoke-HostAudio, ConvertTo-MachineName, Get-HostMachineName, Test-MachineSlotMissing, Write-MachineSlotWarning, Get-DevcontainerConfigFile, Get-HostMount, Test-CloudFolderMount, ConvertTo-MountArgument, ConvertTo-JsonWithoutComment, Get-ConfiguredMountTarget, Test-HostMountsEnabled, Resolve-HostMount, Initialize-HostMountSource, Get-HostMountArgument, Show-HostProfile, Import-SshKey, Import-OpenBaoSshKey, Clear-HostProfileCache, Get-SettingOrEnv, ConvertFrom-TaskCliArgString, Get-PortableNodeDir, Invoke-DcfDownload, Get-DevcontainersCliEntrypoint, Remove-DevcontainersCli, Resolve-DockerPath, Get-WorkspaceFolderVariant, Get-RunningDevcontainerId, Stop-Devcontainer, Test-BuildSubcommand, Get-BuildLockStateDir, Get-BuildLockLabel, Get-BuildLockWaitMessage, Get-EngineBuildxVersion, Get-BuildLockSkipReason, Enter-DevcontainerBuildLock, Exit-DevcontainerBuildLock, Test-EngineSubcommand, Get-ContainerEngineCheck, Test-ContainerEngineResponding, Get-ContainerEngineError, Get-ContainerEngineStartHint, Wait-ContainerEngine, Write-ContainerEngineDiagnosis, Get-DevcontainerCliInvocation, Invoke-DevcontainerCliProcess, Get-LauncherCacheRoot, Get-CloudFolderRcloneVersion, Get-WorkstationRclone, Open-Browser, Invoke-CloudFolderRelayRequest, Invoke-CloudFolderLoginRelay, Invoke-CloudFolderLogin, Get-OpenBaoKeyFileDir, Get-OpenBaoRepoName, Get-OpenBaoKeyFilePath, Find-OpenBaoKeyFile, Protect-OpenBaoKeyFileBlob, Unprotect-OpenBaoKeyFileBlob, Save-OpenBaoKeyFile, Read-OpenBaoKeyFile, ConvertTo-OpenBaoKeyFileJson, Get-OpenBaoAgentJobVariable, Get-DevcontainerRemoteUser, Invoke-OpenBaoSetup, ConvertFrom-OpenBaoSetupOutput, Get-OpenBaoUnlockStatus, Invoke-OpenBaoUnlock, Invoke-OpenBaoKeyFileMake, Export-OpenBaoKeyFile, Import-OpenBaoKeyFile, Remove-OpenBaoKeyFile, Invoke-OpenBaoKeyFileTask, Invoke-DevcontainerCli
+Export-ModuleMember -Function Get-HostTypeId, Get-DefaultHostTypePriority, Resolve-HostType, Resolve-SshAgent, Resolve-HostProfile, Initialize-HostEnvironment, Test-FuseRequested, Get-FuseRefusal, Get-FuseRunArgument, Get-FuseSlotMissing, Write-FuseSlotWarning, Write-FuseRefusedWarning, Get-AudioRequest, Get-AudioRefusal, Invoke-WslSh, Invoke-WslgBind, Initialize-HostAudio, ConvertTo-AudioSecond, Format-AudioDuration, Invoke-HostAudio, ConvertTo-MachineName, Get-HostMachineName, Test-MachineSlotMissing, Write-MachineSlotWarning, Get-DevcontainerConfigFile, Get-HostMount, Test-CloudFolderMount, ConvertTo-MountArgument, ConvertTo-JsonWithoutComment, Get-ConfiguredMountTarget, Test-HostMountsEnabled, Resolve-HostMount, Initialize-HostMountSource, Get-HostMountArgument, Show-HostProfile, Import-SshKey, Import-OpenBaoSshKey, Clear-HostProfileCache, Get-SettingOrEnv, ConvertFrom-TaskCliArgString, Get-PortableNodeDir, Invoke-DcfDownload, Get-DevcontainersCliEntrypoint, Remove-DevcontainersCli, Resolve-DockerPath, Get-WorkspaceFolderVariant, Get-RunningDevcontainerId, Stop-Devcontainer, Test-BuildSubcommand, Get-BuildLockStateDir, Get-BuildLockLabel, Get-BuildLockWaitMessage, Get-EngineBuildxVersion, Get-BuildLockSkipReason, Enter-DevcontainerBuildLock, Exit-DevcontainerBuildLock, Test-EngineSubcommand, Get-ContainerEngineCheck, Test-ContainerEngineResponding, Get-ContainerEngineError, Get-ContainerEngineStartHint, Wait-ContainerEngine, Write-ContainerEngineDiagnosis, Get-DevcontainerCliInvocation, Invoke-DevcontainerCliProcess, Get-LauncherCacheRoot, Get-CloudFolderRcloneVersion, Get-WorkstationRclone, Open-Browser, Invoke-CloudFolderRelayRequest, Invoke-CloudFolderLoginRelay, Invoke-CloudFolderLogin, Get-OpenBaoKeyFileDir, Get-OpenBaoRepoName, Get-OpenBaoKeyFilePath, Find-OpenBaoKeyFile, Protect-OpenBaoKeyFileBlob, Unprotect-OpenBaoKeyFileBlob, Save-OpenBaoKeyFile, Read-OpenBaoKeyFile, ConvertTo-OpenBaoKeyFileJson, Get-OpenBaoAgentJobVariable, Resolve-DevcontainerLocalEnv, Get-DevcontainerRemoteUser, Invoke-OpenBaoSetup, ConvertFrom-OpenBaoSetupOutput, Get-OpenBaoUnlockStatus, Invoke-OpenBaoUnlock, Invoke-OpenBaoKeyFileMake, Export-OpenBaoKeyFile, Import-OpenBaoKeyFile, Remove-OpenBaoKeyFile, Invoke-OpenBaoKeyFileTask, Invoke-DevcontainerCli
