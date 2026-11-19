@@ -1,11 +1,11 @@
 ## How it fits
 
 ```text
-  host: task devcontainer:claude --> container: claude (native binary)
-                                          |        |
-   agents Feature <-- agent-adapter-claude'        |
-   (task agents -- <name>)                         |
-                                                   v
+  host: task devcontainer:agent -- <name> --> container: claude (native binary)
+                                                    |        |
+   participant component <-- agent-adapter-claude --'        |
+   (participants: true, or the deprecated agents Feature;    |
+    task agents -- <name>, agents up at container start)     v
               volume: CLAUDE_CONFIG_DIR  (login, settings, sessions)
               (a repo may bind-mount a host folder on the same target)
 ```
@@ -13,10 +13,46 @@
 | Data | Where it lives | Storage tier |
 | --- | --- | --- |
 | Login, settings, session history, adapter's session list | named volume at `CLAUDE_CONFIG_DIR` (`/var/lib/devcontainer-features/claude-code`); a repo may bind-mount a host folder there | 4 working set |
+| Agent list (with `participants: true`) | `.devcontainer/agents.yml` in the repository | 1 git |
+| Leases and start markers (with `participants: true`) | `/var/lib/devcontainer-features/agents`, not a volume; a lease must not survive a rebuild | 4 working set |
 
 Tiers are the four of ADR 0045: 1 git, 2 shared folder, 3 personal folder, 4 working set (rebuildable only).
 
 Used in: [windows-workstation-devhost](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/reference-architectures/windows-workstation-devhost.md), [agentic-devhost](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/reference-architectures/agentic-devhost.md)
+
+## Participants (`participants`, 1.10.0)
+
+`"participants": true` installs the **participant component**: the agent list
+(`.devcontainer/agents.yml`, or the repo-relative path in `AGENTS_FILE`), the `agents` command, the
+`agents:*` tasks (`task agents -- <name>`, `agents:list`, `agents:up`, `agents:stop`, `agents:logs`,
+`agents:reset`, `agents:leases`, `agents:release`, `agents:check`, `agents:version`), the lease, the
+session names and `agents up` at every container start. It is the code of the
+[`agents`](../agents) Feature 2.1.3, moved unchanged into a shared component (ADR-0061); the
+`agents` Feature is deprecated from 2.2.0 in favour of this option. How each verb, kind and key
+behaves is in the [`agents` notes](../agents), which stay the reference until the component's own
+page exists.
+
+- **One copy.** The component lands in `/usr/local/lib/dcf-participant` (`agents.sh`, the
+  Taskfile, `COMPONENT_VERSION`, `installed-by`), with `/usr/local/bin/agents` a symlink to it and
+  the Taskfile at `/usr/local/share/go-task/includes.d/agents.yml` (when `installTaskfile` is on).
+  Any other Feature that carries the component (the `agents` Feature 2.2.0 does) finds it there
+  and installs nothing of it, unless its own copy is newer, which then replaces it.
+- **At container start** the Feature's `postStartCommand`, `claude-code-post-start`, runs
+  `agents up --post-start` (every resident agent made to run in the background, never fatal). It
+  does nothing when `participants` is off, and leaves the run to the `agents` Feature's own hook
+  when that Feature is also installed.
+- **Session names:** the template is `AGENTS_SESSION_NAME` (the task variable, `.env`,
+  `.devcontainer/.env` or the environment) or an agent's own `session-name` key in the list; the
+  default is the agent's handle. This Feature has no `sessionName` option: the `agents` Feature's
+  option of that name still works while that Feature is installed.
+- **Moving from the `agents` Feature:** set `"participants": true` here and remove the `agents`
+  line. Nothing else changes: the same tasks, the same command, the same `agents.yml` and
+  `AGENTS_FILE`. A `sessionName` option on the `agents` Feature becomes `AGENTS_SESSION_NAME` in the
+  container's environment (`containerEnv`) or in `.devcontainer/.env`. Keeping both Features for a
+  while is fine: one copy is installed, and `task agents:version` and `task agents:check` print one
+  line, `deprecated: use claude-code participants: true`, until the `agents` line goes.
+
+Off (the default), nothing of the component is installed and the post-start hook prints nothing.
 
 ## Deprecated in 1.7.0: claude-host, claude-fleet, claude-host-pin
 

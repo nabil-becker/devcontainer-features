@@ -13,5 +13,8 @@ check "dcf-persist on PATH" command -v dcf-persist
 check "CLAUDE_CONFIG_DIR points at the Feature's state dir" bash -c "[ \"\$CLAUDE_CONFIG_DIR\" = /var/lib/devcontainer-features/claude-code ]"
 check "setup still works without claude" bash -c "claude-code-setup | grep -Eq '^claude-code: /var/lib/devcontainer-features/claude-code \((volume|bind|image), writable\)\$'"
 check "taskfile registered" test -f /usr/local/share/go-task/includes.d/claude-code.yml
+# participants defaults to false: none of the participant component, and the post-start hook is a no-op.
+check "participants off: no component, no agents command, no agents tasks" bash -c "! test -e /usr/local/lib/dcf-participant && ! command -v agents && ! test -e /usr/local/share/go-task/includes.d/agents.yml"
+check "participants off: the post-start hook does nothing, silently" bash -c "[ -z \"\$(claude-code-post-start 2>&1)\" ]"
 
 reportResults

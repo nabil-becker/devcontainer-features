@@ -3,7 +3,8 @@
 # pieces that make it part of this collection's ecosystem: agent-adapter-claude (the agents
 # Feature's adapter), the deprecated claude-host launcher and claude-fleet command, the post-create
 # setup of CLAUDE_CONFIG_DIR, and the Feature Taskfile. Feature options arrive as upper-cased environment variables (see
-# devcontainer-feature.json): INSTALL, VERSION, ADDITIONALDIRECTORIES, REMOTECONTROL, INSTALLTASKFILE.
+# devcontainer-feature.json): INSTALL, VERSION, ADDITIONALDIRECTORIES, REMOTECONTROL, PARTICIPANTS,
+# INSTALLTASKFILE.
 #
 # State: devcontainer-feature.json points CLAUDE_CONFIG_DIR at
 # /var/lib/devcontainer-features/claude-code and mounts a named volume there,
@@ -176,6 +177,21 @@ if [ "${REMOTECONTROL:-false}" = "true" ]; then
   echo 1 > /usr/local/share/claude-code/remote-control
 else
   rm -f /usr/local/share/claude-code/remote-control
+fi
+
+# ---------------------------------------------------------- participants ----
+# The participants option (1.10.0) installs the participant component (the agents command, the
+# agents: tasks, the run half; components/participant, vendored in participant/) into
+# /usr/local/lib/dcf-participant, once: when the deprecated agents Feature or another Feature put
+# the same or a newer copy there, nothing is copied. The marker tells the post-start hook
+# (claude-code-post-start) to run `agents up --post-start`.
+install -m 0755 "$feature_dir/claude-code-post-start.sh" /usr/local/bin/claude-code-post-start
+if [ "${PARTICIPANTS:-false}" = "true" ]; then
+  bash "$feature_dir/participant/install-participant.sh" --by claude-code --taskfile "${INSTALLTASKFILE:-true}"
+  : > /usr/local/share/claude-code/participants
+  chmod 0644 /usr/local/share/claude-code/participants
+else
+  rm -f /usr/local/share/claude-code/participants
 fi
 
 # ---------------------------------------------------- Feature Taskfile ----

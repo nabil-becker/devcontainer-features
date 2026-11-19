@@ -1,8 +1,8 @@
 {
   "id": "claude-code",
-  "version": "1.9.9",
+  "version": "1.10.0",
   "name": "Claude Code",
-  "description": "Claude Code (https://code.claude.com/docs) as a member of this collection's ecosystem: installs the sha256-verified native release binary at /usr/local/bin/claude (no Node.js, version pinnable) unless a claude is already in the image - e.g. from the official ghcr.io/anthropics/devcontainer-features/claude-code, which is then augmented instead of replaced - and adds agent-adapter-claude (Claude Code's adapter for the agents Feature: task agents -- <name> finds a session by its name and folder and acts on it by id), the deprecated claude-host launcher, claude-fleet command and claude-host-pin hook (still working, each printing one deprecation line; claude-code 2.0 removes them), a named volume mounted at CLAUDE_CONFIG_DIR (/var/lib/devcontainer-features/claude-code) so login and sessions survive rebuilds, a post-create hook that makes that directory usable by the remote user, and the Feature Taskfile. The in-app auto-updater is off; a rebuild updates.",
+  "description": "Claude Code (https://code.claude.com/docs) as a member of this collection's ecosystem: installs the sha256-verified native release binary at /usr/local/bin/claude (no Node.js, version pinnable) unless a claude is already in the image - e.g. from the official ghcr.io/anthropics/devcontainer-features/claude-code, which is then augmented instead of replaced - and adds agent-adapter-claude (Claude Code's adapter for the agent list: task agents -- <name> finds a session by its name and folder and acts on it by id), with participants: true the participant component (the agent list, the agents command and the agents:* tasks that the deprecated agents Feature installed, one shared copy in /usr/local/lib/dcf-participant; residents started at each container start), the deprecated claude-host launcher, claude-fleet command and claude-host-pin hook (still working, each printing one deprecation line; claude-code 2.0 removes them), a named volume mounted at CLAUDE_CONFIG_DIR (/var/lib/devcontainer-features/claude-code) so login and sessions survive rebuilds, a post-create hook that makes that directory usable by the remote user, and the Feature Taskfile. The in-app auto-updater is off; a rebuild updates.",
   "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/claude-code",
   "licenseURL": "https://github.com/nabil-becker/devcontainer-features/blob/main/LICENSE",
   "options": {
@@ -31,6 +31,11 @@
       "default": false,
       "description": "Start every Claude agent the agents Feature runs with Remote Control on (--remote-control), so agents.yml need not repeat it in each agent's args. Applied by agent-adapter-claude to the sessions it starts or wakes, unless an agent's args already have --remote-control or --no-remote-control (the adapter's own per-agent opt-out). Per run: AGENT_ADAPTER_CLAUDE_REMOTE_CONTROL=0 or 1."
     },
+    "participants": {
+      "type": "boolean",
+      "default": false,
+      "description": "Install the participant component: the agent list (.devcontainer/agents.yml, or AGENTS_FILE), the agents command, the agents:* tasks (task agents -- <name>, agents:list, agents:up, ...) and `agents up` at every container start, which the agents Feature installed until it was deprecated (agents 2.2.0). One copy in /usr/local/lib/dcf-participant, shared with any other Feature that installs it (the agents Feature included). The session name template is AGENTS_SESSION_NAME (.env or the environment) or each agent's session-name key; the default is the handle. false: nothing of it is installed."
+    },
     "version": {
       "type": "string",
       "default": "stable",
@@ -49,6 +54,7 @@
     }
   ],
   "postCreateCommand": "claude-code-setup",
+  "postStartCommand": "claude-code-post-start",
   "customizations": {
     "vscode": {
       "extensions": [
