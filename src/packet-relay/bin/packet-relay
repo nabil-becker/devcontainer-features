@@ -1,0 +1,12 @@
+#!/usr/bin/env -S python3 -I
+"""The packet-relay command; the library sits in ../lib/packet-relay beside this file's folder, with
+this Feature's own copy of sign-packet's library in it. Isolated (-I): no PYTHONPATH and no user site, so nothing in
+the caller's environment can stand in for the code that runs the guards."""
+import sys
+from pathlib import Path
+
+lib = Path(__file__).resolve().parents[1] / "lib"
+sys.path[:0] = [str(lib / "packet-relay")]
+from packetrelay.cli import main  # noqa: E402
+
+sys.exit(main(sys.argv[1:]))

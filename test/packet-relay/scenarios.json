@@ -1,0 +1,33 @@
+{
+  "two_parties": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "go-task": {},
+      "packet-relay": {
+        "root": "/tmp/relay"
+      }
+    },
+    "remoteUser": "vscode"
+  },
+  "with_guard": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "packet-relay": {
+        "root": "/tmp/relay",
+        "guard": "/bin/grep -qv forbidden",
+        "ingressGuard": "/bin/grep -qv forbidden",
+        "guardTimeout": "20"
+      }
+    },
+    "remoteUser": "vscode"
+  },
+  "no_taskfile": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "packet-relay": {
+        "installTaskfile": false
+      }
+    },
+    "remoteUser": "vscode"
+  }
+}

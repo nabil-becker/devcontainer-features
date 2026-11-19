@@ -27,7 +27,8 @@
       "phi-check": {},
       "audio": {},
       "sign-packet": {},
-      "register-engine": {}
+      "register-engine": {},
+      "packet-relay": {}
     },
     "remoteUser": "vscode"
   }
