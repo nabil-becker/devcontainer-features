@@ -36,6 +36,7 @@ check "phi-check" bash -c "phi-check --version | grep -E '^phi-check [0-9]'"
 check "audio-check" command -v audio-check
 check "rec" command -v rec
 check "sign-packet" bash -c "sign-packet version | grep -E '^sign-packet [0-9]'"
+check "register-engine" bash -c "register-engine version | grep -E '^register-engine [0-9]'"
 check "packet-relay" bash -c "packet-relay version | grep -E '^packet-relay [0-9]'"
 check "dcf-persist" command -v dcf-persist
 check "node not leaked onto PATH" bash -c "! command -v node"
@@ -61,8 +62,8 @@ check "ssh-agent key volume present" test -d /var/lib/devcontainer-features/ssh-
 
 registry=/usr/local/share/go-task/features.yml
 # shellcheck disable=SC2016  # expansion is meant to happen inside the inner bash
-check "registry lists every Feature" bash -c 'for f in common go-task claude-code agents devcontainer-cli coder-cli openbao velero kustomize kubeconform argocd dsc git gh ssh-agent cloud-folder az kube-state phi-check audio sign-packet packet-relay; do grep -q "^  $f:" /usr/local/share/go-task/features.yml || { echo "missing $f"; exit 1; }; done'
-check "feature tasks resolve through the registry" bash -c "task -t $registry --list-all | grep -c -E '^\\* (dsc:get|velero:backups|kustomize:build:all|argocd:apps|openbao:status|coder-cli:workspaces|claude-code:host|agents:list|devcontainer-cli:version|kubeconform:validate:kustomize|go-task:registered|git:setup|gh:status|ssh-agent:check|cloud-folder:status|az:account|kube-state:contexts|phi-check:check|audio:check|common:persist|sign-packet:check|packet-relay:status):' | grep -qx 22"
+check "registry lists every Feature" bash -c 'for f in common go-task claude-code agents devcontainer-cli coder-cli openbao velero kustomize kubeconform argocd dsc git gh ssh-agent cloud-folder az kube-state phi-check audio sign-packet register-engine packet-relay; do grep -q "^  $f:" /usr/local/share/go-task/features.yml || { echo "missing $f"; exit 1; }; done'
+check "feature tasks resolve through the registry" bash -c "task -t $registry --list-all | grep -c -E '^\\* (dsc:get|velero:backups|kustomize:build:all|argocd:apps|openbao:status|coder-cli:workspaces|claude-code:host|agents:list|devcontainer-cli:version|kubeconform:validate:kustomize|go-task:registered|git:setup|gh:status|ssh-agent:check|cloud-folder:status|az:account|kube-state:contexts|phi-check:check|audio:check|common:persist|sign-packet:check|register-engine:types|packet-relay:status):' | grep -qx 23"
 check "feature task runs" task -t "$registry" dsc:version
 check "registered list task" bash -c "task -t $registry go-task:registered | grep -qx dsc"
 

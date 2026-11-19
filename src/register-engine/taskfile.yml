@@ -1,0 +1,29 @@
+# Tasks contributed by the register-engine Feature (namespace: register-engine). Each runs the
+# register-engine command (AOF's tooling REQUIREMENTS.md, R6). Extra arguments after --.
+version: '3'
+
+tasks:
+  version:
+    desc: 'Show what is installed: the register-engine version, the format version, sign-packet, Python, and where the library and the types folder are.'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['register-engine version {{.CLI_ARGS}}']
+
+  setup:
+    desc: 'Nothing to prepare: the engine keeps no state of its own (each capability Feature keeps its own). Idempotent, never fatal.'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['register-engine setup']
+
+  check:
+    desc: 'Say in one line per part what is ready (Python 3.11, ssh-keygen, sign-packet 0.5.1, the types folder) and exit non-zero when not ready.'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['register-engine check {{.CLI_ARGS}}']
+
+  types:
+    desc: 'The register types installed, and which capability Feature gave each.'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['register-engine types {{.CLI_ARGS}}']
+
+  verify:
+    desc: 'Check every entry of one store as one register: -- <store folder> --register <name> [--type <type>] [--anchors <file>]. Exit 1 on a refusal, a held entry or an unruled fork.'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['register-engine verify {{.CLI_ARGS}}']

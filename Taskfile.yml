@@ -133,6 +133,7 @@ tasks:
       - task: test:phi-check-unit
       - task: test:audio-unit
       - task: test:sign-packet-unit
+      - task: test:register-engine-unit
       - task: test:packet-relay-unit
       - task: test:claude-fleet-task
       - task: test:agent-task
@@ -164,6 +165,10 @@ tasks:
     desc: 'Docker-free tests of the sign-packet Feature (src/sign-packet): the packet format, its checks and order, forks and the vouched-absent rule, guards, the command (test_packet.py), the instance id from the environment, OpenBao or made here and recorded once (test_instance.py), and install.sh into a throwaway root with DESTDIR (test_feature.py); part of lint. Needs python3 and ssh-keygen.'
     cmds:
       - for t in test/sign-packet/unit/test_*.py; do echo "== $t"; python3 -I "$t" || exit 1; done
+  test:register-engine-unit:
+    desc: 'Docker-free tests of the register-engine Feature (src/register-engine): the engine with a ledger-like type given through the types folder (reading, refusals, forks, prunes, sync, the index, the change feed) and the types folder''s ownership rules (test_engine.py), format v3 and the 0.2.0 security review''s findings (test_v3.py), and install.sh into a throwaway root with DESTDIR, alone with its own copy of sign-packet''s library (test_feature.py); part of lint. Needs python3 and ssh-keygen.'
+    cmds:
+      - for t in test/register-engine/unit/test_*.py; do echo "== $t"; python3 -I "$t" || exit 1; done
   test:packet-relay-unit:
     desc: 'Docker-free tests of the packet-relay Feature (src/packet-relay): two parties, three, a party away, a lossy folder, a slow partial sync between two machines'' copies, forged and misplaced files, a fork, a gap lost for good and its skip, a lost state, a folder without hard links, the guards on egress and ingress and the command (test_relay.py), and install.sh into a throwaway root with DESTDIR, alone with its own copy of sign-packet''s library, the guard options baked and refused when unusable (test_feature.py); part of lint. Needs python3 and ssh-keygen.'
     cmds:
