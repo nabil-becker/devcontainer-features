@@ -64,6 +64,10 @@ S="$T/state"; L="$S/leases"
 export FAKE_SESSIONS="$T/sessions" FAKE_CALLS="$T/calls" AGENTS_STATE_DIR="$S" AGENTS_START_ID=start-1
 export AGENTS_SETTLE_INTERVAL=0 AGENTS_SETTLE_TIMEOUT=0 AGENTS_LEASE_WAIT=20
 unset AGENTS_FILE AGENTS_FILE_TASK_VAR AGENTS_TTY CLAUDE_CODE_CHILD_SESSION
+# The session name template of the machine running the test (an installed agents Feature's
+# sessionName option, AGENTS_SESSION_NAME) adds a NAME column to the listings checked below.
+export AGENTS_SHARE_DIR="$T/share"
+unset AGENTS_SESSION_NAME AGENTS_SESSION_NAME_TASK_VAR DCF_HOST_MACHINE
 write_list() { cat > "$repo/.devcontainer/agents.yml"; }
 reset() { : > "$T/sessions"; : > "$T/calls"; rm -rf "$S" "$T/out"; mkdir -p "$T/out"; unset FAKE_UNSUPPORTED FAKE_LIST_ERR FAKE_SLOW FAKE_WAKE_NEW; }
 run() { (cd "$repo" && PATH="$bin:$PATH" agents "$@" 2>&1); }
