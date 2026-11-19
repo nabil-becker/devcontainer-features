@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | accepted |
+| **Status** | proposed |
 | **Date** | 2026-11-19 |
 | **Deciders** | the Operator; proposed by the host |
 
@@ -76,3 +76,4 @@ registry shaped like the Windows Registry, without being it:
 |---|---|
 | 2026-11-19 | First draft as "layered skills keep files at the core and any backend plugs in through a layer source adapter" (numbered 0061, then 0062, while other ADRs landed first). |
 | 2026-11-19 | Rewritten for the decided model: the component registry, layers of any number and source, merge by value type, patterns, `ref`; accepted by the Operator in the session. |
+| 2026-11-19 | Back to proposed by the Operator after the architecture review (fit with changes), until the review's changes land in the proposal. |
