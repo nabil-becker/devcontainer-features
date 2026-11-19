@@ -87,6 +87,8 @@ Existing words kept: **agent**, **handle** (a participant's address), **resident
 | **Facilitator model** | The LLM the application uses to decide and summarise: a local OpenAI-compatible endpoint, a one-turn vendor command run with the engineer's token, or an attached participant. Pluggable (4.3). |
 | **Packet** | One signed message: a register entry with its signature (4.6, 4.7). The Operator's word; the register calls it an entry. |
 | **Directory** | The set of agent records (OASF) the participants registered; where the planner reads skills from (4.8). |
+| **Backend** | The one setting that says what carries directory, delivery and records: `agntcy` (the real AGNTCY Agent Directory and SLIM, the default) or `lean` (the register alone). The modules see one interface either way (4.8). |
+| **Infrastructure** | What the Feature itself starts and owns: the directory and SLIM node in `agntcy` mode, and the facilitator application. Participants are never infrastructure. |
 | **Participant** | A named, running process that takes part: a **handle** (`jester`), a persona (a system prompt or profile it is started with, kept by the harness), an **attachment**, an optional model label shown in the transcript. The engineer at the terminal is a participant too (`you`, kind `human`). |
 | **Harness** | Whatever keeps a participant process running: tmux, a process supervisor, a service, the vendor's own session, the `agents` Feature. Not this Feature's job. |
 | **Attachment** | How a running participant connects to the layer. Primary: **MCP** (tools `receive`, `reply`, `say`, `who`). Fallbacks: the **pump** (a loop that does `receive` and runs a one-turn command), and the **model wrapper** (a pump for an OpenAI-compatible endpoint). |
@@ -211,9 +213,9 @@ attached participant answers as a normal turn, so the facilitator can be a vendo
 already runs). The call is a stateless decision, so it needs no session and no harness; it is the
 application's own use of the CLI, not management of it (NFR-13).
 
-**The application is optional at run time.** `facilitator serve` is one more long-running process,
-and as with every participant **a harness runs it** (the Feature offers it as a command and, off by
-default, a `postStartCommand` option; it supervises nothing). Without it, explicit mentions,
+**The application is optional at run time, and does not have to be running for the deterministic core.** `facilitator serve` is one more long-running process,
+and, unlike a participant, **the Feature runs it**: it is part of the infrastructure of 4.8 (`autostart`
+runs it from `postStartCommand`; a harness may run it instead). Without it, explicit mentions,
 direct conversations, the guard and the signer work, because they run in whoever writes; unaddressed
 group messages then use the fallback in 4.4. This keeps the deterministic core independent of any
 model and testable without one.
@@ -319,28 +321,70 @@ packet claims; the hop count is within the limit; the parent exists and is in th
 or a referenced one; every summary `ref`s packets that exist. It prints the chain, one line a hop,
 and exits 1 on a break (NFR-11 shape). It is a query over the register's index, not a new format.
 
-### 4.8 The directory: AGNTCY-compatible, locally lean
+### 4.8 Backends: the real AGNTCY components, or lean
 
-Agents register an **OASF agent record**; the planner and router read it to know who can do what.
-The register's `agents` type already stores exactly that: an OASF 1.1.0 record (name, version,
-description, authors, skills, domains, locators) plus our own `aof` part, an `active_agents` view,
-and the pure OASF record "ready to publish" (SPEC.md, "The agents type"). Three ways to have a
-directory:
+**The Operator's ruling (2026-11-19): run the real AGNTCY components in the devcontainer, partly
+to learn from them, with a safety hatch to a lean setup for simpler uses.** Where simplicity and
+exercising AGNTCY as designed pull apart, this proposal prefers exercising AGNTCY and names the cost.
 
-| | A. The register's `agents` type | B. AGNTCY's Agent Directory (`dir`) | C. SLIM |
+The facilitator's modules talk to **one backend interface of three parts**, so participant names,
+`@mentions` and signed lineage are the same in both modes:
+
+| Part | Does | `agntcy` mode | `lean` mode |
 |---|---|---|---|
-| What | records in the same store, signed by the agent's key | `dirctl daemon start` (apiserver and reconciler in one process, embedded SQLite, localhost:8888, state under `~/.agntcy/dir/`), or a Docker Compose of apiserver, reconciler, Zot registry and PostgreSQL | a Rust data plane that routes by hierarchical name, MLS end-to-end encryption, a control plane, bindings for Python, Go, .NET, Java, Kotlin |
-| Weight | nothing added | a Go binary or four containers; OCI store, optional DHT routing across a network | a Rust node (cargo build or an image) and a binding in each client |
-| Maturity | ours, vendored from AOF, in use | releases around v1.9.1 on its page, Apache-2.0, OpenSSF badges; the page states no maturity level **(docs read)** | v1.x tags, a changelog, Apache-2.0; the page states no version **(docs read)** |
-| For this ask | enough: same host, same trust root | adds discovery and publishing across machines, which is out of scope today | a transport between machines: out of scope today (networking is a later requirement), and the register is already the local binding |
+| **directory** | register, look up and list agent records (OASF) | the Agent Directory (`dir`) | the register's `agents` type |
+| **transport** | deliver a packet to a participant, block in `receive`, group sessions | SLIM | `inbox/<handle>/` files and a file wait |
+| **record** | the signed, append-only conversation and its verification | **the register**, in both modes | the register |
 
-**Recommended: A now, B as an export, C with the later networking requirement.** `facilitator
-register <handle>` writes the participant's `agent` entry (an OASF record with the handle as author,
-skills from the participant file, the harness's start command left out) and its roster entry in one
-step; `facilitator directory export` prints the pure OASF records, which an engineer can publish to
-a real Agent Directory with its own tools. That keeps AGNTCY's formats (OASF 1.1.0, A2A-shaped
-messages) without running its servers. The participant file (4.1) gains `skills:` and `description:`
-for the record. Whether the Operator wants a real `dir` in the devcontainer is decision D13.
+AGNTCY has no conversation store and signs nothing of ours, so the record is the register's
+signed entries in both modes. That is what makes the hatch cheap: **switching modes loses no
+conversation**, only moves directory and delivery.
+
+**Components, what each needs, and how the Feature gets and starts it** (all from the projects' GitHub
+pages **(docs read)** unless marked; versions are those pages' latest at 2026-11-19 and are pinned
+in the Feature, not floated):
+
+| Component | Used for | Obtained (NFR-3: pinned, checksum-verified) | Runs as | Needs | Maturity, licence |
+|---|---|---|---|---|---|
+| **Agent Directory** `dir`, CLI `dirctl` | OASF records, discovery, record signing and provenance | release binary of v1.9.1; its asset names, checksum file and linux arm64 build are **not listed on the page read and must be confirmed in the spike**; images `dir-apiserver`, `dir-ctl`, `dir-reconciler` existed at v1.8.0 | `dirctl daemon start`: apiserver and reconciler in one process, embedded SQLite, localhost:8888, state under `~/.agntcy/dir/` (the Feature points it at its volume; how, **not checked**) | no Docker (the Compose route, with Zot and PostgreSQL, is not used) | v1.x, no maturity statement; Apache-2.0; OpenSSF badges |
+| **SLIM** node, `slimctl` | the transport: named routing, sessions, group membership, end-to-end MLS | slimctl v3.4.6 tarballs with SHA-256 and `.sigstore.json` signatures per asset; **linux arm64 not visible** on the page read; the node binary or an image to confirm | `slim --config <server config>` as a background process on loopback; auth modes offered: basic auth, JWT, mTLS, SPIFFE; the Feature picks basic auth on loopback with a generated secret kept in OpenBao | none for the node; **clients** (our MCP server instance, `chat`, the wrapper) use the `slim-bindings` Python package, a native wheel (platform wheels **not checked**) | v3.x; Apache-2.0; no maturity statement |
+| **AGNTCY Identity** (issuer CLI, node, badges, DIDs) | verifiable agent badges, bringing an existing ID | the CLI by its install script; the node by `launch_node.sh` | needs **Docker** | Docker-in-Docker, which does not start on every host (`wslc`) | no version or releases on the page; Apache-2.0. **Not default**: opt-in `identity: true`, slice 5 |
+| **Agent Connect Protocol** | a REST interface to invoke a remote agent | not used | n/a | n/a | the repository was **archived 2026-04-11**; A2A, which the register's messages are already shaped as, is what is used instead |
+
+**How the Feature starts them** (infrastructure it owns, the opposite of participants):
+`facilitator infra up|down|status|logs` start the directory daemon and the SLIM node as background
+processes with a pidfile, a log and a health check under `/var/lib/devcontainer-features/facilitator/{dir,slim}`;
+`autostart` (default `true` in `agntcy` mode) runs `infra up` and the application from
+`postStartCommand`, never fatal. Ports bind to loopback only, and a port in use fails `check` with
+the owner's name. The Feature restarts neither on crash; `status` says so, and `up` is idempotent.
+
+**What you learn running it** (a note per component for `NOTES.md`):
+
+- **dir**: what an OASF record is when it is real (a record's identity and digest, skills as a
+  taxonomy), how records are stored (OCI) and signed, what `dirctl` can search; the cost is one more
+  daemon and a records workflow to learn.
+- **SLIM**: addressing by hierarchical name, sessions and group membership, MLS (the group keys
+  change as members join and leave); the cost is a Rust node, a native client library, and a
+  channel model that differs from "write a file".
+- **Identity** (opt-in): how an agent badge binds a key to an OASF record; the cost is Docker.
+- **Both together**: where AGNTCY stops (no conversation store, no limits, no model), which is
+  exactly what the facilitator application adds.
+
+**What is lost in `lean` mode:** AGNTCY's discovery API and any publishing to other directories;
+SLIM's named sessions and its end-to-end encryption (lean delivery is files in the volume, readable
+by the same Linux user); streaming delivery (lean waits on a file); the directory's record signing
+and provenance; readiness for the cross-container requirement. **Kept:** participant names,
+`@mentions`, groups, signed lineage and `facilitator verify`, the OASF records themselves (the
+register stores OASF 1.1.0 and `facilitator directory export` prints the pure records).
+
+**Switching:** `backend` option, or `FACILITATOR_BACKEND=lean` in `.env`, then `facilitator backend
+switch lean|agntcy`: it stops the infrastructure it owns, re-registers each participant's OASF
+record in the other directory (the same record), points the transport at the other mechanism, and
+leaves every conversation as it is. There is **no silent fallback**: if `agntcy` cannot start,
+`check` says why and offers the switch, so nobody believes they run AGNTCY when they do not.
+
+**What could force the hatch** (listed as risks in section 9): components too young or churning,
+resource weight, no linux arm64 build, authentication set-up, a host without Docker for Identity.
 
 ### 4.9 How you talk to it
 
@@ -381,14 +425,13 @@ export is a file the engineer chooses to write.
 
 Installs: the `facilitator` command (the modules of 4.3, an MCP server over stdio, `chat`, `pump`, the
 model wrapper), the Feature Taskfile (NFR-2), `facilitator-setup` (state folders, idempotent,
-never fatal; NFR-5), a state volume `facilitator-state-${devcontainerId}` at
-`/var/lib/devcontainer-features/facilitator` (NFR-1). Nothing downloaded if the command is bash and
-a stdlib interpreter already present, otherwise one runtime requirement (decision D7).
+never fatal; NFR-5), in `agntcy` mode the two AGNTCY binaries (pinned, checksum-verified, NFR-3: `dirVersion`, `slimVersion`) and the `slim-bindings` package (a pinned requirement with hashes), a state volume `facilitator-state-${devcontainerId}` at
+`/var/lib/devcontainer-features/facilitator` (NFR-1). The command needs a Python 3.11 runtime (decision D7); `lean` downloads nothing.
 
 **Must not (NFR-13):** install, update or log in to any vendor CLI; edit their settings files or
 their MCP config (it prints the entry; the engineer or the harness adds it); start, stop, restart
-or resume any participant; run a supervisor; open a network port (stdio and files only); keep a
-credential. The vendor CLIs come from their own Features or the engineer.
+or resume any participant; run a supervisor **for participants** (only for its own infrastructure, 4.8); open a network port beyond the loopback ports of its own
+infrastructure; keep a vendor credential. The vendor CLIs come from their own Features or the engineer.
 
 | Option | Default | What |
 |---|---|---|
@@ -399,14 +442,17 @@ credential. The vendor CLIs come from their own Features or the engineer.
 | `staleSeconds` | `900` | after which a participant counts as not attached |
 | `facilitatorBudget` | `20` | model calls the application may make per conversation |
 | `signing` | `auto` | `register` (sign every packet; needs the register), `off`, or `auto` (register when `agentic-register` is on PATH) |
-| `autostart` | `false` | run `facilitator serve` from `postStartCommand`; off, since keeping processes running is the harness's job |
+| `backend` | `agntcy` | `agntcy` (real Agent Directory and SLIM) or `lean` (the register alone); the safety hatch (4.8). `FACILITATOR_BACKEND` overrides |
+| `dirVersion`, `slimVersion` | pinned | the AGNTCY release to install; `latest` says what it resolves to (NFR-3) |
+| `identity` | `false` | also run AGNTCY Identity (needs Docker) |
+| `autostart` | `true` | `postStartCommand` runs `facilitator infra up` and `serve`, never fatal; participants are never started |
 
 Settings are plain variables too: `FACILITATOR_FILE`, `FACILITATOR_HOP_LIMIT` and so on (NFR-6).
 
 Tasks (`task facilitator:<task>`; first is `version`): `version`, `check` (file valid, state
 writable, per-participant attachment seen, no secrets printed), `participants`, `status` (who is
 attached, last seen, each conversation's hops), `chat` (interactive), `send`, `transcript`,
-`register` (a participant's OASF record, key and roster entry), `directory` (list, export), `verify` (4.7), `serve` (the application; run by a harness), `snippet` (the MCP entry and persona sentence for a participant), `pump` and `model` (run by a
+`infra` (up, down, status, logs), `backend` (show, switch), `register` (a participant's OASF record, key and roster entry), `directory` (list, export), `verify` (4.7), `serve` (the application; run by a harness), `snippet` (the MCP entry and persona sentence for a participant), `pump` and `model` (run by a
 harness; documented, not started by a task), `export` (a conversation to Markdown).
 
 Tests (NFR-10): Docker-free unit tests in `task lint`: the routing rules (4.4), the loop limits, the
@@ -446,22 +492,25 @@ Feature's records only to show "running" beside "attached".
 
 ## 8. Slices
 
-1. **Thin slice** (`facilitator` 0.1.0): participant file, deterministic routing, direct and group,
-   hop limit and budget, the MCP server (`receive`, `reply`, `say`, `who`), `chat`, the model
-   wrapper, the **unsigned** store backend, tests with fakes; one manual run: **Claude Code over MCP
-   plus a local model** (the jester scenario), and T1.
-2. **Provenance**: the register backend, `register` (OASF record, key, roster entry), the signer with
-   keys in OpenBao and an ssh-agent, `facilitator verify`, `directory export`. Needs D3 settled
-   (a pullable register).
-3. **The model in the loop**: `serve`, the model gateway (endpoint and command backends), router
-   for gaps, planner, collector/summariser, the facilitator budget; each with a fake-model test.
-4. **Second and third vendors**: Copilot CLI and Gemini CLI over MCP, the pump for each, the
-   per-vendor checklist (NFR-12 met with two CLI vendors). May move before 3 if the Operator wants
-   vendors first.
-5. **Hardening and reach**: per-agent Linux users, a real Agent Directory (B) or SLIM (C) with the
-   cross-container requirement, transcripts to the shared folder.
+0. **Spike (a learning run, no Feature):** run `dirctl daemon` and a SLIM node by hand in this
+   devhost: confirm asset names, checksums, linux arm64, ports, state paths, memory and start-up
+   time, and that a Python client can send and receive on SLIM. Its findings replace every
+   "not checked" in 4.8 before slice 2 is built.
+1. **Thin slice** (`facilitator` 0.1.0, `lean` only; `backend: agntcy` is refused with "not yet"):
+   participant file, the backend interface, direct and group, `@mention` routing, hop limit and
+   budget, the MCP server (`receive`, `reply`, `say`, `who`), `chat`, the local-model wrapper, tests
+   with fakes; one manual run: **Claude Code over MCP plus a local model** (the jester scenario),
+   and T1. The record is the register where it can be pulled, else the unsigned store (D3).
+2. **The AGNTCY backend:** `infra`, the `dir` and SLIM installs and clients, `backend switch`; the
+   default becomes `agntcy` in this release, with a "what changed" note for consumers.
+3. **Provenance:** `register` (OASF record, key, roster entry), the signer with keys in OpenBao and an
+   ssh-agent, `facilitator verify`, `directory export`.
+4. **The model in the loop:** `serve`, the model gateway, router for gaps, planner,
+   collector/summariser, the facilitator budget; each with a fake-model test.
+5. **Second and third vendors** (Copilot CLI, Gemini CLI over MCP, the pump), **Identity** opt-in,
+   per-agent Linux users, transcripts to the shared folder; order for the Operator to set.
 
-**Out of scope:** running AGNTCY's directory or SLIM servers in the devcontainer (decision D13); supervising or starting participants; networking between containers or machines
+**Out of scope:** supervising or starting participants; the Agent Connect Protocol (archived); AGNTCY components across containers or machines; networking between containers or machines
 (a later requirement: the same tools over a bridge, probably A2A, which the register's messages are
 already shaped for); other people's agents; installing or logging in to vendor CLIs; billing or
 price tables; a web UI.
@@ -477,6 +526,16 @@ price tables; a web UI.
 - **A model in the router** can be argued into a wrong choice; bounded by enumerated handles, the
   budget and a human `/veto`, not removed.
 - **Two signed stores** (register and unsigned JSONL) can drift; one interface and one test suite.
+- **What could force the hatch to `lean`:** (1) **immaturity**: neither page states a maturity level,
+  and SLIM is already on a third major version, so APIs may move under a pin; (2) **weight**: a Go
+  daemon, a Rust node and a native Python client in every MCP server instance, memory and start-up
+  unmeasured (the spike); (3) **no linux arm64** build or wheel, not visible on the pages read;
+  (4) **authentication set-up**: four SLIM auth modes, and secrets to keep in OpenBao; (5) **Docker**
+  for Identity and for `dir`'s Compose route, which does not start on every host. A user switches
+  with `backend: lean` and `facilitator backend switch lean` (4.8); conversations survive.
+- **A second moving part per participant:** in `agntcy` mode every MCP server instance is a SLIM
+  client, so a SLIM outage stops `receive` for all; `check` and `status` show it, and the hatch is
+  the remedy.
 - **AGNTCY drift**: OASF and its tools move; only `register` and `directory export` touch them,
   pinned to OASF 1.1.0 as the register already is.
 - **Vendor drift**: tool names, flags and MCP config formats change; only the pump and `snippet`
@@ -494,7 +553,7 @@ price tables; a web UI.
 |---|---|---|---|
 | D1 | The primary attachment | (a) MCP with a blocking `receive`; (b) the pump everywhere (a one-turn command per message); (c) a pty bridge into the running TUI | **(a)**, with (b) as the per-vendor fallback; confirm with T1 before slice 2 |
 | D2 | Who decides who speaks | deterministic only; a model decides every hop; hybrid | **Hybrid**: an explicit `@handle` is always by rule, the facilitator model fills gaps, plans and summarises (4.3); the deterministic core runs without it |
-| D3 | The store and signing | unsigned JSONL first, the register backend in slice 2; the register from slice 1; own signed format | **Register is the store of record (4.6); slice 1 unsigned so a downloader can start; slice 2 signs.** Needs the Operator's ruling on making the register pullable (it is vendored from a private registry) |
+| D3 | The store and signing | unsigned JSONL first, signing with the register in slice 3; the register from slice 1; own signed format | **Register is the store of record (4.6); slice 1 unsigned so a downloader can start; slice 3 signs.** Needs the Operator's ruling on making the register pullable (it is vendored from a private registry) |
 | D4 | Where participants are defined | new `facilitator.yml`; a section of `agents.yml` | **New file**, with an optional `agent:` cross-reference |
 | D5 | The `agents` Feature | keep; narrow; retire | **Keep unchanged, stop growing its multi-vendor slices, revisit after slice 2** |
 | D6 | The Feature name | `facilitator`; `agent-facilitator`; `agent-chat` | **`facilitator`** |
@@ -503,12 +562,14 @@ price tables; a web UI.
 | D9 | Loop guards | defaults 6 hops, 40 messages, 10 a minute; other | **As written**, a human `/continue` extends |
 | D10 | Identity | per-participant token files now; none; per-user later | **Tokens now**, per-user with `agent-linux-user` |
 | D11 | Slice-1 vendors | Claude + local model; Copilot + local model; all three | **Claude + local model**, Copilot and Gemini in slice 2 |
-| D13 | The directory | the register's `agents` type; a real AGNTCY `dir`; SLIM | **The register's records now, `dir` as an export, SLIM with networking** (4.8) |
+| D13 | The backends | real AGNTCY (`dir`, SLIM) default with a `lean` hatch; lean only; AGNTCY only | **The Operator's ruling: `backend: agntcy` default, `lean` on the register, one interface, no silent fallback, conversations in the register either way** (4.8) |
+| D16 | Order of slices | spike then lean then AGNTCY (as 8); AGNTCY first; model-in-the-loop first | **Spike, lean thin slice, AGNTCY backend**: the lean slice proves the experience, the spike de-risks the components |
+| D17 | AGNTCY Identity | opt-in later; default now; never | **Opt-in later** (needs Docker, no stated version) |
 | D14 | Where keys live | signer holds them (OpenBao, ssh-agent); each participant holds its own | **Signer, OpenBao at rest, ssh-agent for a sitting**; own key as an option |
 | D15 | Facilitator model default | local endpoint; a vendor command; an attached participant | **None by default** (rules only); the engineer names one; a local endpoint is the documented first choice |
 | D12 | Transcripts | volume only, export on request; committed to the repo; shared folder | **Volume only**; shared folder later |
 
-Decisions needed from the Operator: all fifteen, in particular D1, D3 and D5.
+Decisions needed from the Operator: all seventeen (D13 is already the Operator's ruling, here for the record), in particular D1, D3, D5 and D16.
 
 **Open questions.** Q1: what "the sign-packet feature" is: no such Feature exists here; read as the
 register's entry signing; please confirm or point to it. Q2: is the facilitator application's
