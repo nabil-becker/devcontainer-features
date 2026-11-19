@@ -8,6 +8,16 @@ here; `task lint` fails when the entry is missing.
 
 Entries from 1.0.0 to 2.1.1 were generated from the commit history (`.github/scripts/changelog.py backfill`) and the "Changes in x.y.z" sections that NOTES.md used to hold; most list commit subjects as written then; the newest of them is in wording for users.
 
+## [2.2.0] - 2026-11-19
+
+### Deprecated
+
+- **This Feature is deprecated: use the `claude-code` Feature with `"participants": true`** (claude-code 1.10.0), which installs the same code (ADR-0061). Nothing breaks in 2.x: the `task agents:*` names, the `agents` command, `.devcontainer/agents.yml`, `AGENTS_FILE`, the `sessionName` option and the verbs `task devcontainer:agent` calls are unchanged. `task agents:version` and `task agents:check` now print one line on stderr, `deprecated: use claude-code participants: true`. 3.0.0 retires the Feature, only after the conditions in the notes ("Deprecated in 2.2.0"). To move: set `"participants": true` on `claude-code`, remove the `agents` line, and put a `sessionName` you set here into `AGENTS_SESSION_NAME` (`containerEnv` or `.devcontainer/.env`).
+
+### Changed
+
+- The code moved into the shared participant component (`components/participant`, vendored here in `participant/`), installed once into `/usr/local/lib/dcf-participant`, with `/usr/local/bin/agents` a symlink into it. When `claude-code` with `participants: true` (or another Feature) installed the same or a newer copy, this Feature installs nothing of it; otherwise it installs it as before. The state folders, the Taskfile include and every path a user sees are as in 2.1.3. Nothing to do.
+
 ## [2.1.3] - 2026-11-03
 
 ### Changed

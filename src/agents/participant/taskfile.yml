@@ -1,4 +1,6 @@
-# Tasks contributed by the agents Feature (namespace: agents). `task agents -- <name>` is
+# Tasks of the participant component (namespace: agents), installed by claude-code
+# (participants: true) or by the deprecated agents Feature, one copy whichever installs it
+# (components/participant/install-participant.sh). `task agents -- <name>` is
 # the default task of the namespace. AGENTS_FILE (repo-relative path of the agent list) from
 # the command line, a .env file or the environment; the agents command resolves the order.
 # AGENTS_SESSION_NAME (the session name template) the same way.
@@ -7,9 +9,11 @@ version: '3'
 tasks:
   version:
     dir: '{{.USER_WORKING_DIR}}'
-    desc: 'Show the agents Feature version and which agent list is used (the path and where AGENTS_FILE came from).'
+    desc: 'Show the version (the agents Feature''s when it is installed, which also prints one deprecation line; else the participant component''s) and which agent list is used (the path and where AGENTS_FILE came from).'
     cmds:
-      - 'cat /usr/local/share/agents-feature/version 2>/dev/null || echo unknown'
+      - cmd: '[ ! -f "${AGENTS_SHARE_DIR:-/usr/local/share/agents-feature}/version" ] || echo ''deprecated: use claude-code participants: true'' >&2'
+        silent: true
+      - 'cat "${AGENTS_SHARE_DIR:-/usr/local/share/agents-feature}/version" 2>/dev/null || sed ''s/^/participant /'' "${DCF_PARTICIPANT_LIB:-/usr/local/lib/dcf-participant}/COMPONENT_VERSION" 2>/dev/null || echo unknown'
       - '{{if .AGENTS_FILE}}AGENTS_FILE_TASK_VAR={{shellQuote .AGENTS_FILE}} {{end}}{{if .AGENTS_SESSION_NAME}}AGENTS_SESSION_NAME_TASK_VAR={{shellQuote .AGENTS_SESSION_NAME}} {{end}}agents check || true'
 
   default:
@@ -64,6 +68,8 @@ tasks:
 
   check:
     dir: '{{.USER_WORKING_DIR}}'
-    desc: 'Read and check the agent list without starting anything: which file (and where AGENTS_FILE came from), the default agent, each agent with its CLI, definition, kind, lifecycle, identity, lease, folder, args and (when it differs from its handle) its session name; a broken list exits 2 naming the file, the line and the problem.'
+    desc: 'Read and check the agent list without starting anything: which file (and where AGENTS_FILE came from), the default agent, each agent with its CLI, definition, kind, lifecycle, identity, lease, folder, args and (when it differs from its handle) its session name; a broken list exits 2 naming the file, the line and the problem. With the deprecated agents Feature installed, one deprecation line first (on stderr).'
     cmds:
+      - cmd: '[ ! -f "${AGENTS_SHARE_DIR:-/usr/local/share/agents-feature}/version" ] || echo ''deprecated: use claude-code participants: true'' >&2'
+        silent: true
       - '{{if .AGENTS_FILE}}AGENTS_FILE_TASK_VAR={{shellQuote .AGENTS_FILE}} {{end}}{{if .AGENTS_SESSION_NAME}}AGENTS_SESSION_NAME_TASK_VAR={{shellQuote .AGENTS_SESSION_NAME}} {{end}}agents check'
