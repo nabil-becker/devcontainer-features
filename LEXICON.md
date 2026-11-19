@@ -49,6 +49,17 @@ The domain words of the project itself are not here; they live with the project'
   inside the container is a start command, not a launcher.
 - **Shared script**: a script in `src/common` vendored verbatim into the Features that use it
   (`dcf-persist`, `dcf-curl`).
+- **Component**: shared code in `components/<id>` with no `devcontainer-feature.json`, so it is never
+  published alone; `task components:sync` copies it into each Feature that uses it and
+  `task components:check` (in `task lint`) fails when a copy drifts, subfolders included. Bash only
+  (ADR-0061).
+- **Participant component**: the component `components/participant` holding the code that was the
+  `agents` Feature (list reader, kinds, lease, session names, adapter verbs, `agents up`); `claude-code`
+  installs it into `/usr/local/lib/dcf-participant` with the option `participants: true`, and
+  `agents` 2.2.0 installs it only when `claude-code` has not (ADR-0061).
+- **Deprecation**: how a Feature or option goes away: announced in a minor release (a one-line
+  notice from `version` and `check`, the NOTES, and a "Deprecated" heading in the CHANGELOG, behaviour
+  unchanged) and removed only in the next major (CONTRIBUTING.md).
 - **Devcontainer hook**: a `postCreateCommand`, `postStartCommand` or `postAttachCommand` of the
   Dev Container spec. Bare "hook" is avoided: say whose hook it is (devcontainer, Claude, git). An
   agent integration's lifecycle points are verbs, not hooks.
