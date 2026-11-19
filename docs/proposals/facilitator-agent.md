@@ -8,7 +8,7 @@ a Dev Container Feature, gives it their own vendor credentials, and holds conver
 several AI agents running in their devcontainer. Vendor facts are marked **(docs read)** when a
 vendor page was read for this proposal, **(matrix)** when taken from the capability matrix of
 `docs/proposals/agents-v2.md` section 14 (itself from docs, 2026-10-29), and **(not checked)** when
-neither; nothing was installed or run here.
+neither; AGNTCY facts are from the project's GitHub pages **(docs read)**. Nothing was installed or run here.
 
 ## 1. The ask
 
@@ -27,6 +27,13 @@ A further ruling the same day: "they are running as external processes, using so
 keep them running so our responsibility is the communication." So the Feature **does not start,
 stop, supervise or resume anything**. Its whole job is: how a running participant is addressed,
 how messages reach it, how replies come back, routing, limits, and the record.
+
+Later the same day, three more directions: run a lean AGNTCY-style setup (agents register an OASF
+record in a directory), have agents **sign their messages** so provenance and lineage can be
+verified ("maybe even using the sign-packet feature"), and make the facilitator "a multi module
+agentic application that uses its llm model to help the orchestration and routing". "AGNCY" is read
+as AGNTCY. No Feature, task or document named "sign-packet" exists in this repository (searched);
+it is read as the register's entry signing, and that is open question Q1.
 
 Rulings it rests on: separate processes in one devcontainer; cloud agents only through a local
 interface; networking out of scope; **NFR-12** (a contract for agent CLIs works on two vendors or
@@ -58,6 +65,11 @@ names its fallback; ADR-0037); **NFR-13** (manage the environment, not the CLI);
      | `facilitator chat` prints every message of conversation c1 as it lands|
 ```
 
+In the picture the sender named both handles, so routing is by rule. Had you written "get someone to
+tell a joke to the expert", the router module (4.3) would have asked the facilitator model to choose
+from the directory, written its choice as a packet, and gone on the same way. Every arrow is a signed
+packet (4.7).
+
 Nothing in this picture is started by the Feature: the two participants, and whatever keeps them
 alive, are the harness's. The store and the routing are written by whichever process calls a
 tool, so there is no facilitator daemon to keep running either (section 4.3).
@@ -71,13 +83,16 @@ Existing words kept: **agent**, **handle** (a participant's address), **resident
 
 | Proposed term | Meaning |
 |---|---|
-| **Facilitator** (the Feature, and a role) | The Feature `facilitator`: the communication layer. The **facilitator role** is a participant, any vendor or a local model, that receives what is addressed to no one, in a group conversation. The layer routes by rule; the role is who it falls to. |
+| **Facilitator** (the Feature, and the application) | The Feature `facilitator`: the communication layer, and the **facilitator application** it ships: a set of modules (4.3), some deterministic, some assisted by the facilitator's own model. It is not a participant; it speaks in a conversation as the handle `facilitator`. |
+| **Facilitator model** | The LLM the application uses to decide and summarise: a local OpenAI-compatible endpoint, a one-turn vendor command run with the engineer's token, or an attached participant. Pluggable (4.3). |
+| **Packet** | One signed message: a register entry with its signature (4.6, 4.7). The Operator's word; the register calls it an entry. |
+| **Directory** | The set of agent records (OASF) the participants registered; where the planner reads skills from (4.8). |
 | **Participant** | A named, running process that takes part: a **handle** (`jester`), a persona (a system prompt or profile it is started with, kept by the harness), an **attachment**, an optional model label shown in the transcript. The engineer at the terminal is a participant too (`you`, kind `human`). |
 | **Harness** | Whatever keeps a participant process running: tmux, a process supervisor, a service, the vendor's own session, the `agents` Feature. Not this Feature's job. |
 | **Attachment** | How a running participant connects to the layer. Primary: **MCP** (tools `receive`, `reply`, `say`, `who`). Fallbacks: the **pump** (a loop that does `receive` and runs a one-turn command), and the **model wrapper** (a pump for an OpenAI-compatible endpoint). |
 | **Conversation** | A thread with members: **direct** (you and one participant, or two participants) or **group** (three or more). Held as in the register's `messages` type: group and direct, A2A-shaped. |
 | **Turn** | One message by a participant in a conversation. A turn's **hops** are the number of participant-to-participant deliveries since the last human message. |
-| **Mention routing** | Delivery by `@handle` in the text or the `to` argument; no mention means the asker (see 4.4). |
+| **Mention routing** | Delivery by `@handle` in the text or the `to` argument, always honoured; no mention is for the router module (4.3, 4.4). |
 | **Bubbling up** | Every message lands in the conversation's transcript, which a human follows; a message with no mention returns to the participant that asked. |
 | **Hop limit** and **message budget** | The two guards against agents mentioning each other forever (4.5). |
 
@@ -103,18 +118,24 @@ a section of `agents.yml`: `agents.yml` says how to start and lease something (t
 business), this says who may talk. One optional cross-reference keeps them honest:
 
 ```yaml
+facilitator:                       # the application's own model (4.3)
+  model:
+    endpoint: http://localhost:11434/v1   # or: command: "copilot -p"   or: participant: copilot-lead
+    name: llama3.2
 participants:
   - name: jester                   # the handle; letters, digits, - and _
     attachment: model              # mcp | pump | model
     endpoint: http://localhost:11434/v1     # model only; an OpenAI-compatible server
     model: llama3.2
     persona: personas/jester.md    # model/pump only: the text the wrapper sends as system prompt
+    description: tells jokes       # the OASF record (4.8), read by the router and planner
+    skills: [humour]
   - name: domain-expert-one
     attachment: mcp                # the participant's own CLI calls the tools
     agent: expert                  # optional: a name in agents.yml, shown by `facilitator status`; never started from here
   - name: copilot-lead
     attachment: mcp
-    facilitator: true              # at most one; receives what is addressed to no one in a group
+    facilitator: true              # at most one; the fallback for what is addressed to no one when the application is not running
 ```
 
 For an `mcp` participant the persona lives with its harness (its CLI's own profile or prompt); the
@@ -152,28 +173,64 @@ pump instead. Slice 1 ends with T1 on Claude Code, and the finding decides the p
 other vendors (decision D1). A turn hook that shows unread mail at each turn, as the register's
 `inbox --notice` does, is a vendor-specific optimisation, never the contract.
 
-### 4.3 The router, and the facilitator role
+### 4.3 The facilitator application: modules, and what the model decides
 
-Two ways to decide who speaks: **deterministic** routing by `@mention`, or a model-run
-facilitator that reads each message and chooses. **Recommended: deterministic routing in the
-layer; the facilitator is a participant, any vendor or local model, to whom unaddressed group
-messages go and who may be asked to decide ("@copilot-lead who should take this?").** Reasons: a
-model deciding every hop costs a turn per hop, fails in ways the Operator cannot read from a log,
-and cannot be tested without a vendor; routing by rule is a unit test. A model-run facilitator is
-then no special case, just the participant that happens to be addressed.
+The Operator's direction is a multi-module application whose own model helps orchestrate and route,
+not only an `@mention` matcher. **Recommended: an explicit `@handle` is always routed by rule and
+the model can never redirect it; the model fills the gaps** (nobody addressed, a request to break
+up, many replies to join), and everything it decides is written as a packet, so a human can see and
+veto why a message went where it did.
 
-The route is computed **at write time by whoever writes** (an MCP server instance, `chat`, the
-pump): it appends the message under a file lock, then appends a delivery to each target's inbox
-folder. `receive` reads and marks its own inbox. So there is no facilitator daemon to supervise,
-which keeps with "our responsibility is the communication, not the processes".
+```
+ intake -> guard -> router ----> planner* ----> dispatcher -> (participants, via inbox)
+   |         |        |  \          |                |                 |
+   |         |        |   directory client            |  <---- replies -+
+   |         |        |                               v
+   |         |        +-----------------------> collector/summarizer* -> bubbled up to you
+   +---------+-------------------- signer (every packet) -------------------------------+
+   * = LLM-assisted, through the model gateway        (all others deterministic)
+```
+
+| Module | Does | Deterministic or model |
+|---|---|---|
+| **Intake** | Authenticates the writer (token), parses `@handles`, attaches the conversation and its recent messages | deterministic |
+| **Guard / limits** | Hop limit, message budget, rate, the facilitator's own model-call budget, pause and `/continue` (4.5) | deterministic, and runs at write time even when the application is not running |
+| **Router** | Explicit mentions: by rule. Unaddressed in a group, or "someone should...": asks the model to choose handles **from the directory's list only** (an enumerated answer, validated; anything else is discarded and the fallback below used) | rule first, model for gaps |
+| **Planner** | Breaks a request into sub-asks (`ask`, an A2A task per assignee), writes the plan to the transcript as a packet; a human may `/veto` it before dispatch (default off for 1 to 3 sub-asks) | model |
+| **Dispatcher** | Writes deliveries, tracks each task's state (`submitted` to `completed`), re-asks or marks `failed` on a timeout, never delivers past the guard | deterministic |
+| **Collector / summariser** | When the sub-asks are done (or timed out), joins the replies into one message to the asker, each claim with a `ref` to the packet it came from | model (a plain concatenation is the fallback) |
+| **Directory client** | Reads the registered agent records: handle, description, skills; feeds the router and planner (4.8) | deterministic |
+| **Signer** | Signs every packet, the facilitator's own included (4.7) | deterministic |
+| **Model gateway** | One interface, `complete(prompt, schema) -> text`; backends below | deterministic code around a model |
+
+**The facilitator model is pluggable** (`facilitator.yml`, `model:`): `endpoint` (an
+OpenAI-compatible server, a local model, credentials none), `command` (a one-turn vendor command
+that takes the prompt on stdin and prints the answer: `copilot -p`, `claude -p`, `gemini -p`, run
+with the engineer's own token **(docs read, section 4.2)**), or `participant: <handle>` (an
+attached participant answers as a normal turn, so the facilitator can be a vendor session someone
+already runs). The call is a stateless decision, so it needs no session and no harness; it is the
+application's own use of the CLI, not management of it (NFR-13).
+
+**The application is optional at run time.** `facilitator serve` is one more long-running process,
+and as with every participant **a harness runs it** (the Feature offers it as a command and, off by
+default, a `postStartCommand` option; it supervises nothing). Without it, explicit mentions,
+direct conversations, the guard and the signer work, because they run in whoever writes; unaddressed
+group messages then use the fallback in 4.4. This keeps the deterministic core independent of any
+model and testable without one.
+
+**Guard against the model's own failure modes.** Message text reaches the model as data inside
+delimiters and never as instructions; its answer is parsed against a schema; a handle that is not
+in the conversation is dropped; its calls count against a budget (`facilitatorBudget`, default 20
+model calls per conversation) and each is recorded with its prompt hash. A prompt-injected message
+can make the router pick a wrong *member*; it cannot add a member, exceed a limit or edit a packet.
 
 ### 4.4 Routing rules
 
 1. `@handle` in the text (or `to`) delivers to that participant, each mention once. `@all` delivers
    to every member of a group.
-2. A message with no mention in a **direct** conversation goes to the other member; in a **group**
-   it goes to the facilitator-role participant, else (none set) to every member, which the hop
-   limit then bounds.
+2. A message with no mention in a **direct** conversation goes to the other member. In a **group**
+   it goes to the router module when the application runs (4.3); otherwise to the participant
+   marked `facilitator: true`, else to every member, which the hop limit then bounds.
 3. A reply with no mention goes to the **asker**: the author of the message it answers (so the
    jester's "tell @domain-expert-one a joke" is answered back to the jester, not broadcast).
 4. A participant that is not attached (no `receive` for `staleSeconds`) is **not** skipped
@@ -192,37 +249,100 @@ politeness in a prompt:
 - **Message budget** (`messageBudget`, default 40 per conversation): the same, for a conversation
   with many humans or many parallel chains.
 - **Rate**: a participant may not write more than N messages a minute (`rateLimit`, default 10).
+- **The facilitator's own model calls** are counted and capped (`facilitatorBudget`, 4.3).
 - **Cost**: the layer cannot see a participant's spend except when the pump reads
   `total_cost_usd` from Claude's JSON **(docs read)**; it records it when there, and never guesses.
   The hop and message limits are the guard.
 
-### 4.6 The store
+### 4.6 The store, and what a packet is
 
-A conversation is `conversations/<id>.jsonl` in the state volume: one JSON line per message
-(`id`, `from`, `to`, `text`, `reply_to`, `hops`, `at`, `flags`), appended under `flock`, never
-edited. A delivery is a file in `inbox/<handle>/`. The fields are the names of the register's
-`messages` type (thread, message, mentions, `reply_to`, A2A task states), so a register backend is
-a mapping.
+A conversation is a register thread of type `messages` (group or direct, sub-threads, mentions as
+principals, `reply_to`, `refs`, A2A tasks), and a **packet** is one entry in it: a body of canonical
+JSON, hashed and signed, whose writer the register verifies against a roster (SPEC.md, "Entry" and
+the `messages` type). **Recommended: the register is the store of record**, because it already is
+what the Operator asks for (signed, verifiable, append-only, group and direct, MCP tools) and
+inventing a second signed format would be the mistake the Operator warned of with `agents`. What it
+lacks, and so what the Feature adds around it:
 
-**Is the store the agentic-register's `messages` register? Not for the first slice, and this is
-what it lacks:**
-
-| Lacks | Detail |
+| Lacks | What the Feature adds |
 |---|---|
-| A published home | `local-features/agentic-register` is vendored and not published; a published Feature cannot name it in `installsAfter` or pull it (CLAUDE.md, "Git here"). |
-| Zero-ceremony identity | every writer needs a signing key and a roster entry added with an operator key (`key new`, `roster --add-key`), for each participant. Right for a ledger; too heavy for "download, add a participant, talk". |
-| Attribution when the layer writes | the sender of an entry is its signing principal; the layer writing for a participant would show every message as the layer's, unless it holds each participant's key. |
-| Delivery | unread markers per principal and a polling `watch --follow`, but no claimed delivery, no blocking receive, no "attached since". |
-| Limits | no hops, budget or rate; no pause state. |
-| Participants | no definition of one (the `agents` register type, an OASF record, is the nearest, and is a later home for participant records). |
+| A published home: `local-features/agentic-register` is vendored and unpublished, so a downloaded Feature cannot name it in `installsAfter` or pull it | the blocker of decision D3; until it can be pulled, the store is an interface with two backends |
+| Zero-ceremony identity: every writer needs a key and a roster entry added with an operator key | `facilitator register` does it for a participant at registration (4.7) |
+| Delivery: unread markers and a polling `watch --follow`, but no claimed delivery, blocking receive or "attached since" | `inbox/<handle>/` beside the register, written by the dispatcher; `receive` blocks on it; the register stays the record |
+| Limits: no hops, budget, rate or pause | the guard module; hops and the root message id are carried in the packet's `data` part |
+| A model in the loop | the modules of 4.3; their decisions are packets of kind `message` from the handle `facilitator` |
+| Participant definition | the directory (4.8) |
 
-What it has and the layer reuses by shape: group and direct threads, sub-threads, mentions as
-principals, refs, A2A tasks (`ask`, `task-status`) for "do this and tell me when done". Later
-slice: a `register` store backend (`FACILITATOR_STORE=register`) for engineers who run the
-register, writing as each participant's own key, so a conversation can be signed, mirrored and
-queried. Decision D3.
+The other backend is a plain `conversations/<id>.jsonl` in the state volume, with the same field
+names and **no signatures**: the zero-dependency path for a downloader until the register can be
+pulled. Both keep the field names of the `messages` type, so a conversation moves between them.
 
-### 4.7 How you talk to it
+### 4.7 Identity, signing and lineage
+
+**Who signs.** Every packet is signed by an identity key: an Ed25519 key as the register uses
+(`ssh-keygen -Y sign`, the public half on the register's roster). One per participant, one for
+`facilitator`, and the human's operator key as the register already has it.
+
+**Where the key lives, so the participant process does not hold a long-lived private key.** The
+**signer module** signs on the participant's behalf, **after authenticating it by its participant
+token** (4.2, section 5). The participant, a model reached by MCP, never sees a private key: it
+asks `reply`, the signer signs. Keys are kept in OpenBao (ADR-0048, the master of every private
+key) under `facilitator/keys/<handle>` and loaded into an ssh-agent for the sitting, which the
+register already supports (a `.pub` whose private half an agent holds; the `ssh-agent` Feature, key
+loading per `secrets-master-split.md`). So the private half is in the agent's memory for a sitting
+and in OpenBao at rest, in neither a file nor a participant. A harness that wants end-to-end
+signing may instead give a participant its own key and use `--key`; the layer then verifies the
+signature and signs nothing for it.
+
+**What this proves, and what it does not.** A valid packet proves that the key registered for
+`jester` signed this exact body, in this chain, and that nobody changed or reordered it. With the
+signer module it attests that the layer authenticated the participant's token at that moment: it
+does not prove the model *meant* it, and a process that can read another participant's token (the
+same Linux user, section 5) can write as it. Provenance here means "which registered identity, via
+which authenticated route", not a hardware attestation.
+
+**Lineage** is expressed with fields the register already has, so `verify` can walk it:
+
+| Link | Field |
+|---|---|
+| what a message answers | `reply_to` (a message id) |
+| what it derives from (a summary's sources, a sub-ask's origin) | `refs` (`thread:message_id`) |
+| the human request the chain began with | the root message id, in the packet's `data` and as the last `ref` |
+| a request and its outcome | `task_id`, the A2A task and its `status` entries |
+| why it went to this recipient | a `facilitator` packet (route, plan) that `refs` it |
+
+**How a chain is proved.** The register's `verify` checks every entry's signature, its place in its
+writer's chain and its roster (and flags forks and refused entries). On top of it a new command,
+`facilitator verify --conv <id> [--message <id>]`, walks `reply_to` and `refs` from a message back
+to a human-signed root, and for each hop checks: the signer is on the roster and is the `from` the
+packet claims; the hop count is within the limit; the parent exists and is in the same conversation
+or a referenced one; every summary `ref`s packets that exist. It prints the chain, one line a hop,
+and exits 1 on a break (NFR-11 shape). It is a query over the register's index, not a new format.
+
+### 4.8 The directory: AGNTCY-compatible, locally lean
+
+Agents register an **OASF agent record**; the planner and router read it to know who can do what.
+The register's `agents` type already stores exactly that: an OASF 1.1.0 record (name, version,
+description, authors, skills, domains, locators) plus our own `aof` part, an `active_agents` view,
+and the pure OASF record "ready to publish" (SPEC.md, "The agents type"). Three ways to have a
+directory:
+
+| | A. The register's `agents` type | B. AGNTCY's Agent Directory (`dir`) | C. SLIM |
+|---|---|---|---|
+| What | records in the same store, signed by the agent's key | `dirctl daemon start` (apiserver and reconciler in one process, embedded SQLite, localhost:8888, state under `~/.agntcy/dir/`), or a Docker Compose of apiserver, reconciler, Zot registry and PostgreSQL | a Rust data plane that routes by hierarchical name, MLS end-to-end encryption, a control plane, bindings for Python, Go, .NET, Java, Kotlin |
+| Weight | nothing added | a Go binary or four containers; OCI store, optional DHT routing across a network | a Rust node (cargo build or an image) and a binding in each client |
+| Maturity | ours, vendored from AOF, in use | releases around v1.9.1 on its page, Apache-2.0, OpenSSF badges; the page states no maturity level **(docs read)** | v1.x tags, a changelog, Apache-2.0; the page states no version **(docs read)** |
+| For this ask | enough: same host, same trust root | adds discovery and publishing across machines, which is out of scope today | a transport between machines: out of scope today (networking is a later requirement), and the register is already the local binding |
+
+**Recommended: A now, B as an export, C with the later networking requirement.** `facilitator
+register <handle>` writes the participant's `agent` entry (an OASF record with the handle as author,
+skills from the participant file, the harness's start command left out) and its roster entry in one
+step; `facilitator directory export` prints the pure OASF records, which an engineer can publish to
+a real Agent Directory with its own tools. That keeps AGNTCY's formats (OASF 1.1.0, A2A-shaped
+messages) without running its servers. The participant file (4.1) gains `skills:` and `description:`
+for the record. Whether the Operator wants a real `dir` in the devcontainer is decision D13.
+
+### 4.9 How you talk to it
 
 - **Terminal:** `facilitator chat [conversation]` (task `facilitator:chat`, `interactive: true`):
   one line in, `@jester ...` routes; the transcript follows live. `/new group jester
@@ -244,6 +364,11 @@ environment, so nothing is written to a file in git or to the state volume (ADR-
 never writes a vendor token, never reads one, and prints none (no environment dumps from
 `check` or `status`; they list names only).
 
+The facilitator model's credential is the same kind of thing: an `endpoint` needs none; a `command`
+(`copilot -p`) uses the token its harness set in the environment of `facilitator serve`, from OpenBao
+as above. The **identity keys** of 4.7 are the one secret the layer asks for, and it asks OpenBao
+(`dcf-secret`, ADR-0048), never a file in git or in the state volume.
+
 The layer's own secret is the **participant token**: `tokens/<handle>` (mode 600), which an MCP
 entry passes as `FACILITATOR_TOKEN` so a participant can write only as itself. Honest limit: every
 process of one Linux user can read every token, so this stops a mistake (one participant writing
@@ -254,7 +379,7 @@ export is a file the engineer chooses to write.
 
 ## 6. What the Feature installs and what it must not
 
-Installs: the `facilitator` command (a router and an MCP server over stdio, `chat`, `pump`, the
+Installs: the `facilitator` command (the modules of 4.3, an MCP server over stdio, `chat`, `pump`, the
 model wrapper), the Feature Taskfile (NFR-2), `facilitator-setup` (state folders, idempotent,
 never fatal; NFR-5), a state volume `facilitator-state-${devcontainerId}` at
 `/var/lib/devcontainer-features/facilitator` (NFR-1). Nothing downloaded if the command is bash and
@@ -272,20 +397,23 @@ credential. The vendor CLIs come from their own Features or the engineer.
 | `messageBudget` | `40` | section 4.5 |
 | `receiveWaitSeconds` | `300` | how long `receive` blocks |
 | `staleSeconds` | `900` | after which a participant counts as not attached |
+| `facilitatorBudget` | `20` | model calls the application may make per conversation |
+| `signing` | `auto` | `register` (sign every packet; needs the register), `off`, or `auto` (register when `agentic-register` is on PATH) |
+| `autostart` | `false` | run `facilitator serve` from `postStartCommand`; off, since keeping processes running is the harness's job |
 
 Settings are plain variables too: `FACILITATOR_FILE`, `FACILITATOR_HOP_LIMIT` and so on (NFR-6).
 
 Tasks (`task facilitator:<task>`; first is `version`): `version`, `check` (file valid, state
 writable, per-participant attachment seen, no secrets printed), `participants`, `status` (who is
 attached, last seen, each conversation's hops), `chat` (interactive), `send`, `transcript`,
-`snippet` (the MCP entry and persona sentence for a participant), `pump` and `model` (run by a
+`register` (a participant's OASF record, key and roster entry), `directory` (list, export), `verify` (4.7), `serve` (the application; run by a harness), `snippet` (the MCP entry and persona sentence for a participant), `pump` and `model` (run by a
 harness; documented, not started by a task), `export` (a conversation to Markdown).
 
 Tests (NFR-10): Docker-free unit tests in `task lint`: the routing rules (4.4), the loop limits, the
 file lock under concurrent writers, the MCP protocol over stdio (initialize, `tools/list`,
 `receive` blocking and timing out), the participant file parser, and the **two fake attachments**
 (a fake MCP client and a fake one-turn command with different capabilities) that NFR-12 asks for;
-a list using only the fake pump must never call anything named `claude`. Feature scenarios
+a list using only the fake pump must never call anything named `claude`; the model gateway with a fake model (the router cannot pick a handle outside the conversation, the budget stops it, an injected message cannot add a member); a signed chain verifies, and a tampered packet, a wrong signer and a broken `reply_to` each fail `facilitator verify`. Feature scenarios
 (`devcontainer features test`) check the install on the base images and idempotence. Real-vendor
 tests are a manual checklist in `NOTES.md` (T1 above, then each vendor: attach, one message, one
 reply, a hop limit), run with the engineer's own credentials; none runs in CI.
@@ -318,17 +446,22 @@ Feature's records only to show "running" beside "attached".
 
 ## 8. Slices
 
-1. **Thin slice** (`facilitator` 0.1.0): participant file, the store, deterministic routing, direct
-   and group, hop limit and budget, the MCP server (`receive`, `reply`, `say`, `who`), `chat`, the
-   **model wrapper**, tests with fakes, one manual run: **Claude Code over MCP plus a local model**
-   (the jester scenario), and T1.
-2. **Second and third vendors**: Copilot CLI, then Gemini CLI, over MCP; the pump for each; NOTES
-   and the per-vendor checklist (NFR-12 met with two CLI vendors).
-3. **Register backend**, signed transcripts, tasks (`ask`) in conversations.
-4. **Hardening**: per-agent Linux users and tokens (with `agent-linux-user`), a facilitator that
-   summarises, transcripts to the shared folder.
+1. **Thin slice** (`facilitator` 0.1.0): participant file, deterministic routing, direct and group,
+   hop limit and budget, the MCP server (`receive`, `reply`, `say`, `who`), `chat`, the model
+   wrapper, the **unsigned** store backend, tests with fakes; one manual run: **Claude Code over MCP
+   plus a local model** (the jester scenario), and T1.
+2. **Provenance**: the register backend, `register` (OASF record, key, roster entry), the signer with
+   keys in OpenBao and an ssh-agent, `facilitator verify`, `directory export`. Needs D3 settled
+   (a pullable register).
+3. **The model in the loop**: `serve`, the model gateway (endpoint and command backends), router
+   for gaps, planner, collector/summariser, the facilitator budget; each with a fake-model test.
+4. **Second and third vendors**: Copilot CLI and Gemini CLI over MCP, the pump for each, the
+   per-vendor checklist (NFR-12 met with two CLI vendors). May move before 3 if the Operator wants
+   vendors first.
+5. **Hardening and reach**: per-agent Linux users, a real Agent Directory (B) or SLIM (C) with the
+   cross-container requirement, transcripts to the shared folder.
 
-**Out of scope:** supervising or starting participants; networking between containers or machines
+**Out of scope:** running AGNTCY's directory or SLIM servers in the devcontainer (decision D13); supervising or starting participants; networking between containers or machines
 (a later requirement: the same tools over a bridge, probably A2A, which the register's messages are
 already shaped for); other people's agents; installing or logging in to vendor CLIs; billing or
 price tables; a web UI.
@@ -339,7 +472,13 @@ price tables; a web UI.
   burn tokens waiting. Mitigation: shorter waits, the pump; named, not hidden.
 - **Prompt injection through a participant's message** reaches another participant as its input.
   The hop limit does not stop it; each CLI's sandbox and permissions do (the inventory).
-- **Attribution is weak** with one Linux user (section 5).
+- **Attribution is weak** with one Linux user (section 5), and the signer attests the route, not
+  the intent (4.7).
+- **A model in the router** can be argued into a wrong choice; bounded by enumerated handles, the
+  budget and a human `/veto`, not removed.
+- **Two signed stores** (register and unsigned JSONL) can drift; one interface and one test suite.
+- **AGNTCY drift**: OASF and its tools move; only `register` and `directory export` touch them,
+  pinned to OASF 1.1.0 as the register already is.
 - **Vendor drift**: tool names, flags and MCP config formats change; only the pump and `snippet`
   know them, and every vendor fact above has a date.
 - **Transcript privacy**: conversations hold what people and models say; volume only, export on
@@ -354,8 +493,8 @@ price tables; a web UI.
 | # | Decision | Options | Recommendation |
 |---|---|---|---|
 | D1 | The primary attachment | (a) MCP with a blocking `receive`; (b) the pump everywhere (a one-turn command per message); (c) a pty bridge into the running TUI | **(a)**, with (b) as the per-vendor fallback; confirm with T1 before slice 2 |
-| D2 | Who decides who speaks | deterministic `@mention` routing; a model decides every hop; hybrid | **Deterministic, the facilitator is any participant** (section 4.3) |
-| D3 | The store | own JSONL now, register later; the register now; register required | **Own now, register backend in slice 3** (it is unpublished and needs keys per participant) |
+| D2 | Who decides who speaks | deterministic only; a model decides every hop; hybrid | **Hybrid**: an explicit `@handle` is always by rule, the facilitator model fills gaps, plans and summarises (4.3); the deterministic core runs without it |
+| D3 | The store and signing | unsigned JSONL first, the register backend in slice 2; the register from slice 1; own signed format | **Register is the store of record (4.6); slice 1 unsigned so a downloader can start; slice 2 signs.** Needs the Operator's ruling on making the register pullable (it is vendored from a private registry) |
 | D4 | Where participants are defined | new `facilitator.yml`; a section of `agents.yml` | **New file**, with an optional `agent:` cross-reference |
 | D5 | The `agents` Feature | keep; narrow; retire | **Keep unchanged, stop growing its multi-vendor slices, revisit after slice 2** |
 | D6 | The Feature name | `facilitator`; `agent-facilitator`; `agent-chat` | **`facilitator`** |
@@ -364,9 +503,17 @@ price tables; a web UI.
 | D9 | Loop guards | defaults 6 hops, 40 messages, 10 a minute; other | **As written**, a human `/continue` extends |
 | D10 | Identity | per-participant token files now; none; per-user later | **Tokens now**, per-user with `agent-linux-user` |
 | D11 | Slice-1 vendors | Claude + local model; Copilot + local model; all three | **Claude + local model**, Copilot and Gemini in slice 2 |
+| D13 | The directory | the register's `agents` type; a real AGNTCY `dir`; SLIM | **The register's records now, `dir` as an export, SLIM with networking** (4.8) |
+| D14 | Where keys live | signer holds them (OpenBao, ssh-agent); each participant holds its own | **Signer, OpenBao at rest, ssh-agent for a sitting**; own key as an option |
+| D15 | Facilitator model default | local endpoint; a vendor command; an attached participant | **None by default** (rules only); the engineer names one; a local endpoint is the documented first choice |
 | D12 | Transcripts | volume only, export on request; committed to the repo; shared folder | **Volume only**; shared folder later |
 
-Decisions needed from the Operator: all twelve, and in particular D1 and D5.
+Decisions needed from the Operator: all fifteen, in particular D1, D3 and D5.
+
+**Open questions.** Q1: what "the sign-packet feature" is: no such Feature exists here; read as the
+register's entry signing; please confirm or point to it. Q2: is the facilitator application's
+`serve` acceptable as one more process a harness runs (4.3), given that the deterministic core
+does not need it? Q3: should a human be able to veto a plan by default?
 
 ## Architecture review
 
