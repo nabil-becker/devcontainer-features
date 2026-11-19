@@ -108,3 +108,4 @@ numbering and a row below.
 | [0057](0057-microphone-audio-reaches-the-container-through-an-opt-in-launcher-setting-and-an-audio-feature.md) | Microphone audio reaches the container through an opt-in launcher setting and an `audio` Feature | accepted | 2026-11-06 |
 | [0058](0058-the-microphone-is-gated-by-a-workstation-relay-with-a-ttl-and-is-off-by-default.md) | The microphone is gated by a workstation relay with a TTL and is off by default | accepted | 2026-11-06 |
 | [0059](0059-an-openbao-ssh-certificate-authority-signs-for-the-operator-only-with-roles-of-principal-patterns.md) | An OpenBao SSH certificate authority signs for the Operator only, with roles of principal patterns | accepted | 2026-11-06 |
+| [0060](0060-the-architecture-is-kept-in-a-standing-set-of-six-documents-and-every-proposal-carries-its-deltas.md) | The architecture is kept in a standing set of six documents, and every proposal carries its deltas | accepted | 2026-11-19 |

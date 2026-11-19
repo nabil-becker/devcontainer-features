@@ -26,6 +26,7 @@
       "kube-state": {},
       "phi-check": {},
       "audio": {},
+      "sign-packet": {},
       "packet-relay": {}
     },
     "remoteUser": "vscode"

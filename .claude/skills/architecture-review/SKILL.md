@@ -1,6 +1,6 @@
 ---
 name: architecture-review
-description: Review a proposal's design before the Operator rules on it, by briefing a subagent that checks it against the non-functional requirements, the ADRs, the CLI capability matrix, the lexicon, the line "manage the environment, not the CLI" (NFR-13) and where each element is placed, and writes an "Architecture review (YYYY-MM-DD)" section into the proposal. Use it on every proposal in docs/proposals/ after it is written and before the Operator rules, and when the Operator asks for an architecture review, a design check or "the architect". Never changes the design sections.
+description: Review a proposal's design before the Operator rules on it, by briefing a subagent that checks it against the non-functional requirements, the ADRs, the CLI capability matrix, the lexicon, the line "manage the environment, not the CLI" (NFR-13), where each element is placed and whether it carries its deltas to the standing architecture documents, and writes an "Architecture review (YYYY-MM-DD)" section into the proposal. Use it on every proposal in docs/proposals/ after it is written and before the Operator rules, and when the Operator asks for an architecture review, a design check or "the architect". Never changes the design sections.
 ---
 
 # Architecture review
@@ -40,6 +40,12 @@ The Operator's ruling is still theirs; the review advises.
    - **Placement**: for each element, the layer it belongs in (a Feature option, a CLI adapter,
      the agents list spec, the launcher, a consumer's own config) and why. A misplaced element is
      the commonest finding.
+   - **Documentation**: the standing architecture set is six documents (State of the Architecture,
+     C4 Models, Workflows, Lifecycles, Data Flows, Data Inventory and Models), indexed in one README
+     (`docs/architecture/` by default). Name which of the six the proposal changes, and whether each
+     changed one carries its delta (the changed diagram or table, Mermaid plus text). A change
+     without its delta is a finding, and so is a standing document that is missing or stale. The
+     documents are updated in the pull request that builds the change, not by the proposal.
    Where a source does not exist in this repository (a consumer has no capability matrix), the
    reviewer says so and skips it; it never invents the rule.
 

@@ -132,6 +132,7 @@ tasks:
       - task: test:claude-unit
       - task: test:phi-check-unit
       - task: test:audio-unit
+      - task: test:sign-packet-unit
       - task: test:packet-relay-unit
       - task: test:claude-fleet-task
       - task: test:agent-task
@@ -159,6 +160,10 @@ tasks:
     cmds:
       - bash test/phi-check/unit/phi_check_test.sh
 
+  test:sign-packet-unit:
+    desc: 'Docker-free tests of the sign-packet Feature (src/sign-packet): the packet format, its checks and order, forks and the vouched-absent rule, guards, the command (test_packet.py), the instance id from the environment, OpenBao or made here and recorded once (test_instance.py), and install.sh into a throwaway root with DESTDIR (test_feature.py); part of lint. Needs python3 and ssh-keygen.'
+    cmds:
+      - for t in test/sign-packet/unit/test_*.py; do echo "== $t"; python3 -I "$t" || exit 1; done
   test:packet-relay-unit:
     desc: 'Docker-free tests of the packet-relay Feature (src/packet-relay): two parties, three, a party away, a lossy folder, a slow partial sync between two machines'' copies, forged and misplaced files, a fork, a gap lost for good and its skip, a lost state, a folder without hard links, the guards on egress and ingress and the command (test_relay.py), and install.sh into a throwaway root with DESTDIR, alone with its own copy of sign-packet''s library, the guard options baked and refused when unusable (test_feature.py); part of lint. Needs python3 and ssh-keygen.'
     cmds:
