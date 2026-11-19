@@ -687,10 +687,6 @@ register's entry signing; please confirm or point to it. Q2: is the facilitator 
 `serve` acceptable as one more process a harness runs (4.3), given that the deterministic core
 does not need it? Q3: should a human be able to veto a plan by default?
 
-## Architecture review
-
-Not yet written: the `architecture-review` skill runs on this proposal before the Operator rules.
-
 ## Architecture review (2026-11-19)
 
 **Verdict:** fit with changes
