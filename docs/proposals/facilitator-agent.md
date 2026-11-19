@@ -10,7 +10,8 @@ several AI agents running in their devcontainer. Vendor facts are marked **(docs
 vendor page was read for this proposal, **(matrix)** when taken from the capability matrix of
 `docs/proposals/agents-v2.md` section 14 (itself from docs, 2026-10-29), and **(not checked)** when
 neither; AGNTCY facts are from the project's GitHub pages **(docs read)**, and slice 0 replaces the
-unchecked ones. Nothing was installed or run here.
+unchecked ones. The proposal itself ran nothing; the slice-0 spike did ([the spike note](../spikes/2026-11-19-agntcy.md), 2026-11-19), and its findings are
+in 4.8 and 8.
 
 ## 1. The ask
 
@@ -190,8 +191,8 @@ Feature only adds the entry that names it, through the CLI's own command (7.3).
 | Participant | Primary attachment | Fallback (the vendor has no usable long-running form) |
 |---|---|---|
 | Claude Code | MCP: `--mcp-config` or a configured server **(docs read)**; MCP servers load under `-p` when named on the command line **(docs read)** | pump: a loop of `receive` and `agent-adapter-claude run-once`, which runs `claude -p "<prompt>" --output-format json`, then `--resume <session_id>`; the JSON carries `result`, `session_id` and `total_cost_usd` **(docs read)**; `--append-system-prompt` for the definition **(docs read)** |
-| GitHub Copilot CLI | MCP: `copilot mcp` manages its servers **(docs read)**; the Agent Client Protocol, `--acp`, is tried beside it in slice 0 **(matrix)** | pump through `agent-adapter-copilot run-once`: `copilot -p` with `--resume <id or name>`, `--allow-all-tools`, `--no-ask-user` **(matrix)**; auth by `COPILOT_GITHUB_TOKEN`, else `GH_TOKEN`, else `GITHUB_TOKEN`, a fine-grained token with the "Copilot Requests" permission, or `copilot login --with-token` **(docs read)** |
-| Gemini CLI | MCP servers from its settings **(not checked)**; the Agent Client Protocol, `--experimental-acp`, tried beside it in slice 0 **(matrix)** | pump through `agent-adapter-gemini run-once`: `gemini -p`, `--output-format json` gives `response` and `stats` with no session id; the `stream-json` `init` event carries it **(docs read)**; `--resume latest\|index\|uuid` **(matrix)** |
+| GitHub Copilot CLI | MCP: `copilot mcp` manages its servers **(docs read)**; the Agent Client Protocol, `copilot --acp --stdio` (public preview), is documented and its `session/new` carries MCP servers, with a public report that they were not loaded; not run, **(docs read, [the spike note](../spikes/2026-11-19-agntcy.md))** | pump through `agent-adapter-copilot run-once`: `copilot -p` with `--resume <id or name>`, `--allow-all-tools`, `--no-ask-user` **(matrix)**; auth by `COPILOT_GITHUB_TOKEN`, else `GH_TOKEN`, else `GITHUB_TOKEN`, a fine-grained token with the "Copilot Requests" permission, or `copilot login --with-token` **(docs read)** |
+| Gemini CLI | MCP servers from `mcpServers` in its settings **(docs read, [the spike note](../spikes/2026-11-19-agntcy.md))**; the Agent Client Protocol, `gemini --acp`, is documented, and whether an `--acp` session reads `mcpServers` is not stated; not run | pump through `agent-adapter-gemini run-once`: `gemini -p`, `--output-format json` gives `response` and `stats` with no session id; the `stream-json` `init` event carries it **(docs read)**; `--resume latest\|index\|uuid` **(matrix)** |
 | Local model (Ollama, llama.cpp server) | the CLI adapter `openai-compatible`, which the facilitator ships: its `receive` loop (the **model wrapper**, needing no model loop) calls the server's OpenAI-compatible chat endpoint with the definition and the conversation so far, and `reply`s. Ollama serves `/v1/chat/completions` **(not checked)**; llama.cpp's server is OpenAI-compatible **(not checked)**; the endpoint is stateless, so the wrapper keeps the messages | none needed |
 | Cloud agent behind a local CLI or MCP | whichever of the rows above its local interface is | pump |
 
@@ -395,7 +396,7 @@ The facilitator's modules talk to **one backend interface of three parts**, so p
 AGNTCY has no conversation store and signs nothing of ours, so the record is register-engine's in
 both modes. That is what makes the hatch cheap: **switching modes loses no conversation**, only moves
 directory and delivery. AGNTCY also carries A2A and MCP over SLIM (the `slim-a2a-*` and `slim-mcp-*`
-packages); these are the protocols to use wherever a protocol over SLIM is wanted, including the later
+packages; **run in the spike:** `slima2a` needs `slim-bindings` 3.x, but PyPI's `slim-mcp` 0.2.3 is pinned to bindings 1.4, fails against the 3.4.6 node, and worked only with 3.x bindings and a one-line patch, so it needs a patch or a fork); these are the protocols to use wherever a protocol over SLIM is wanted, including the later
 cross-container path.
 
 **Components, what each needs, and how the Feature gets and starts it** (all from the projects' GitHub
@@ -404,9 +405,9 @@ in the Feature, not floated):
 
 | Component | Used for | Obtained (NFR-3: pinned, checksum-verified, through the shared download helper `dcf_curl`, ADR-0034) | Runs as | Needs | Maturity, licence |
 |---|---|---|---|---|---|
-| **Agent Directory** `dir`, CLI `dirctl` | OASF records, discovery, record signing and provenance | release binary of v1.9.1; its asset names, checksum file and linux arm64 build are **not listed on the page read and are confirmed in the slice-0 spike**; images `dir-apiserver`, `dir-ctl`, `dir-reconciler` existed at v1.8.0 | `dirctl daemon start`: apiserver and reconciler in one process, embedded SQLite, localhost:8888, state under `~/.agntcy/dir/` (the Feature points it at its volume; how, **not checked**, slice 0) | no Docker (the Compose route, with Zot and PostgreSQL, is not used) | v1.x, no maturity statement; Apache-2.0; OpenSSF badges |
-| **SLIM** node, `slimctl` | the transport: named routing, sessions, group membership, end-to-end MLS | slimctl v3.4.6 tarballs with SHA-256 and `.sigstore.json` signatures per asset; **linux arm64 not visible** on the page read; the node binary or an image to confirm in slice 0 | `slim --config <server config>` as a background process on loopback; auth modes offered: basic auth, JWT, mTLS, SPIFFE; the Feature picks basic auth on loopback with a generated secret kept in OpenBao | none for the node; **clients** (the MCP server instance, `chat`, the wrapper) use the `slim-bindings` Python package, a native wheel (platform wheels **not checked**, slice 0). **`slim-bindings` is pinned with hashes through the shared download helper, or the exception to ADR-0034 is recorded in the ruling's ADR** | v3.x; Apache-2.0; no maturity statement |
-| **AGNTCY Identity** (issuer CLI, node, badges, DIDs) | verifiable agent badges, bringing an existing ID | the CLI by its install script; the node by `launch_node.sh` | needs **Docker** | Docker-in-Docker, which does not start on every host (`wslc`) | no version or releases on the page; Apache-2.0. **Not default**: opt-in `identity: true`, slice 7 (D17) |
+| **Agent Directory** `dir`, CLI `dirctl` | OASF records, discovery, record signing and provenance | release binary of v1.9.1, one static file per platform (`dirctl-linux-amd64` 198 MB, `dirctl-linux-arm64` 184 MB exist; **run, [the spike note](../spikes/2026-11-19-agntcy.md)**). **No checksum file and no per-asset signature**: the SHA-256 comes from the release API and from the SLSA provenance file `dirctl-v1.9.1.intoto.jsonl` (both matched the download), so the Feature pins the SHA-256 itself | `dirctl daemon start`: apiserver and reconciler in one process, embedded SQLite, `127.0.0.1:8888`, state under `~/.agntcy/dir/` by default and under whatever `--data-dir` says (the Feature passes its volume). **Run:** about 150 MB RSS, 0.2 to 1.3 s to start; it also opens `5555` (OCI, loopback) and, **to all interfaces by default, `8999` (libp2p) and `8889` (HTTP gateway)**, which the Feature must set to loopback in `daemon.config.yaml`; a push is validated against `https://schema.oasf.outshift.com` unless `policy.operations` is emptied ([the spike note](../spikes/2026-11-19-agntcy.md)) | no Docker (the Compose route, with Zot and PostgreSQL, is not used) | v1.x (`v1.9.1`, 2026-11-18), no maturity statement; Apache-2.0; OpenSSF badges |
+| **SLIM** node, `slimctl` | the transport: named routing, sessions, group membership, end-to-end MLS | slimctl v3.4.6 tarballs (gnu and musl, linux amd64 and arm64 both exist) with a `.sigstore.json` per asset, **verified for amd64 and arm64 by identity** (no checksum file; the release API digest matched). **There is no node binary among the release assets: the node is `slimctl slim start`** (an image `ghcr.io/agntcy/slim` also exists, `3.5.0` is `latest` with no release yet) ([the spike note](../spikes/2026-11-19-agntcy.md)) | `slimctl slim start --config <server config>` as a background process on `127.0.0.1:46357`; **run:** basic auth over plain-text loopback worked (a warning is logged, a wrong password is refused), about 20 MB RSS, 80 ms to start, no state on disk; other modes offered: JWT, mTLS, SPIFFE; the Feature picks basic auth with a generated secret kept in OpenBao | none for the node; **clients** (the MCP server instance, `chat`, the wrapper) use the `slim-bindings` Python package, a native wheel: PyPI has `3.3.9` (it reports node 3.4.6), one `py3-none` wheel each for manylinux_2_28 and musllinux_1_2 on **x86_64 and aarch64**, and `pip --require-hashes` worked. A message between two Python clients and a 3-member MLS group ran through the node ([the spike note](../spikes/2026-11-19-agntcy.md)). **`slim-bindings` is pinned with hashes through the shared download helper, or the exception to ADR-0034 is recorded in the ruling's ADR** | v3.x; Apache-2.0; no maturity statement |
+| **AGNTCY Identity** (issuer CLI, node, badges, DIDs) | verifiable agent badges, bringing an existing ID | the CLI by its install script; the node by `launch_node.sh` | needs **Docker** | Docker-in-Docker, which does not start on every host (`wslc`) | docs read in the spike: releases `v0.0.25` and `v0.0.26` (a `v1.0.0-beta.1` tag exists), signed binaries for linux amd64 and arm64, the node **still needs Docker** (Compose with PostgreSQL); Apache-2.0. **Not default**: opt-in `identity: true`, slice 7 (D17) |
 | **Agent Connect Protocol** | a REST interface to invoke a remote agent | not used | n/a | n/a | the repository's last change was May 2025 and its SDK was archived in June 2025; AGNTCY now carries **A2A and MCP over SLIM** (`slim-a2a-*`, `slim-mcp-*`), which is what to use in its place |
 
 **How the Feature starts them** (infrastructure it owns, the opposite of participants):
@@ -667,11 +668,13 @@ facilitator not installed, `attach` has nothing to name and does nothing.
 
 The Operator's order (ruled). The first version is on AGNTCY; the lean hatch comes later.
 
-0. **Spike, by hand (a learning run, no Feature):** run the AGNTCY Directory (`dirctl daemon`) and a
+0. **Spike, by hand (a learning run, no Feature), done 2026-11-19, findings in [the spike note](../spikes/2026-11-19-agntcy.md):** run the AGNTCY Directory (`dirctl daemon`) and a
    SLIM node in this devhost: downloads and their asset names, checksums, linux arm64, ports, memory,
    start-up time, state paths, and a Python client sending and receiving on SLIM. It replaces every
-   "not checked" in 4.8. Plus **T1** (does an agent keep looping on a blocking `receive`), with the
-   Agent Client Protocol tried on Copilot and Gemini beside MCP. May run at any time.
+   "not checked" in 4.8 (done). Plus **T1** (does an agent keep looping on a blocking `receive`): **done
+   with Claude Code (Haiku, `-p`): it loops, and a 300 s blocking call did not time out**; the Agent Client
+   Protocol and MCP on Copilot and Gemini were read from docs only (neither CLI is installed). Result: both components run here without
+   Docker, so no ruling changes; what the Feature must do about it is the note's "Requirements" list.
 1. **The AOF Features in:** sign-packet 0.5.1, register-engine 0.2.0 and packet-relay 0.3.0 move from
    the AOF repository into `src/` and are published here (backlog `aof-features-takeover`, in progress
    on branches `feature/aof-features-takeover/1`, `/2` and `/4`). agentic-register and agentic-a2a stay
@@ -837,6 +840,19 @@ The Operator ruled on the proposal on 2026-11-19. Each decision as ruled:
 **The ADR this ruling needs:** ADR-0061 ("The facilitator is built on AGNTCY first, …"), covering the records listed in 7.2 (ADR-0036, 0037, 0041,
 0025, 0045, 0048, 0034 and the "MCP: none for now" decision), the home of `sessionName`, and the two
 exceptions (participant token files; `slim-bindings` if it cannot go through the download helper).
+
+
+### Ruling on the spike findings (2026-11-19)
+
+After the AGNTCY spike (`docs/spikes/2026-11-19-agntcy.md`) the Operator ruled, as recommended:
+
+- **E. No `slim-mcp`.** The facilitator Feature's own MCP server speaks MCP to the CLI over stdio and
+  uses `slim-bindings` (3.x, pinned with hashes) directly for SLIM; PyPI's `slim-mcp` (pinned to
+  bindings 1.4) is not used, patched or forked.
+- **F. Agent records are checked offline by default.** The Directory daemon runs with
+  `policy.operations: []`; a Feature option turns on the online OASF schema check.
+- **G. SLIM is pinned to slimctl 3.4.6** (released, sigstore-signed, amd64 and arm64); move up when
+  3.5.0 has a release, not only an image.
 
 ## Architecture review (2026-11-19)
 
