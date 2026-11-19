@@ -77,7 +77,7 @@ Where an official Feature exists, this one MUST order after it with `installsAft
 - **Why:** images rebuild; users differ per repo.
 - **Source:** CONTRIBUTING "install.sh" step 10, "devcontainer-feature.json".
 - **Checked by:** test (run twice, run as non-root). Automatable, but the twice-run test does not exist.
-- **Today:** estimate only. The non-root check is in the `pinned_version` scenarios (11 of 16). Idempotence is stated, and I did not verify it per Feature.
+- **Today:** estimate only. The non-root check is in the `pinned_version` scenarios (11 of 16). Idempotence is stated, and I did not verify it per Feature. One case is tested Docker-free: the `participant` component's installer (`components/participant`, carried by `claude-code` and `agents`) run twice, and by two Features, leaves one copy (`task test:participant-unit`, 2026-11-19).
 
 ### NFR-6 one-way-to-configure
 Settings MUST be options or plain variables, resolved CLI, then `.env`, then environment, with the same names in tasks and scripts.
@@ -147,7 +147,7 @@ A contract this repository defines for agent CLIs (the adapter verbs, the agents
 - **Why:** a contract written around one CLI's quirks (Claude's supervisor, its settings file, its list) leaves every consumer on another CLI with a wrapper to script around.
 - **Source:** the Operator, 2026-10-29; agents-v2 section 14.
 - **Checked by:** the contract tests against two fake adapters with different capabilities; review against the matrix. Partly automatable.
-- **Today:** one adapter, Claude; Copilot next.
+- **Today:** one adapter, Claude; Copilot next. The contract tests run against the `participant` component (`components/participant`, the agents code since agents 2.2.0, ADR-0061), with the two fake adapters kept.
 
 ### NFR-13 manages-the-environment-not-the-cli
 A Feature MUST manage the agent's environment (which agent, its state, its skills, its records, how it is started and found again) and use each CLI's own features through its options and flags instead of re-implementing them. A capability that one CLI has MUST be exposed as that CLI adapter's or Feature's option, not as a new concept in the agents spec, unless NFR-12's two-vendor test is met.

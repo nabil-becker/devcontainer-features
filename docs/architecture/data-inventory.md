@@ -69,8 +69,9 @@ named in the rows ("bounded loss", "to verify").
 | Cost history to the cut-over (cold storage) | `/mnt/cloud-folder/costs/archive/` | host, once | 2 | internal | yes | `docs/ledger/README.md` |
 | Backs' state: offsets, locks, job logs, pending notes, `runs.jsonl` | volume `devhost-state-${devcontainerId}` at `DEVHOST_STATE` | devhost Feature | 4 | internal (job.log content: to verify) | yes | `local-features/devhost/NOTES.md` ("State") |
 | rclone token and config, sync state, logs, VFS cache | volume at `/var/lib/devcontainer-features/cloud-folder` | cloud-folder Feature | 4 | secret (token) | yes | `src/cloud-folder/NOTES.md` |
-| Agent list | `.devcontainer/agents.yml` | agents Feature, the repo | 1 | public | yes | `src/agents/NOTES.md`, `.devcontainer/agents.yml` |
-| Agent leases and start markers | `/var/lib/devcontainer-features/agents`, not a volume | agents Feature | 4 | internal | no, by design | `src/agents/NOTES.md` |
+| Agent list | `.devcontainer/agents.yml` | participant component (claude-code `participants: true`, or the deprecated agents Feature), the repo | 1 | public | yes | `src/agents/NOTES.md`, `src/claude-code/NOTES.md`, `.devcontainer/agents.yml` |
+| Agent leases and start markers | `/var/lib/devcontainer-features/agents`, not a volume | participant component | 4 | internal | no, by design | `src/agents/NOTES.md` |
+| The participant component itself | `/usr/local/lib/dcf-participant` (`COMPONENT_VERSION`, `installed-by`), `/usr/local/bin/agents` a symlink into it | the first Feature that installs it (newer copy wins) | 4 (image) | public | no (rebuilt) | `components/participant/install-participant.sh` |
 | Launcher settings per machine | `.devcontainer/.env` on the workstation (git-ignored, `.gitignore`) | the Operator | 3-like (a workstation file) | internal | not applicable | `.devcontainer/devcontainer.json`, `src/devcontainer-cli/NOTES.md` |
 | Audio relay folder (microphone socket, only while the gate is on) | `/mnt/wsl/devhost-audio` | launcher, audio gate | none | personal (live audio, stored nowhere) | no | `src/audio/NOTES.md`, `docs/adr/0058-*.md` |
 | Audio ALSA default | `/etc/asound.conf` in the image | audio Feature | 4 (image) | public | no (rebuilt) | `src/audio/NOTES.md` |

@@ -10,8 +10,8 @@ installing Node.js, and a one-line bootstrap that wires both into any repo.
 | --- | --- |
 | [`go-task`](src/go-task) | [Task](https://taskfile.dev) (`task`), sha256-verified from GitHub releases, with bash/zsh completions. |
 | [`devcontainer-cli`](src/devcontainer-cli) | `@devcontainers/cli` as `devcontainer`, on a private Node.js under `/opt/devcontainer-cli` that is never put on PATH. |
-| [`claude-code`](src/claude-code) | [Claude Code](https://code.claude.com/docs): the native release binary (no Node.js, version pinnable) unless a `claude` is already there (the official Anthropic Feature), plus `agent-adapter-claude` (Claude Code's adapter for the `agents` Feature) and the state (`CLAUDE_CONFIG_DIR`) in a volume it owns; the `claude-host` launcher, `claude-host-pin` hook and `claude-fleet` still work in 1.7.0 but are deprecated (claude-code 2.0 removes them). |
-| [`agents`](src/agents) | One list of a repository's agents (`.devcontainer/agents.yml`: name, CLI, folder, args, kind) and one verb for every agent CLI: `task agents -- <name>` makes a `resident` agent run in the background and attaches, or opens a new session of an `on-demand` one; `agents:up` starts the residents with the container; each CLI Feature supplies the adapter. |
+| [`claude-code`](src/claude-code) | [Claude Code](https://code.claude.com/docs): the native release binary (no Node.js, version pinnable) unless a `claude` is already there (the official Anthropic Feature), plus `agent-adapter-claude` (Claude Code's adapter for the agent list), with `participants: true` (1.10.0) the participant component (the agent list, `task agents -- <name>`, residents started with the container; what `agents` installed), and the state (`CLAUDE_CONFIG_DIR`) in a volume it owns; the `claude-host` launcher, `claude-host-pin` hook and `claude-fleet` still work in 1.7.0 but are deprecated (claude-code 2.0 removes them). |
+| [`agents`](src/agents) | **Deprecated (2.2.0): use `claude-code` with `participants: true`**, which installs the same code; it keeps working unchanged until 3.0.0. One list of a repository's agents (`.devcontainer/agents.yml`: name, CLI, folder, args, kind) and one verb for every agent CLI: `task agents -- <name>` makes a `resident` agent run in the background and attaches, or opens a new session of an `on-demand` one; `agents:up` starts the residents with the container; each CLI Feature supplies the adapter. |
 | [`git`](src/git) | git augmented for the container: a worktree-aware wrapper that scopes `GIT_DIR` to the checkout and maps a `.git` pointer under the host's `.git-dirs` onto one shared mount, `safe.directory` and `core.hooksPath` at post-create, the global config in a volume it owns. |
 | [`gh`](src/gh) | [GitHub CLI](https://cli.github.com) from GitHub releases, checksum-verified, unless the official Feature installed it; its login (`GH_CONFIG_DIR`) in a volume it owns, git's GitHub credentials taken from it. |
 | [`ssh-agent`](src/ssh-agent) | `SSH_AUTH_SOCK` at a fixed path in every process, so git commits can be signed with an SSH key: the launcher mounts the host's agent socket (linux, macOS, a WSL distro), the private key never entering the container; the Windows engines get a plain explanation and an opt-in, temporary key mode; `ssh-agent:*` tasks for keys, dedicated-key warnings, rotation and retirement (`key:rotate`, `key:retire`, `key:age`) and git signing setup. |
@@ -84,7 +84,8 @@ gap to close here (see [Contributing from a consuming repo](#contributing-from-a
   over `.claude/worktrees`), or a synced checkout carries every build
   artefact.
 - **One list of agents, one verb.** A repository names its agents in
-  `.devcontainer/agents.yml` (the `agents` Feature): a name, a CLI, a folder,
+  `.devcontainer/agents.yml` (the participant component, which `claude-code` installs with
+  `participants: true`; the deprecated `agents` Feature installs the same): a name, a CLI, a folder,
   extra args and a kind. `task agents -- <name>` inside, `task
   devcontainer:agent -- <name>` from the host, does the right thing for the
   kind: a `resident` agent is made to run in the background and attached, an
@@ -94,6 +95,11 @@ gap to close here (see [Contributing from a consuming repo](#contributing-from-a
   session id is pinned anywhere and nothing starts a second copy of a running
   agent. `claude-host`, `claude-fleet`, `HOST_SESSION` and `SESSIONS` are
   deprecated and go with claude-code 2.0.
+- **Shared code is vendored, never depended on.** A published Feature folder must be
+  self-contained, so code several Features use is copied into each: single helpers from
+  `src/common` (`task common:sync`), multi-file components from `components/<name>/`
+  (`task components:sync`; never published alone; each installs once, whichever Feature brings
+  it). `task lint` fails when a copy drifts.
 - **Settings are plain variables, three ways.** Command-line var, then the
   `.env` files, then the exported environment, with the same names in the
   tasks, the PowerShell scripts and their bash twins.
@@ -341,6 +347,12 @@ agent: `name`, `cli`, `kind` resident or on-demand, `folder`, `args`) and start 
 `SESSIONS`, the `HOST_SESSION...` pins in `.devcontainer/.env`, the `claude-host-pin` hook and any join script of your
 own; they keep working, with a deprecation line, until claude-code 2.0. Step by step:
 [docs/migrations/agents.md](docs/migrations/agents.md).
+
+**The agents Feature becomes a claude-code option (`agents` 2.2.0, claude-code 1.10.0, once released):** nothing is
+required; `agents` keeps working unchanged until 3.0.0 and says it is deprecated in one line from `task agents:version`
+and `task agents:check`. To move, set `"participants": true` on `claude-code`, remove the `agents` line, and turn a
+`sessionName` option into `AGENTS_SESSION_NAME` (`containerEnv` or `.devcontainer/.env`); the tasks, the command and
+`agents.yml` stay. Both together install one copy.
 
 All of them also answer to `dc:` (the include's alias in the generated
 Taskfile). Each task dispatches per platform (Task's per-command
