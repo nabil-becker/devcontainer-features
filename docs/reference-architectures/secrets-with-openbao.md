@@ -26,13 +26,13 @@ Out of scope here: anything the proposal defers to a later phase.
 
 ## What exists today
 
-Read this before you copy the fragment. The client is built (1.1.0); server mode and what follows are not.
+Read this before you copy the fragment. As of 2026-11-19 the tree has `openbao` 1.6.0 (1.6.0 itself unreleased): the client (1.1.0), server mode (1.2.0), backup, restore and onboarding (1.3.0), the OpenBao key file (1.5.0) and the SSH certificate authority (1.6.0) are built, and `ssh-agent` 1.5.0 loads keys from OpenBao. Sections below written before those still say "planned" in places; check `src/openbao/CHANGELOG.md` before relying on one.
 
 | Piece | Published today | Planned in phase 1 (proposal section 12) |
 | --- | --- | --- |
-| `openbao` client | `bao` at `/usr/local/bin/bao`, checksum-verified, `openbao:version`, `:status`, `:login`, `:logout`, `:kv:get`, `:setup`; 1.1.0 adds the state volume (the login, kept by a token helper, survives a rebuild), `dcf-secret` (get, put, status) and the `mode` option (`client` only) | 1.2.0: server mode (`mode: server`) |
-| `openbao` server mode, backup, restore, onboarding | not built | 1.2.0 server mode and the gate; 1.3.0 backup and restore; 1.4.0 onboarding |
-| `ssh-agent` | socket mode, and key mode with its own key volume and `key:unlock` / `key:lock` | 1.4.0: `key:load` and `key:lock` of a key fetched from OpenBao, with a lifetime; 2.0.0 removes the key volume |
+| `openbao` client | `bao` at `/usr/local/bin/bao`, checksum-verified, `openbao:version`, `:status`, `:login`, `:logout`, `:kv:get`, `:setup`; 1.1.0 adds the state volume (the login, kept by a token helper, survives a rebuild), `dcf-secret` (get, put, status) and the `mode` option (`client` only) | built: server mode in 1.2.0 |
+| `openbao` server mode, backup, restore, onboarding | built: 1.2.0 server mode and the gate; 1.3.0 `openbao:backup`, `openbao:restore` and onboarding by a starter instance; 1.4.0 `openbao:password`; 1.5.0 `unlock: keyfile`; 1.6.0 the SSH certificate authority (unreleased) | |
+| `ssh-agent` | socket mode, and key mode with its own key volume and `key:unlock` / `key:lock` | built: 1.4.0 `key:load` and `key:rotate` from OpenBao; 1.5.0 the `mode` option; planned: 2.0.0 removes the key volume |
 | `gh`, `az` | each owns its login in its own volume | last slice: the long-lived credential in OpenBao, fetched with `dcf-secret` at the start of a sitting |
 | ADR 0048 | accepted 2026-11-03; ADR 0046 (the passphrase unlock) is superseded, but its flow carries on until `ssh-agent` 1.4.0 ships | |
 
