@@ -27,7 +27,7 @@ printf "version: '"'"'3'"'"'\nincludes:\n  features:\n    taskfile: /usr/local/s
 export PATH="$t/bin:$PATH" AGENTS_SETTLE_INTERVAL=0 AGENTS_SETTLE_TIMEOUT=0; cd "$t/repo"'
 check "task agents:check reads the list" bash -c "$setup; task agents:check | grep -F 'pair: cli fake, on-demand'"
 check "task agents:check prints no deprecation line" bash -c "$setup; ! task agents:check 2>&1 | grep -q deprecated"
-check "task agents:version shows the component" bash -c "$setup; task agents:version 2>&1 | head -n 1 | grep -qx \"participant \$(cat $lib/COMPONENT_VERSION)\""
+check "task agents:version shows the component" bash -c "$setup; task agents:version 2>/dev/null | head -n 1 | grep -qx \"participant \$(cat $lib/COMPONENT_VERSION)\""
 check "the post-start hook starts the resident only" bash -c "$setup; claude-code-post-start >/dev/null; grep -c start-bg \"\$t/calls\" | grep -qx 1 && ! grep -q pair \"\$t/calls\""
 check "the post-start hook never fails" bash -c "cd \"\$(mktemp -d)\" && claude-code-post-start"
 
