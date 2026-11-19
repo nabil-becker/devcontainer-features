@@ -25,7 +25,8 @@
       "az": {},
       "kube-state": {},
       "phi-check": {},
-      "audio": {}
+      "audio": {},
+      "sign-packet": {}
     },
     "remoteUser": "vscode"
   }
