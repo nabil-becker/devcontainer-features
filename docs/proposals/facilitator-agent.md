@@ -690,3 +690,66 @@ does not need it? Q3: should a human be able to veto a plan by default?
 ## Architecture review
 
 Not yet written: the `architecture-review` skill runs on this proposal before the Operator rules.
+
+## Architecture review (2026-11-19)
+
+**Verdict:** fit with changes
+
+The facilitator itself (a deterministic core, limits in the layer, the register as the signed
+record, AGNTCY behind one backend interface) fits the collection. The changes are about where the
+deprecated `agents` Feature's new "connect half" is put: most of it belongs in the facilitator,
+the register or a CLI adapter, not in a component that `claude-code` installs.
+
+### Requirements checked
+
+- **NFR-1** needs a line: met for the facilitator (section 6, `facilitator-state-*`). Not said for the run half's leases once they leave `agents`, or for the conversation record, which sits in the agentic-register Feature's volume (4.6, 4.8).
+- **NFR-2** met (section 6, `version` first). The component's Taskfile is included by two vendor Features (7.3); say which install block registers it.
+- **NFR-3** not met yet: `dir`'s checksum file and arm64 build are unknown (4.8, the spike). `slim-bindings` by pip is a second download route (finding 12).
+- **NFR-4** needs a check for `copilot` (7.3 says it is not checked). Does not apply to `facilitator`.
+- **NFR-5** met in the design (section 6; 7.3 "one place, newer wins"). The newer-wins rule needs its own test.
+- **NFR-6** mostly met (section 6). `facilitator backend switch` (4.8) must not persist a backend that disagrees with the `backend` option or `FACILITATOR_BACKEND`.
+- **NFR-7** partly met: `chat` is `interactive: true`, and `send` and `transcript --json` exist (4.9). `CLI_ARGS` is not mentioned.
+- **NFR-8, NFR-9** do not apply to a proposal. 4.8 names the NOTES content. `copilot` needs NFR-9 if an official Feature exists.
+- **NFR-10** met in the plan (section 6), with two gaps. The `.github/workflows/test.yaml` matrix is a hand list, so `facilitator` and `copilot` must be added. `debian:latest` and `ubuntu:latest` have no `python3` (`src/agents/agents.sh` says so and avoids it), so a `participants: true` scenario needs Python.
+- **NFR-11** partly applies. `facilitator verify` claims the shape (4.7) but takes no paths. Give it exit 0, 1 and 2 and `--format json`, and say the rest does not apply.
+- **NFR-12** met in form, not checked against the matrix. E1's fallback is named (the pump), but E1 rests on MCP clients and long blocking tool calls, and section 14 of `agents-v2.md` has no MCP row (finding 6).
+- **NFR-13** partly met. The pump puts per-vendor flags in the facilitator (finding 3), and the vendor Features gain a facilitator-specific option (finding 4).
+
+### Findings
+
+1. **The default record cannot be installed by a downloader.** 4.8 says the record is the register "in both modes", and the default is `backend: agntcy`. 4.6 and D3 say the register cannot be pulled: it is vendored, unchanged, from AOF's private packages (`local-features/agentic-register/VENDORED.md`), and local Features are never published (ADR-0025). 4.6 also names an unsigned JSONL fallback that 4.8's table omits. Recommended change: make the record a setting of its own (`record: register|jsonl`), independent of `backend`, default `jsonl` until the register can be pulled, and show both settings in 4.8's table.
+2. **The connect half is misplaced in the vendor Features.** E1 is useless without the conversation service that only the facilitator installs (7.4). In `agntcy` mode every E1 instance is a SLIM client with a native wheel (section 9). The component needs Python 3.11 (D7). Today `agents` is awk and bash, because base images lack `python3` (`src/agents/agents.sh`). Python reaches a Feature through `dependsOn` (the `phi-check` precedent), which cannot depend on an option, so every `claude-code` user would carry Python whether `participants` is on or off. Recommended change: the component keeps only the run half and E4 (`agents list --json`, which already exists), in bash; E1 ships in `facilitator`; E3 is the register's own signing and verification; E2 is the facilitator's directory client reading E4.
+3. **The pump re-implements adapter knowledge.** 4.2's table puts each vendor's one-turn flags (`-p`, `--resume`, `--output-format json`, `--allow-all-tools`) in the facilitator's pump, and 9 says "only the pump and `snippet` know them". 7.4 says the facilitator "carries no vendor knowledge". ADR-0037 already defines the optional adapter verb `run-once` (exit 3 when absent). Recommended change: the pump becomes a loop around `agent-adapter-<cli> run-once`, and the facilitator model's `command:` becomes `cli:` through the same verb.
+4. **MCP registration is placed in a facilitator-specific vendor option.** `attach: facilitator` on each vendor Feature (7.3) teaches every vendor Feature about one consumer. 7.3 also says `claude-code` already registers the register's MCP; in fact the agentic-register Feature registers itself (`claude mcp add --scope user` in `register/cli.py`). Two vendors have an MCP command (Claude Code, `copilot mcp`; both read from docs in 4.2). Recommended change: add an optional adapter verb `mcp-add <name> -- <command>` (exit 3 when absent), call it from the facilitator's setup, and drop the `attach` option.
+5. **D1 omits a native route that two vendors in the matrix have.** Section 14.2 lists Copilot `--acp` and Gemini `--experimental-acp`: the Agent Client Protocol, where a client drives an agent session and hands it prompts. That is the gap 4.2 names ("a server cannot wake a model"), and two vendors pass NFR-12's test on paper. Recommended change: add ACP as an option of D1 and to T1, with Claude Code's ACP status read from its docs (the matrix does not state it).
+6. **The design was not checked against the matrix (NFR-12).** E1 rests on facts that section 14.1 has no row for: an MCP client in interactive mode and under `-p`, a command to add a server, tool-call timeouts, and Gemini's MCP (marked "not checked" in 4.2). Recommended change: add those rows to the matrix, dated and sourced, before D1 is ruled.
+7. **The participant keys break the list spec.** `name`, `cli` and `kind` are required today (`agents.sh`: "name, cli and kind are required"), and the `jester` and `copilot-lead` entries in 4.1 have neither `cli` nor `kind`. The human `you` reuses `kind` (resident or on-demand) with a new value, `human`. `persona` duplicates `definition` (ADR-0036: "the key for the CLI profile stays `definition`"). `facilitator: true` is the facilitator's own setting inside the shared list, and `endpoint` and `model` belong to one attachment. Recommended change: model a local model as a CLI adapter that the facilitator ships (`cli: openai-compatible`, endpoint and model in `args`); use `definition` for the persona; move `facilitator: true` and the human member into `facilitator.yml`. The shared list then gains only `attachment`, `description` and `skills`.
+8. **E1's `services.d/` is a second plug-in mechanism.** ADR-0036 decided that integrations plug in through `agent-integration-<id>` executables with the verbs `env`, `before-start`, `check` and the rest. Handing a participant its `FACILITATOR_TOKEN` and registering it at start is what `env` and `before-start` do. Recommended change: the facilitator plugs into the run half as `agent-integration-facilitator`, and `services.d/` is dropped, or kept with the ADR saying why the integration contract does not fit.
+9. **More accepted records are touched than 7.2 names.** ADR-0036 (the lease moves out of the `agents` Feature) and ADR-0037 (the `copilot-cli` name; the contract tests run against "the agents Feature") are named. Not named:
+   - ADR-0041: the session name is rendered by the agents Feature from its `sessionName` option, and that option has no home in 7.3's option table.
+   - ADR-0025: `components/` is a new top-level folder class beside `local-features/`.
+   - The recorded decision "MCP: none for now" in `docs/principles/non-functional-requirements.md`: `facilitator` would be the first published Feature to offer an MCP server.
+
+   Recommended change: one ADR at the ruling that names all five and gives `sessionName` a home (a vendor Feature option, or the list key `session-name` alone).
+10. **The provenance record sits in tier 4 (ADR-0045).** Conversations and their signed lineage live in a volume (4.6, D12), which is the rebuildable-only tier, while the design exists to prove that lineage later. The register README says a `messages` register has no mirror, so adding one is a register change upstream in AOF. Recommended change: state in 4.6 that conversations are working set and lost with the machine, and keep a tier-2 mirror as a later item that needs a register release.
+11. **Participant tokens bypass OpenBao (ADR-0048).** ADR-0048 makes OpenBao the master of every token the collection creates. SLIM's secret goes there (4.8), but `tokens/<handle>` is a file in the volume (section 5). Recommended change: either keep the tokens in OpenBao, or write the exception into the ADR (made at each start, valid only in that container, worthless outside it).
+12. **Downloads outside `dcf_curl` (ADR-0034).** Section 6 does not say the `dir` and `slim` binaries go through `dcf_curl`. `slim-bindings` arrives by pip, which neither the helper nor `common:curl-check` covers. Recommended change: say that the binaries use `dcf_curl`, and record pip with `--require-hashes` as a named exception in the deprecation ADR.
+13. **CI does not see the new folder.** `release.yaml` and `validate.yml` use `base-path-to-features: ./src`, so `components/` is safely never published. The `test.yaml` matrix is a hand list. `common:check` and `common:curl-check` glob `src/*/*.sh` one level deep, so a copy vendored into a subfolder (`src/claude-code/participant/`) escapes both. Recommended change: `components:check` compares whole trees, `curl-check` covers the vendored subfolders, and the component's unit tests run in `task lint` (ADR-0027).
+14. **Lexicon collisions.**
+    - "Model wrapper" clashes with **Wrapper** (an executable ahead of a tool, under the tool's own name).
+    - "Packet" is a second name for a register entry, while the lexicon's **Entry** means one ledger record.
+    - "Building block" and "endpoint" name the same thing (section 3, 7.4).
+
+    Recommended change: drop "model wrapper" (finding 7 makes it an adapter), call a packet a "signed message" with one lexicon line, and keep "endpoint" only.
+15. **New terms need lexicon entries that relate them to the old ones.** "Participant" against **Agent** ("any model doing work for the repository ... an inter or a back"; a local jester is neither) and against **Agent list** (which `participants.yml` renames). "Harness" against **Carrier** (what an agent runs on). "Conversation" against the register's "thread". Recommended change: the librarian adds Participant, Harness, Attachment, Facilitator and Participant component, each saying what existing term it extends or replaces, when the Operator rules.
+16. **`serve` has two owners.** 4.3 says "the Feature runs it" (`autostart`). Section 6's task list says "run by a harness". Q2 asks whether a harness should run it. Running a server from `postStartCommand` has precedent in openbao's server mode (ADR-0048, decision 3). Recommended change: say the Feature runs it under `autostart`, the way it runs `dir` and SLIM, and close Q2.
+17. **A deprecation convention already exists in practice.** 7.2 says none is written. The README already deprecates `claude-host`, `devcontainer:claude` and `devcontainer:ssh-key-import` with one printed line, removed at the next major, and ADR-0048 keeps `DCF_HOST_SSH_AGENT=key` "for one major". Recommended change: D21 cites these as the precedent it writes down.
+
+### Open questions for the Operator
+
+- **The default backend before the spike.** Section 6 sets `backend: agntcy` and `autostart: true`, which starts two daemons for every downloader, while every cell of 4.8 is unconfirmed until slice 0. Recommendation: keep the ruling as the target, ship `lean` as the default until slice 4 (section 8 already implies it), then switch with the "what changed" note.
+- **Where E1 lives** (finding 2): in the vendor-installed component (the proposal) or in `facilitator` (the review). Recommendation: `facilitator`, so `claude-code` gains no Python or SLIM dependency.
+- **Publishing the register** (D3, finding 1): a downloaded Feature can sign only once the register can be pulled. Recommendation: rule on it before slice 5, with `record: jsonl` until then.
+- **ACP in D1** (finding 5). Recommendation: put it in T1 beside MCP before D1 is ruled.
+- **Participant tokens** (finding 11): OpenBao, or a written exception. Recommendation: the exception, since the tokens are made per container start.
+- **Conversations' tier** (finding 10): working set, or a mirror. Recommendation: working set now; a mirror after a register release.
