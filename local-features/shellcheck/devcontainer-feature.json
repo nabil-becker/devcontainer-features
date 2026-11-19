@@ -1,0 +1,15 @@
+{
+  "id": "shellcheck",
+  "version": "1.0.0",
+  "name": "shellcheck (release asset, checksum-pinned)",
+  "description": "Installs shellcheck from its GitHub release asset (a plain download, never the GitHub API, so the runner's shared rate limit cannot fail it) and verifies the archive against a SHA-256 pinned in install.sh for each architecture. Only versions with a pinned checksum install; add one to install.sh to bump. Used by this repository's devcontainer and CI config, not published.",
+  "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/local-features/shellcheck",
+  "licenseURL": "https://github.com/nabil-becker/devcontainer-features/blob/main/LICENSE",
+  "options": {
+    "version": {
+      "type": "string",
+      "default": "0.11.0",
+      "description": "The shellcheck version; it must have a checksum pinned in install.sh."
+    }
+  }
+}

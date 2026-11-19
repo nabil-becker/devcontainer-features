@@ -137,8 +137,9 @@ Add a Feature and rebuild: its tasks appear. Remove it: they disappear.
 
 Not in this collection on purpose: the GitHub Copilot CLI (now an official
 `ghcr.io/devcontainers/features/copilot-cli`), code-server (Coder publishes
-`ghcr.io/coder/devcontainer-features/code-server`), and shellcheck/yamllint
-(`ghcr.io/devcontainers-extra/features/*`).
+`ghcr.io/coder/devcontainer-features/code-server`), and yamllint
+(`ghcr.io/devcontainers-extra/features/yamllint`); shellcheck is a local, unpublished
+Feature (`local-features/shellcheck`) for this repository's own devcontainer.
 
 To try an unpublished change, reference the Feature folder locally
 (`"./features/<id>": {}`); the CLI only accepts local Features that live

@@ -30,6 +30,10 @@ reach anyone who references them. The rules below keep that safe.
    `task lint:toolchain` (part of `task lint`) fails when the two differ in the
    image or any shared Feature entry, or when a tool has no pinned version. Then
    rebuild the devcontainer and run `task lint`: a newer tool may flag new things.
+   shellcheck is the exception to "change the version": `local-features/shellcheck` installs
+   it from the release asset against a SHA-256 pinned in its `install.sh` (the
+   devcontainers-extra Feature failed CI on the GitHub API's rate limit), so a bump also
+   adds the new version's two checksums there; `task lint:toolchain` checks they exist.
 2. Make the change; run `task docs` (if the JSON or notes changed),
    `task lint` and, on Linux/macOS or inside the devcontainer,
    `task test FEATURE=<id>`.
