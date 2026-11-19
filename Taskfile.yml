@@ -95,7 +95,7 @@ tasks:
   lint:
     desc: 'shellcheck, yamllint, PSScriptAnalyzer, the vendored-helper and toolchain checks, the Feature version literals in container tests (versions:check), and every Docker-free unit test (test:*-unit and friends; see each task''s desc). CI runs exactly this inside .devcontainer/ci; the tools must be installed - this repo''s devcontainer has them, at the pinned versions.'
     cmds:
-      - shellcheck -x src/*/*.sh local-features/*/*.sh local-features/*/share/bin/*.sh local-features/*/share/jobs/*/*.sh test/*/*.sh test/*/unit/*.sh test/bootstrap/*.sh bootstrap/*.sh bootstrap/host/*.sh .githooks/* .devcontainer/*.sh
+      - shellcheck -x src/*/*.sh components/*/*.sh local-features/*/*.sh local-features/*/share/bin/*.sh local-features/*/share/jobs/*/*.sh test/*/*.sh test/*/unit/*.sh test/bootstrap/*.sh bootstrap/*.sh bootstrap/host/*.sh .githooks/* .devcontainer/*.sh
       - yamllint --strict .
       - task: lint:toolchain
       - pwsh -NoLogo -NoProfile -File '{{.ROOT_DIR}}/.github/scripts/Invoke-PSScriptAnalyzer.ps1'
@@ -127,6 +127,7 @@ tasks:
       - task: test:cloud-folder-unit
       - task: test:cloud-folder-login
       - task: test:agents-unit
+      - task: test:participant-unit
       - task: test:agents-contract
       - task: test:agents-lease
       - task: test:claude-unit
@@ -139,12 +140,17 @@ tasks:
       - task: test:agent-task
 
   test:agents-contract:
-    desc: 'Docker-free contract tests of the agents Feature: the same scenarios against two fake adapters with different capabilities (fakea, Claude-like with background mode, wake, list, stop and logs; fakeb, minimal, with only new, resume and attach, every other verb answering exit 3): check on a mixed list, start of an on-demand agent on each (and refused without a terminal), --resume, a resident on each (attached on fakea, run as on-demand on fakeb with its one line, refused without a terminal), up (started, skipped, never twice), list and --json for an adapter with no list (unknown, not an error), stop and logs without the verb (exit 3), unsupported verbs asked once per command, and that a list using only fakeb never runs anything named claude (a fake claude and agent-adapter-claude log any call), plus a grep that src/agents names claude only in its documented places. Part of lint.'
+    desc: 'Docker-free contract tests of the participant component (the agents command, components/participant; installed by claude-code participants: true or the deprecated agents Feature): the same scenarios against two fake adapters with different capabilities (fakea, Claude-like with background mode, wake, list, stop and logs; fakeb, minimal, with only new, resume and attach, every other verb answering exit 3): check on a mixed list, start of an on-demand agent on each (and refused without a terminal), --resume, a resident on each (attached on fakea, run as on-demand on fakeb with its one line, refused without a terminal), up (started, skipped, never twice), list and --json for an adapter with no list (unknown, not an error), stop and logs without the verb (exit 3), unsupported verbs asked once per command, and that a list using only fakeb never runs anything named claude (a fake claude and agent-adapter-claude log any call), plus a grep that the participant component (components/participant) names claude only in its documented places. Part of lint.'
     cmds:
       - bash test/agents/unit/contract_test.sh
 
+  test:participant-unit:
+    desc: 'Docker-free tests of the participant component''s installer (components/participant/install-participant.sh), every path moved into a temp folder: a first install (lib folder, the agents symlink, state folders and modes, the Taskfile include, installed-by, the go-task registry refreshed), a second Feature with the same version installing nothing (one copy), an older copy never replacing a newer one (1.10.0 beats 1.9.0), a newer one replacing an older, --taskfile false and a later caller adding only the include, usage refused; and that each src/<id>/participant copy equals the component. Part of lint.'
+    cmds:
+      - bash test/participant/unit/install_test.sh
+
   test:agents-lease:
-    desc: 'Docker-free tests of the agents Feature''s 2.0 keys and lease: lifecycle, identity, lease, definition and default parsed, checked and shown (bad values refused with their line, the inline map pointing at the flat form, two stateful agents with one identity, definition with --agent, two defaults); a 1.x list read as stateful with an exclusive lease; eight concurrent starts of one stateful agent giving one copy (resident: one start, seven joins; on-demand: one session, seven refused; up racing start); a dead holder taken over, one case per liveness rule, never a live one, eight takers giving one winner, a stale takeover lock; cannot list (never taken over) and a failed listing (nothing taken); an ephemeral agent with no lease; release by stop, by the foreground wrapper on exit and on SIGTERM, and by agents release (--force for a live holder); leases and the LEASE column; the default agent from agents, agents start and task agents; part of lint.'
+    desc: 'Docker-free tests of the participant component''s 2.0 keys and lease (the agents command, components/participant): lifecycle, identity, lease, definition and default parsed, checked and shown (bad values refused with their line, the inline map pointing at the flat form, two stateful agents with one identity, definition with --agent, two defaults); a 1.x list read as stateful with an exclusive lease; eight concurrent starts of one stateful agent giving one copy (resident: one start, seven joins; on-demand: one session, seven refused; up racing start); a dead holder taken over, one case per liveness rule, never a live one, eight takers giving one winner, a stale takeover lock; cannot list (never taken over) and a failed listing (nothing taken); an ephemeral agent with no lease; release by stop, by the foreground wrapper on exit and on SIGTERM, and by agents release (--force for a live holder); leases and the LEASE column; the default agent from agents, agents start and task agents; part of lint.'
     cmds:
       - bash test/agents/unit/lease_test.sh
 
@@ -181,7 +187,7 @@ tasks:
       - bash test/audio/unit/relay_test.sh
 
   test:agents-unit:
-    desc: 'Docker-free tests of the agents Feature''s agents command: the agent list (the YAML subset, required keys, unknown keys warned, errors with file and line), AGENTS_FILE from the task variable, .env, .devcontainer/.env, the environment or the default (a missing file named with its source), each verb per kind (start, --resume, --new and its question, up, list, stop, logs), the no-terminal rule, the fallbacks when the adapter answers exit 3, a listing that fails (state error, nothing started, the hint, never a fresh session), an on-demand agent shown none unless running, reset (a dry run by default, duplicates stopped, --purge, only listed agents and their folders, unlisted sessions untouched, a session mid-turn not stopped, uncommitted changes a warning and with --purge a refusal, --force, refused inside a Claude Code session, --all), the once-per-container-start marker, and the Feature Taskfile; a fake adapter keeps sessions in a file and records every call; part of lint. Needs task for the Taskfile part.'
+    desc: 'Docker-free tests of the agents command (the participant component, components/participant): the agent list (the YAML subset, required keys, unknown keys warned, errors with file and line), AGENTS_FILE from the task variable, .env, .devcontainer/.env, the environment or the default (a missing file named with its source), each verb per kind (start, --resume, --new and its question, up, list, stop, logs), the no-terminal rule, the fallbacks when the adapter answers exit 3, a listing that fails (state error, nothing started, the hint, never a fresh session), an on-demand agent shown none unless running, reset (a dry run by default, duplicates stopped, --purge, only listed agents and their folders, unlisted sessions untouched, a session mid-turn not stopped, uncommitted changes a warning and with --purge a refusal, --force, refused inside a Claude Code session, --all), the once-per-container-start marker, and the component Taskfile (the deprecation line of agents:version and agents:check when the agents Feature is installed, the component version alone otherwise); a fake adapter keeps sessions in a file and records every call; part of lint. Needs task for the Taskfile part.'
     cmds:
       - bash test/agents/unit/agents_test.sh
 
@@ -406,12 +412,12 @@ tasks:
       - bash test/go-task/unit/aliases_test.sh
 
   taskfiles:check:
-    desc: 'Fail if a Feature Taskfile (src/<id>/taskfile.yml or local-features/<id>/taskfile.yml) breaks the mechanical rules: every task runs in the directory task was started from (dir: ''{{"{{"}}.USER_WORKING_DIR{{"}}"}}''; included through features.yml it would otherwise run in /usr/local/share/go-task/includes.d), every task has a desc, and the first task is version (NFR-2).'
+    desc: 'Fail if a Feature Taskfile (src/<id>/taskfile.yml, components/<name>/taskfile.yml or local-features/<id>/taskfile.yml) breaks the mechanical rules: every task runs in the directory task was started from (dir: ''{{"{{"}}.USER_WORKING_DIR{{"}}"}}''; included through features.yml it would otherwise run in /usr/local/share/go-task/includes.d), every task has a desc, and the first task is version (NFR-2).'
     silent: true
     cmds:
       - cmd: |
           rc=0
-          for f in src/*/taskfile.yml local-features/*/taskfile.yml; do
+          for f in src/*/taskfile.yml components/*/taskfile.yml local-features/*/taskfile.yml; do
             found="$(awk -v q="'" '
               function flush() {
                 if (task != "" && !dir) print "dir " task

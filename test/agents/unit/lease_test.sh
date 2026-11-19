@@ -13,7 +13,7 @@ set -u
 
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/../../.." && pwd)"
-agents_sh="${AGENTS_SH:-$root/src/agents/agents.sh}"
+agents_sh="${AGENTS_SH:-$root/components/participant/agents.sh}"
 
 T="$(mktemp -d)"
 trap 'rm -rf "$T"' EXIT
@@ -440,7 +440,7 @@ YAML
 reset; out="$(AGENTS_TTY=1 run)"; rc=$?
 check 'an ephemeral default is allowed and takes no lease' "0:new|crowd:no" "$rc:$(tr '\n' ';' < "$T/calls" | sed 's/;$//'):$([ -d "$L/crowd" ] && echo yes || echo no)"
 if command -v task >/dev/null 2>&1; then
-  mkdir -p "$T/inc"; cp "$root/src/agents/taskfile.yml" "$T/inc/agents.yml"
+  mkdir -p "$T/inc"; cp "$root/components/participant/taskfile.yml" "$T/inc/agents.yml"
   printf "version: '3'\nincludes:\n  agents:\n    taskfile: %s/inc/agents.yml\n" "$T" > "$repo/Taskfile.yml"
   reset; out="$(cd "$repo" && AGENTS_TTY=1 PATH="$bin:$PATH" task agents 2>&1)"
   check 'task agents with no arguments starts the default' "new|crowd" "$(tr '\n' ';' < "$T/calls" | sed 's/;$//')"

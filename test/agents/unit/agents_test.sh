@@ -12,7 +12,7 @@ set -u
 
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/../../.." && pwd)"
-agents_sh="${AGENTS_SH:-$root/src/agents/agents.sh}"
+agents_sh="${AGENTS_SH:-$root/components/participant/agents.sh}"
 
 T="$(mktemp -d)"
 trap 'rm -rf "$T"' EXIT
@@ -717,7 +717,7 @@ cp "$T/list.before-reset" "$repo/.devcontainer/agents.yml" 2>/dev/null || true
 if command -v task >/dev/null 2>&1; then
   reset
   mkdir -p "$T/inc"
-  cp "$root/src/agents/taskfile.yml" "$T/inc/agents.yml"
+  cp "$root/components/participant/taskfile.yml" "$T/inc/agents.yml"
   printf "version: '3'\nincludes:\n  agents:\n    taskfile: %s/inc/agents.yml\n" "$T" > "$T/features.yml"
   printf "version: '3'\ndotenv: ['.env', '.devcontainer/.env']\nincludes:\n  features:\n    taskfile: %s/features.yml\n    flatten: true\n" "$T" > "$repo/Taskfile.yml"
   out="$(cd "$repo" && AGENTS_TTY=1 PATH="$bin:$PATH" task agents -- reviewer --resume 2>&1)"
@@ -730,6 +730,24 @@ if command -v task >/dev/null 2>&1; then
   rm -f "$repo/.env"
   out="$(cd "$repo" && PATH="$bin:$PATH" task agents:list -- --json 2>&1)"
   contains 'task agents:list -- --json: CLI_ARGS reach the command' "$out" '"name":"host"'
+  # The version and the deprecation line (agents 2.2.0): the agents Feature's share folder holds
+  # its version, and then version and check print one line on stderr; with the component alone
+  # (claude-code participants: true) the component's version and no such line.
+  share="$T/share"; plib="$T/plib"; mkdir -p "$share" "$plib"
+  printf '2.2.0\n' > "$share/version"; printf '1.0.0\n' > "$plib/COMPONENT_VERSION"
+  out="$(cd "$repo" && AGENTS_SHARE_DIR="$share" DCF_PARTICIPANT_LIB="$plib" PATH="$bin:$PATH" task agents:version 2>/dev/null)"
+  check 'task agents:version: the agents Feature version on stdout' "2.2.0" "$(printf '%s\n' "$out" | head -n 1)"
+  out="$(cd "$repo" && AGENTS_SHARE_DIR="$share" DCF_PARTICIPANT_LIB="$plib" PATH="$bin:$PATH" task agents:version 2>&1 >/dev/null)"
+  check 'task agents:version: one deprecation line on stderr' "1" "$(printf '%s\n' "$out" | grep -cx 'deprecated: use claude-code participants: true')"
+  out="$(cd "$repo" && AGENTS_SHARE_DIR="$share" PATH="$bin:$PATH" task agents:check 2>&1 >/dev/null)"
+  check 'task agents:check: one deprecation line on stderr' "1" "$(printf '%s\n' "$out" | grep -cx 'deprecated: use claude-code participants: true')"
+  rm -f "$share/version"
+  out="$(cd "$repo" && AGENTS_SHARE_DIR="$share" DCF_PARTICIPANT_LIB="$plib" PATH="$bin:$PATH" task agents:version 2>/dev/null)"
+  check 'task agents:version: the component alone shows its version' "participant 1.0.0" "$(printf '%s\n' "$out" | head -n 1)"
+  out="$(cd "$repo" && AGENTS_SHARE_DIR="$share" DCF_PARTICIPANT_LIB="$plib" PATH="$bin:$PATH" task agents:version 2>&1)"
+  lacks 'task agents:version: the component alone prints no deprecation line' "$out" 'deprecated'
+  out="$(cd "$repo" && AGENTS_SHARE_DIR="$share" PATH="$bin:$PATH" task agents:check 2>&1)"
+  lacks 'task agents:check: the component alone prints no deprecation line' "$out" 'deprecated'
 else
   echo "skip - the Feature Taskfile (no task on PATH)"
 fi
