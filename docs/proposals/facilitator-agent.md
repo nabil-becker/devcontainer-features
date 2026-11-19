@@ -841,6 +841,19 @@ The Operator ruled on the proposal on 2026-11-19. Each decision as ruled:
 0025, 0045, 0048, 0034 and the "MCP: none for now" decision), the home of `sessionName`, and the two
 exceptions (participant token files; `slim-bindings` if it cannot go through the download helper).
 
+
+### Ruling on the spike findings (2026-11-19)
+
+After the AGNTCY spike (`docs/spikes/2026-11-19-agntcy.md`) the Operator ruled, as recommended:
+
+- **E. No `slim-mcp`.** The facilitator Feature's own MCP server speaks MCP to the CLI over stdio and
+  uses `slim-bindings` (3.x, pinned with hashes) directly for SLIM; PyPI's `slim-mcp` (pinned to
+  bindings 1.4) is not used, patched or forked.
+- **F. Agent records are checked offline by default.** The Directory daemon runs with
+  `policy.operations: []`; a Feature option turns on the online OASF schema check.
+- **G. SLIM is pinned to slimctl 3.4.6** (released, sigstore-signed, amd64 and arm64); move up when
+  3.5.0 has a release, not only an image.
+
 ## Architecture review (2026-11-19)
 
 **Verdict:** fit with changes
