@@ -20,9 +20,11 @@ CI = ROOT / ".devcontainer" / "ci" / "devcontainer.json"
 # Features whose version option must be set (not "latest", not absent).
 PINNED = (
     "ghcr.io/devcontainers/features/powershell",
-    "ghcr.io/devcontainers-extra/features/shellcheck",
+    "features/shellcheck",
     "ghcr.io/devcontainers-extra/features/yamllint",
 )
+# The local shellcheck Feature installs only versions with a SHA-256 pinned in its install.sh.
+SHELLCHECK_INSTALL = ROOT / "local-features" / "shellcheck" / "install.sh"
 TOKEN = re.compile(r'"(?:\\.|[^"\\])*"|//[^\n]*|/\*.*?\*/', re.S)
 
 
@@ -55,6 +57,12 @@ def main():
                 errors.append(f"{name} is missing from the {label} config")
             elif not feats[ref].get("version") or feats[ref]["version"] == "latest":
                 errors.append(f"{ref} has no pinned version in the {label} config")
+    ref = next((k for k in fa if k == "features/shellcheck"), None)
+    if ref and fa[ref].get("version") and fa[ref]["version"] != "latest":
+        table = SHELLCHECK_INSTALL.read_text()
+        for arch in ("x86_64", "aarch64"):
+            if not re.search(rf"^\s*{re.escape(fa[ref]['version'])}/{arch}\) want=[0-9a-f]{{64}} ;;", table, re.M):
+                errors.append(f"shellcheck {fa[ref]['version']} has no pinned {arch} checksum in {SHELLCHECK_INSTALL.relative_to(ROOT)}")
     for e in errors:
         print(f"toolchain drift: {e}")
     if errors:

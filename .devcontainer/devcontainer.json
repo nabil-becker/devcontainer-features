@@ -26,9 +26,7 @@
     "ghcr.io/devcontainers/features/docker-in-docker:2": {
       "moby": false
     },
-    "ghcr.io/devcontainers-extra/features/shellcheck:1": {
-      "version": "0.11.0"
-    },
+    "./features/shellcheck": { "version": "0.11.0" },
     "ghcr.io/devcontainers-extra/features/yamllint:2": {
       "version": "1.38.0"
     },
