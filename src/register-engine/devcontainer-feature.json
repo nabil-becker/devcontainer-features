@@ -1,0 +1,20 @@
+{
+  "id": "register-engine",
+  "version": "0.3.0",
+  "name": "register-engine (signed, mergeable registers: the building block under the capability Features)",
+  "description": "The register engine, a building block (AOF ADR 0028): a register is a set of sign-packet packets that merges without conflicts across branches, machines and writers that are not trusted. The engine reads and checks them (rosters, anchors, forks and rulings, prunes), stores them (put once), syncs and mirrors them, and builds views; it knows no register type but `log`. Capability Features give the types, through a root-owned types folder, and the commands that write. Installs the register-engine command (version, check, types, verify), its own copy of sign-packet's library (no sign-packet Feature needed), and its Taskfile. Moved from the AOF repository, where it replaced agentic-register's engine.",
+  "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/register-engine",
+  "licenseURL": "https://github.com/nabil-becker/devcontainer-features/blob/main/LICENSE",
+  "options": {
+    "installTaskfile": {
+      "type": "boolean",
+      "default": true,
+      "description": "Install this Feature's Taskfile into /usr/local/share/go-task/includes.d so its tasks appear under register-engine: in a root Taskfile that includes /usr/local/share/go-task/features.yml (the go-task Feature)."
+    }
+  },
+  "installsAfter": [
+    "ghcr.io/nabil-becker/devcontainer-features/go-task",
+    "ghcr.io/devcontainers/features/python",
+    "ghcr.io/devcontainers/features/common-utils"
+  ]
+}

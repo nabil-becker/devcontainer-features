@@ -40,6 +40,7 @@ jobs:
           - kube-state
           - phi-check
           - audio
+          - register-engine
         baseImage:
           - debian:latest
           - ubuntu:latest
@@ -83,6 +84,7 @@ jobs:
           - kube-state
           - phi-check
           - audio
+          - register-engine
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
