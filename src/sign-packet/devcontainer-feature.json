@@ -1,0 +1,31 @@
+{
+  "id": "sign-packet",
+  "version": "0.6.0",
+  "name": "sign-packet (signed packets, named by their hash, chained per key)",
+  "description": "The signed-packet core that registers and transports are built on (register-engine and packet-relay in this collection; AOF ADR 0024): canonical JSON, an SSH Ed25519 signature, an id that is the SHA-256 of the body, and a chain per key (seq, prev, saw). A Python library that makes, checks and orders packets, with no registers, kinds or rosters, and a sign-packet command that checks packet files alone. Keeps one thing: this running instance's id (one GUID per container, the part after @ in its agents' principals), in a named volume.",
+  "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/sign-packet",
+  "licenseURL": "https://github.com/nabil-becker/devcontainer-features/blob/main/LICENSE",
+  "options": {
+    "installTaskfile": {
+      "type": "boolean",
+      "default": true,
+      "description": "Install this Feature's Taskfile into /usr/local/share/go-task/includes.d so its tasks appear under sign-packet: in a root Taskfile that includes /usr/local/share/go-task/features.yml (the go-task Feature)."
+    }
+  },
+  "installsAfter": [
+    "ghcr.io/nabil-becker/devcontainer-features/go-task",
+    "ghcr.io/devcontainers/features/python",
+    "ghcr.io/devcontainers/features/common-utils"
+  ],
+  "containerEnv": {
+    "SIGN_PACKET_HOME": "/var/lib/devcontainer-features/sign-packet"
+  },
+  "mounts": [
+    {
+      "source": "sign-packet-state-${devcontainerId}",
+      "target": "/var/lib/devcontainer-features/sign-packet",
+      "type": "volume"
+    }
+  ],
+  "postCreateCommand": "sign-packet-setup"
+}
