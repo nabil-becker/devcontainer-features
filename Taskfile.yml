@@ -100,6 +100,7 @@ tasks:
       - task: lint:toolchain
       - pwsh -NoLogo -NoProfile -File '{{.ROOT_DIR}}/.github/scripts/Invoke-PSScriptAnalyzer.ps1'
       - task: common:check
+      - task: components:check
       - task: common:curl-check
       - task: signpacket:check
       - task: taskfiles:check
@@ -379,6 +380,29 @@ tasks:
           [ "$rc" -eq 0 ] && echo "common helper copies are up to date"
           exit "$rc"
 
+  components:check:
+    desc: 'Fail if a Feature''s vendored copy of a shared component (src/<id>/<name>/ or local-features/<id>/<name>/ for each components/<name>/, e.g. src/claude-code/participant/) differs from the component anywhere in the folder: every file at every depth, a file missing from the copy and a file only in the copy (diff -r; __pycache__ ignored). Run `task components:sync` to refresh the copies. Part of lint.'
+    silent: true
+    cmds:
+      - cmd: |
+          rc=0
+          for canon in components/*/; do
+            canon="${canon%/}"
+            [ -d "$canon" ] || continue
+            name="$(basename "$canon")"
+            [ -f "$canon/COMPONENT_VERSION" ] || { echo "$canon has no COMPONENT_VERSION"; rc=1; }
+            for copy in src/*/"$name" local-features/*/"$name"; do
+              [ -d "$copy" ] || continue
+              if ! out="$(diff -r -x __pycache__ "$canon" "$copy" 2>&1)"; then
+                echo "stale copy: $copy differs from $canon (task components:sync):"
+                printf '%s\n' "$out" | grep -E '^(diff|Only in|Binary)' | sed 's/^/  /'
+                rc=1
+              fi
+            done
+          done
+          [ "$rc" -eq 0 ] && echo "component copies are up to date"
+          exit "$rc"
+
   common:curl-check:
     desc: 'Fail on a download in a Feature script (src/<id>/*.sh, local-features/<id>/*.sh) that does not go through dcf_curl, the retry helper in src/common/dcf-curl.sh (a curl or wget call: the name followed by an option, a quote, a variable or a URL; comment lines skipped), and on a script that calls dcf_curl without its vendored copy beside it or without sourcing it. A justified exception carries `dcf-curl: allow <reason>` on the same line.'
     silent: true
@@ -460,6 +484,21 @@ tasks:
               [ "$copy" = "$canon" ] && continue
               [ -e "$copy" ] || continue
               cp "$canon" "$copy" && echo "synced $copy"
+            done
+          done
+
+  components:sync:
+    desc: 'Copy each shared component (components/<name>/) over every Feature''s vendored copy of it (src/<id>/<name>/, local-features/<id>/<name>/), whole folder, so files removed from the component go from the copies too. A Feature starts carrying a component by creating the empty folder (mkdir src/<id>/participant) and running this. After a change to a component, bump its COMPONENT_VERSION and every Feature that carries a copy.'
+    silent: true
+    cmds:
+      - cmd: |
+          for canon in components/*/; do
+            canon="${canon%/}"
+            [ -d "$canon" ] || continue
+            name="$(basename "$canon")"
+            for copy in src/*/"$name" local-features/*/"$name"; do
+              [ -d "$copy" ] || continue
+              rm -rf "$copy" && cp -r "$canon" "$copy" && rm -rf "$copy/__pycache__" && echo "synced $copy"
             done
           done
 
