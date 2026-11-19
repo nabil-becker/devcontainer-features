@@ -1,0 +1,51 @@
+{
+  "id": "packet-relay",
+  "version": "0.4.0",
+  "name": "packet-relay (sign-packet packets between parties through a shared folder)",
+  "description": "A file transport on sign-packet's packets (AOF ADR 0024; moved from the AOF repository, with its own copy of sign-packet's library): parties exchange signed packets through a folder each of them mounts (a host folder mounted into several dev containers, a cloud folder synced to several machines), with delivery that is reliable, ordered per sender and exactly once. Each party writes only its own subfolder, each file once; receivers acknowledge with signed packets; a sender removes a packet only after every party has taken it, and writes a lost one again; a gap lost for good is skipped only on an operator's word. Installs the packet-relay command and its Taskfile; keeps each party's state in a named volume.",
+  "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/packet-relay",
+  "licenseURL": "https://github.com/nabil-becker/devcontainer-features/blob/main/LICENSE",
+  "options": {
+    "installTaskfile": {
+      "type": "boolean",
+      "default": true,
+      "description": "Install this Feature's Taskfile into /usr/local/share/go-task/includes.d so its tasks appear under packet-relay: in a root Taskfile that includes /usr/local/share/go-task/features.yml (the go-task Feature)."
+    },
+    "root": {
+      "type": "string",
+      "default": "",
+      "description": "The shared folder, as mounted in the container (for example /mnt/relay). Empty = none: give --root or set PACKET_RELAY_ROOT. The folder is mounted by devcontainer.json, not by this Feature."
+    },
+    "guard": {
+      "type": "string",
+      "default": "",
+      "description": "Egress guards: commands run on every packet this party sends, before it is signed, separated by ';'; each command's first word an absolute path, for example /usr/local/bin/phi-check --no-exceptions --stdin-filename packet - (the phi-check Feature). It reads the packet's body on stdin and exits 0 to let it through; anything else refuses it, and nothing is sent. Empty = none. Only this option sets it: an environment cannot drop it."
+    },
+    "ingressGuard": {
+      "type": "string",
+      "default": "",
+      "description": "Ingress guards: commands run on every packet this party would take, after its signature is checked, before it is delivered; the same form as guard. A packet one refuses is taken in order and acknowledged, but kept in the quarantine with the guard's reason, never in the inbox. Empty = none. Only this option sets it."
+    },
+    "guardTimeout": {
+      "type": "string",
+      "default": "10",
+      "description": "Seconds each guard has to answer, 0 to 300 (default 10); no answer refuses the packet."
+    }
+  },
+  "containerEnv": {
+    "PACKET_RELAY_HOME": "/var/lib/devcontainer-features/packet-relay"
+  },
+  "mounts": [
+    {
+      "source": "packet-relay-state-${devcontainerId}",
+      "target": "/var/lib/devcontainer-features/packet-relay",
+      "type": "volume"
+    }
+  ],
+  "installsAfter": [
+    "ghcr.io/nabil-becker/devcontainer-features/go-task",
+    "ghcr.io/devcontainers/features/python",
+    "ghcr.io/devcontainers/features/common-utils"
+  ],
+  "postCreateCommand": "packet-relay-setup"
+}

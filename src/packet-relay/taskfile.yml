@@ -1,0 +1,45 @@
+# Tasks contributed by the packet-relay Feature (namespace: packet-relay). Each runs the packet-relay
+# command (AOF's tooling REQUIREMENTS.md, R6). Extra arguments after --, for example:
+#   task packet-relay:sync -- --domain talk --as bob
+version: '3'
+
+tasks:
+  version:
+    desc: 'Show what is installed: the packet-relay and sign-packet versions, Python, the library and the home.'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['packet-relay version {{.CLI_ARGS}}']
+
+  setup:
+    desc: 'Re-run the post-create setup: the home folder in the volume, its keys and members folders (idempotent, never fatal).'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['packet-relay-setup']
+
+  check:
+    desc: 'Say in one line per part what is ready (Python, ssh-keygen, the home, the shared folder) and exit non-zero when not ready.'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['packet-relay check {{.CLI_ARGS}}']
+
+  key:
+    desc: 'Make or show a party''s key: -- new <party> | show <party>. Prints the line for the members file.'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['packet-relay key {{.CLI_ARGS}}']
+
+  send:
+    desc: 'Send a packet: -- --domain <d> --as <party> --kind <kind> --data ''<json object>''. Written once into this party''s folder.'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['packet-relay send {{.CLI_ARGS}}']
+
+  sync:
+    desc: 'One round: -- --domain <d> --as <party>. Take what the others sent, in order; acknowledge it; remove or write again this party''s own.'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['packet-relay sync {{.CLI_ARGS}}']
+
+  status:
+    desc: 'What this party sent, took and had acknowledged: -- --domain <d> --as <party>. Writes nothing.'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['packet-relay status {{.CLI_ARGS}}']
+
+  skip:
+    desc: 'An operator vouches that a gap is lost for good: -- --domain <d> --as <operator> --party <p> --from <seq> --through <seq> --id <the next packet''s prev>.'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['packet-relay skip {{.CLI_ARGS}}']
