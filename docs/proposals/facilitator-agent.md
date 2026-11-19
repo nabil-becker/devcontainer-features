@@ -35,6 +35,11 @@ agentic application that uses its llm model to help the orchestration and routin
 as AGNTCY. No Feature, task or document named "sign-packet" exists in this repository (searched);
 it is read as the register's entry signing, and that is open question Q1.
 
+A last direction, the same day, reverses the first draft's treatment of the `agents` Feature: **the
+goal is to deprecate it**; the `claude-code` and a Copilot Feature evolve to enrich the
+experience; `agents` becomes an internal common component those Features use, exposing standard
+interoperability endpoints that other Features, this one first, consume. Section 7 is that design.
+
 Rulings it rests on: separate processes in one devcontainer; cloud agents only through a local
 interface; networking out of scope; **NFR-12** (a contract for agent CLIs works on two vendors or
 names its fallback; ADR-0037); **NFR-13** (manage the environment, not the CLI); **NFR-1, 2, 5, 6,
@@ -90,6 +95,8 @@ Existing words kept: **agent**, **handle** (a participant's address), **resident
 | **Backend** | The one setting that says what carries directory, delivery and records: `agntcy` (the real AGNTCY Agent Directory and SLIM, the default) or `lean` (the register alone). The modules see one interface either way (4.8). |
 | **Infrastructure** | What the Feature itself starts and owns: the directory and SLIM node in `agntcy` mode, and the facilitator application. Participants are never infrastructure. |
 | **Participant** | A named, running process that takes part: a **handle** (`jester`), a persona (a system prompt or profile it is started with, kept by the harness), an **attachment**, an optional model label shown in the transcript. The engineer at the terminal is a participant too (`you`, kind `human`). |
+| **Participant component** (the component) | Internal code shared by vendoring, never published as a Feature: the participant definition, identity and signing, the attachment endpoint, directory registration, and the optional run half (kinds, lease, session names, adapter verbs) that today is the `agents` Feature (section 7). |
+| **Building block** | One of the component's parts a Feature can use alone: the four **endpoints** E1 to E4 (7.4). |
 | **Harness** | Whatever keeps a participant process running: tmux, a process supervisor, a service, the vendor's own session, the `agents` Feature. Not this Feature's job. |
 | **Attachment** | How a running participant connects to the layer. Primary: **MCP** (tools `receive`, `reply`, `say`, `who`). Fallbacks: the **pump** (a loop that does `receive` and runs a one-turn command), and the **model wrapper** (a pump for an OpenAI-compatible endpoint). |
 | **Conversation** | A thread with members: **direct** (you and one participant, or two participants) or **group** (three or more). Held as in the register's `messages` type: group and direct, A2A-shaped. |
@@ -101,23 +108,29 @@ Existing words kept: **agent**, **handle** (a participant's address), **resident
 ## 4. Architecture
 
 ```
-                         .devcontainer/facilitator.yml  (participants: handle, kind, attachment, agent?)
-                                          |
-  you ---- `facilitator chat` ----+       v
-                                  |   +-----------------------------------------+
-  claude (domain-expert-one) --MCP--> |  facilitator MCP server (one per client)|
-  copilot, gemini  ------------MCP--> |  = route + limits + write               |
-  pump / model wrapper --(same code)-> +--------------------+--------------------+
-                                                           |  flock, append-only
-                                       /var/lib/devcontainer-features/facilitator/
-                                         conversations/<c>.jsonl  inbox/<handle>/  tokens/<handle>
+ vendor Features (user-facing)   participant component (vendored, internal)            facilitator Feature
+ claude-code  participants/attach  E4 definition  E3 sign  E2 register  E1 attachment (MCP)   application:
+ copilot      participants/attach  + run half: kinds, lease, session names, adapter verbs     intake, guard, router,
+ gemini (later)                          |                                                    planner, dispatcher,
+                                         |  participant processes, kept running by a harness  collector, signer use
+   claude (domain-expert-one) --MCP-->   |                                                    backend interface:
+   copilot, gemini ------------MCP-->    v                                                    directory | transport |
+   local-model wrapper --------------> E1 `receive reply say who`  ----------------------->   record
+   you: `facilitator chat` ----------------------------------------------------------------->  (agntcy | lean, 4.8)
 ```
+
+Section 7 says which of these the Operator's "deprecate `agents`" puts where; the rest of this
+section is the facilitator's side of the line.
 
 ### 4.1 The participant file
 
-`.devcontainer/facilitator.yml`, committed, path set by `FACILITATOR_FILE` (NFR-6). A new file, not
-a section of `agents.yml`: `agents.yml` says how to start and lease something (the harness's
-business), this says who may talk. One optional cross-reference keeps them honest:
+`.devcontainer/participants.yml`, committed, **owned by the participant component (7)**, path set by
+`PARTICIPANTS_FILE` (NFR-6). It is the **same list as today's `agents.yml`**, one list not two: the
+keys `agents` reads (name, cli, kind, folder, args, lifecycle, identity, lease, session-name, default)
+stay, and the keys below are added. During the deprecation `agents.yml` and `AGENTS_FILE` are still
+read as aliases (7.2). The facilitator application's own settings (its model, the backend) go in a
+separate `.devcontainer/facilitator.yml`, because only the facilitator reads them. In the example,
+`participants.yml` is the second block and `facilitator.yml` the first:
 
 ```yaml
 facilitator:                       # the application's own model (4.3)
@@ -133,16 +146,17 @@ participants:
     description: tells jokes       # the OASF record (4.8), read by the router and planner
     skills: [humour]
   - name: domain-expert-one
+    cli: claude                    # the run half starts it (the harness); the facilitator never does
     attachment: mcp                # the participant's own CLI calls the tools
-    agent: expert                  # optional: a name in agents.yml, shown by `facilitator status`; never started from here
   - name: copilot-lead
     attachment: mcp
     facilitator: true              # at most one; the fallback for what is addressed to no one when the application is not running
 ```
 
 For an `mcp` participant the persona lives with its harness (its CLI's own profile or prompt); the
-Feature prints the MCP entry and the sentence to add to the persona (`task facilitator:snippet --
-<name>`), because it must not edit a vendor's configuration (NFR-13).
+component prints the sentence to add to the persona (`task agents:snippet -- <name>`) and the vendor
+Feature's `attach` option registers the MCP entry through the CLI's own command (7.3), because
+nothing may edit a vendor's configuration by hand (NFR-13).
 
 ### 4.2 Attachment: one primary, a fallback per vendor
 
@@ -423,7 +437,9 @@ export is a file the engineer chooses to write.
 
 ## 6. What the Feature installs and what it must not
 
-Installs: the `facilitator` command (the modules of 4.3, an MCP server over stdio, `chat`, `pump`, the
+**Scope after the component (7): the facilitator Feature is the facilitator application and the
+AGNTCY or lean infrastructure, and nothing about vendors.** It consumes the component's endpoints and
+vendors only the connect half of the component. Installs: the `facilitator` command (the modules of 4.3, an MCP server over stdio, `chat`, `pump`, the
 model wrapper), the Feature Taskfile (NFR-2), `facilitator-setup` (state folders, idempotent,
 never fatal; NFR-5), in `agntcy` mode the two AGNTCY binaries (pinned, checksum-verified, NFR-3: `dirVersion`, `slimVersion`) and the `slim-bindings` package (a pinned requirement with hashes), a state volume `facilitator-state-${devcontainerId}` at
 `/var/lib/devcontainer-features/facilitator` (NFR-1). The command needs a Python 3.11 runtime (decision D7); `lean` downloads nothing.
@@ -464,53 +480,134 @@ a list using only the fake pump must never call anything named `claude`; the mod
 tests are a manual checklist in `NOTES.md` (T1 above, then each vendor: attach, one message, one
 reply, a hop limit), run with the engineer's own credentials; none runs in CI.
 
-## 7. The `agents` Feature, and what to keep, replace or retire
+## 7. Deprecating `agents`: a shared component, and the vendor Features that use it
 
-The `agents` Feature (2.1.3) does **lifecycle**: one list (`agents.yml`), kinds
-(`resident`, `on-demand`), a lease, session names, an adapter per CLI (`agent-adapter-claude`), and
-integrations that give a session its environment. It has no concept of one agent talking to
-another, which is what the Operator called an unguided attempt. With the harness ruling the line is
-clean:
+**The Operator's ruling (2026-11-19):** deprecate the `agents` Feature; the `claude-code` and a
+Copilot Feature evolve to enrich the experience; `agents` becomes an internal common component those
+Features use, so that standard building blocks exist and interoperability endpoints are exposed for
+other Features, this one among them.
+
+### 7.1 What `agents` is today, and what it becomes
+
+`agents` 2.1.3 does lifecycle: the list, kinds, a lease, session names, an adapter per CLI
+(`agent-adapter-claude` ships in `claude-code`), `task agents -- <name>`, the container-start
+`agents up`, and the verbs the workstation launcher (`task devcontainer:agent`) calls inside the
+container. It was **never a conversation layer**. Split in two halves, which is also the line
+between "the harness" and "the communication":
 
 ```
-  harness (not ours): keeps them running      facilitator (ours): connects them
-  - the agents Feature, tmux, a service       - addressing, routing, limits, record
-  - starts, leases, resumes, stops            - never starts or stops anything
+  run half (a harness; optional)               connect half (the communication; what the facilitator uses)
+  kinds resident / on-demand                    E4 participant definition (the list and its new keys)
+  lease, session names                          E3 identity and signing (keys, packets)
+  adapter verbs: start wake attach stop ...     E2 directory registration (OASF record)
+  `agents up` at container start                E1 attachment endpoint (MCP receive reply say who, pump)
 ```
 
-| Piece | Verdict |
-|---|---|
-| `agents` list, kinds, lease, verbs, session names | **Keep, unchanged.** It is one harness among several, the one already in the devhost for Claude. |
-| `agents` integrations, the Copilot adapter slice (`agent-adapter-copilot`), the lease for non-Claude CLIs | **Stop growing** them for the sake of multi-vendor conversation; they remain valid for lifecycle. |
-| `agents` as the answer to "run several vendors" | **Replace** in the docs: NOTES says "to have them talk, add the facilitator". |
-| Retiring `agents` | **Not now.** Revisit after slice 2: if no consumer uses a lease, narrow it to a documented harness recipe. |
+The run half is kept because the host and the workstation launcher depend on it, and moves into the
+component. The connect half is new. Neither is a user-facing Feature.
 
-Migration for a consumer that uses `agents`: **none required**. To make an agent a participant they
-add one `participants:` entry (with `agent: <name>` pointing at its `agents.yml` entry) and the MCP
-snippet to that agent's persona; `agents` keeps starting it. `facilitator status` reads the agents
-Feature's records only to show "running" beside "attached".
+### 7.2 The deprecation path (nothing breaks without a major version)
+
+The repository has no written deprecation convention (CONTRIBUTING.md does not mention one);
+proposed here as D21: a Feature or option is deprecated in a **minor** (a notice from `version` and
+`check`, in NOTES, and under "Deprecated" in the CHANGELOG, behaviour unchanged) and removed only in
+the next **major**.
+
+| Release | What changes | What a consumer does |
+|---|---|---|
+| `agents` 2.2.0 and `claude-code` (next minor) | the component is extracted; `claude-code` gains `participants` (7.3), which installs it; `agents` says in one line "deprecated, use claude-code `participants: true`" and, when the component is already installed by `claude-code`, installs nothing of its own. **Task names (`task agents:*`), the `agents` command, `AGENTS_FILE` and `.devcontainer/agents.yml` are unchanged.** | nothing is required. To move: set `"participants": true` on `claude-code`, remove the `agents` reference, optionally rename the file to `participants.yml` |
+| `agents` 2.x | bug fixes only, no new keys; the new participant keys land in the component and are read from `participants.yml` or `agents.yml` alike | as above |
+| `agents` 3.0.0 (the retirement) | installs nothing and prints where to go; `:2` stays in the registry. Released only when: (a) `claude-code` has carried the component for at least one release; (b) the office and DSNP, the documented adopters of `agents` (their `.devcontainer/DEVCONTAINER_CONTRIBUTION.md` says what each adopts; this repository sees their use only through that and the reference architecture), have moved; (c) the `devcontainer-cli` launcher's `devcontainer:agent` tasks are shown to work on the component alone; the Operator starts that release | remove the `agents` line if still there; `agents.yml` keeps working until the component's own next major |
+| the component's next major | `agents.yml` and `AGENTS_FILE` aliases removed, and the `agents:` task namespace gets a `participants:` alias or replacement | rename the file and the settings (a CHANGELOG note in each vendor Feature) |
+
+This repository's own devhost moves first (`.devcontainer/devcontainer.json` lists `./features/agents`
+today). A decision record for the deprecation, partly superseding ADR-0036 (the lease and
+integrations stay, in the component) and the Feature name `copilot-cli` in ADR-0037, is written
+when the Operator rules.
+
+### 7.3 Where the component lives, and how vendor Features use it
+
+`src/common` is itself a published Feature of **single shell helpers** (`dcf-persist.sh`,
+`dcf-curl.sh`) that `task common:sync` copies verbatim into every Feature that uses them, because a
+published Feature folder must be self-contained; `task common:check` (in `task lint`) fails when a
+copy drifts. The component is a multi-file package with its own tests and version, not a helper.
+**Recommended: the same pattern in directory form, in a new top-level `components/participant/`
+(no `devcontainer-feature.json`, so never published on its own), with `task components:sync` and
+`components:check` beside the common ones, and a `COMPONENT_VERSION` file.** Putting it in `src/common`
+would make a tiny-helper Feature carry a Python package and its tests, and make a folder
+that looks like a Feature but is not. (How the release workflow and the test globs treat a
+folder under `components/` is not checked; it is outside `src/`, which they enumerate.)
+
+Each vendor Feature carries a vendored copy and installs it **idempotently into one place**
+(`/usr/local/lib/dcf-participant`, the same `agents` and `participant` commands on PATH, the same
+Taskfile include) so two vendor Features installing it leave one. Copies at different versions: the
+newer wins, and the component is backward compatible within a major (NFR-5). The **vendor Feature's
+options**:
+
+| Option | Default | What |
+|---|---|---|
+| `participants` | `false` | install the component: the participant file reader, the `agents:` tasks, the run half and the connect half. The definitions are in the file, not in the option, because Feature options are flat strings and the list is already a committed file |
+| `attach` | empty | `facilitator` registers the component's MCP attachment (E1) with this CLI **through the CLI's own supported command**, as `claude-code` already does for the register's MCP at user scope; other values reserved |
+
+The line that keeps NFR-13: a vendor Feature installs the CLI, installs the component, and
+registers an MCP entry through the CLI's own route; it never wraps the CLI, edits its settings files
+by hand (Claude's managed drop-in is the existing route, ADR-0032) or starts a participant except
+through the run half's explicit `task agents -- <name>`. The component's adapter verbs are tested
+against two fake adapters and two real vendors, **ADR-0037 and NFR-12 held**.
+
+**Copilot CLI belongs in a new `copilot` Feature, not in `gh`.** The `gh` Feature installs and
+configures the GitHub CLI and its login (its NOTES do not mention Copilot); Copilot CLI is a
+separate program with its own install, versions, state and trust gate **(matrix)**, and one `gh`
+Feature doing both breaks "one tool, one Feature" (CONTRIBUTING). `copilot` orders after `gh` with
+`installsAfter`, never `dependsOn`, since Copilot reads `COPILOT_GITHUB_TOKEN`, `GH_TOKEN` or
+`GITHUB_TOKEN` **(docs read)**; it follows the id-equals-binary rule, so `copilot` (ADR-0037's
+proposed `copilot-cli` was never confirmed); it carries `agent-adapter-copilot` and the same two
+options. Whether Microsoft or GitHub publishes an official Copilot CLI Feature this one should
+augment (NFR-4) is not checked and is the first thing slice 3 looks up. Gemini follows the same
+pattern later.
+
+### 7.4 The interoperability endpoints
+
+Four local contracts, versioned with the component, that any Feature may consume:
+
+| Endpoint | Contract | Consumer today |
+|---|---|---|
+| **E1 attachment** | `participant mcp`: stdio MCP server with `receive`, `reply`, `say`, `who`; it forwards to a **conversation service** found through `/usr/local/lib/dcf-participant/services.d/`; with none installed the tools answer "no conversation service" | the facilitator installs its service there |
+| **E2 directory registration** | `participant register <name>`: writes the participant's OASF record to the configured directory (the register's `agents` type or AGNTCY `dir`, 4.8) | the facilitator's directory client; any Feature that wants the roster |
+| **E3 signed packets** | `participant sign` and `participant verify-packet`: the register's entry format, signed by the identity key the component fetches from OpenBao | the facilitator's signer and `facilitator verify`; a ledger-writing Feature |
+| **E4 definition** | `participant list --json`: each participant as the component reads it | everything above |
+
+**Where the line falls:** the component and the vendor Features own *who a participant is and how
+it connects*; the facilitator Feature owns *what happens to a conversation* (modules, routing,
+limits, backends, AGNTCY). The facilitator needs the connect half only and carries no vendor
+knowledge; its pump and snippets call E4. A repository that never installs the facilitator still has
+the definition, the run half and the endpoints.
 
 ## 8. Slices
 
 0. **Spike (a learning run, no Feature):** run `dirctl daemon` and a SLIM node by hand in this
    devhost: confirm asset names, checksums, linux arm64, ports, state paths, memory and start-up
-   time, and that a Python client can send and receive on SLIM. Its findings replace every
-   "not checked" in 4.8 before slice 2 is built.
-1. **Thin slice** (`facilitator` 0.1.0, `lean` only; `backend: agntcy` is refused with "not yet"):
-   participant file, the backend interface, direct and group, `@mention` routing, hop limit and
-   budget, the MCP server (`receive`, `reply`, `say`, `who`), `chat`, the local-model wrapper, tests
-   with fakes; one manual run: **Claude Code over MCP plus a local model** (the jester scenario),
-   and T1. The record is the register where it can be pulled, else the unsigned store (D3).
-2. **The AGNTCY backend:** `infra`, the `dir` and SLIM installs and clients, `backend switch`; the
-   default becomes `agntcy` in this release, with a "what changed" note for consumers.
-3. **Provenance:** `register` (OASF record, key, roster entry), the signer with keys in OpenBao and an
-   ssh-agent, `facilitator verify`, `directory export`.
-4. **The model in the loop:** `serve`, the model gateway, router for gaps, planner,
-   collector/summariser, the facilitator budget; each with a fake-model test.
-5. **Second and third vendors** (Copilot CLI, Gemini CLI over MCP, the pump), **Identity** opt-in,
-   per-agent Linux users, transcripts to the shared folder; order for the Operator to set.
+   time, and a Python client sending and receiving on SLIM. It replaces every "not checked" in 4.8
+   before slice 4. May run at any time.
+1. **Component extraction** (no new behaviour): `components/participant/` from `src/agents`, the
+   `components:sync` and `components:check` tasks, tests with two fake adapters, `claude-code`'s
+   `participants` option, `agents` 2.2.0 with the deprecation notice, this repository's devhost moved
+   to `claude-code` with `participants: true`. Task names unchanged.
+2. **The connect half and the facilitator, lean:** E1 to E4 (E3 unsigned), `claude-code`'s `attach`,
+   the local-model wrapper, `facilitator` 0.1.0 with `backend: lean` only (`agntcy` refused "not
+   yet"); one manual run, **Claude Code over MCP plus a local model** (the jester scenario), and T1.
+3. **The `copilot` Feature** 0.1.0: install (verified), `participants`, `attach`,
+   `agent-adapter-copilot`; the second real vendor for the component's contracts (NFR-12).
+4. **The AGNTCY backend:** `infra`, `dir` and SLIM, `backend switch`; the default becomes `agntcy`
+   here, with a "what changed" note.
+5. **Provenance:** E2 and E3 for real (OASF records, signing with keys in OpenBao), `facilitator
+   verify`, `directory export`.
+6. **The model in the loop:** `serve`, the model gateway, the router's gap-filling, planner,
+   collector/summariser, the budget.
+7. **Retirement and reach:** `agents` 3.0.0 once its conditions hold (7.2), Gemini, Identity opt-in,
+   per-agent Linux users, transcripts to the shared folder. The order of 3 to 7 is the Operator's.
 
-**Out of scope:** supervising or starting participants; the Agent Connect Protocol (archived); AGNTCY components across containers or machines; networking between containers or machines
+**Out of scope:** the facilitator Feature supervising or starting participants (the run half of the component may, on request);  the Agent Connect Protocol (archived); AGNTCY components across containers or machines; networking between containers or machines
 (a later requirement: the same tools over a bridge, probably A2A, which the register's messages are
 already shaped for); other people's agents; installing or logging in to vendor CLIs; billing or
 price tables; a web UI.
@@ -533,6 +630,15 @@ price tables; a web UI.
   (4) **authentication set-up**: four SLIM auth modes, and secrets to keep in OpenBao; (5) **Docker**
   for Identity and for `dir`'s Compose route, which does not start on every host. A user switches
   with `backend: lean` and `facilitator backend switch lean` (4.8); conversations survive.
+- **The component is a new pattern** (a vendored directory, not a script): drift between vendored
+  copies, two vendor Features installing different versions, and the release workflow possibly
+  tripping on a folder without a `devcontainer-feature.json`; mitigated by `components:check`, the
+  newer-wins rule and slice 1 being behaviour-neutral.
+- **Deprecation reaches the Operator's own devhost first** (it lists `./features/agents`), and the
+  launcher's `devcontainer:agent` tasks call into it; slice 1 and the retirement condition (c) cover
+  both.
+- **The run half stays in a component the facilitator does not need:** keeping lifecycle inside
+  vendor Features risks the "unguided" growth again; D5 keeps it frozen to what exists.
 - **A second moving part per participant:** in `agntcy` mode every MCP server instance is a SLIM
   client, so a SLIM outage stops `receive` for all; `check` and `status` show it, and the hatch is
   the remedy.
@@ -554,14 +660,19 @@ price tables; a web UI.
 | D1 | The primary attachment | (a) MCP with a blocking `receive`; (b) the pump everywhere (a one-turn command per message); (c) a pty bridge into the running TUI | **(a)**, with (b) as the per-vendor fallback; confirm with T1 before slice 2 |
 | D2 | Who decides who speaks | deterministic only; a model decides every hop; hybrid | **Hybrid**: an explicit `@handle` is always by rule, the facilitator model fills gaps, plans and summarises (4.3); the deterministic core runs without it |
 | D3 | The store and signing | unsigned JSONL first, signing with the register in slice 3; the register from slice 1; own signed format | **Register is the store of record (4.6); slice 1 unsigned so a downloader can start; slice 3 signs.** Needs the Operator's ruling on making the register pullable (it is vendored from a private registry) |
-| D4 | Where participants are defined | new `facilitator.yml`; a section of `agents.yml` | **New file**, with an optional `agent:` cross-reference |
-| D5 | The `agents` Feature | keep; narrow; retire | **Keep unchanged, stop growing its multi-vendor slices, revisit after slice 2** |
+| D4 | Where participants are defined | one list, the component's `participants.yml` with `agents.yml` as an alias; a new `facilitator.yml` for participants; a section of `agents.yml` | **One list** (`participants.yml`, alias `agents.yml`); `facilitator.yml` only for the application's own settings (4.1, 7.2) |
+| D5 | The `agents` Feature (replaces the first draft's "keep") | keep; deprecate; retire at once | **Deprecate in 2.2.0, no behaviour change, retire in 3.0.0 under the three conditions of 7.2**; the Operator's ruling |
 | D6 | The Feature name | `facilitator`; `agent-facilitator`; `agent-chat` | **`facilitator`** |
 | D7 | The runtime | Python 3.11 stdlib (as the register); a Go binary; bash only | **Python stdlib**, a stated requirement in NOTES; bash cannot hold the MCP server comfortably |
 | D8 | Ship a local-model wrapper | yes, small; no, a participant brings its own | **Yes**: nothing else gives a bare model an attachment |
 | D9 | Loop guards | defaults 6 hops, 40 messages, 10 a minute; other | **As written**, a human `/continue` extends |
 | D10 | Identity | per-participant token files now; none; per-user later | **Tokens now**, per-user with `agent-linux-user` |
 | D11 | Slice-1 vendors | Claude + local model; Copilot + local model; all three | **Claude + local model**, Copilot and Gemini in slice 2 |
+| D18 | Where the shared component lives | `components/participant/` vendored like `src/common`; a new directory in `src/common`; a published Feature | **`components/participant/`**, same sync and check pattern in directory form (7.3) |
+| D19 | How a vendor Feature opts in | `participants` boolean plus `attach`, definitions in the file; the list inside an option string; a separate Feature | **`participants` and `attach`**, definitions in the file (7.3) |
+| D20 | Copilot CLI's home | in `gh`; a new `copilot` Feature | **A new `copilot` Feature**, `installsAfter` `gh` (7.3) |
+| D21 | A deprecation convention | write it in CONTRIBUTING (deprecate in a minor, remove in the next major); ad hoc | **Write it**, applied first to `agents` (7.2) |
+| D22 | Task and command names | keep `agents:` and `agents` in the component until its next major; rename now to `participants:` | **Keep**, alias later, so no consumer changes a script (7.2) |
 | D13 | The backends | real AGNTCY (`dir`, SLIM) default with a `lean` hatch; lean only; AGNTCY only | **The Operator's ruling: `backend: agntcy` default, `lean` on the register, one interface, no silent fallback, conversations in the register either way** (4.8) |
 | D16 | Order of slices | spike then lean then AGNTCY (as 8); AGNTCY first; model-in-the-loop first | **Spike, lean thin slice, AGNTCY backend**: the lean slice proves the experience, the spike de-risks the components |
 | D17 | AGNTCY Identity | opt-in later; default now; never | **Opt-in later** (needs Docker, no stated version) |
@@ -569,7 +680,7 @@ price tables; a web UI.
 | D15 | Facilitator model default | local endpoint; a vendor command; an attached participant | **None by default** (rules only); the engineer names one; a local endpoint is the documented first choice |
 | D12 | Transcripts | volume only, export on request; committed to the repo; shared folder | **Volume only**; shared folder later |
 
-Decisions needed from the Operator: all seventeen (D13 is already the Operator's ruling, here for the record), in particular D1, D3, D5 and D16.
+Decisions needed from the Operator: all twenty-two (D5 and D13 are already the Operator's rulings, here for the record), in particular D1, D3, D16, D18 and D20.
 
 **Open questions.** Q1: what "the sign-packet feature" is: no such Feature exists here; read as the
 register's entry signing; please confirm or point to it. Q2: is the facilitator application's
