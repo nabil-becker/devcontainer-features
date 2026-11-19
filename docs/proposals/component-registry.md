@@ -1,8 +1,7 @@
 # Proposal: the component registry, a registry for agentic components
 
-Status: proposed 2026-11-19. The design was decided piece by piece by the Operator on 2026-11-19
-(section 2); the architecture review (below) gave "fit with changes", and its changes are applied
-(the last section). ADR-0063 is proposed until the Operator rules. Supersedes the
+Status: accepted by the Operator 2026-11-19, with the architecture review's changes applied (the
+last section) and the rule that no layer widens a permission; ADR-0063. Supersedes the
 [personalization](personalization.md) proposal. Nothing is built.
 
 Who this serves: the Operator, who rules on it and is its first user (their own layer: "I'm

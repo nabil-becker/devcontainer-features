@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | proposed |
+| **Status** | accepted |
 | **Date** | 2026-11-19 |
 | **Deciders** | the Operator; proposed by the host |
 
@@ -90,3 +90,4 @@ registry shaped like the Windows Registry, without being it:
 | 2026-11-19 | Rewritten for the decided model: the component registry, layers of any number and source, merge by value type, patterns, `ref`; accepted by the Operator in the session. |
 | 2026-11-19 | Back to proposed by the Operator after the architecture review (fit with changes), until the review's changes land in the proposal. |
 | 2026-11-19 | The architecture review's changes and the Operator's rulings applied: who-you-are as a variable, the match rule, registry sources pinning version and log-in, http authentication only, review out of scope, permissions never widened, release 1 skills only, ADR-0037 amended. |
+| 2026-11-19 | Accepted by the Operator with the proposal, including the rule that no layer widens a permission. |
