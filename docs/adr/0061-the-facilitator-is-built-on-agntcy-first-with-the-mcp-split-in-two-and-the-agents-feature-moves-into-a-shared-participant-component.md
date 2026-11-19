@@ -1,4 +1,4 @@
-# ADR-0060: The facilitator is built on AGNTCY first, the MCP connection is split in two, and the agents Feature moves into a shared participant component
+# ADR-0061: The facilitator is built on AGNTCY first, the MCP connection is split in two, and the agents Feature moves into a shared participant component
 
 | | |
 |---|---|
@@ -118,3 +118,4 @@ No migration, but two copies of the agent list, kinds and lease code to keep in 
 | Date | Change |
 |---|---|
 | 2026-11-19 | First draft, from the Operator's rulings of the same day. |
+| 2026-11-19 | Renumbered from 0060, which PR #193 took. |

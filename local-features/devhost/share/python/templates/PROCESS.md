@@ -32,6 +32,16 @@ element placed in its layer. It writes an "Architecture review" section into the
 findings with a recommended change each, open questions) and never changes the design sections; the
 author or the host applies what the Operator accepts.
 
+**The architecture is kept in a standing set of six documents.** State of the Architecture, C4
+Models, Workflows, Lifecycles, Data Flows, and Data Inventory and Models, indexed in one README
+(`docs/architecture/` by default; the repository chooses the path). Every proposal says which of the
+six it changes and carries the delta: the changed diagram or table. The architecture review flags a
+proposal that changes one without its delta, or a standing document that is missing or stale. The
+standing documents are updated in the same pull request as the change, when it is built, not when
+the proposal is written. Each diagram is committed as Mermaid plus text, which is the reviewed
+source the guards check; a Whiteboard board per diagram set is generated from it for the Operator
+to view and rearrange, and is never the source.
+
 ## Who does what
 
 - **The Operator** owns the repository: brings notes, asks for work, reviews and decides; a

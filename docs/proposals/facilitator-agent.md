@@ -588,8 +588,8 @@ NOTES, and under "Deprecated" in the CHANGELOG, behaviour unchanged) and removed
 | the component's next major | `agents.yml` and `AGENTS_FILE` aliases removed, and the `agents:` task namespace gets a `participants:` alias or replacement | rename the file and the settings (a CHANGELOG note in each vendor Feature) |
 
 This repository's own devhost moves first (`.devcontainer/devcontainer.json` lists `./features/agents`
-today). **One ADR is needed by this ruling, to be written by the librarian: "The facilitator, the
-participant component and the deprecation of `agents`".** It names and, where needed, supersedes in
+today). **One ADR records this ruling: ADR-0061, "The facilitator is built on AGNTCY first, the MCP
+connection is split in two, and the agents Feature moves into a shared participant component".** It names and, where needed, supersedes in
 part: ADR-0036 (the lease and integrations stay, in the component), ADR-0037 (the Feature name
 `copilot-cli` becomes `copilot`; the contract tests run against the component), ADR-0041 (the session
 name was rendered by the agents Feature from its `sessionName` option: the ADR gives it a home, a
@@ -834,8 +834,7 @@ The Operator ruled on the proposal on 2026-11-19. Each decision as ruled:
    `slim-mcp-*`), which are used wherever that protocol was named. `claude-code` does not register the
    register's MCP today; the agentic-register Feature registers itself.
 
-**The ADR this ruling needs, to be written by the librarian:** "The facilitator, the participant
-component and the deprecation of `agents`", covering the records listed in 7.2 (ADR-0036, 0037, 0041,
+**The ADR this ruling needs:** ADR-0061 ("The facilitator is built on AGNTCY first, …"), covering the records listed in 7.2 (ADR-0036, 0037, 0041,
 0025, 0045, 0048, 0034 and the "MCP: none for now" decision), the home of `sessionName`, and the two
 exceptions (participant token files; `slim-bindings` if it cannot go through the download helper).
 
