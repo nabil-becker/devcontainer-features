@@ -338,3 +338,106 @@ classDiagram
 2. **An agent's own path** (`whoami` per agent): a key in the agents list entry, or a registry
    value under the agent's definition. Recommended: the agents list entry, so the list stays the
    one place an agent is defined.
+
+## Architecture review (2026-11-19)
+
+**Verdict:** fit with changes
+
+Requirements (NFR), one line each. Met: NFR-3 (no build-time download; the runtime fetch is not
+the build-time rule of ADR-0034), NFR-4 (no official Feature to order after), NFR-11 (the tool is
+not a linter), NFR-13 (placement in section 8 is right, see finding 5). Needs the proposal to say
+it: NFR-1 (section 9 says "named volume" but not `/var/lib/devcontainer-features/component-registry`,
+`containerEnv` and `component-registry-setup`), NFR-2 (no tasks named; `resolve` and `explain` need
+registered tasks with a `desc`), NFR-5 (`resolve` and setup idempotent: not stated), NFR-8 and
+NFR-10 (slice 1 tests fixtures; the scenario per option and the two-fake-adapter contract test of
+NFR-12 are not named). Not met: NFR-6 (finding 3), NFR-9 (finding 5), NFR-12 (finding 2).
+
+### Findings
+1. **The `.reg` grammar and the match rule are not specified enough to build (section 3.2, 3.3).**
+   Section 3.2 defers the grammar to "the build's NOTES", but the proposal leaves open: how a
+   section header relates to the layer's `at` (the examples are absolute while a layer is mounted at
+   a path); how "who you are" selects lines (is a line applied when its path is an ancestor of the
+   `whoami` path?); "more fixed path names wins" when `**` is involved; three meanings of `!` (list
+   removal, a lock after the type, `!replace` on a section); `skills:list = ref ...` mixes two
+   types; the same key with different types in two layers; whether a refused line fails the
+   resolve or is ignored; and how a skill with more than one file (references, scripts) is
+   carried when `body:text` holds one `@file`. Recommended change: write the grammar (ABNF or a
+   table) and one worked resolve of the section 3.2 example, with the match rule and a tie-break
+   order, into the proposal or a first-slice spec before the Operator rules.
+2. **The `skills` adapter verb has no row in the capability matrix, so NFR-12 is only half shown
+   (section 6, 8; agents-v2 section 14.1).** The matrix has no skills-folder capability for any
+   CLI. The exit 3 fallback is named (plain skills, said so), which meets NFR-12's letter, but the
+   claim that Claude ranks personal above project skills, and that a created-empty folder is watched
+   live, are CLI facts without a source, and Copilot reading `.claude/skills` is unchecked. The verb
+   `skills <name> <folder> --from <dir>` also differs in shape from the optional verbs in
+   `src/agents/NOTES.md` (`<verb> <name> <folder>`), and amends the contract of ADR-0037.
+   Recommended change: add a "skills folder" row (and the precedence and live-reload cells, with
+   their sources) to the matrix, make `skills` a `supports` verb, and name ADR-0037 and
+   `src/agents/NOTES.md` as amended in ADR-0063.
+3. **`whoami` sits in a committed shared file (section 3.1; NFR-6; ADR-0045 tier 1).** The example
+   puts `/Corp/MyDepartment/team/me` in `.devcontainer/registry.yml`, which is tier 1 and shared,
+   while the proposal says it is "per person". NFR-6 wants settings as options or plain variables
+   (CLI, then `.env`, then environment). Recommended change: take `whoami` from a variable
+   (`COMPONENT_REGISTRY_WHOAMI`, `.env` or the launcher), keep the yml for layers only, and let
+   the agents list entry override it per agent (open question 2).
+4. **A personal layer's data tier is unstated (sections 7, 9; ADR-0045, ADR-0049).** The inventory
+   says a layer is "1, 2 or 3 by owner", and the personal layer's example source is `cloud-folder`
+   (tier 2, shared), yet it may hold health facts. ADR-0045 keeps tier 3 out of the mounts by
+   default. Also not in the inventory: the resolved skill copies in the CLI's own volume
+   (`claude-code`, tier 4), the `explain` output, and the OpenBao token path (data flows show no
+   secret edge). Recommended change: state that a personal layer lives in tier 3 or in a tier 2
+   folder the person alone can read, add the skills-folder copies and the `dcf-secret` edge to
+   the inventory and data-flow deltas, and name the token's secret path.
+5. **No statement of why not the CLI's own distribution (NFR-9, NFR-13; section 8).** Claude Code
+   already has plugins, marketplaces and managed settings with their own scope order. The
+   placement is right (skills hand-over in the adapter, start in agents), but the proposal never
+   says what is added over them (many sources, merge by type, locks, `explain`), and the
+   `settings` and `prompts` kinds come close to re-implementing the CLI's settings merge. Recommended
+   change: add the one paragraph NFR-9 asks for, and limit the first release to skills and agent
+   definitions, with `settings` deferred until the CLI's own merge is compared.
+6. **Trust of an http layer is weaker than stated (sections 4, 7).** The `manifest.json` comes from
+   the same host as the files, so a sha256 match proves only transfer, not origin; the layer is
+   instructions fed to agents and may carry tool permissions. Recommended change: pin the
+   manifest's digest in the layer list, or have the owner sign it (the `sign-packet` Feature
+   exists), and say a layer may not carry permission or `allowed-tools` settings.
+7. **Mermaid blocks have defects (section 9).** The `classDiagram` puts members on one line with
+   semicolons (`class Layer { id; rank; at; sources }`), which is not valid member syntax; each
+   member needs its own line. The `stateDiagram-v2` joins two unrelated machines in one block with
+   two `[*]` starts and an unused `state ... as rc`. `registry-source-&lt;kind&gt;` in a flowchart
+   label may render literally; use `#lt;kind#gt;` or avoid angle brackets. Recommended change: fix
+   the class members, split the state diagram into a layer-change machine and a resolved-component
+   machine (add an offline-snapshot state), and replace the escapes.
+8. **Source adapter collides with the lexicon (LEXICON "CLI adapter", "Snapshot").** The lexicon
+   says "adapter" is used only for the CLI adapter; `registry-source-<kind>` is called a "source
+   adapter" (decision 9, section 4). "Snapshot" is already the OpenBao raft file. "Layer" collides
+   with the bar and life layers (section 11 handles it). Needs terms: registry layer, registry source,
+   resolved view, lock, who-you-are path (`whoami`), `.reg` file. Recommended change: call the
+   executables "registry sources" (a `registry-source-<kind>` executable), call the local copy a
+   "layer copy", and ask the librarian for the six terms; the component-registry ontology id
+   already exists.
+9. **ADR-0063 is accepted ahead of this review and drifts from the proposal.** ADR-0039 puts the
+   architecture review before the ruling; the ADR already says accepted. The ADR says agent
+   definitions go to the agents Feature, while slice 5 defers them; it omits the open questions
+   and the amendment of ADR-0037. No accepted ADR is otherwise contradicted (ADR-0036, 0037, 0045,
+   0048, 0060 are consistent). Recommended change: keep the ADR proposed until the Operator
+   rules, and align its item 8 with slice 5.
+10. **Standing documents: the state, C4, workflow, lifecycle, data flow and inventory deltas are all
+    present (section 9), good, but two are thin.** The state row lacks the supersession of the
+    personalization row at state-of-the-architecture line 78; the C4 delta lacks the host launcher
+    (file-share mount) and OpenBao; the workflow shows no refused-lock or offline path. Recommended
+    change: add the personalization row change, the two C4 relations and an alt branch for lock
+    refusal and offline fallback.
+11. **Smaller gaps.** A skill the layers drop leaves a stale copy in the skills folder; two
+    concurrent resolves can race on the folder; the `git` source's credentials are not named
+    (OpenBao through `dcf-secret`, like `http`). Recommended change: say `resolve` writes to a
+    temporary folder and swaps it in, and removes copies it owns that no layer still names.
+
+### Open questions for the Operator
+- Should the first release ship skills only (recommended), with agent definitions, prompts and
+  settings later, so the design does not duplicate the CLI's own settings layering?
+- Where does a personal layer with health facts live (recommended: tier 3, or a private tier 2
+  folder), given ADR-0045 keeps tier 3 unmounted by default?
+- Keep ADR-0063 accepted now, or move it back to proposed until this review's changes are made
+  (recommended: proposed)?
+- Review of changes (open question 1) and an agent's own path (open question 2): the proposal's
+  recommendations are sound; the review agrees with both.
