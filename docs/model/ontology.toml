@@ -210,6 +210,21 @@ type = "mechanism"
 term = "Architecture review"
 summary = "A subagent's check of a proposal against the NFRs, ADRs, capability matrix and lexicon before the Operator rules."
 
+[standing-architecture-set]
+type = "record"
+term = "Standing architecture set"
+summary = "The six living architecture documents, indexed in one README and updated in the pull request that builds a change."
+
+[[relation]]
+subject = "architecture-review"
+predicate = "checks"
+object = "standing-architecture-set"
+
+[delta]
+type = "concept"
+term = "Delta"
+summary = "The changed diagram or table a proposal carries for each standing architecture document it changes."
+
 [cost-report]
 type = "record"
 term = "Cost report"

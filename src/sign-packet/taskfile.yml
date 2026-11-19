@@ -1,0 +1,30 @@
+# Tasks contributed by the sign-packet Feature (namespace: sign-packet). Each runs the sign-packet
+# command (AOF's tooling REQUIREMENTS.md, R6). Extra arguments after --, for example:
+#   task sign-packet:verify -- --domain ledger docs/ledger/entries
+version: '3'
+
+tasks:
+  version:
+    desc: 'Show what is installed: the sign-packet version, the format version, Python, ssh-keygen and where the library is.'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['sign-packet version {{.CLI_ARGS}}']
+
+  setup:
+    desc: 'Re-run the post-create setup: the state folder in the volume, and this instance''s id resolved once (idempotent, never fatal).'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['sign-packet-setup']
+
+  instance:
+    desc: 'This running instance''s id: from AOF_INSTANCE_ID, OpenBao (dcf-secret get instance --field id), or made here; recorded once, a different value later refused. -- --quiet prints the id alone.'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['sign-packet instance {{.CLI_ARGS}}']
+
+  check:
+    desc: 'Say in one line per part what is ready (Python 3.11, ssh-keygen) and exit non-zero when not ready.'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['sign-packet check {{.CLI_ARGS}}']
+
+  verify:
+    desc: 'Check packet files alone (format, fields, domain, signature): -- --domain <name> <file or folder>... Not who may write: agentic-register verify says that.'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['sign-packet verify {{.CLI_ARGS}}']
