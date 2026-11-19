@@ -229,8 +229,16 @@ The domain words of the project itself are not here; they live with the project'
   last review's friction came back, and turning each group into one action; kept as a `## Review`
   section (a file in the shared folder's `reviews/`, shown between the ledger's entries), every 75 entries here (`DEVHOST_REVIEW_EVERY`, ADR 0021; 25 if unset). Run with `/ledger-review`.
 - **Architecture review**: a subagent's check of a proposal's design against the non-functional
-  requirements, the ADRs, the CLI capability matrix, the lexicon and where each element is placed,
-  written into the proposal before the Operator rules; run with `/architecture-review`.
+  requirements, the ADRs, the CLI capability matrix, the lexicon, where each element is placed and
+  the documentation (which documents of the standing architecture set the proposal changes, and
+  their deltas), written into the proposal before the Operator rules; run with `/architecture-review`.
+- **Standing architecture set**: the six living architecture documents every repository keeps (State
+  of the Architecture, C4 Models, Workflows, Lifecycles, Data Flows, Data Inventory and Models),
+  linked from one index `README.md` (`docs/architecture/` by default, the repository's choice). A
+  proposal names which it changes and carries the delta; the set is updated in the pull request that
+  builds the change (ADR-0060).
+- **Delta**: the changed diagram or table a proposal carries for each standing architecture document
+  it changes; the architecture review flags a change without one.
 - **Cost report**: `costs-YYYY-MM-<engineer>.md` (in the shared folder's `costs/`), the monthly agent costs on one
   engineer's machine (inters, cons, backs, by model), rebuilt by `devhost-report` with no model
   from the cost store and this machine's new records, with the month's entry rate and, when `DEVHOST_MONTHLY_TARGET` is set, the spend against that tracking point. Read first by the review.
