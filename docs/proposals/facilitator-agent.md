@@ -97,7 +97,7 @@ Existing words kept: **agent**, **handle** (a participant's address), **resident
 | **Facilitator** (the Feature, and the application) | The Feature `facilitator`: the communication layer, and the **facilitator application** it ships: a set of modules (4.3), some deterministic, some assisted by the facilitator's own model. It is not a participant; it speaks in a conversation as the handle `facilitator`. |
 | **Facilitator model** | The LLM the application uses to decide and summarise: a local OpenAI-compatible endpoint, a one-turn vendor command run with the engineer's token, or an attached participant. Pluggable (4.3). |
 | **Packet** | One signed message: an entry of the `conversation` register type (register-engine), in the format and with the signature of **sign-packet** (4.6, 4.7). The Operator's word, and the AOF Feature's own. |
-| **Directory** | The set of agent records (OASF) the participants registered; where the planner reads skills from (4.8). |
+| **Directory** | The set of agent records (OASF) the participants registered; where the route planner reads skills from (4.8). |
 | **Backend** | The one setting that says what carries directory and delivery: `agntcy` (the real AGNTCY Agent Directory and SLIM, the default, and the first to be built) or `lean` (packet-relay, the safety hatch). The record is register-engine's in both. The modules see one interface either way (4.8). |
 | **Infrastructure** | What the Feature itself starts and owns: the directory and SLIM node in `agntcy` mode, and the facilitator application. Participants are never infrastructure. |
 | **Participant** | A named, running process that takes part: a **handle** (`jester`), a definition (the CLI profile or system prompt it is started with, the list key `definition`, kept by the harness), an **attachment**, an optional model label shown in the transcript. The engineer at the terminal is a participant too (`you`, kind `human`, declared in `facilitator.yml`). |
@@ -117,7 +117,7 @@ Existing words kept: **agent**, **handle** (a participant's address), **resident
  vendor Features (user-facing)   participant component (vendored, thin)           facilitator Feature
  claude-code  participants/attach  E4 definition  E3 identity  E1 attach (MCP entry)   application:
  copilot      participants/attach  + run half: kinds, lease, session names, adapters    intake, guard, router,
- gemini (later)                          |                                              planner, dispatcher,
+ gemini (later)                          |                                              route planner, dispatcher,
                                          |  participant processes, kept running by a    collector, MCP server
    claude (domain-expert-one) --MCP-->   |  harness                                     (receive reply say who)
    copilot, gemini ------------MCP-->    v                                              sign-packet signer,
@@ -159,7 +159,7 @@ participants:                      # participants.yml: the shared list
     args: "--endpoint http://localhost:11434/v1 --model llama3.2"
     definition: personas/jester.md # the persona: the text sent as system prompt
     attachment: mcp                # mcp | pump
-    description: tells jokes       # the OASF record (4.8), read by the router and planner
+    description: tells jokes       # the OASF record (4.8), read by the router and route planner
     skills: [humour]
   - name: domain-expert-one
     cli: claude                    # the run half starts it (the harness); the facilitator never does
@@ -224,7 +224,7 @@ up, many replies to join), and everything it decides is written as a packet, so 
 veto why a message went where it did.
 
 ```
- intake -> guard -> router ----> planner* ----> dispatcher -> (participants, via transport)
+ intake -> guard -> router ----> route-planner* -> dispatcher -> (participants, via transport)
    |         |        |  \          |                |                 |
    |         |        |   directory client            |  <---- replies -+
    |         |        |                               v
@@ -238,10 +238,10 @@ veto why a message went where it did.
 | **Intake** | Authenticates the writer (token), parses `@handles`, attaches the conversation and its recent messages | deterministic |
 | **Guard / limits** | Hop limit, message budget, rate, the facilitator's own model-call budget, pause and `/continue` (4.5) | deterministic, and runs at write time even when the application is not running |
 | **Router** | Explicit mentions: by rule. Unaddressed in a group, or "someone should...": asks the model to choose handles **from the directory's list only** (an enumerated answer, validated; anything else is discarded and the fallback below used) | rule first, model for gaps |
-| **Planner** | Breaks a request into sub-asks (`ask`, an A2A task per assignee), writes the plan to the transcript as a packet; a human may `/veto` it before dispatch (default off for 1 to 3 sub-asks) | model |
+| **Route planner** (`route-planner`) | Breaks a request into sub-asks (`ask`, an A2A task per assignee), writes the plan to the transcript as a packet; a human may `/veto` it before dispatch (default off for 1 to 3 sub-asks) | model |
 | **Dispatcher** | Writes deliveries, tracks each task's state (`submitted` to `completed`), re-asks or marks `failed` on a timeout, never delivers past the guard | deterministic |
 | **Collector / summariser** | When the sub-asks are done (or timed out), joins the replies into one message to the asker, each claim with a `ref` to the packet it came from | model (a plain concatenation is the fallback) |
-| **Directory client** | Reads the registered agent records: handle, description, skills; feeds the router and planner (4.8) | deterministic |
+| **Directory client** | Reads the registered agent records: handle, description, skills; feeds the router and route planner (4.8) | deterministic |
 | **Signer** | Signs every packet, the facilitator's own included (4.7) | deterministic |
 | **Model gateway** | One interface, `complete(prompt, schema) -> text`; backends below | deterministic code around a model |
 
@@ -690,7 +690,7 @@ The Operator's order (ruled). The first version is on AGNTCY; the lean hatch com
    thing: check whether an official Copilot CLI Feature exists (NFR-4, NFR-9).
 5. **The lean hatch:** `backend: lean` on packet-relay, `backend switch`, with the conversations
    carried over.
-6. **The AI facilitator:** `serve`, the model gateway, the router's gap-filling, planner,
+6. **The AI facilitator:** `serve`, the model gateway, the router's gap-filling, route planner,
    collector/summariser, the budget.
 7. **Retirement and reach:** `agents` 3.0.0 once its conditions hold (7.2), Gemini, AGNTCY Identity
    opt-in, per-agent Linux users, transcripts to the shared folder.
