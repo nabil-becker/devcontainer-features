@@ -25,7 +25,7 @@ printf "#!/bin/sh\necho \"\$*\" >> %s/calls\nexit 0\n" "$t" > "$t/bin/agent-adap
 printf "version: '"'"'3'"'"'\nincludes:\n  features:\n    taskfile: /usr/local/share/go-task/features.yml\n    flatten: true\n" > "$t/repo/Taskfile.yml"
 export PATH="$t/bin:$PATH" AGENTS_SETTLE_INTERVAL=0 AGENTS_SETTLE_TIMEOUT=0; cd "$t/repo"'
 check "task agents:check works and says it is deprecated once" bash -c "$setup; out=\$(task agents:check 2>&1); printf '%s\n' \"\$out\" | grep -F 'host: cli fake, resident' && [ \"\$(printf '%s\n' \"\$out\" | grep -cx 'deprecated: use claude-code participants: true')\" = 1 ]"
-check "the sessionName option reaches the agents command" bash -c "$setup; agents check | grep -F 'the sessionName option of the agents Feature'"
+check "the sessionName option reaches the agents command (no DCF_HOST_MACHINE: 'container')" bash -c "$setup; unset AGENTS_SESSION_NAME DCF_HOST_MACHINE; agents check | grep -F 'session name \"container host\"'"
 check "claude-code's post-start hook leaves agents up to the agents Feature" bash -c "$setup; claude-code-post-start; ! test -e \"\$t/calls\""
 
 reportResults
