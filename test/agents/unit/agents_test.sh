@@ -752,5 +752,70 @@ else
   echo "skip - the Feature Taskfile (no task on PATH)"
 fi
 
+# ---------------------------------------- participants.yml and the three keys (1.1) ----
+rm -f "$repo/.env" "$repo/.devcontainer/.env" "$repo/.devcontainer/agents.yml" "$repo/.devcontainer/participants.yml"
+printf 'agents:\n  - name: from-agents\n    cli: fake\n    kind: on-demand\n' > "$repo/.devcontainer/agents.yml"
+out="$(run check)"
+contains 'agents.yml alone: read, source unchanged' "$out" "$repo/.devcontainer/agents.yml (from the default (AGENTS_FILE is not set))"
+lacks 'agents.yml alone: no warning' "$out" 'both'
+printf 'participants:\n  - name: from-part\n    cli: fake\n    kind: on-demand\n' > "$repo/.devcontainer/participants.yml"
+out="$(run check)"
+contains 'both files: participants.yml is read' "$out" 'from-part'
+lacks 'both files: agents.yml is not read' "$out" 'from-agents:'
+contains 'both files: one warning naming both' "$out" 'both .devcontainer/participants.yml and .devcontainer/agents.yml exist'
+check 'both files: the warning once' 1 "$(printf '%s\n' "$out" | grep -c 'both .devcontainer/participants.yml')"
+rm -f "$repo/.devcontainer/agents.yml"
+out="$(run check)"
+contains 'participants.yml alone: read' "$out" "participants.yml (from the default (PARTICIPANTS_FILE is not set)): 1 agent(s)"
+lacks 'participants.yml alone: no warning' "$out" 'both'
+printf 'agents:\n  - name: from-agents\n    cli: fake\n    kind: on-demand\n' > "$repo/ops/agents.yml"
+printf 'participants:\n  - name: from-pf\n    cli: fake\n    kind: on-demand\n' > "$repo/ops/participants.yml"
+out="$(AGENTS_FILE=ops/agents.yml run check)"
+contains 'AGENTS_FILE set beats the default participants.yml (an explicit setting)' "$out" 'from-agents'
+out="$(PARTICIPANTS_FILE=ops/participants.yml run check)"
+contains 'PARTICIPANTS_FILE is read' "$out" 'from-pf'
+contains 'PARTICIPANTS_FILE is named as the source' "$out" 'from PARTICIPANTS_FILE in the environment'
+out="$(PARTICIPANTS_FILE=ops/participants.yml AGENTS_FILE=ops/agents.yml run check)"
+contains 'both settings: PARTICIPANTS_FILE wins' "$out" 'from-pf'
+contains 'both settings: the warning names both' "$out" 'both PARTICIPANTS_FILE (ops/participants.yml, from PARTICIPANTS_FILE in the environment) and AGENTS_FILE (ops/agents.yml'
+out="$(PARTICIPANTS_FILE_TASK_VAR=ops/participants.yml run check)"
+contains 'PARTICIPANTS_FILE_TASK_VAR is a task variable' "$out" 'from the task variable PARTICIPANTS_FILE'
+printf 'PARTICIPANTS_FILE=ops/participants.yml\n' > "$repo/.env"
+out="$(run check)"
+contains 'PARTICIPANTS_FILE from .env' "$out" 'from PARTICIPANTS_FILE in .env'
+rm -f "$repo/.env"
+out="$(PARTICIPANTS_FILE=nope.yml run check)"; rc=$?
+check 'a missing PARTICIPANTS_FILE: exit 2' 2 "$rc"
+contains 'a missing PARTICIPANTS_FILE: named with its source' "$out" "no agent list at $repo/nope.yml (from PARTICIPANTS_FILE in the environment)"
+rm -f "$repo/.devcontainer/participants.yml"
+out="$(run check)"
+contains 'no list at all: the message recommends participants.yml' "$out" 'participants.yml is the name to use'
+
+printf 'agents:\n  - name: a\n    cli: fake\n    kind: on-demand\n  - name: b\n    cli: fake\n    kind: on-demand\n    attachment: pump\n    description: "Reviews: the diff"\n    skills: [review, "plan it"]\n  - name: c\n    cli: fake\n    kind: on-demand\n    skills:\n      - one   # a comment\n      - two\n    attachment: mcp\n' > "$repo/.devcontainer/participants.yml"
+printf 'participants:\n' > /dev/null
+sed -i '1s/agents:/participants:/' "$repo/.devcontainer/participants.yml"
+out="$(run list --json)"
+lacks 'the three keys: no unknown-key warning' "$out" 'unknown key'
+contains 'list --json: attachment, description and skills of b' "$out" '"sessionName":"b","attachment":"pump","description":"Reviews: the diff","skills":["review","plan it"]}'
+contains 'list --json: a block list of skills and attachment of c' "$out" '"sessionName":"c","attachment":"mcp","skills":["one","two"]}'
+contains 'list --json: an agent without the keys prints as before' "$out" '"sessionName":"a"},'
+out="$(run check)"
+contains 'check shows attachment and skills' "$out" 'attachment mcp, skills [one, two]'
+sed -i 's/attachment: pump/attachment: telepathy/' "$repo/.devcontainer/participants.yml"
+out="$(run check)"; rc=$?
+check 'a bad attachment: exit 2' 2 "$rc"
+contains 'a bad attachment: file, line and the allowed values' "$out" "attachment 'telepathy' is none of mcp, pump or model"
+printf 'participants:\n  - name: a\n    cli: fake\n    kind: on-demand\nagents:\n  - name: b\n    cli: fake\n    kind: on-demand\n' > "$repo/.devcontainer/participants.yml"
+out="$(run check)"; rc=$?
+check 'agents: and participants: in one file: exit 2' 2 "$rc"
+contains 'agents: and participants: in one file: said' "$out" "'agents' and 'participants' both appear"
+printf 'participants:\n  - name: a\n    cli: fake\n    kind: on-demand\n    skills: review\n' > "$repo/.devcontainer/participants.yml"
+out="$(run check)"
+contains 'skills must be a list' "$out" 'skills must be a list'
+printf 'participants:\n  - name: a\n    cli: fake\n    kind: on-demand\n    attachment:\n' > "$repo/.devcontainer/participants.yml"
+out="$(run check)"
+contains 'an empty attachment is refused' "$out" "'attachment' has no value"
+rm -f "$repo/.devcontainer/participants.yml"
+
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

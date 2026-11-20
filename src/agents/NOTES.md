@@ -136,6 +136,12 @@ agents:
 then attach. `on-demand`: starting it opens a new session in this terminal; it resumes its latest
 conversation only when asked.
 
+**Newer names (2.3.0).** This Feature is deprecated, and its copy of the participant component
+(1.1.0) also reads `.devcontainer/participants.yml`, the top-level key `participants:`,
+`PARTICIPANTS_FILE`, and the entry keys `attachment`, `description` and `skills`. They are
+documented under "The list file and the keys" in the [`claude-code` notes](../claude-code); what is
+below stays true for `agents.yml` and `AGENTS_FILE`.
+
 **Where the list is: `AGENTS_FILE`.** A path relative to the repository root (the nearest folder
 at or above the current one holding `.devcontainer/`; an absolute path is used as it is),
 resolved like every setting here (NFR-6), first wins:

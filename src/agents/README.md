@@ -156,6 +156,12 @@ agents:
 then attach. `on-demand`: starting it opens a new session in this terminal; it resumes its latest
 conversation only when asked.
 
+**Newer names (2.3.0).** This Feature is deprecated, and its copy of the participant component
+(1.1.0) also reads `.devcontainer/participants.yml`, the top-level key `participants:`,
+`PARTICIPANTS_FILE`, and the entry keys `attachment`, `description` and `skills`. They are
+documented under "The list file and the keys" in the [`claude-code` notes](../claude-code); what is
+below stays true for `agents.yml` and `AGENTS_FILE`.
+
 **Where the list is: `AGENTS_FILE`.** A path relative to the repository root (the nearest folder
 at or above the current one holding `.devcontainer/`; an absolute path is used as it is),
 resolved like every setting here (NFR-6), first wins:
@@ -565,6 +571,17 @@ the `SESSIONS` / `HOST_SESSION` settings, which claude-code 2.0 removes; the mig
 
 ## Changes
 
+### [2.3.0] - 2026-11-20
+
+#### Changed
+
+- Carries the participant component 1.1.0, which also reads `.devcontainer/participants.yml`
+  (`participants:` or `agents:` as the top-level key, `PARTICIPANTS_FILE`) and accepts the entry keys
+  `attachment`, `description` and `skills`. This Feature is deprecated and takes no new work of its own;
+  this release only keeps its copy of the component equal to the one in `claude-code`. Nothing to do:
+  an existing `agents.yml` and `AGENTS_FILE` behave exactly as before. The new names are documented
+  under `claude-code`'s "Participants".
+
 ### [2.2.0] - 2026-11-19
 
 #### Deprecated
@@ -580,12 +597,6 @@ the `SESSIONS` / `HOST_SESSION` settings, which claude-code 2.0 removes; the mig
 #### Changed
 
 - The README now has a "How it fits" section with a small diagram of how the Feature sits in a devcontainer, a table of the data it keeps and the storage tier of each, and "Used in" links to the reference architectures that use it. Documentation only: the Feature itself is unchanged. Nothing to do.
-
-### [2.1.2] - 2026-11-03
-
-#### Added
-
-- This changelog: every release of this Feature now has an entry here, written for its users, and the Feature's README shows the latest three under "Changes". Nothing to do.
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/agents/CHANGELOG.md).
 

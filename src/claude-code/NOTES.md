@@ -54,6 +54,31 @@ page exists.
 
 Off (the default), nothing of the component is installed and the post-start hook prints nothing.
 
+### The list file and the keys (component 1.1.0, claude-code 1.11.0)
+
+The list is `.devcontainer/participants.yml`, the name to use, with `participants:` as the top-level
+key. `.devcontainer/agents.yml` and the key `agents:` are aliases and keep working. One key per file.
+
+| Where | Which file |
+| --- | --- |
+| `PARTICIPANTS_FILE` set (task variable, root `.env`, `.devcontainer/.env`, environment, in that order) | that path |
+| else `AGENTS_FILE` set | that path |
+| neither set, `participants.yml` exists | `.devcontainer/participants.yml` |
+| otherwise | `.devcontainer/agents.yml` |
+
+When both variables are set, or both default files exist, the first is read and the second ignored,
+with one warning on stderr that names both. A repository that only has `agents.yml` or `AGENTS_FILE`
+gets no warning and no change. An entry may also carry:
+
+- `attachment: mcp | pump | model`, how another Feature (the facilitator) attaches the participant;
+  any other value is refused with the file and line;
+- `description: "..."`, a line of text;
+- `skills: [a, b]` (or one `- value` per line), a list of names.
+
+The `agents` command reads and checks them and does nothing else with them. `agents list --json`
+prints them after `sessionName` (`"attachment"`, `"description"`, `"skills"` as an array), only for
+entries that set them, so the output of an older list is unchanged.
+
 ## Deprecated in 1.7.0: claude-host, claude-fleet, claude-host-pin
 
 The [`agents`](../agents) Feature replaces them: a repository lists its agents in
