@@ -174,7 +174,7 @@ if [ -z "$SKIP_DOWNLOADS" ]; then
   install -m 0644 "$work/requirements.txt" "$tree/lib/requirements.txt"
   # One line, relative to the interpreter's own site-packages, so `python3 -I` finds slim-bindings wherever the
   # tree is unpacked (python/lib/python3.13/site-packages -> ../../../../lib/site-packages).
-  pydir="$(cd "$tree/python/lib" && ls -d python3.* | head -n1)"
+  pydir="$(find "$tree/python/lib" -mindepth 1 -maxdepth 1 -type d -name 'python3.*' -printf '%f\n' | head -n1)"
   printf '../../../../lib/site-packages\n' >"$tree/python/lib/$pydir/site-packages/facilitator-bundle.pth"
   python_line="#!$PREFIX/python/bin/python3 -I"
 else

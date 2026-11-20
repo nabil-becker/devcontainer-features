@@ -1,0 +1,71 @@
+# A sample hub: the facilitator node image with an OpenBao beside it (ruling AI), on a network of their own that
+# reaches nothing else and publishes no port. Slice N2: the hub runs role standalone, every facilitator port on
+# loopback inside its container; the hub's networking and trust (SLIM listeners, SVIDs from OpenBao PKI) are
+# slice N3. OpenBao starts sealed and uninitialised: the Operator initialises it once and unseals it by hand
+# after every start (ruling AB), from a terminal, never an agent's job:
+#
+#   docker compose -f bundles/facilitator/compose.yml up -d
+#   docker compose -f bundles/facilitator/compose.yml exec openbao bao operator init     # once; keep the shares
+#   docker compose -f bundles/facilitator/compose.yml exec openbao bao operator unseal   # after every start
+#   docker compose -f bundles/facilitator/compose.yml exec hub facilitator check
+#
+# FACILITATOR_NODE_IMAGE names the image (task bundle:image builds facilitator-node:<version>-local).
+name: facilitator-hub
+
+services:
+  hub:
+    image: ${FACILITATOR_NODE_IMAGE:-ghcr.io/nabil-becker/facilitator-node:0.3.0}
+    restart: unless-stopped
+    depends_on: [openbao]
+    environment:
+      BAO_ADDR: http://openbao:8200
+    volumes:
+      - facilitator-state:/var/lib/devcontainer-features/facilitator
+      # - ./facilitator.yml:/etc/facilitator/facilitator.yml:ro      # the hub's humans and settings
+      # - ./participants.yml:/etc/facilitator/participants.yml:ro
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [hub]
+
+  openbao:
+    # quay.io/openbao/openbao 2.7.3, by digest (the multi-arch index, read from the registry on 2026-11-20).
+    image: quay.io/openbao/openbao:2.7.3@sha256:ba4b133eb9586630024e71a617e66f37f29cc3534cdd46a6233e098ceded8dc9
+    restart: unless-stopped
+    command: ["server", "-config=/etc/openbao/hub.hcl"]
+    environment:
+      BAO_ADDR: http://127.0.0.1:8200
+    configs:
+      - source: openbao-config
+        target: /etc/openbao/hub.hcl
+    volumes:
+      - openbao-data:/openbao/file
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [hub]
+
+configs:
+  openbao-config:
+    content: |
+      storage "raft" {
+        path    = "/openbao/file"
+        node_id = "hub-openbao"
+      }
+      # Plain HTTP on the hub's own network only (internal, nothing published); TLS comes with slice N3.
+      listener "tcp" {
+        address     = "0.0.0.0:8200"
+        tls_disable = true
+      }
+      api_addr      = "http://openbao:8200"
+      cluster_addr  = "http://openbao:8201"
+      disable_mlock = true
+      ui            = false
+
+volumes:
+  facilitator-state:
+  openbao-data:
+
+networks:
+  hub:
+    internal: true
