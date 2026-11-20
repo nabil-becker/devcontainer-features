@@ -82,7 +82,10 @@ named in the rows ("bounded loss", "to verify").
 | Registry layer copies, the resolved view, `resolve.lock` | volume `component-registry-state-${devcontainerId}` at `/var/lib/devcontainer-features/component-registry`, owner-only | component-registry Feature | 4 | as its most sensitive layer (may be personal) | yes (refetched, rebuilt) | `src/component-registry/NOTES.md` |
 | `explain` output | the terminal only | component-registry Feature | none | as the resolved view | not kept | `src/component-registry/NOTES.md` |
 | Registry source secrets | OpenBao, read with `dcf-secret` | the layer's owner or the person | OpenBao's | secret | yes | `src/component-registry/NOTES.md` |
-| Later (slice 2): resolved skills in the CLI | the CLI's skills folder (Claude: the claude-code volume) | the CLI adapter | 4 | as the resolved view | rebuilt | `docs/proposals/component-registry.md` |
+| Resolved skills in the CLI | the CLI's skills folder (Claude Code: `$CLAUDE_CONFIG_DIR/skills` in the claude-code volume), owner-only, each copy marked `.component-registry` | the CLI adapter's `skills` verb (`dcf-registry handover`) | 4 | as the resolved view (may be personal) | yes (rebuilt by the next resolve) | `src/claude-code/NOTES.md`, `docs/adr/0064-*.md` |
+| Remembered lines (`/registry-remember`) | `remembered.reg` in the folder of the layer marked `writable: true` | the person | the person's choice (their own layer's source) | personal | follows its source | `src/component-registry/NOTES.md` |
+| The utility skills (built-in base layer) | `/usr/local/share/component-registry-feature/base` in the image | component-registry Feature | 4 (image) | public | no (rebuilt) | `src/component-registry/NOTES.md` |
+| An agent's who-you-are path (`registry-path`) | an entry of `.devcontainer/agents.yml` | the repo | 1 | internal | yes | `src/agents/NOTES.md` |
 | Journal pieces, night-shift reports, iteration papers | `docs/journal/`, `docs/night-shift/`, `docs/iterations/` | host, journalist | 1 | public (name guard applies) | yes | `docs/journal/README.md`, `local-features/devhost/NOTES.md` |
 
 ### Features that hold nothing

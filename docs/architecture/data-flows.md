@@ -269,9 +269,10 @@ flowchart LR
 
 ## 7. The component registry
 
-Built in slice 1 (component-registry 1.0.0): sources `git` and `path`, the view in the Feature's
-volume. Later: the `http` and `cloud-folder` sources (slice 3) and the hand-over to the CLI's
-skills folder (slice 2), drawn dashed.
+Built in slices 1 and 2 (component-registry 1.1.0, claude-code 1.11.0): sources `git` and `path`,
+the view in the Feature's volume, the hand-over to the CLI's skills folder through the adapter's
+`skills` verb, and `/registry-remember` appending to the person's own writable layer. Later: the
+`http` and `cloud-folder` sources (slice 3), drawn dashed.
 
 ```mermaid
 flowchart LR
@@ -291,12 +292,15 @@ flowchart LR
   launcher -.->|later: mounts a share, sets whoami| component-registry
   external-copies --> component-registry
   component-registry -->|resolve| external-view
-  external-view -.->|later: skills verb| external-cli-skills
+  external-view -->|handover: the adapter's skills verb| external-cli-skills
+  component-registry -->|remember: appends a line| external-sources
 ```
 
 - Who you are (`COMPONENT_REGISTRY_WHOAMI`) comes from `.env` or the launcher, never a committed file.
 - A layer copy and the view are as sensitive as their most sensitive layer (a person's own layer may hold health facts): owner-only, never committed. `explain` prints to the terminal only.
-- Sources: `src/component-registry/NOTES.md`, `docs/proposals/component-registry.md`, `docs/adr/0063-*.md`.
+- The CLI's skills folder (Claude Code: `$CLAUDE_CONFIG_DIR/skills`, the claude-code volume) gets owner-only copies, each marked owned by the registry; never the repository's `.claude/skills`.
+- `/registry-remember` writes only to the layer marked `writable: true`, and only to a folder (a `path` source): the person's own layer, wherever they keep it.
+- Sources: `src/component-registry/NOTES.md`, `src/claude-code/NOTES.md`, `docs/proposals/component-registry.md`, `docs/adr/0063-*.md`, `docs/adr/0064-*.md`.
 
 ## Gaps seen while drawing
 

@@ -41,7 +41,7 @@ commit that added it); every other row is "to verify against the registry".
 |---|---|
 | Host and devcontainer | `devcontainer-cli` (1.22.1), `common` (1.0.4), `cloud-folder` (1.3.3), `audio` (1.1.0) |
 | Git and identity | `git` (1.4.6), `gh` (1.1.0), `ssh-agent` (1.5.0), `openbao` (1.6.0, unreleased) |
-| Agents | `agents` (2.2.0, deprecated: use `claude-code` `participants: true`), `claude-code` (1.10.0), `component-registry` (1.0.0, unreleased: the core of [the component registry](../proposals/component-registry.md), slice 1), `phi-check` (1.0.3), `go-task` (1.2.2), `coder-cli` (1.1.5), `dsc` (1.1.5) |
+| Agents | `agents` (2.3.0, deprecated: use `claude-code` `participants: true`), `claude-code` (1.11.0, unreleased: the `skills` adapter verb), `component-registry` (1.1.0, unreleased: [the component registry](../proposals/component-registry.md) slices 1 and 2; 1.0.0 published), `phi-check` (1.0.3), `go-task` (1.2.2), `coder-cli` (1.1.5), `dsc` (1.1.5) |
 | Cloud and Kubernetes | `az` (1.1.3), `kustomize` (1.0.5), `kubeconform` (1.0.5), `argocd` (1.1.5), `velero` (1.0.6), `kube-state` (1.0.4) |
 
 ## Shared components: `components/`
@@ -89,7 +89,7 @@ status lines were not (see Gaps).
 | [Secrets master split](../proposals/secrets-master-split.md), [OpenBao key file](../proposals/openbao-key-file.md) | decided or proposed; build not started | `openbao` 1.6.0 (unreleased) with server mode and `unlock: keyfile`, the key file in `devcontainer-cli` 1.22.1, `ssh-agent` 1.5.0; ADRs 0048, 0056 |
 | [Least privilege for agents, ending in one agent Linux user](../proposals/agent-linux-user.md) | accepted 2026-11-08; build not started | not built |
 | [Personalization](../proposals/personalization.md) | open | superseded by the component registry (ADR-0063) |
-| [Component registry](../proposals/component-registry.md) | accepted 2026-11-19 | slice 1 built: `component-registry` 1.0.0 (resolve, explain, the `.reg` grammar and match rule, `git` and `path` sources; skills only). Later: the adapter step (slice 2), `http` and `cloud-folder` sources (slice 3), first real use (slice 4) |
+| [Component registry](../proposals/component-registry.md) | accepted 2026-11-19 | slice 1 built: `component-registry` 1.0.0 (resolve, explain, the `.reg` grammar and match rule, `git` and `path` sources; skills only); slice 2 built: the adapter step (`component-registry` 1.1.0, `claude-code` 1.11.0, participant 1.1.0, ADR-0064). Later: `http` and `cloud-folder` sources (slice 3), first real use (slice 4) |
 | [Secrets distribution (phase 2)](../proposals/secrets-distribution.md) | research notes, not designed | not built |
 | Decided and closed: [King Arthur theme](../proposals/king-arthur-theme.md) (superseded), [Journalist back](../proposals/journalist-back.md), [Feature principles](../proposals/feature-principles.md), [Agent principles](../proposals/agent-principles.md), [Iteration package](../proposals/iteration-package.md) | decided or superseded | in the ADRs and [docs/principles/](../principles/) |
 
@@ -111,6 +111,6 @@ status lines were not (see Gaps).
 
 | Element | State | Builds on |
 |---|---|---|
-| component-registry Feature: `resolve`, `explain`, the layer list, the `.reg` grammar and match rule, `git` and `path` registry sources | built, slice 1 (`component-registry` 1.0.0, unreleased) | nothing yet: standalone, skills resolved into its own volume |
-| The CLI adapter's `skills` verb, `resolve` at an agent's start, the per-agent who-you-are override, the utility skills | later (slice 2) | agents CLI adapters (ADR-0037, amended then) |
+| component-registry Feature: `resolve`, `explain`, the layer list, the `.reg` grammar and match rule, `git` and `path` registry sources | built, slice 1 (`component-registry` 1.0.0, published) | nothing: standalone, skills resolved into its own volume |
+| The CLI adapter's `skills` verb (`agent-adapter-claude`), `dcf-registry handover` and `refresh`, `resolve` at an agent's start, the per-agent `registry-path`, the utility skills in a built-in base layer | built, slice 2 (`component-registry` 1.1.0, `claude-code` 1.11.0, participant 1.1.0; unreleased) | agents CLI adapters (ADR-0037, amended by ADR-0064), the participant component (ADR-0061) |
 | `http` and `cloud-folder` registry sources | later (slice 3) | OpenBao (`dcf-secret`), cloud-folder |
