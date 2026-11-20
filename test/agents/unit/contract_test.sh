@@ -47,7 +47,7 @@ case "$verb" in
   stop) sed -i "s/^\($name\t[^\t]*\t\)running\t/\1stopped\t/" "$SESS_A" ;;
   logs) echo "fakea log of $name" ;;
   attach | resume | new) ;;
-  hint | record | skills | session-busy | session-stop | session-remove) exit 3 ;;
+  hint | record | trust | run-once | skills | session-busy | session-stop | session-remove) exit 3 ;;
   *) exit 2 ;;
 esac
 exit 0
@@ -60,7 +60,7 @@ verb="$1"; shift
 echo "$verb|$*" >> "$CALLS_B"
 case "$verb" in
   new | resume | attach) exit 0 ;;
-  start-bg | wake | list | stop | logs | hint | record | skills | session-busy | session-stop | session-remove) echo "fakeb: $verb is not supported" >&2; exit 3 ;;
+  start-bg | wake | list | stop | logs | hint | record | trust | run-once | skills | session-busy | session-stop | session-remove) echo "fakeb: $verb is not supported" >&2; exit 3 ;;
   *) exit 2 ;;
 esac
 FAKE
@@ -226,7 +226,7 @@ contains "check: carries on to the next CLI" "$OUT" "  fakea: start-bg"
 rm -f "$bin/agent-adapter-fakeerr"
 
 # --- supports agrees with the verbs
-VERBS="start-bg wake attach resume new list stop logs hint record skills session-busy session-stop session-remove"
+VERBS="start-bg wake attach resume new list stop logs hint record trust run-once skills session-busy session-stop session-remove"
 # agreement <adapter>: prints the disagreements, nothing when `supports` and the verbs agree
 agreement() {
   local ad="$1" sup v rc bad=''
@@ -260,6 +260,20 @@ if [ -f "$real_adapter" ]; then
   printf '#!/usr/bin/env bash\n[ "$1" = agents ] && { echo "[]"; exit 0; }\nexit 1\n' > "$rbin/claude"; chmod +x "$rbin/claude"
   got="$(PATH="$rbin:$PATH" CLAUDE_CONFIG_DIR="$T/claude-config" agreement "$rbin/agent-adapter-claude")"
   check "supports agrees with the verbs: the real agent-adapter-claude (fake claude)" "" "$got"
+fi
+
+# the real agent-adapter-copilot, the second real vendor (NFR-12), with a fake copilot that starts nothing:
+# supports must agree with every verb, including the optional trust and run-once (an empty prompt on
+# stdin is a bad use, never a not-supported)
+real_copilot="$root/src/copilot/agent-adapter-copilot.sh"
+if [ -f "$real_copilot" ]; then
+  cbin="$T/copilotbin"; mkdir -p "$cbin"
+  cp "$real_copilot" "$cbin/agent-adapter-copilot"; chmod +x "$cbin/agent-adapter-copilot"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$cbin/copilot"; chmod +x "$cbin/copilot"
+  got="$(PATH="$cbin:$PATH" agreement "$cbin/agent-adapter-copilot")"
+  check "supports agrees with the verbs: the real agent-adapter-copilot (fake copilot)" "" "$got"
+  contains "the copilot adapter lists run-once" "$("$cbin/agent-adapter-copilot" supports)" "run-once"
+  lacks "the copilot adapter does not list start-bg (it has no background mode)" "$("$cbin/agent-adapter-copilot" supports)" "start-bg"
 fi
 
 # --- nothing is Claude-specific

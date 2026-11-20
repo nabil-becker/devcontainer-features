@@ -134,6 +134,7 @@ tasks:
       - task: test:agents-lease
       - task: test:agents-registry
       - task: test:claude-unit
+      - task: test:copilot-unit
       - task: test:phi-check-unit
       - task: test:audio-unit
       - task: test:sign-packet-unit
@@ -173,6 +174,11 @@ tasks:
       - bash test/claude-code/unit/musl_test.sh
       - bash test/claude-code/unit/post_start_test.sh
       - bash test/claude-code/unit/skills_test.sh
+
+  test:copilot-unit:
+    desc: 'Docker-free tests of the copilot Feature''s agent-adapter-copilot (src/copilot) with a fake `copilot` and no login: new and resume (--name and --resume by session name, AGENT_SESSION_NAME or the handle, a tab falling back), run-once (the prompt from stdin as -p with --silent --no-ask-user --no-auto-update, args passed through, --allow-all-tools only when asked, an empty or over-long prompt refused, --session-id a stable UUID only with AGENT_ADAPTER_COPILOT_CONTINUE=1, copilot''s stdout and exit code kept), mcp-attach (remove then add through copilot mcp, no token or --env, idempotent, nothing with no facilitator on PATH, a missing copilot or other target refused, a private COPILOT_HOME made), every other verb exit 3, and supports agreeing with the verbs. The contract tests run the real adapter too (test:agents-contract).'
+    cmds:
+      - bash test/copilot/unit/adapter_test.sh
 
   test:phi-check-unit:
     desc: 'Docker-free tests of the phi-check Feature (src/phi-check): every rule with a positive and a near-miss case (never-issued SSN ranges, a lower-case MBI, an ICD code list, an NPI, a date, a name or a diagnosis word alone, an anchor outside the three-line window), no output line in any format holding the matched value, a binary or missing path failing closed, exit 2 on bad usage, the exceptions file skipping only the listed path and reporting a malformed line, --no-exceptions, standard input with --stdin-filename, the importable module; then a mutation check that three deliberately broken patterns each fail the suite; part of lint. Needs python3.'
