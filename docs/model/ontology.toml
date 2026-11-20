@@ -1275,12 +1275,12 @@ summary = "The Feature that runs the Directory and SLIM node on loopback and rou
 [facilitator-node]
 type = "product"
 term = "Facilitator node"
-summary = "One install of the facilitator on the network, with a role and peers or a primary; topology is configuration."
+summary = "One install of the facilitator on the network, with a role and peers or a primary; topology is configuration; it signs for its own agents."
 
 [mesh]
 type = "product"
 term = "Mesh"
-summary = "The facilitator nodes that trust each other, configured by one mesh.yml with SPIFFE identities and a preset."
+summary = "The facilitator nodes that trust each other; each node has its own mesh.yml with SPIFFE trust domains and a preset."
 
 [trust-level]
 type = "mechanism"

@@ -1192,6 +1192,23 @@ and backed up (17, Data Inventory); and the ADR-0060 deltas in section 17.
 
 Decisions still open for the Operator are in "Open after the rulings" at the end of section 15.
 
+### Ruling on the last readings (2026-11-20)
+
+The Operator ruled on the readings left open (section 15), all as recommended:
+
+| Call | Reading | Ruling |
+|---|---|---|
+| BA (D1) | "Local is unrestricted" | no trust restriction; hops, budget and rate still apply at local |
+| BB (D2) | Can an HTTP client continue? | no: an HTTP client is never `human`; a person continues from a local MCP session |
+| BC (D9) | `expose` keys | a handle is shorthand for that agent's SPIFFE ID on this node; full IDs are accepted |
+| BD (D10) | First-contact approver on a pure hub | the hub's own `humans:` list; a hub must name at least one, or `check` refuses `approval: first-contact` |
+| BE (D11) | Bearer-token clients in N4 | mapped through `http.<home domain>`, public by default; an engineer may mark an intranet CLI private |
+| BF | The thin-client-only install | the option `mode: node \| leaf` |
+| BG | An unanswered first-contact message | held 7 days |
+| BH | A hub's roster and approvals | backed up with its OpenBao snapshot, to the personal folder (tier 3) |
+| BI | Directory copies | spokes `sync` from the hub; the hub syncs from a spoke only if that spoke opens its OCI port to the hub |
+| BJ | N4's exit test | Claude Code (run in the spike) and Copilot CLI, run for real before 1.0 |
+
 ## 18. Architecture review
 
 Run on 2026-11-20; the review is in the next section, and the Operator's rulings on it are in "Ruling on the review (2026-11-20)", just above it.

@@ -65,10 +65,11 @@ The domain words of the project itself are not here; they live with the project'
   a person's `continue` resets the hop count (ADR-0061, ADR-0066).
 - **Facilitator node**: one install of the facilitator seen from the network: it has a role and
   either peers or a primary, so hub-and-spoke or peer-to-peer is configuration, not code. Local CLIs
-  reach it through the thin client plus SLIM, cloud AIs through MCP over HTTP with OAuth (ADR-0067;
-  not built yet).
-- **Mesh**: the set of facilitator nodes that trust each other, configured by one `mesh.yml` with SPIFFE
-  identities and one of three presets: solo, team or open (ADR-0067; not built yet).
+  reach it through the thin client plus SLIM, cloud AIs through MCP over HTTP with OAuth; it signs for
+  the agents in its own container (ADR-0067; not built yet).
+- **Mesh**: the set of facilitator nodes that trust each other. Each node has its own `mesh.yml`, naming
+  the SPIFFE trust domains it trusts at each level and one of three presets: solo, team or open
+  (ADR-0067; not built yet).
 - **Trust level**: how far a facilitator node trusts a client or peer: local, private or public. A
   client that arrives over MCP over HTTP is public unless marked trusted (ADR-0067; not built yet).
 - **Deprecation**: how a Feature or option goes away: announced in a minor release (a one-line
