@@ -6,6 +6,31 @@ of the Feature and whether they must act (an option renamed, a task removed, a r
 The version in `devcontainer-feature.json` is bumped in the same change that adds its entry
 here; `task lint` fails when the entry is missing.
 
+## [1.1.0] - 2026-11-20
+
+### Added
+
+- **The adapter step** (ADR-0064): `dcf-registry handover <cli> [<name> <folder>]` hands the resolved
+  view's skills to that CLI's adapter (`agent-adapter-<cli> skills`, when its `supports` lists it;
+  Claude Code: `claude-code` 1.12.0); a CLI that cannot take them is named and keeps its plain skills.
+  The participant component (`claude-code` with `participants: true`) runs resolve and the hand-over
+  at every agent's start, with an agent's own `registry-path` from the agents list.
+- **The three utility skills, in a built-in base layer**: `/registry-refresh` (resolve now for the
+  path the current view was resolved for, then hand over to every CLI adapter on PATH: live in Claude
+  Code, a restart for a CLI that does not watch its skills folder), `/registry-explain <path>`, and
+  `/registry-remember [skills/<name>] <line>` (appends the line to the layer marked `writable: true`,
+  which must have a `path` source, then refreshes; refused, nothing written, otherwise). The base
+  layer is rank 0, the id `component-registry` at `/`, below every listed layer; `explain` shows it as
+  `0 component-registry at /, source 1 (builtin)`. A listed layer adapts the utility skills like any
+  skill.
+- `dcf-registry layer-list`, `refresh`, `remember`; tasks `component-registry:refresh` and
+  `component-registry:remember`.
+
+### Changed
+
+- The layer id `component-registry` is reserved for the base layer: a layer list using it is refused
+  with its line. Rename such a layer.
+
 ## [1.0.0] - 2026-11-20
 
 ### Added

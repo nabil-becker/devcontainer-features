@@ -43,14 +43,15 @@ flowchart TB
 
 ## The component registry (ADR-0063)
 
-Built in slice 1: `component-registry` fetches its layers and resolves them. The dashed relations
-come later: the agents start sequence running `resolve` and the CLI adapter's `skills` verb (slice
-2), the launcher's share mount and who-you-are path, and the `http` and cloud-folder sources
-(slice 3). OpenBao gives a `git` source its secret today, through `dcf-secret`.
+Built in slices 1 and 2: `component-registry` fetches its layers and resolves them; the
+participant component runs `resolve` at every agent's start and `dcf-registry handover` gives the
+skills to the CLI adapter's `skills` verb (ADR-0064). The dashed relations come later: the
+launcher's share mount and who-you-are path, and the `http` and cloud-folder sources (slice 3).
+OpenBao gives a `git` source its secret today, through `dcf-secret`.
 
 ```mermaid
 flowchart LR
-  component-registry["component-registry: resolve, explain"]
+  component-registry["component-registry: resolve, explain, handover, refresh"]
   participant-component["agents (participant component)"]
   cli-adapter["CLI adapter: skills verb"]
   launcher["Launcher: share mount, whoami"]
@@ -59,6 +60,6 @@ flowchart LR
   external-sources -->|fetched by| component-registry
   master-of-secrets -->|gives secrets to| component-registry
   launcher -.->|later: mounts shares, sets whoami for| component-registry
-  participant-component -.->|later: runs resolve at start| component-registry
-  component-registry -.->|later: hands skills to| cli-adapter
+  participant-component -->|runs resolve at start| component-registry
+  component-registry -->|hands skills to| cli-adapter
 ```

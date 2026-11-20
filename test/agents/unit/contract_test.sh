@@ -47,7 +47,7 @@ case "$verb" in
   stop) sed -i "s/^\($name\t[^\t]*\t\)running\t/\1stopped\t/" "$SESS_A" ;;
   logs) echo "fakea log of $name" ;;
   attach | resume | new) ;;
-  hint | record | session-busy | session-stop | session-remove) exit 3 ;;
+  hint | record | skills | session-busy | session-stop | session-remove) exit 3 ;;
   *) exit 2 ;;
 esac
 exit 0
@@ -60,7 +60,7 @@ verb="$1"; shift
 echo "$verb|$*" >> "$CALLS_B"
 case "$verb" in
   new | resume | attach) exit 0 ;;
-  start-bg | wake | list | stop | logs | hint | record | session-busy | session-stop | session-remove) echo "fakeb: $verb is not supported" >&2; exit 3 ;;
+  start-bg | wake | list | stop | logs | hint | record | skills | session-busy | session-stop | session-remove) echo "fakeb: $verb is not supported" >&2; exit 3 ;;
   *) exit 2 ;;
 esac
 FAKE
@@ -226,7 +226,7 @@ contains "check: carries on to the next CLI" "$OUT" "  fakea: start-bg"
 rm -f "$bin/agent-adapter-fakeerr"
 
 # --- supports agrees with the verbs
-VERBS="start-bg wake attach resume new list stop logs hint record session-busy session-stop session-remove"
+VERBS="start-bg wake attach resume new list stop logs hint record skills session-busy session-stop session-remove"
 # agreement <adapter>: prints the disagreements, nothing when `supports` and the verbs agree
 agreement() {
   local ad="$1" sup v rc bad=''

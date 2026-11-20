@@ -9,6 +9,30 @@ change here, add the entry below, run `task components:sync`, and bump every Fea
 copy. Backward compatible within a major (NFR-5): `agents.yml` and `AGENTS_FILE` stay (as aliases of
 `participants.yml` and `PARTICIPANTS_FILE` from 1.1.0) until the next major.
 
+## [1.2.0] - 2026-11-20
+
+### Added
+
+- **The component registry at an agent's start** (ADR-0064). When the `component-registry` Feature is
+  installed (`dcf-registry` on PATH) and its layer list exists, `agents start` and `agents up` first
+  run `dcf-registry resolve` and then hand the resolved skills to the agent's CLI
+  (`dcf-registry handover`, which uses the adapter's new optional `skills` verb when its `supports`
+  lists it), so the agent starts with them. It never blocks a start: no layer list, a resolve that
+  fails (no `COMPONENT_REGISTRY_WHOAMI`, a required layer never fetched) or a CLI that cannot take
+  resolved skills is one line, and the agent starts with the skills it has. Without the
+  `component-registry` Feature nothing changes and nothing is said.
+- **`registry-path`, an optional key of an agents list entry**: who this agent is in the component
+  registry (an absolute path such as `/Corp/MyDepartment/team/review`), passed to `resolve` as
+  `--as`; without it `COMPONENT_REGISTRY_WHOAMI` applies. Checked like the other keys (a relative
+  path, a pattern or the key twice is refused with its file and line) and shown by `agents check`.
+
+- **A start limit for the registry** (`COMPONENT_REGISTRY_START_WAIT`, default 15 seconds per agent):
+  resolve and the hand-over together wait at most that long, a layer fetch that hangs and another
+  resolve holding the lock included. Past it the agent starts with the last good skills already in
+  its CLI's skills folder, and one line says so; `/registry-refresh` hands the new ones over later.
+
+Nothing to do: lists without `registry-path` work as before.
+
 ## [1.1.0] - 2026-11-20
 
 ### Added

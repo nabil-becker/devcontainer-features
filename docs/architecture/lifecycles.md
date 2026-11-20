@@ -188,5 +188,22 @@ stateDiagram-v2
   current --> stale: a layer or who-you-are changed
 ```
 
-Nothing marks a view stale by itself in slice 1: `resolve` is run by hand. From slice 2 the agents
-start sequence and `/registry-refresh` run it.
+Nothing marks a view stale by itself: since slice 2 (component-registry 1.1.0) the participant
+component's start sequence runs `resolve` at every agent's start, and `/registry-refresh` (and
+`/registry-remember`, which refreshes) run it mid-session; `task component-registry:resolve` runs
+it by hand.
+
+## A resolved skill in the CLI's skills folder
+
+From `src/claude-code/NOTES.md` (claude-code 1.12.0, the adapter's `skills` verb, ADR-0064). One per
+resolved skill, in the CLI's own skills folder.
+
+```mermaid
+stateDiagram-v2
+  [*] --> owned: handover copies it, marked .component-registry
+  owned --> owned: unchanged at a handover, not rewritten
+  owned --> owned: changed, replaced in one rename
+  owned --> [*]: no longer resolved, removed at a handover
+  [*] --> not_installed: a skill of that name without the mark is there (never touched)
+  not_installed --> owned: that skill is gone at a later handover
+```

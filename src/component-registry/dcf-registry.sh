@@ -9,6 +9,18 @@
 #                                               read-only: who said each line, at which version;
 #                                               --uses lists what refers to <path>
 #   dcf-registry version                        the Feature version and the layer list in use
+#   dcf-registry layer-list                     print the layer list's path; exit 0 when it is
+#                                               there, 1 when not (the agents start hook asks)
+#   dcf-registry handover <cli> [<name> <folder>]
+#                                               hand the resolved view's skills to that CLI's adapter
+#                                               (agent-adapter-<cli> skills, when its supports lists
+#                                               it; exit 3 when it cannot take them)
+#   dcf-registry refresh [--as <path>]          resolve, then hand over to every CLI adapter on PATH
+#                                               (/registry-refresh); for the path the current view
+#                                               was resolved for unless --as names another
+#   dcf-registry remember [--skill <name>] [--] <line>
+#                                               append the line to the layer marked writable: true
+#                                               (a path source), then refresh (/registry-remember)
 #
 # Who you are is a path (/Corp/MyDepartment/team/me): --as, else COMPONENT_REGISTRY_WHOAMI from
 # the task variable, the root .env, .devcontainer/.env or the environment (NFR-6); never in a
@@ -20,7 +32,7 @@
 #     - id: corp-base             # unique; letters, digits, - and _
 #       at: /Corp                 # where its relative section paths are mounted
 #       required: true            # optional: never fetched stops resolve (on a source too)
-#       writable: true            # optional: read by a later release (/registry-remember)
+#       writable: true            # optional: where remember appends (one layer, a path source)
 #       sources:                  # merged in this order
 #         - kind: git             # registry-source-git on PATH
 #           url: https://git.example.invalid/corp/registry.git
@@ -44,6 +56,11 @@
 # meta/skills/<name>/ (provenance.tsv, keys.tsv, values/<key>), meta/refs.tsv,
 # meta/problems.tsv, layers.tsv and whoami.
 #
+# The built-in base layer (1.1.0): the Feature's own utility skills (registry-refresh,
+# registry-explain, registry-remember), read from $SHARE_DIR/base, are layer rank 0 with the id
+# component-registry at /, below every listed layer and always present when a list is resolved;
+# explain shows it as "0 component-registry at /, source 1 (builtin)". The id is reserved.
+#
 # Exit: 0 done, 1 failed (a required layer never fetched, the lock, no resolved view), 2 bad use
 # (no who-you-are path, a bad layer list, an unknown verb).
 set -uo pipefail
@@ -55,6 +72,9 @@ SHARE_DIR="${COMPONENT_REGISTRY_SHARE_DIR:-/usr/local/share/component-registry-f
 KINDS="skills agents prompts settings lexicon"
 ACTIVE_KINDS="skills"
 declare -A S_KIND S_REQ S_LINE S_ARGS S_PIN
+# The built-in base layer: the Feature's utility skills, rank 0, below every listed layer.
+BASE_ID=component-registry
+BASE_DIR="${COMPONENT_REGISTRY_BASE_DIR:-$SHARE_DIR/base}"
 
 warn() { printf 'dcf-registry: %s\n' "$*" >&2; }
 say() { printf 'dcf-registry: %s\n' "$*"; }
@@ -350,6 +370,7 @@ load_list() {
     for ((j = 1; j < i; j++)); do
       [ -n "${L_ID[i]:-}" ] && [ "${L_ID[i]}" = "${L_ID[j]:-}" ] && { warn "$at: id '${L_ID[i]}' is already used by layer $j"; errs=$((errs + 1)); }
     done
+    [ "${L_ID[i]:-}" = "$BASE_ID" ] && { warn "$at: id '$BASE_ID' is reserved for the Feature's built-in base layer (its utility skills); pick another"; errs=$((errs + 1)); }
     if [ -z "${L_AT[i]:-}" ]; then warn "$at has no at (the path the layer is mounted at, like /Corp)"; errs=$((errs + 1))
     else
       L_AT[i]="${L_AT[i]%/}"; [ -n "${L_AT[i]}" ] || L_AT[i]=/
@@ -818,6 +839,15 @@ cmd_resolve() {
   mkdir -p "$stage/meta" "$stage/skills"
   : > "$TMP/manifest"
   printf 'rank\tlayer\tat\tsource\tkind\tversion\tstate\tfetched\tnote\n' > "$stage/layers.tsv"
+  # The built-in base layer first (rank 0): the utility skills, read where the Feature installed
+  # them, never fetched.
+  if [ -d "$BASE_DIR" ]; then
+    v="$(cat "$SHARE_DIR/version" 2>/dev/null || echo unknown)"
+    printf '0\t%s\t/\t1\tbuiltin\t%s\tbuiltin\t-\tthe Feature'"'"'s utility skills, %s\n' "$BASE_ID" "$v" "$BASE_DIR" >> "$stage/layers.tsv"
+    while IFS= read -r f; do
+      [ -n "$f" ] && printf '0\t%s\t/\t1\t%s\t%s\t%s\n' "$BASE_ID" "$v" "$BASE_DIR" "$f" >> "$TMP/manifest"
+    done < <(cd "$BASE_DIR" && find . -maxdepth 1 -type f -name '*.reg' | sed 's|^\./||' | LC_ALL=C sort)
+  fi
   for ((n = 1; n <= NL; n++)); do
     id="${L_ID[n]}"
     for ((m = 1; m <= L_NSRC[n]; m++)); do
@@ -960,10 +990,134 @@ cmd_version() {
   if [ -f "$STATE_DIR/view/whoami" ]; then echo "resolved view: for $(cat "$STATE_DIR/view/whoami") at $(cat "$STATE_DIR/view/resolved")"; else echo "resolved view: none yet"; fi
 }
 
+cmd_layer_list() {
+  [ $# -eq 0 ] || die 2 "layer-list takes no arguments"
+  resolve_settings
+  printf '%s\n' "$RF_ABS"
+  [ -f "$RF_ABS" ]
+}
+
+# handover <cli> [<name> <folder>] (1.1.0): the consumer step of release 1, skills. The CLI's
+# adapter (agent-adapter-<cli>, installed by that CLI's Feature) copies the resolved view's skills
+# into the CLI's own skills folder with its optional `skills` verb (ADR-0064, amending the CLI
+# contract of ADR-0037), given the folder in COMPONENT_REGISTRY_SKILLS. The view is read under a
+# shared hold of resolve.lock, so a resolve never swaps it out mid-copy. <name> and <folder> are
+# the agent's, as every adapter verb takes them (default: component-registry and the repository
+# root). Exit 0 handed over, 1 failed or no view, 2 bad use, 3 the CLI cannot take resolved skills
+# (no adapter, or its supports does not list skills, or the verb answers 3): its sessions keep
+# their plain skills (NFR-12), and one line says so.
+cmd_handover() {
+  local cli="${1:-}" name="${2:-$BASE_ID}" folder="${3:-}" ad sup real rc
+  [ -n "$cli" ] || die 2 "handover needs a CLI: dcf-registry handover <cli> [<name> <folder>]"
+  [[ "$cli" =~ ^[A-Za-z0-9_-]+$ ]] || die 2 "handover: '$cli' is not a CLI name"
+  [ -n "$folder" ] || { resolve_settings; folder="$ROOT"; }
+  ad="$(command -v "agent-adapter-$cli" 2>/dev/null)" || ad=''
+  if [ -z "$ad" ]; then say "$cli: no agent-adapter-$cli on PATH; its sessions keep their plain skills"; return 3; fi
+  sup="$("$ad" supports </dev/null 2>/dev/null)" || sup=''
+  if ! printf '%s\n' "$sup" | grep -qx skills; then
+    say "$cli: its adapter takes no resolved skills (no skills verb); its sessions keep their plain skills"
+    return 3
+  fi
+  [ -d "$STATE_DIR" ] || die 1 "no state folder $STATE_DIR; run dcf-registry resolve first"
+  command -v flock >/dev/null 2>&1 || die 1 "flock (util-linux) is needed to read the view while no resolve swaps it"
+  exec 8>>"$STATE_DIR/resolve.lock"
+  flock -s -w "${COMPONENT_REGISTRY_LOCK_WAIT:-120}" 8 || die 1 "a resolve has held $STATE_DIR/resolve.lock for ${COMPONENT_REGISTRY_LOCK_WAIT:-120}s; try again"
+  view_path
+  real="$(readlink -f "$VIEW")"
+  [ -d "$real/skills" ] || die 1 "the resolved view $real has no skills folder; run dcf-registry resolve"
+  COMPONENT_REGISTRY_SKILLS="$real/skills" "$ad" skills "$name" "$folder" </dev/null; rc=$?
+  exec 8>&-
+  if [ "$rc" -eq 3 ]; then say "$cli: its adapter answered that it cannot take resolved skills; its sessions keep their plain skills"; fi
+  return "$rc"
+}
+
+# refresh [--as <path>] (1.1.0, /registry-refresh): resolve now, for the path the current view was
+# resolved for (a refresh repeats what the agent's start did, a per-agent path included), else
+# the who-you-are setting; then hand the skills to every CLI adapter on PATH. A CLI whose adapter
+# cannot take them is named (exit 3 of handover); the refresh still succeeds.
+cmd_refresh() {
+  local as='' cli n=0 rc fail=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --as) [ $# -ge 2 ] || die 2 "--as needs a path"; as="$2"; shift 2 ;;
+      --as=*) as="${1#--as=}"; shift ;;
+      *) die 2 "refresh: unknown argument '$1' (refresh [--as <path>])" ;;
+    esac
+  done
+  if [ -z "$as" ] && [ -f "$STATE_DIR/view/whoami" ]; then
+    as="$(cat "$STATE_DIR/view/whoami")"
+    say "refreshing for $as, the path the current view was resolved for (--as names another)"
+  fi
+  if [ -n "$as" ]; then bash "$0" resolve --as "$as"; else bash "$0" resolve; fi
+  rc=$?
+  [ "$rc" -eq 0 ] || die "$rc" "resolve failed; nothing was handed over, the skills stay as they were"
+  for cli in $(compgen -c agent-adapter- 2>/dev/null | sed 's/^agent-adapter-//' | LC_ALL=C sort -u); do
+    [[ "$cli" =~ ^[A-Za-z0-9_-]+$ ]] || continue
+    n=$((n + 1))
+    ( cmd_handover "$cli" ); rc=$?
+    case "$rc" in 0 | 3) ;; *) fail=1; warn "$cli: the handover failed (exit $rc)" ;; esac
+  done
+  [ "$n" -gt 0 ] || say "no CLI adapter on PATH (agent-adapter-<cli>); the resolved view is ready, nothing was handed over"
+  say "a CLI that does not watch its skills folder reads the new skills when its session is restarted"
+  return "$fail"
+}
+
+# remember [--skill <name>] [--] <line> (1.1.0, /registry-remember): append one text line to the
+# layer marked writable: true (the person's own), as body:text of that skill or, without --skill,
+# of every skill ([skills/*]), into remembered.reg at the root of its path source's folder; then
+# refresh. Refused, nothing written: no writable layer, two of them, a writable layer without a
+# path source (git, http and the others are the owner's release process, not a file to append
+# to), a folder that is not there or not writable, an empty line, a line starting with @ (it
+# would read as @file).
+cmd_remember() {
+  local skill='' line='' i n=0 w=0 j folder='' file sect
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --skill) [ $# -ge 2 ] || die 2 "--skill needs a skill name"; skill="$2"; shift 2 ;;
+      --skill=*) skill="${1#--skill=}"; shift ;;
+      --) shift; line="$*"; break ;;
+      -*) die 2 "remember: unknown option '$1' (remember [--skill <name>] [--] <line>)" ;;
+      *) line="$*"; break ;;
+    esac
+  done
+  line="$(printf '%s' "$line" | tr '\r\n\t' '   ' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+  [ -n "$line" ] || die 2 "remember needs a line: dcf-registry remember [--skill <name>] -- <line>"
+  case "$line" in @*) die 2 "a remembered line cannot start with @ (it would read as @file); rephrase it" ;; esac
+  if [ -n "$skill" ]; then
+    skill="${skill#/}"; skill="${skill#skills/}"
+    [[ "$skill" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ ]] || die 2 "--skill '$skill' is not a skill name (letters, digits, . _ -)"
+  fi
+  resolve_settings
+  load_list
+  for ((i = 1; i <= NL; i++)); do [ "${L_WR[i]:-false}" = true ] && { n=$((n + 1)); w="$i"; }; done
+  [ "$n" -gt 0 ] || die 1 "no layer in $RF is marked writable: true; mark your own layer (one with a path source) writable: true in the layer list, then try again. Nothing was written."
+  if [ "$n" -gt 1 ]; then
+    die 2 "$n layers in $RF are marked writable: true ($(for ((i = 1; i <= NL; i++)); do [ "${L_WR[i]:-false}" = true ] && printf '%s ' "${L_ID[i]}"; done)); mark one. Nothing was written."
+  fi
+  # the strongest path source of that layer (the later source wins inside a layer)
+  for ((j = L_NSRC[w]; j >= 1; j--)); do
+    if [ "${S_KIND[$w.$j]}" = path ]; then folder="$(sed -n 's/^path=//p' <<< "${S_ARGS[$w.$j]}")"; break; fi
+  done
+  [ -n "$folder" ] || die 1 "layer ${L_ID[w]} is writable: true but has no path source; remember appends to a folder only (a git or http layer changes through its owner's release process). Nothing was written."
+  [ -d "$folder" ] || die 1 "layer ${L_ID[w]}: its folder $folder is not there; create it (git-ignored, or outside the repository) and try again. Nothing was written."
+  [ -w "$folder" ] || die 1 "layer ${L_ID[w]}: its folder $folder is not writable by $(id -un). Nothing was written."
+  if [ -n "$skill" ]; then sect="skills/$skill"; else sect='skills/*'; fi
+  file="$folder/remembered.reg"
+  [ ! -s "$file" ] || [ -z "$(tail -c 1 "$file")" ] || printf '\n' >> "$file"
+  printf '; remembered %s\n[%s]\nbody:text = %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$sect" "$line" >> "$file" ||
+    die 1 "could not write $file. Nothing was written."
+  say "remembered in layer ${L_ID[w]} ($file): [$sect] body:text = $line"
+  cmd_refresh
+}
+
 case "${1:-}" in
   resolve) shift; cmd_resolve "$@" ;;
   explain) shift; cmd_explain "$@" ;;
   version) shift; cmd_version ;;
+  layer-list) shift; cmd_layer_list "$@" ;;
+  handover) shift; cmd_handover "$@" ;;
+  refresh) shift; cmd_refresh "$@" ;;
+  remember) shift; cmd_remember "$@" ;;
   -h | --help | help | '') usage ;;
-  *) die 2 "unknown verb '$1' (resolve, explain, version)" ;;
+  *) die 2 "unknown verb '$1' (resolve, explain, version, layer-list, handover, refresh, remember)" ;;
 esac
