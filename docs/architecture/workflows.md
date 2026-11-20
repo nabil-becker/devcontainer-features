@@ -126,3 +126,40 @@ flowchart LR
 ```
 
 A merged branch is never pushed to again; a new branch starts the next piece of work.
+
+## 7. Resolving the component registry
+
+Built in slice 1 ([component-registry](../proposals/component-registry.md), ADR-0063): `resolve`
+run by hand (`task component-registry:resolve`). Later (slice 2): the agents start sequence runs it
+with the agent's who-you-are path, and the CLI adapter's `skills` verb hands the skills over;
+`/registry-refresh` runs the same mid-session.
+
+```mermaid
+sequenceDiagram
+  actor person as Person or (later) the agents Feature
+  participant R as component-registry
+  participant S as registry source
+  participant C as CLI adapter (later)
+  person->>R: resolve, for COMPONENT_REGISTRY_WHOAMI or --as
+  R->>R: take the lock (flock)
+  loop each layer, each source
+    R->>S: version
+    alt unchanged
+      R->>R: keep the layer copy
+    else changed
+      R->>S: fetch into a new copy
+      S-->>R: layer copy
+    else unreachable
+      R->>R: use the last good copy, say so
+    else never fetched and required
+      R-->>person: fail, the view left as it was
+    end
+  end
+  R->>R: match for who you are, merge by value type
+  opt a higher line breaks a lock, a type or a permission
+    R->>R: skip the line, report it
+  end
+  R->>R: write a new view, swap the symlink, drop copies no layer names
+  R-->>person: resolved N components, lines skipped
+  R-->>C: skills (later, slice 2)
+```
