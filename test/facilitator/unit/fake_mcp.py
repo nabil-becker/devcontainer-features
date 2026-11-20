@@ -93,6 +93,13 @@ def facilitator_argv() -> list[str]:
     b = os.environ.get("FACILITATOR_BIN")
     if b:
         return [b]
-    from pathlib import Path
+    import shutil
     import sys
-    return [sys.executable, "-I", str(Path(__file__).resolve().parents[3] / "src" / "facilitator" / "bin" / "facilitator")]
+    from pathlib import Path
+    src = Path(__file__).resolve().parents[3] / "src" / "facilitator" / "bin" / "facilitator"
+    if src.is_file():
+        return [sys.executable, "-I", str(src)]
+    installed = shutil.which("facilitator")          # in a Feature's test container: the installed command
+    if not installed:
+        raise SystemExit("no facilitator: set FACILITATOR_BIN, or run from the repository")
+    return [installed]
