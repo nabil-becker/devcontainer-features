@@ -18,7 +18,7 @@ check "the http source says what it supports" bash -c "registry-source-http supp
 check "the http source refuses a secret over plain http" bash -c "registry-source-http version l url=http://x.example.invalid/a.reg auth.secret=s 2>&1 | grep -F allow-insecure"
 check "component-registry-setup on PATH" command -v component-registry-setup
 check "dcf-persist on PATH" command -v dcf-persist
-check "the Feature version is baked" grep -qx '1.3.0' /usr/local/share/component-registry-feature/version
+check "the Feature version is baked" grep -qx '1.4.0' /usr/local/share/component-registry-feature/version
 check "the registryFile option is baked (default)" grep -qx 'REGISTRYFILE=.devcontainer/registry.yml' /usr/local/share/component-registry-feature/options.env
 check "COMPONENT_REGISTRY_STATE_DIR set" bash -c "[ \"\$COMPONENT_REGISTRY_STATE_DIR\" = /var/lib/devcontainer-features/component-registry ]"
 check "setup makes the state folder owner-only" bash -c "component-registry-setup >/dev/null && [ \"\$(stat -c %a \"\$COMPONENT_REGISTRY_STATE_DIR\")\" = 700 ]"

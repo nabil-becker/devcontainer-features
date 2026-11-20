@@ -6,6 +6,18 @@ of the Feature and whether they must act (an option renamed, a task removed, a r
 The version in `devcontainer-feature.json` is bumped in the same change that adds its entry
 here; `task lint` fails when the entry is missing.
 
+## [1.4.0] - 2026-11-20
+
+### Added
+
+- **`dcf-registry explain --color auto|always|never`.** `explain` paints each resolved line by the
+  layer it came from, with a legend at the top (layer id and colour name), and shows skipped lines
+  and dangling refs dim and struck through. Six colours of the Okabe-Ito set, chosen to stay
+  distinguishable with the usual colour-vision deficiencies; the layer id is on every line, so
+  colour is never the only signal. The default, `auto`, colours only when stdout is a terminal and
+  `NO_COLOR` is unset; `always` colours regardless (also over `NO_COLOR`); `never` does not. Without
+  colour the output is byte for byte that of 1.3.0, so scripts keep working. Nothing to act on.
+
 ## [1.3.0] - 2026-11-20
 
 ### Added

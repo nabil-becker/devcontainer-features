@@ -244,7 +244,7 @@ Review and release are the owner's, before the source; the registry reads what i
 | Verb | Task (NFR-2) | Does |
 |---|---|---|
 | `dcf-registry resolve [--as <path>]` | `registry:resolve` | fetch each layer (`version` first, so an unchanged layer is skipped), merge (section 3.3), write the resolved view to a temporary folder and swap it in, hand each kind to its consumer, remove copies it owns that no layer still names; idempotent (NFR-5) |
-| `dcf-registry explain <path> [--uses]` | `registry:explain` | read-only: every line of a resolved component with the layer it came from and the version that layer was read at; skipped lines and why; refs that point at nothing; `--uses` lists what refers to the path |
+| `dcf-registry explain <path> [--uses] [--color auto\|always\|never]` | `registry:explain` | read-only: every line of a resolved component with the layer it came from and the version that layer was read at; skipped lines and why; refs that point at nothing; `--uses` lists what refers to the path; `--color` (1.4.0) paints each line by its layer with a legend, in six colours chosen for colour-vision deficiencies and with the layer id always printed, skipped lines and dangling refs dim and struck through; `auto` colours only on a terminal without `NO_COLOR`, and without colour the text is unchanged |
 
 A lock file in the state folder serialises two `resolve` runs.
 
