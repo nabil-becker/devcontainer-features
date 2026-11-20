@@ -38,6 +38,8 @@
 #           url: https://git.example.invalid/corp/registry.git
 #           tag: v3               # exactly one of branch, tag, commit
 #           auth: { type: basic, user: bot, secret: registry/corp }   # optional, dcf-secret
+#         - { kind: http, url: "https://registry.example.invalid/corp.reg", auth: { type: bearer, secret: registry/corp } }
+#         - { kind: cloud-folder, remote: registry/mine }   # a folder under the cloud folder
 #         - { kind: path, path: .registry-mine }   # repo-relative or absolute folder
 #
 # Only that subset of YAML is read (comments, plain and quoted scalars, block entries, one-line
@@ -154,7 +156,7 @@ resolve_whoami() { # $1: the --as value, may be empty
 #   K <n> <key> <value> <line>        id, at, required, writable
 #   S <n> <m> <line>                  source m of layer n starts
 #   P <n> <m> <key> <value> <line>    kind, url, branch, tag, commit, path, remote, required,
-#                                     auth.type, auth.secret, auth.user, auth.header
+#                                     allow-insecure, auth.type, auth.secret, auth.user, auth.header
 #   E <line> <message>                an error (the last line)
 # Written for mawk as well as gawk: no gensub, no regex intervals.
 read -r -d '' LIST_PARSER <<'AWK'
@@ -197,7 +199,7 @@ function setkey(where, k, v,   id) {
     return
   }
   if (where == "source") {
-    if (k !~ /^(kind|url|branch|tag|commit|path|remote|required)$/) fail("unknown key '" k "' in a source (kind, url, branch, tag, commit, path, remote, required, auth)")
+    if (k !~ /^(kind|url|branch|tag|commit|path|remote|required|allow-insecure)$/) fail("unknown key '" k "' in a source (kind, url, branch, tag, commit, path, remote, required, allow-insecure, auth)")
     id = k
   } else {
     if (k !~ /^(type|secret|user|header)$/) fail("unknown key '" k "' in auth (type, secret, user, header)")
@@ -386,12 +388,18 @@ load_list() {
       v="${S_KIND[$k]:-}"
       if [ -z "$v" ]; then warn "$at has no kind"; errs=$((errs + 1)); continue; fi
       [[ "$v" =~ ^[a-z0-9-]+$ ]] || { warn "$at: kind '$v' may hold only lower-case letters, digits and -"; errs=$((errs + 1)); continue; }
-      # The two kinds this release installs are checked here, so a mistake names its line.
+      # The kinds this release installs are checked here, so a mistake names its line.
       case "$v" in
+        http)
+          grep -q '^url=' <<< "${S_ARGS[$k]}" || { warn "$at: an http source needs url"; errs=$((errs + 1)); }
+          grep -q '^\(branch\|tag\|commit\|path\|remote\)=' <<< "${S_ARGS[$k]}" && { warn "$at: an http source takes url, allow-insecure and auth (type, user, secret, header) only"; errs=$((errs + 1)); } ;;
+        cloud-folder)
+          grep -q '^remote=' <<< "${S_ARGS[$k]}" || { warn "$at: a cloud-folder source needs remote (a folder under the cloud folder)"; errs=$((errs + 1)); }
+          grep -q '^\(url\|branch\|tag\|commit\|path\|allow-insecure\|auth\.[a-z]*\)=' <<< "${S_ARGS[$k]}" && { warn "$at: a cloud-folder source takes remote only (the cloud folder's own set-up is its log-in)"; errs=$((errs + 1)); } ;;
         git)
           grep -q '^url=' <<< "${S_ARGS[$k]}" || { warn "$at: a git source needs url"; errs=$((errs + 1)); }
           [ "$(grep -c '^\(branch\|tag\|commit\)=' <<< "${S_ARGS[$k]}")" -eq 1 ] || { warn "$at: a git source needs exactly one of branch, tag, commit"; errs=$((errs + 1)); }
-          grep -q '^\(path\|remote\|auth\.header\)=' <<< "${S_ARGS[$k]}" && { warn "$at: a git source takes url, branch, tag or commit, and auth (type, user, secret)"; errs=$((errs + 1)); } ;;
+          grep -q '^\(path\|remote\|allow-insecure\|auth\.header\)=' <<< "${S_ARGS[$k]}" && { warn "$at: a git source takes url, branch, tag or commit, and auth (type, user, secret)"; errs=$((errs + 1)); } ;;
         path)
           grep -q '^path=' <<< "${S_ARGS[$k]}" || { warn "$at: a path source needs path"; errs=$((errs + 1)); }
           grep -q '^\(url\|branch\|tag\|commit\|remote\|auth\.[a-z]*\)=' <<< "${S_ARGS[$k]}" && { warn "$at: a path source takes path only (the folder's own permissions are its log-in)"; errs=$((errs + 1)); }
@@ -427,8 +435,9 @@ fetch_source() {
   fi
   if ! command -v "$cmd" >/dev/null 2>&1; then
     case "$kind" in
-      http | db) SRC_NOTE="kind $kind is not in this release of component-registry (no $cmd on PATH)" ;;
-      cloud-folder) SRC_NOTE="kind cloud-folder comes with the cloud-folder Feature in a later release (no $cmd on PATH)" ;;
+      db) SRC_NOTE="kind db is not in this release of component-registry (no $cmd on PATH)" ;;
+      http) SRC_NOTE="no $cmd on PATH (component-registry 1.2.0 or later installs it)" ;;
+      cloud-folder) SRC_NOTE="no $cmd on PATH (the cloud-folder Feature, 1.4.0 or later, installs it)" ;;
       *) SRC_NOTE="no $cmd on PATH (the Feature that owns the $kind transport installs it)" ;;
     esac
     offline_or_missing; return

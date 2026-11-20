@@ -9,7 +9,9 @@ source dev-container-features-test-lib
 check "cloud-folder-setup on PATH" command -v cloud-folder-setup
 check "cloud-folder-setup is root-owned" bash -c "[ \"\$(stat -c %U \"\$(command -v cloud-folder-setup)\")\" = root ]"
 check "options baked for cloud-folder-setup" bash -c "grep -qx 'MODE=auto' /usr/local/share/cloud-folder-feature/options.env && grep -qx 'MOUNTPOINT=/mnt/cloud-folder' /usr/local/share/cloud-folder-feature/options.env"
-check "the Feature version is baked" grep -qx 'FEATURE_VERSION=1.3.3' /usr/local/share/cloud-folder-feature/options.env
+check "registry-source-cloud-folder on PATH (1.4.0)" command -v registry-source-cloud-folder
+check "the registry source says not set up, in one line, exit 1" bash -c "out=\$(registry-source-cloud-folder version l remote=registry/x 2>&1); rc=\$?; [ \$rc -eq 1 ] && printf '%s\n' \"\$out\" | grep -c . | grep -qx 1 && grep -qF 'not set up' <<< \"\$out\""
+check "the Feature version is baked" grep -qx 'FEATURE_VERSION=1.4.0' /usr/local/share/cloud-folder-feature/options.env
 check "the host mount path is baked" grep -qx 'HOST_MOUNT=/mnt/cloud-folder-host' /usr/local/share/cloud-folder-feature/options.env
 check "the mount point is a link to the host mount" bash -c "[ \"\$(readlink /mnt/cloud-folder)\" = /mnt/cloud-folder-host ]"
 check "the host mount is not created by the image" bash -c "! test -e /mnt/cloud-folder-host"

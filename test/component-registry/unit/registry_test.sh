@@ -347,8 +347,8 @@ contains "a required layer never fetched: said" "$out" "layer corp source 1 (pat
 check "a required layer never fetched: no view is made" no "$([ -e "$(V)" ] && echo yes || echo no)"
 printf 'layers:\n  - id: corp\n    at: /Corp\n    sources:\n      - { kind: http, url: "https://registry.example.invalid/l.reg", required: true }\n' > .devcontainer/registry.yml
 out="$(dcf-registry resolve --as /Corp 2>&1)"; rc=$?
-check "a required http source (not in this release): exit 1" 1 "$rc"
-contains "an http source says it is not in this release" "$out" "kind http is not in this release of component-registry"
+check "a required http source with no registry-source-http on PATH: exit 1" 1 "$rc"
+contains "an http source with no command says so" "$out" "no registry-source-http on PATH"
 
 new_case path
 l="$(layer a)"; printf '[skills/x]\n' > "$l/a.reg"

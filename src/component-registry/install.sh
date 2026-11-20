@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Installs the component-registry Feature: the dcf-registry command (resolve, explain, handover,
-# refresh, remember), the two registry sources this release ships (registry-source-git,
-# registry-source-path), the built-in base layer with the utility skills, the postStartCommand
+# refresh, remember), the three registry sources this release ships (registry-source-git,
+# registry-source-path, registry-source-http, which reads dcf-curl.sh from the share folder), the built-in base layer with the utility skills, the postStartCommand
 # component-registry-setup, the dcf-persist helper and the Feature Taskfile.
 # Feature options arrive as upper-cased environment variables (see devcontainer-feature.json):
 # REGISTRYFILE, INSTALLTASKFILE.
 #
-# Nothing is downloaded, so there is nothing to verify: the scripts are bash, awk and sed (NFR-7);
-# the git source needs git, which this Feature does not install (the git Feature or the image
+# Nothing is downloaded at build, so there is nothing to verify (the http source fetches layers at
+# run time through dcf_curl): the scripts are bash, awk and sed (NFR-7);
+# the git source needs git and the http source curl, which this Feature does not install (the git Feature or the image
 # brings it; without it a git source fails with a plain line and the other layers still resolve).
 #
 # Never writes into /var/lib/devcontainer-features/component-registry: the volume is not mounted
@@ -40,6 +41,8 @@ chmod 0644 "$share/version" "$share/options.env"
 install -m 0755 "$feature_dir/dcf-registry.sh" /usr/local/bin/dcf-registry
 install -m 0755 "$feature_dir/registry-source-git.sh" /usr/local/bin/registry-source-git
 install -m 0755 "$feature_dir/registry-source-path.sh" /usr/local/bin/registry-source-path
+install -m 0755 "$feature_dir/registry-source-http.sh" /usr/local/bin/registry-source-http
+install -m 0644 "$feature_dir/dcf-curl.sh" "$share/dcf-curl.sh"
 install -m 0755 "$feature_dir/component-registry-setup.sh" /usr/local/bin/component-registry-setup
 install -m 0755 "$feature_dir/dcf-persist.sh" /usr/local/bin/dcf-persist
 
