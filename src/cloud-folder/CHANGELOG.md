@@ -8,6 +8,19 @@ here; `task lint` fails when the entry is missing.
 
 Entries from 1.0.0 to 1.3.1 were generated from the commit history (`.github/scripts/changelog.py backfill`) and the "Changes in x.y.z" sections that NOTES.md used to hold; most list commit subjects as written then; the newest of them is in wording for users.
 
+## [1.4.0] - 2026-11-20
+
+### Added
+
+- **`registry-source-cloud-folder`**, the component registry's `cloud-folder` source: a layer in
+  the layer list can be `{ kind: cloud-folder, remote: registry/mine }`, a folder under the cloud
+  folder (your own layer in the shared folder, or a team's). It reads what the Feature already
+  shows at the mount point in its own mode (host, sync or mount), copies the folder into the layer
+  copy and takes the version from a fingerprint of the folder's names, sizes and times. It sets up
+  no rclone and holds no credentials; when the cloud folder is not set up or the folder is absent
+  it says so in one line and the registry uses its last good copy. Needs component-registry 1.2.0 or
+  later to be read. Rebuild to get it; nothing else changes.
+
 ## [1.3.3] - 2026-11-03
 
 ### Changed

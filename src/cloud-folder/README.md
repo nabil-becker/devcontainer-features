@@ -1,7 +1,7 @@
 
 # Cloud folder (cloud-folder)
 
-One fixed path in the devcontainer (mountPoint, default /mnt/cloud-folder) for a shared document folder that must never go in git, such as a SharePoint or OneDrive folder, filled by one of three modes. host: the devcontainer-cli launcher bind-mounts the host folder named by DCF_HOST_CLOUD_FOLDER (a folder a sync client keeps on the host) at /mnt/cloud-folder-host, and mountPoint links to it. sync: rclone (installed pinned and checksum-verified, only when absent) runs bisync between the remote and the folder, on demand and on a timer started at each start, with the token, config and sync state in the Feature's own volume; nothing privileged, so it works on a cluster. mount: rclone mount of the remote with a VFS cache (mode writes) in the volume, when the launcher granted FUSE on this machine (DCF_HOST_FUSE=1; fuse3 is installed in modes auto and mount). auto picks host when a host folder is mounted, else mount when FUSE is usable and a remote is signed in, else sync when a remote is signed in. A post-start hook (cloud-folder-setup) reports on every start; cloud-folder:status exits non-zero when the folder is missing, unwritable, never synced or its last sync failed, and cloud-folder:shutdown-check refuses a stop while a sync runs, local changes wait or mounted uploads are pending. Sign-in (task cloud-folder:login) runs rclone's browser flow in the container: paste back the address the browser shows after the sign-in, or, from the workstation with the devcontainer-cli launcher 1.16.0, the same command relays the browser into the container. Plus the Feature Taskfile (version, status, setup, login, sync, start, stop, unmount, shutdown-check).
+One fixed path in the devcontainer (mountPoint, default /mnt/cloud-folder) for a shared document folder that must never go in git, such as a SharePoint or OneDrive folder, filled by one of three modes. host: the devcontainer-cli launcher bind-mounts the host folder named by DCF_HOST_CLOUD_FOLDER (a folder a sync client keeps on the host) at /mnt/cloud-folder-host, and mountPoint links to it. sync: rclone (installed pinned and checksum-verified, only when absent) runs bisync between the remote and the folder, on demand and on a timer started at each start, with the token, config and sync state in the Feature's own volume; nothing privileged, so it works on a cluster. mount: rclone mount of the remote with a VFS cache (mode writes) in the volume, when the launcher granted FUSE on this machine (DCF_HOST_FUSE=1; fuse3 is installed in modes auto and mount). auto picks host when a host folder is mounted, else mount when FUSE is usable and a remote is signed in, else sync when a remote is signed in. A post-start hook (cloud-folder-setup) reports on every start; cloud-folder:status exits non-zero when the folder is missing, unwritable, never synced or its last sync failed, and cloud-folder:shutdown-check refuses a stop while a sync runs, local changes wait or mounted uploads are pending. Sign-in (task cloud-folder:login) runs rclone's browser flow in the container: paste back the address the browser shows after the sign-in, or, from the workstation with the devcontainer-cli launcher 1.16.0, the same command relays the browser into the container. It also installs registry-source-cloud-folder, the component registry's cloud-folder source: a layer is a folder under the cloud folder (read-only, no new credentials). Plus the Feature Taskfile (version, status, setup, login, sync, start, stop, unmount, shutdown-check).
 
 ## Example Usage
 
@@ -293,6 +293,16 @@ fi
 
 or, in a `shutdown:check` task, `- cloud-folder-setup shutdown-check 60`. `FORCE=1` on
 `task devcontainer:stop` skips every check, this one included.
+
+## Pairs with the component registry
+
+The Feature installs `registry-source-cloud-folder` (1.4.0), the component registry's
+`cloud-folder` source: a layer `{ kind: cloud-folder, remote: registry/mine }` is the folder
+`<mountPoint>/registry/mine`, read in the mode the Feature runs (host, sync or mount) and copied
+into the layer copy. No new rclone credentials and nothing written into the folder; the version
+is a fingerprint of names, sizes and times (the sync marker left out). When the Feature's status is
+not usable, or the folder is absent, the source says so in one line (exit 1) and the registry uses
+its last good copy. component-registry 1.2.0 or later reads it.
 
 ## Options
 
@@ -604,6 +614,19 @@ v=1.75.2; curl -fsSL https://downloads.rclone.org/v$v/SHA256SUMS | grep -E "rclo
 
 ## Changes
 
+### [1.4.0] - 2026-11-20
+
+#### Added
+
+- **`registry-source-cloud-folder`**, the component registry's `cloud-folder` source: a layer in
+  the layer list can be `{ kind: cloud-folder, remote: registry/mine }`, a folder under the cloud
+  folder (your own layer in the shared folder, or a team's). It reads what the Feature already
+  shows at the mount point in its own mode (host, sync or mount), copies the folder into the layer
+  copy and takes the version from a fingerprint of the folder's names, sizes and times. It sets up
+  no rclone and holds no credentials; when the cloud folder is not set up or the folder is absent
+  it says so in one line and the registry uses its last good copy. Needs component-registry 1.2.0 or
+  later to be read. Rebuild to get it; nothing else changes.
+
 ### [1.3.3] - 2026-11-03
 
 #### Changed
@@ -615,20 +638,6 @@ v=1.75.2; curl -fsSL https://downloads.rclone.org/v$v/SHA256SUMS | grep -E "rclo
 #### Added
 
 - This changelog: every release of this Feature now has an entry here, written for its users, and the Feature's README shows the latest three under "Changes". Nothing to do.
-
-### [1.3.1] - 2026-10-30
-
-#### Changed
-
-- **The post-start hook never fails and never holds the start.** A consumer's rebuild ended with
-  `postStartCommand from Feature 'cloud-folder' failed with exit code 1` after 775 s, while another
-  Feature's hook waited at a prompt and WSL reported a connection timeout. `cloud-folder-setup` with
-  no argument (the hook, and `task cloud-folder:setup`) now always exits 0: a broken pipe or hang-up
-  on the exec channel (SIGPIPE, SIGHUP) is ignored, and the whole run gets a budget of 60 s
-  (`DCF_CLOUD_FOLDER_START_BUDGET`) after which it reports that it did not finish and returns; the
-  mount and the sync timer are detached and go on in the background. A problem is a warning with
-  the command to fix it (`task cloud-folder:status`, `:login`, `:start`). The explicit tasks
-  (`start`, `sync`, `status`, `login`) keep their real exit codes.
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/cloud-folder/CHANGELOG.md).
 

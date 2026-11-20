@@ -310,15 +310,15 @@ flowchart LR
 
 ## 7. The component registry
 
-Built in slices 1 and 2 (component-registry 1.1.0, claude-code 1.12.0): sources `git` and `path`,
+Built in slices 1 to 3 (component-registry 1.2.0, claude-code 1.12.0, cloud-folder 1.4.0): sources `git`, `path`, `http` (one `.reg` file, auth settings only) and `cloud-folder`,
 the view in the Feature's volume, the hand-over to the CLI's skills folder through the adapter's
-`skills` verb, and `/registry-remember` appending to the person's own writable layer. Later: the
-`http` and `cloud-folder` sources (slice 3), drawn dashed.
+`skills` verb, and `/registry-remember` appending to the person's own writable layer.
 
 ```mermaid
 flowchart LR
   external-sources["Layer sources: git, a folder or file share"]
-  external-http["Later: http, cloud folder"]
+  external-http["http(s) endpoint: one .reg file"]
+  external-cloud["The cloud folder (tier 2)"]
   master-of-secrets["OpenBao"]
   subgraph external-zone-ct["Container"]
     component-registry["component-registry: dcf-registry"]
@@ -328,8 +328,9 @@ flowchart LR
   end
   launcher["Launcher"]
   external-sources -->|registry-source-git, -path| external-copies
-  external-http -.->|later| external-copies
-  master-of-secrets -->|dcf-secret: source secrets| external-copies
+  external-http -->|registry-source-http: bearer, header, basic or none; never a secret over plain http| external-copies
+  external-cloud -->|registry-source-cloud-folder: read-only, no new credentials| external-copies
+  master-of-secrets -->|dcf-secret: source secrets, to curl on stdin| external-copies
   launcher -.->|later: mounts a share, sets whoami| component-registry
   external-copies --> component-registry
   component-registry -->|resolve| external-view
@@ -338,6 +339,7 @@ flowchart LR
 ```
 
 - Who you are (`COMPONENT_REGISTRY_WHOAMI`) comes from `.env` or the launcher, never a committed file.
+- An `http` source's secret goes to curl on standard input only, and is refused over plain `http://` unless the source says `allow-insecure: true`; with a secret redirects are not followed. No manifest or signature is required: review is the endpoint owner's.
 - A layer copy and the view are as sensitive as their most sensitive layer (a person's own layer may hold health facts): owner-only, never committed. `explain` prints to the terminal only.
 - The CLI's skills folder (Claude Code: `$CLAUDE_CONFIG_DIR/skills`, the claude-code volume) gets owner-only copies, each marked owned by the registry; never the repository's `.claude/skills`.
 - `/registry-remember` writes only to the layer marked `writable: true`, and only to a folder (a `path` source): the person's own layer, wherever they keep it.

@@ -6,6 +6,25 @@ of the Feature and whether they must act (an option renamed, a task removed, a r
 The version in `devcontainer-feature.json` is bumped in the same change that adds its entry
 here; `task lint` fails when the entry is missing.
 
+## [1.2.0] - 2026-11-20
+
+### Added
+
+- **The `http` layer source.** A layer can now be one `.reg` file served over HTTP(S):
+  `{ kind: http, url: "https://registry.example.invalid/corp.reg", auth: { type: bearer, secret: registry/corp } }`.
+  `auth.type` is `bearer` (an `Authorization: Bearer` header), `header` (`auth.header` names the
+  header) or `basic` (`auth.user` and the secret); without `auth` the endpoint is read open, the
+  layer owner's choice. The secret is read with `dcf-secret` (the openbao Feature) and handed to
+  curl on its standard input: never on a command line, in a file or in a log. A secret is never
+  sent over plain `http://` unless the source says `allow-insecure: true` (plain http sends it
+  in the clear), and with a secret redirects are not followed. The version is the ETag, else the
+  Last-Modified, else a hash of the body; when the endpoint cannot be reached the last good copy
+  is used and said. One `.reg` file of at most 1 MiB: archives and `@file` siblings are not read.
+  The layer list accepts the new `allow-insecure` key. Nothing to do unless you want an http layer;
+  rebuild to get it.
+- The `cloud-folder` source's command comes with the cloud-folder Feature 1.4.0; `kind: cloud-folder`
+  no longer says "later release" here. `db` is still not in a release.
+
 ## [1.1.0] - 2026-11-20
 
 ### Added

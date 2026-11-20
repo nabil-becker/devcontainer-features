@@ -196,6 +196,7 @@ mkdir -p "$share"
 chmod 0644 "$share/options.env"
 install -m 0755 "$feature_dir/cloud-folder-setup.sh" /usr/local/bin/cloud-folder-setup
 install -m 0755 "$feature_dir/dcf-persist.sh" /usr/local/bin/dcf-persist
+install -m 0755 "$feature_dir/registry-source-cloud-folder.sh" /usr/local/bin/registry-source-cloud-folder
 
 # The state folder is the Feature's volume (devcontainer-feature.json), mounted at start, not
 # at build: nothing is written into it here. cloud-folder-setup hands it to the remote user.

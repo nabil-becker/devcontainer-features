@@ -267,6 +267,16 @@ fi
 or, in a `shutdown:check` task, `- cloud-folder-setup shutdown-check 60`. `FORCE=1` on
 `task devcontainer:stop` skips every check, this one included.
 
+## Pairs with the component registry
+
+The Feature installs `registry-source-cloud-folder` (1.4.0), the component registry's
+`cloud-folder` source: a layer `{ kind: cloud-folder, remote: registry/mine }` is the folder
+`<mountPoint>/registry/mine`, read in the mode the Feature runs (host, sync or mount) and copied
+into the layer copy. No new rclone credentials and nothing written into the folder; the version
+is a fingerprint of names, sizes and times (the sync marker left out). When the Feature's status is
+not usable, or the folder is absent, the source says so in one line (exit 1) and the registry uses
+its last good copy. component-registry 1.2.0 or later reads it.
+
 ## Options
 
 - `mode` (default `auto`): `host` expects a host folder mounted at the mount point. `sync` syncs

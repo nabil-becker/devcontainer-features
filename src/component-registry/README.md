@@ -1,7 +1,7 @@
 
 # Component registry (component-registry)
 
-A registry for agentic components, shaped like the Windows Registry (ADR-0063). Layers from any number of sources (a git branch, tag or commit; a folder or mounted file share) are fetched into local layer copies (version first, so an unchanged layer is skipped; offline, the last good copy is used and said) and merged by value type into one resolved view for who you are (COMPONENT_REGISTRY_WHOAMI, a path such as /Corp/MyDepartment/team/me): value replaces, list combines (!item takes out), text stacks in layer order, ref points at another path; the higher layer wins, the more specific scope inside a layer, a locked key beats both, and a permission key comes from a component's lowest layer only. dcf-registry resolve and dcf-registry explain <path> [--uses] (task component-registry:resolve, :explain); release 1 resolves skills, and dcf-registry handover gives them to a CLI's adapter (agent-adapter-<cli> skills; Claude Code: its personal skills folder, live in running sessions), which the participant component (claude-code participants: true) does at every agent's start. A built-in base layer ships the utility skills /registry-refresh, /registry-explain and /registry-remember (appends to the layer marked writable: true). The layer list is .devcontainer/registry.yml (option registryFile, COMPONENT_REGISTRY_FILE). Layer copies and the resolved view live owner-only in a named volume at COMPONENT_REGISTRY_STATE_DIR=/var/lib/devcontainer-features/component-registry, made usable by component-registry-setup at start. Bash, awk and sed; nothing downloaded at build.
+A registry for agentic components, shaped like the Windows Registry (ADR-0063). Layers from any number of sources (a git branch, tag or commit; one .reg file over http(s) with bearer, header or basic log-in, the secret through dcf-secret and never over plain http without allow-insecure; a folder or mounted file share; a folder in the cloud folder, from the cloud-folder Feature) are fetched into local layer copies (version first, so an unchanged layer is skipped; offline, the last good copy is used and said) and merged by value type into one resolved view for who you are (COMPONENT_REGISTRY_WHOAMI, a path such as /Corp/MyDepartment/team/me): value replaces, list combines (!item takes out), text stacks in layer order, ref points at another path; the higher layer wins, the more specific scope inside a layer, a locked key beats both, and a permission key comes from a component's lowest layer only. dcf-registry resolve and dcf-registry explain <path> [--uses] (task component-registry:resolve, :explain); release 1 resolves skills, and dcf-registry handover gives them to a CLI's adapter (agent-adapter-<cli> skills; Claude Code: its personal skills folder, live in running sessions), which the participant component (claude-code participants: true) does at every agent's start. A built-in base layer ships the utility skills /registry-refresh, /registry-explain and /registry-remember (appends to the layer marked writable: true). The layer list is .devcontainer/registry.yml (option registryFile, COMPONENT_REGISTRY_FILE). Layer copies and the resolved view live owner-only in a named volume at COMPONENT_REGISTRY_STATE_DIR=/var/lib/devcontainer-features/component-registry, made usable by component-registry-setup at start. Bash, awk and sed; nothing downloaded at build.
 
 ## Example Usage
 
@@ -68,12 +68,13 @@ four value types, patterns, the match rule, locks, `resolve` and `explain` (`--u
 the resolved skills to a CLI through its adapter's `skills` verb, the participant component
 resolves and hands over at every agent's start (with a per-agent who-you-are path), and a built-in
 base layer ships the utility skills `/registry-refresh`, `/registry-explain`, `/registry-remember`.
-It resolves **skills** only. Not yet: the `http`, `cloud-folder` and `db` sources; a layer list
-naming one of those kinds is read, and `resolve` says that kind is not in this release.
+Release 1.2.0 adds the `http` source (and, with cloud-folder 1.4.0, the `cloud-folder` source).
+It resolves **skills** only. Not yet: the `db` source; a layer list naming it is read, and
+`resolve` says that kind is not in this release.
 
 ## What it installs
 
-Nothing is downloaded; there is nothing to verify. Bash, awk and sed only (mawk and gawk both
+Nothing is downloaded at build; there is nothing to verify (an `http` layer is read at run time). Bash, awk and sed only (mawk and gawk both
 work; no python3, no jq):
 
 - `dcf-registry` (`/usr/local/bin`): `resolve`, `explain`, `version`, and (1.1.0) `handover`,
@@ -139,7 +140,48 @@ Only this YAML subset is read: comments, plain and quoted values, block entries 
 | --- | --- | --- |
 | `git` | `url`, one of `branch`, `tag`, `commit`; `required` | `auth`: `type` `basic` (default; `user`, default `git`) or `bearer`, and `secret`, a `dcf-secret` name; handed to git through the environment, never an argument; git never prompts |
 | `path` | `path` (repository-relative or absolute); `required` | the folder's own permissions |
-| `http`, `cloud-folder`, `db` | later releases | |
+| `http` | `url` (one `.reg` file); `allow-insecure`; `required` | `auth`: `type` `bearer`, `header` (`header` names it) or `basic` (`user`), and `secret`, a `dcf-secret` name; none (the default without a secret) reads an open endpoint |
+| `cloud-folder` | `remote` (a folder under the cloud folder); `required` | the cloud folder's own set-up (cloud-folder Feature 1.4.0 or later installs the source) |
+| `db` | a later release | |
+
+### The `http` source
+
+`registry-source-http` reads one `.reg` file of at most 1 MiB, saved in the layer copy under the
+URL's file name (or `<layer>.reg`). The smallest safe form: archives (`.tar.gz`, `.zip`) and
+`@file` siblings are **not** read in this release, because unpacking an archive from the network
+is a risk the registry does not take; the source says so when the URL is an archive. No manifest
+and no signature are required; review is the endpoint owner's, and the layer list pins only the
+URL and how to log in.
+
+- **Secrets.** `auth.secret` names a secret that `dcf-secret` (openbao) reads at each run; it
+  reaches curl as a config on standard input, never on a command line, in a file, in an
+  environment or in a log (a test reads every process's arguments while a request is in flight).
+  A secret that holds a newline, quote or backslash is refused (a curl config cannot carry it).
+- **Plain http sends credentials in the clear.** HTTPS is not required (an open endpoint over
+  `http://` is the owner's choice), but a source with a secret and an `http://` URL is refused
+  (exit 2) unless the source sets `allow-insecure: true`. With a secret, redirects are not
+  followed, so the secret never reaches another host; without one, at most 3.
+- **Version.** The ETag (`etag:<value>`), else the Last-Modified, else a hash of the body
+  (`sha256:<hash>`); a HEAD request first, the GET when the server gives no validator.
+- **Time and failure.** 10 s to connect and 60 s in all, the retry helper `dcf_curl` with one
+  retry; a 4xx, 5xx, timeout or oversized body fails (exit 1) and `resolve` uses the last good
+  copy and says so.
+
+```yaml
+- { kind: http, url: "https://registry.example.invalid/corp.reg", auth: { type: bearer, secret: registry/corp } }
+- { kind: http, url: "https://registry.example.invalid/open.reg" }          # an open endpoint
+- { kind: http, url: "https://registry.example.invalid/x.reg", auth: { type: header, header: X-Api-Key, secret: registry/x } }
+```
+
+### The `cloud-folder` source
+
+`registry-source-cloud-folder` (installed by the cloud-folder Feature, which owns the transport)
+reads `remote`, a folder under the cloud folder's mount point (`registry/mine` is
+`<mountPoint>/registry/mine`), in whatever mode the Feature runs (host, sync or mount); it needs
+no rclone credentials of its own and writes nothing into the folder. The version is a fingerprint
+of names, sizes and times, as for `path`. When the cloud folder is not set up (the Feature's
+status says why) or the folder is absent, the source exits 1 with one line and `resolve` uses the
+last good copy.
 
 ## A layer's content: `.reg` files
 
@@ -295,8 +337,9 @@ every skipped line with its reason, and `resolved N component(s) for <W>`.
 - `claude-code` 1.12.0: its adapter's `skills` verb, and with `participants: true` the participant
   component, which resolves and hands over at every agent's start. Neither is required: without
   them `handover` and `refresh` say no adapter takes skills.
-- Later releases: `cloud-folder` (its source), the launcher (a file share mount,
-  `COMPONENT_REGISTRY_WHOAMI` from the workstation).
+- `cloud-folder` 1.4.0: its `cloud-folder` source. `curl` in the image for `http` sources.
+- Later releases: the launcher (a file share mount, `COMPONENT_REGISTRY_WHOAMI` from the
+  workstation).
 
 ## Limits
 
@@ -327,6 +370,25 @@ Pin the major in the Feature reference (`component-registry:1`); a rebuild picks
 else; the `.reg` grammar and the layer list keys only grow within 1.x.
 
 ## Changes
+
+### [1.2.0] - 2026-11-20
+
+#### Added
+
+- **The `http` layer source.** A layer can now be one `.reg` file served over HTTP(S):
+  `{ kind: http, url: "https://registry.example.invalid/corp.reg", auth: { type: bearer, secret: registry/corp } }`.
+  `auth.type` is `bearer` (an `Authorization: Bearer` header), `header` (`auth.header` names the
+  header) or `basic` (`auth.user` and the secret); without `auth` the endpoint is read open, the
+  layer owner's choice. The secret is read with `dcf-secret` (the openbao Feature) and handed to
+  curl on its standard input: never on a command line, in a file or in a log. A secret is never
+  sent over plain `http://` unless the source says `allow-insecure: true` (plain http sends it
+  in the clear), and with a secret redirects are not followed. The version is the ETag, else the
+  Last-Modified, else a hash of the body; when the endpoint cannot be reached the last good copy
+  is used and said. One `.reg` file of at most 1 MiB: archives and `@file` siblings are not read.
+  The layer list accepts the new `allow-insecure` key. Nothing to do unless you want an http layer;
+  rebuild to get it.
+- The `cloud-folder` source's command comes with the cloud-folder Feature 1.4.0; `kind: cloud-folder`
+  no longer says "later release" here. `db` is still not in a release.
 
 ### [1.1.0] - 2026-11-20
 
