@@ -164,7 +164,7 @@ container's restart policy supervises it. In 0.3.0 it runs **role standalone**: 
 container; the hub's networking and trust come with slice N3.
 
 The sample [`bundles/facilitator/compose.yml`](../../bundles/facilitator/compose.yml) runs the hub beside an
-OpenBao 2.7.3 (by digest) on an internal network that publishes nothing (ruling AI). OpenBao starts sealed:
+OpenBao 2.7.2 (by digest) on an internal network that publishes nothing (ruling AI). OpenBao starts sealed:
 initialise it once and unseal it by hand after every start (ruling AB), from your own terminal:
 
 ```sh
