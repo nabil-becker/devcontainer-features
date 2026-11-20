@@ -359,6 +359,20 @@ The domain words of the project itself are not here; they live with the project'
   ordered layers from any sources, one tree of paths with typed `:key` values (`value`, `list`,
   `text`, `ref`) that merge by type, gitignore-style patterns, locks; the higher layer wins.
   Read with `dcf-registry resolve` and `explain` (ADR-0063). Not the `agentic-register`.
+- **Registry layer**: one ordered input of the component registry, made of one or more registry
+  sources; a higher layer wins over a lower one. "Layer" alone stays the theme layer.
+- **Registry source**: a `registry-source-<kind>` executable that fetches a registry layer into a
+  layer copy (`git` and `path` in release 1; others are named and not yet resolved).
+- **Layer copy**: the local copy of a registry layer's files that a registry source wrote; when the
+  source is unreachable the last good copy is used.
+- **Resolved view**: the one merged tree `dcf-registry resolve` writes for who you are, swapped in
+  whole as the `view` link in the Feature's state volume; machine data sits in its `meta/` folder.
+- **Registry lock**: a lock on a key, so it keeps the value of the layer that locked it and higher
+  layers' lines for it are skipped; it beats `@replace`.
+- **Who-you-are path**: the path that says which sections of the registry apply to this person and
+  agent, given to `resolve` and `explain` (`--as`).
+- **.reg file**: a file of the component registry's format: sections of paths with `:key` value
+  lines, read from a layer copy in name order.
 
 ## Secrets
 

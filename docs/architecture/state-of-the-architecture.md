@@ -41,7 +41,7 @@ commit that added it); every other row is "to verify against the registry".
 |---|---|
 | Host and devcontainer | `devcontainer-cli` (1.22.1), `common` (1.0.4), `cloud-folder` (1.3.3), `audio` (1.1.0) |
 | Git and identity | `git` (1.4.6), `gh` (1.1.0), `ssh-agent` (1.5.0), `openbao` (1.6.0, unreleased) |
-| Agents | `agents` (2.2.0, deprecated: use `claude-code` `participants: true`), `claude-code` (1.10.0), `phi-check` (1.0.3), `go-task` (1.2.2), `coder-cli` (1.1.5), `dsc` (1.1.5) |
+| Agents | `agents` (2.2.0, deprecated: use `claude-code` `participants: true`), `claude-code` (1.10.0), `component-registry` (1.0.0, unreleased: the core of [the component registry](../proposals/component-registry.md), slice 1), `phi-check` (1.0.3), `go-task` (1.2.2), `coder-cli` (1.1.5), `dsc` (1.1.5) |
 | Agent communication | `sign-packet` (0.6.0), `register-engine` (0.3.0), `packet-relay` (0.4.0), `facilitator` (0.1.0, unreleased: the first version on AGNTCY, slice 3 of the [facilitator proposal](../proposals/facilitator-agent.md); its own copies of register-engine's and sign-packet's libraries, checked by `task registerengine:check` and `task signpacket:check`) |
 | Cloud and Kubernetes | `az` (1.1.3), `kustomize` (1.0.5), `kubeconform` (1.0.5), `argocd` (1.1.5), `velero` (1.0.6), `kube-state` (1.0.4) |
 
@@ -89,7 +89,8 @@ status lines were not (see Gaps).
 | [Task aliases](../proposals/task-aliases.md) | draft; build not started | `taskAliases` (team file) in `go-task` 1.2.2 ([NOTES](../../src/go-task/NOTES.md)) |
 | [Secrets master split](../proposals/secrets-master-split.md), [OpenBao key file](../proposals/openbao-key-file.md) | decided or proposed; build not started | `openbao` 1.6.0 (unreleased) with server mode and `unlock: keyfile`, the key file in `devcontainer-cli` 1.22.1, `ssh-agent` 1.5.0; ADRs 0048, 0056 |
 | [Least privilege for agents, ending in one agent Linux user](../proposals/agent-linux-user.md) | accepted 2026-11-08; build not started | not built |
-| [Personalization](../proposals/personalization.md) | open | not built |
+| [Personalization](../proposals/personalization.md) | open | superseded by the component registry (ADR-0063) |
+| [Component registry](../proposals/component-registry.md) | accepted 2026-11-19 | slice 1 built: `component-registry` 1.0.0 (resolve, explain, the `.reg` grammar and match rule, `git` and `path` sources; skills only). Later: the adapter step (slice 2), `http` and `cloud-folder` sources (slice 3), first real use (slice 4) |
 | [Secrets distribution (phase 2)](../proposals/secrets-distribution.md) | research notes, not designed | not built |
 | [Facilitator](../proposals/facilitator-agent.md) | ruled 2026-11-19; slices 0 to 2 done | `facilitator` 0.1.0 (slice 3, unreleased): `agntcy` backend only, no model, the vendor Features' `attach` and the pump not built; rule 1 reads only the addressed mentions (the first `@handle` and those right after it), which the scenario of section 2 needs |
 | Decided and closed: [King Arthur theme](../proposals/king-arthur-theme.md) (superseded), [Journalist back](../proposals/journalist-back.md), [Feature principles](../proposals/feature-principles.md), [Agent principles](../proposals/agent-principles.md), [Iteration package](../proposals/iteration-package.md) | decided or superseded | in the ADRs and [docs/principles/](../principles/) |
@@ -109,3 +110,11 @@ status lines were not (see Gaps).
 | The participant component does not know the facilitator's keys | `components/participant` 1.0.0 reads `agents:` and `agents.yml` only and warns on `attachment`, `description`, `skills`; the facilitator reads `participants.yml` (alias `agents.yml`) itself |
 | The facilitator is the first published Feature with an MCP server and with daemons it starts | `src/facilitator/NOTES.md`; the NFR decision "MCP: none for now" is revised in `docs/principles/non-functional-requirements.md` |
 | Architecture documents are new | Data Flows and Data Inventory are written beside this page; C4 views are in `docs/model/` |
+
+## Component registry (ADR-0063)
+
+| Element | State | Builds on |
+|---|---|---|
+| component-registry Feature: `resolve`, `explain`, the layer list, the `.reg` grammar and match rule, `git` and `path` registry sources | built, slice 1 (`component-registry` 1.0.0, unreleased) | nothing yet: standalone, skills resolved into its own volume |
+| The CLI adapter's `skills` verb, `resolve` at an agent's start, the per-agent who-you-are override, the utility skills | later (slice 2) | agents CLI adapters (ADR-0037, amended then) |
+| `http` and `cloud-folder` registry sources | later (slice 3) | OpenBao (`dcf-secret`), cloud-folder |

@@ -156,3 +156,37 @@ stateDiagram-v2
 
 The setting is `DEVHOST_REVIEW_EVERY` (75, [ADR 0021](../adr/0021-the-ledger-review-runs-every-75-entries.md);
 25 if unset). Run with `/ledger-review`.
+
+## A registry layer copy
+
+From `src/component-registry/NOTES.md` (component-registry 1.0.0, slice 1 of the
+[component registry](../proposals/component-registry.md)). One per source of a layer, in the
+Feature's volume.
+
+```mermaid
+stateDiagram-v2
+  [*] --> missing
+  missing --> fetched: version, then fetch
+  missing --> missing: unreachable (a required layer fails resolve)
+  fetched --> fetched: unchanged version, kept
+  fetched --> fetched: new version read
+  fetched --> offline: source unreachable
+  offline --> fetched: source back
+  fetched --> missing: the pin changed (another copy)
+  fetched --> [*]: no layer names it, removed
+  offline --> [*]: no layer names it, removed
+```
+
+## A resolved view
+
+```mermaid
+stateDiagram-v2
+  [*] --> stale
+  stale --> resolving: dcf-registry resolve (one at a time, a lock)
+  resolving --> current: new view swapped in by one rename
+  resolving --> stale: a required layer never fetched; the old view stays
+  current --> stale: a layer or who-you-are changed
+```
+
+Nothing marks a view stale by itself in slice 1: `resolve` is run by hand. From slice 2 the agents
+start sequence and `/registry-refresh` run it.

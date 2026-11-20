@@ -1,0 +1,28 @@
+{
+  "with_task": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "go-task": {},
+      "component-registry": {}
+    },
+    "remoteUser": "vscode"
+  },
+  "registry_file": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "component-registry": {
+        "registryFile": "config/layers.yml"
+      }
+    },
+    "remoteUser": "vscode"
+  },
+  "no_taskfile": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "component-registry": {
+        "installTaskfile": false
+      }
+    },
+    "remoteUser": "vscode"
+  }
+}

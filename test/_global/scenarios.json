@@ -29,6 +29,7 @@
       "sign-packet": {},
       "register-engine": {},
       "packet-relay": {},
+      "component-registry": {},
       "facilitator": {}
     },
     "remoteUser": "vscode"

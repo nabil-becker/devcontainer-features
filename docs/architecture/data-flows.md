@@ -308,6 +308,37 @@ flowchart LR
 - The release job has `contents: read` and `packages: write` only; READMEs are not generated there.
 - Sources: `CLAUDE.md`, `.github/workflows/release.yaml`, `docs/adr/0040-*.md`, `docs/model/c4-context.md`.
 
+## 7. The component registry
+
+Built in slice 1 (component-registry 1.0.0): sources `git` and `path`, the view in the Feature's
+volume. Later: the `http` and `cloud-folder` sources (slice 3) and the hand-over to the CLI's
+skills folder (slice 2), drawn dashed.
+
+```mermaid
+flowchart LR
+  external-sources["Layer sources: git, a folder or file share"]
+  external-http["Later: http, cloud folder"]
+  master-of-secrets["OpenBao"]
+  subgraph external-zone-ct["Container"]
+    component-registry["component-registry: dcf-registry"]
+    external-copies["Layer copies, tier 4, owner-only"]
+    external-view["Resolved view, tier 4, owner-only"]
+    external-cli-skills["The CLI's skills folder, tier 4"]
+  end
+  launcher["Launcher"]
+  external-sources -->|registry-source-git, -path| external-copies
+  external-http -.->|later| external-copies
+  master-of-secrets -->|dcf-secret: source secrets| external-copies
+  launcher -.->|later: mounts a share, sets whoami| component-registry
+  external-copies --> component-registry
+  component-registry -->|resolve| external-view
+  external-view -.->|later: skills verb| external-cli-skills
+```
+
+- Who you are (`COMPONENT_REGISTRY_WHOAMI`) comes from `.env` or the launcher, never a committed file.
+- A layer copy and the view are as sensitive as their most sensitive layer (a person's own layer may hold health facts): owner-only, never committed. `explain` prints to the terminal only.
+- Sources: `src/component-registry/NOTES.md`, `docs/proposals/component-registry.md`, `docs/adr/0063-*.md`.
+
 ## Gaps seen while drawing
 
 - Claude Code memory sits in a tier 4 volume though it cannot be rebuilt (ADR 0049 names the move to tier 3; whether it has shipped: to verify).

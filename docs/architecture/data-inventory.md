@@ -76,6 +76,13 @@ named in the rows ("bounded loss", "to verify").
 | Audio relay folder (microphone socket, only while the gate is on) | `/mnt/wsl/devhost-audio` | launcher, audio gate | none | personal (live audio, stored nowhere) | no | `src/audio/NOTES.md`, `docs/adr/0058-*.md` |
 | Audio ALSA default | `/etc/asound.conf` in the image | audio Feature | 4 (image) | public | no (rebuilt) | `src/audio/NOTES.md` |
 | PHI-check exceptions (synthetic fixtures only) | a file named by the `exceptions` option | phi-check Feature, the repo | 1 | internal | yes | `src/phi-check/NOTES.md` |
+| Registry layer list | `.devcontainer/registry.yml` (option `registryFile`, `COMPONENT_REGISTRY_FILE`) | component-registry Feature, the repo | 1 | public | yes | `src/component-registry/NOTES.md` |
+| Who-you-are path (`COMPONENT_REGISTRY_WHOAMI`) | `.env` (git-ignored) or the launcher (later), per person | the person | none (a setting) | internal | not applicable (set again) | `src/component-registry/NOTES.md`, `docs/adr/0063-*.md` |
+| A registry layer's `.reg` files and skill files | its source: a git repository, a folder or file share (later: http, the cloud folder) | the layer's owner | the owner's choice | internal; a person's own layer is personal | follows its source | `docs/proposals/component-registry.md` |
+| Registry layer copies, the resolved view, `resolve.lock` | volume `component-registry-state-${devcontainerId}` at `/var/lib/devcontainer-features/component-registry`, owner-only | component-registry Feature | 4 | as its most sensitive layer (may be personal) | yes (refetched, rebuilt) | `src/component-registry/NOTES.md` |
+| `explain` output | the terminal only | component-registry Feature | none | as the resolved view | not kept | `src/component-registry/NOTES.md` |
+| Registry source secrets | OpenBao, read with `dcf-secret` | the layer's owner or the person | OpenBao's | secret | yes | `src/component-registry/NOTES.md` |
+| Later (slice 2): resolved skills in the CLI | the CLI's skills folder (Claude: the claude-code volume) | the CLI adapter | 4 | as the resolved view | rebuilt | `docs/proposals/component-registry.md` |
 | Facilitator conversations: one register-engine register (`conversation` type) per conversation, every message signed | volume `facilitator-state-${devcontainerId}` at `/var/lib/devcontainer-features/facilitator` (`conversations/`) | facilitator Feature | 4 (working data, D12; a tier-2 mirror is a later item) | personal (what people and models said) | yes | `src/facilitator/NOTES.md` |
 | Facilitator identity keys (each participant, each human, `facilitator`) | OpenBao `facilitator/keys/<handle>`; the 0.1.0 fallback `keys/<handle>` (mode 600) in the same volume | facilitator Feature | none (OpenBao); 4 for the fallback (ADR-0048 exception) | secret | yes | `src/facilitator/NOTES.md` ("Keys") |
 | Facilitator participant tokens | `tokens/<handle>` (mode 600) in the same volume, made again at every container start | facilitator Feature | 4 (ADR-0048 exception, ADR-0061) | secret (worthless outside the container) | yes, replaced at start | `src/facilitator/NOTES.md` |
@@ -300,3 +307,35 @@ erDiagram
 Three more views are derived from it: `themes/*.toml` (labels, `id = "label"`), the C4 Markdown
 files (Mermaid whose node ids are ids), and `LEXICON.md` (prose). `devhost-verify` guard `model`
 keeps them in agreement.
+
+### The component registry: layer, entry, resolved component
+
+Source: `src/component-registry/NOTES.md` (component-registry 1.0.0), `docs/proposals/component-registry.md` sections 3.2 and 3.3.
+
+```mermaid
+classDiagram
+  class Layer {
+    id
+    rank
+    at
+    sources
+  }
+  class Entry {
+    path
+    key
+    type
+    data
+    locked
+  }
+  class ResolvedComponent {
+    path
+    values
+    sourceOfEachValue
+  }
+  Layer "1" --> "*" Entry : holds
+  Entry "*" --> "1" ResolvedComponent : merged into
+```
+
+On disk the resolved component is `skills/<name>/` (`SKILL.md` and its files) and
+`meta/skills/<name>/`: `values/<key>`, `keys.tsv` (key, type, summary) and `provenance.tsv` (state,
+key, type, layer, rank, version, `source:file:line`, data, why: `sourceOfEachValue`).

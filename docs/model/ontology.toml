@@ -510,6 +510,41 @@ type = "mechanism"
 term = "Component registry"
 summary = "Agentic components in ordered layers from any sources, one path tree of typed values merged by type; higher layer wins, a lock beats it (ADR-0063)."
 
+[registry-layer]
+type = "mechanism"
+term = "Registry layer"
+summary = "One ordered input of the component registry, made of registry sources; a higher layer wins."
+
+[registry-source]
+type = "mechanism"
+term = "Registry source"
+summary = "A registry-source-<kind> executable that fetches a registry layer into a layer copy."
+
+[layer-copy]
+type = "mechanism"
+term = "Layer copy"
+summary = "The local copy of a registry layer's files; the last good copy is used when the source is unreachable."
+
+[resolved-view]
+type = "mechanism"
+term = "Resolved view"
+summary = "The merged tree dcf-registry resolve writes for who you are, swapped in whole as the view link."
+
+[registry-lock]
+type = "mechanism"
+term = "Registry lock"
+summary = "A lock on a key so it keeps the locking layer's value; it beats @replace."
+
+[who-you-are-path]
+type = "concept"
+term = "Who-you-are path"
+summary = "The path saying which registry sections apply to this person and agent (--as)."
+
+[reg-file]
+type = "concept"
+term = ".reg file"
+summary = "A component registry file of sections of paths with :key value lines."
+
 [key-mode]
 type = "mechanism"
 term = "Key mode"
