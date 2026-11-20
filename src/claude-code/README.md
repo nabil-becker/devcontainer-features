@@ -1,7 +1,7 @@
 
 # Claude Code (claude-code)
 
-Claude Code (https://code.claude.com/docs) as a member of this collection's ecosystem: installs the sha256-verified native release binary at /usr/local/bin/claude (no Node.js, version pinnable) unless a claude is already in the image - e.g. from the official ghcr.io/anthropics/devcontainer-features/claude-code, which is then augmented instead of replaced - and adds agent-adapter-claude (Claude Code's adapter for the agents Feature: task agents -- <name> finds a session by its name and folder and acts on it by id), the deprecated claude-host launcher, claude-fleet command and claude-host-pin hook (still working, each printing one deprecation line; claude-code 2.0 removes them), a named volume mounted at CLAUDE_CONFIG_DIR (/var/lib/devcontainer-features/claude-code) so login and sessions survive rebuilds, a post-create hook that makes that directory usable by the remote user, and the Feature Taskfile. The in-app auto-updater is off; a rebuild updates.
+Claude Code (https://code.claude.com/docs) as a member of this collection's ecosystem: installs the sha256-verified native release binary at /usr/local/bin/claude (no Node.js, version pinnable) unless a claude is already in the image - e.g. from the official ghcr.io/anthropics/devcontainer-features/claude-code, which is then augmented instead of replaced - and adds agent-adapter-claude (Claude Code's adapter for the agent list: task agents -- <name> finds a session by its name and folder and acts on it by id), with participants: true the participant component (the agent list, the agents command and the agents:* tasks that the deprecated agents Feature installed, one shared copy in /usr/local/lib/dcf-participant; residents started at each container start), the deprecated claude-host launcher, claude-fleet command and claude-host-pin hook (still working, each printing one deprecation line; claude-code 2.0 removes them), a named volume mounted at CLAUDE_CONFIG_DIR (/var/lib/devcontainer-features/claude-code) so login and sessions survive rebuilds, a post-create hook that makes that directory usable by the remote user, and the Feature Taskfile. The in-app auto-updater is off; a rebuild updates.
 
 ## Example Usage
 
@@ -19,6 +19,7 @@ Claude Code (https://code.claude.com/docs) as a member of this collection's ecos
 | install | How the claude binary gets there. 'auto': keep a claude already in the image (official Feature, base image) and only add the ecosystem pieces, else install the native binary. 'native': always install the verified native binary at /usr/local/bin/claude (wins over an npm install on PATH). 'none': never install the binary, only the pieces. | string | auto |
 | additionalDirectories | Comma-separated folders every Claude session in the container may read and edit besides the one it starts in (Claude Code's permissions.additionalDirectories), written at build time to the managed-settings drop-in /etc/claude-code/managed-settings.d/50-devcontainer-features-claude-code.json, so no wrapper adding --add-dir is needed and the user's own settings are not touched. Absolute paths, or ~/... for the remote user's home (expanded at build time); a relative path fails the build. Empty: nothing is written. File access only: unlike --add-dir, a folder listed here does not load its CLAUDE.md, skills or other .claude/ configuration. | string | - |
 | remoteControl | Start every Claude agent the agents Feature runs with Remote Control on (--remote-control), so agents.yml need not repeat it in each agent's args. Applied by agent-adapter-claude to the sessions it starts or wakes, unless an agent's args already have --remote-control or --no-remote-control (the adapter's own per-agent opt-out). Per run: AGENT_ADAPTER_CLAUDE_REMOTE_CONTROL=0 or 1. | boolean | false |
+| participants | Install the participant component: the agent list (.devcontainer/agents.yml, or AGENTS_FILE), the agents command, the agents:* tasks (task agents -- <name>, agents:list, agents:up, ...) and `agents up` at every container start, which the agents Feature installed until it was deprecated (agents 2.2.0). One copy in /usr/local/lib/dcf-participant, shared with any other Feature that installs it (the agents Feature included). The session name template is AGENTS_SESSION_NAME (.env or the environment) or each agent's session-name key; the default is the handle. false: nothing of it is installed. | boolean | false |
 | version | Native binary version to install (e.g. '2.1.286'), or a release channel: 'stable' or 'latest'. Ignored when an existing claude is kept (install=auto) or install=none. | string | stable |
 
 ## Customizations
@@ -30,11 +31,11 @@ Claude Code (https://code.claude.com/docs) as a member of this collection's ecos
 ## How it fits
 
 ```text
-  host: task devcontainer:claude --> container: claude (native binary)
-                                          |        |
-   agents Feature <-- agent-adapter-claude'        |
-   (task agents -- <name>)                         |
-                                                   v
+  host: task devcontainer:agent -- <name> --> container: claude (native binary)
+                                                    |        |
+   participant component <-- agent-adapter-claude --'        |
+   (participants: true, or the deprecated agents Feature;    |
+    task agents -- <name>, agents up at container start)     v
               volume: CLAUDE_CONFIG_DIR  (login, settings, sessions)
               (a repo may bind-mount a host folder on the same target)
 ```
@@ -42,10 +43,46 @@ Claude Code (https://code.claude.com/docs) as a member of this collection's ecos
 | Data | Where it lives | Storage tier |
 | --- | --- | --- |
 | Login, settings, session history, adapter's session list | named volume at `CLAUDE_CONFIG_DIR` (`/var/lib/devcontainer-features/claude-code`); a repo may bind-mount a host folder there | 4 working set |
+| Agent list (with `participants: true`) | `.devcontainer/agents.yml` in the repository | 1 git |
+| Leases and start markers (with `participants: true`) | `/var/lib/devcontainer-features/agents`, not a volume; a lease must not survive a rebuild | 4 working set |
 
 Tiers are the four of ADR 0045: 1 git, 2 shared folder, 3 personal folder, 4 working set (rebuildable only).
 
 Used in: [windows-workstation-devhost](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/reference-architectures/windows-workstation-devhost.md), [agentic-devhost](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/reference-architectures/agentic-devhost.md)
+
+## Participants (`participants`, 1.10.0)
+
+`"participants": true` installs the **participant component**: the agent list
+(`.devcontainer/agents.yml`, or the repo-relative path in `AGENTS_FILE`), the `agents` command, the
+`agents:*` tasks (`task agents -- <name>`, `agents:list`, `agents:up`, `agents:stop`, `agents:logs`,
+`agents:reset`, `agents:leases`, `agents:release`, `agents:check`, `agents:version`), the lease, the
+session names and `agents up` at every container start. It is the code of the
+[`agents`](../agents) Feature 2.1.3, moved unchanged into a shared component (ADR-0061); the
+`agents` Feature is deprecated from 2.2.0 in favour of this option. How each verb, kind and key
+behaves is in the [`agents` notes](../agents), which stay the reference until the component's own
+page exists.
+
+- **One copy.** The component lands in `/usr/local/lib/dcf-participant` (`agents.sh`, the
+  Taskfile, `COMPONENT_VERSION`, `installed-by`), with `/usr/local/bin/agents` a symlink to it and
+  the Taskfile at `/usr/local/share/go-task/includes.d/agents.yml` (when `installTaskfile` is on).
+  Any other Feature that carries the component (the `agents` Feature 2.2.0 does) finds it there
+  and installs nothing of it, unless its own copy is newer, which then replaces it.
+- **At container start** the Feature's `postStartCommand`, `claude-code-post-start`, runs
+  `agents up --post-start` (every resident agent made to run in the background, never fatal). It
+  does nothing when `participants` is off, and leaves the run to the `agents` Feature's own hook
+  when that Feature is also installed.
+- **Session names:** the template is `AGENTS_SESSION_NAME` (the task variable, `.env`,
+  `.devcontainer/.env` or the environment) or an agent's own `session-name` key in the list; the
+  default is the agent's handle. This Feature has no `sessionName` option: the `agents` Feature's
+  option of that name still works while that Feature is installed.
+- **Moving from the `agents` Feature:** set `"participants": true` here and remove the `agents`
+  line. Nothing else changes: the same tasks, the same command, the same `agents.yml` and
+  `AGENTS_FILE`. A `sessionName` option on the `agents` Feature becomes `AGENTS_SESSION_NAME` in the
+  container's environment (`containerEnv`) or in `.devcontainer/.env`. Keeping both Features for a
+  while is fine: one copy is installed, and `task agents:version` and `task agents:check` print one
+  line, `deprecated: use claude-code participants: true`, until the `agents` line goes.
+
+Off (the default), nothing of the component is installed and the post-start hook prints nothing.
 
 ## Deprecated in 1.7.0: claude-host, claude-fleet, claude-host-pin
 
@@ -410,6 +447,15 @@ the CLI) contend for `.claude.json.lock`; run one.
 
 ## Changes
 
+### [1.10.0] - 2026-11-19
+
+#### Added
+
+- **The `participants` option** (boolean, default `false`). `true` installs the participant component: the agent list (`.devcontainer/agents.yml` or `AGENTS_FILE`), the `agents` command, the `agents:*` tasks and `agents up` at every container start, which is the code of the `agents` Feature 2.1.3 moved unchanged into a shared component (ADR-0061). One copy lands in `/usr/local/lib/dcf-participant`, shared with any other Feature that installs it; the `agents` Feature 2.2.0 finds it there and installs nothing of its own. The `agents` Feature is deprecated in favour of this option: to move, set `"participants": true` here and remove the `agents` line (a `sessionName` option there becomes `AGENTS_SESSION_NAME` in the environment or `.devcontainer/.env`). See "Participants" in the notes.
+- **A `postStartCommand`, `claude-code-post-start`,** which runs `agents up --post-start` when `participants` is on (and the `agents` Feature, whose own hook does the same, is not installed). Off, it does nothing and prints nothing.
+
+Nothing to do: with `participants` left at `false` the Feature installs what it did in 1.9.9, plus the silent post-start hook.
+
 ### [1.9.9] - 2026-11-03
 
 #### Changed
@@ -421,43 +467,6 @@ the CLI) contend for `.claude.json.lock`; run one.
 #### Added
 
 - This changelog: every release of this Feature now has an entry here, written for its users, and the Feature's README shows the latest three under "Changes". Nothing to do.
-
-### [1.9.7] - 2026-11-03
-
-#### Changed
-
-- **A stale background-session record no longer starts a copy of a resident agent** (`agents-stale-bg-record`).
-  Reported by a consumer after `up --remove-existing-container` (agents 2.1.1, claude-code 1.9.6): `agents up`
-  woke a stopped resident with `claude --bg --resume <id>`, and Claude Code answered *"session 43428c82 is already
-  running in the background, so this started a copy as cf20ad8b"*, two copies of an agent that may have only one
-  (the lease). A new container has no process of any session, but Claude Code's records of sessions live in the
-  Feature's volume and survive it.
-  - **Stale records are cleared before a wake.** Claude Code keeps one record per session with a process in
-    `$CLAUDE_CONFIG_DIR/sessions/<pid>.json` (`pid`, `sessionId`, `procStart`, `pidDomain`,
-    `messagingSocketPath`, with a `<pid>.<hash>.key` beside it; read on 2.1.311, where it leaves the records of
-    containers that are gone). Before every wake, `wake` and the wake that `attach` does, the adapter looks at
-    the records that name the session it is about to wake and removes (with their `.key` files and a socket left
-    behind) those whose process is proven not to exist in this container: it ran in another pid namespace
-    (`pidDomain` differs from `/proc/self/ns/pid`), or no such pid is here, or the pid is here but started at
-    another time (`procStart` differs from field 22 of `/proc/<pid>/stat`). One line says so. A record whose
-    process is alive, that cannot be read, or that names another session is never touched.
-  - **A copy that is started anyway is stopped by the id in the CLI's note, and the wake is an error.** When the CLI
-    still prints "is already running in the background, so this started a copy as <id>", the adapter stops that copy
-    (`claude stop <id>`; the id comes from the note, since the copies were never in `claude agents`, only in Claude
-    Code's own view), never wakes again in the same run (every repeat made another copy), records nothing and exits 1
-    with `agent-adapter-claude: error: <name>: Claude Code took session <id> for one that runs ... started a copy as
-    <id2>, which was stopped; the agent is not running`. When `$CLAUDE_CONFIG_DIR/daemon/roster.json` (the background
-    service's roster, with each worker's pid and procStart; read by the CLI to decide whether a session runs) names the
-    session, the line says so; this Feature does not edit that file, which the service rewrites. `agents` treats the
-    failed wake as `agents: <name>: waking failed.`, and at post-start goes on with the container start after saying
-    `agents: some agents did not start (above)` (it never fails the start); the lease is released. The next run starts
-    from the cleared records.
-  - **`attach` never wakes a session a second time.** Reported with it: `agents start` woke the session, which the
-    list did not show yet ("not recorded"), then called `attach`, which found no running session and woke it again, a
-    second copy per run. A wake leaves a marker (`woken-<session id>` beside `agents.tsv`); `attach` of a session
-    woken less than `AGENT_ADAPTER_RECENT` seconds ago (default 60) waits for it to be listed (`AGENT_ADAPTER_WAIT`)
-    and attaches it, or says it was woken a moment ago and stops (exit 1), never waking it again.
-  - Not changed: `agents` (2.1.1) itself; a session with a live process is still never woken.
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/claude-code/CHANGELOG.md).
 

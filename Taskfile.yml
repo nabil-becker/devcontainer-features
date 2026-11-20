@@ -95,11 +95,12 @@ tasks:
   lint:
     desc: 'shellcheck, yamllint, PSScriptAnalyzer, the vendored-helper and toolchain checks, the Feature version literals in container tests (versions:check), and every Docker-free unit test (test:*-unit and friends; see each task''s desc). CI runs exactly this inside .devcontainer/ci; the tools must be installed - this repo''s devcontainer has them, at the pinned versions.'
     cmds:
-      - shellcheck -x src/*/*.sh local-features/*/*.sh local-features/*/share/bin/*.sh local-features/*/share/jobs/*/*.sh test/*/*.sh test/*/unit/*.sh test/bootstrap/*.sh bootstrap/*.sh bootstrap/host/*.sh .githooks/* .devcontainer/*.sh
+      - shellcheck -x src/*/*.sh components/*/*.sh local-features/*/*.sh local-features/*/share/bin/*.sh local-features/*/share/jobs/*/*.sh test/*/*.sh test/*/unit/*.sh test/bootstrap/*.sh bootstrap/*.sh bootstrap/host/*.sh .githooks/* .devcontainer/*.sh
       - yamllint --strict .
       - task: lint:toolchain
       - pwsh -NoLogo -NoProfile -File '{{.ROOT_DIR}}/.github/scripts/Invoke-PSScriptAnalyzer.ps1'
       - task: common:check
+      - task: components:check
       - task: common:curl-check
       - task: signpacket:check
       - task: taskfiles:check
@@ -127,6 +128,7 @@ tasks:
       - task: test:cloud-folder-unit
       - task: test:cloud-folder-login
       - task: test:agents-unit
+      - task: test:participant-unit
       - task: test:agents-contract
       - task: test:agents-lease
       - task: test:claude-unit
@@ -139,22 +141,28 @@ tasks:
       - task: test:agent-task
 
   test:agents-contract:
-    desc: 'Docker-free contract tests of the agents Feature: the same scenarios against two fake adapters with different capabilities (fakea, Claude-like with background mode, wake, list, stop and logs; fakeb, minimal, with only new, resume and attach, every other verb answering exit 3): check on a mixed list, start of an on-demand agent on each (and refused without a terminal), --resume, a resident on each (attached on fakea, run as on-demand on fakeb with its one line, refused without a terminal), up (started, skipped, never twice), list and --json for an adapter with no list (unknown, not an error), stop and logs without the verb (exit 3), unsupported verbs asked once per command, and that a list using only fakeb never runs anything named claude (a fake claude and agent-adapter-claude log any call), plus a grep that src/agents names claude only in its documented places. Part of lint.'
+    desc: 'Docker-free contract tests of the participant component (the agents command, components/participant; installed by claude-code participants: true or the deprecated agents Feature): the same scenarios against two fake adapters with different capabilities (fakea, Claude-like with background mode, wake, list, stop and logs; fakeb, minimal, with only new, resume and attach, every other verb answering exit 3): check on a mixed list, start of an on-demand agent on each (and refused without a terminal), --resume, a resident on each (attached on fakea, run as on-demand on fakeb with its one line, refused without a terminal), up (started, skipped, never twice), list and --json for an adapter with no list (unknown, not an error), stop and logs without the verb (exit 3), unsupported verbs asked once per command, and that a list using only fakeb never runs anything named claude (a fake claude and agent-adapter-claude log any call), plus a grep that the participant component (components/participant) names claude only in its documented places. Part of lint.'
     cmds:
       - bash test/agents/unit/contract_test.sh
 
+  test:participant-unit:
+    desc: 'Docker-free tests of the participant component''s installer (components/participant/install-participant.sh), every path moved into a temp folder: a first install (lib folder, the agents symlink, state folders and modes, the Taskfile include, installed-by, the go-task registry refreshed), a second Feature with the same version installing nothing (one copy), an older copy never replacing a newer one (1.10.0 beats 1.9.0), a newer one replacing an older, --taskfile false and a later caller adding only the include, usage refused; and that each src/<id>/participant copy equals the component. Part of lint.'
+    cmds:
+      - bash test/participant/unit/install_test.sh
+
   test:agents-lease:
-    desc: 'Docker-free tests of the agents Feature''s 2.0 keys and lease: lifecycle, identity, lease, definition and default parsed, checked and shown (bad values refused with their line, the inline map pointing at the flat form, two stateful agents with one identity, definition with --agent, two defaults); a 1.x list read as stateful with an exclusive lease; eight concurrent starts of one stateful agent giving one copy (resident: one start, seven joins; on-demand: one session, seven refused; up racing start); a dead holder taken over, one case per liveness rule, never a live one, eight takers giving one winner, a stale takeover lock; cannot list (never taken over) and a failed listing (nothing taken); an ephemeral agent with no lease; release by stop, by the foreground wrapper on exit and on SIGTERM, and by agents release (--force for a live holder); leases and the LEASE column; the default agent from agents, agents start and task agents; part of lint.'
+    desc: 'Docker-free tests of the participant component''s 2.0 keys and lease (the agents command, components/participant): lifecycle, identity, lease, definition and default parsed, checked and shown (bad values refused with their line, the inline map pointing at the flat form, two stateful agents with one identity, definition with --agent, two defaults); a 1.x list read as stateful with an exclusive lease; eight concurrent starts of one stateful agent giving one copy (resident: one start, seven joins; on-demand: one session, seven refused; up racing start); a dead holder taken over, one case per liveness rule, never a live one, eight takers giving one winner, a stale takeover lock; cannot list (never taken over) and a failed listing (nothing taken); an ephemeral agent with no lease; release by stop, by the foreground wrapper on exit and on SIGTERM, and by agents release (--force for a live holder); leases and the LEASE column; the default agent from agents, agents start and task agents; part of lint.'
     cmds:
       - bash test/agents/unit/lease_test.sh
 
   test:claude-unit:
-    desc: 'Docker-free tests of the claude-code Feature''s claude-host live-session rule (a running session, one with a pid, refuses a second copy; ended sessions never count; CLAUDE_HOST_ALLOW_SECOND; the stale-pin warning and CLAUDE_HOST_UPDATE_PIN; `claude agents --json` unavailable), of the claude-host-pin SessionStart hook (the right .env line, every other byte kept, never fails) of claude-fleet (running by id or by folder, unset variable, start with --bg in the folder, --plan, --no-view, the environment beating .env), the deprecation line of the three, and of agent-adapter-claude (list from `claude agents --json --all`, a session found by name and folder, every action by id, a stopped one woken with --bg --resume <session id>, never -c, never rm, resume refused while running, --extras; the list read past a notice line, a slow first read tried again, a quick error such as a wrapper''s said as it is and not retried, resume on an unreadable list opening Claude Code''s own picker, never a new session; the record of each agent''s session, so a retitled session is still found and never started twice, a /clear and a removed session resolved; session-stop, session-remove, record), and of the additionalDirectories managed-settings drop-in (empty, one, several, a space in a path, ~ expanded, re-run idempotent, a relative path refused); a fake claude on PATH answers `agents --json` and records the other calls; part of lint.'
+    desc: 'Docker-free tests of the claude-code Feature''s claude-host live-session rule (a running session, one with a pid, refuses a second copy; ended sessions never count; CLAUDE_HOST_ALLOW_SECOND; the stale-pin warning and CLAUDE_HOST_UPDATE_PIN; `claude agents --json` unavailable), of the claude-host-pin SessionStart hook (the right .env line, every other byte kept, never fails) of claude-fleet (running by id or by folder, unset variable, start with --bg in the folder, --plan, --no-view, the environment beating .env), the deprecation line of the three, and of agent-adapter-claude (list from `claude agents --json --all`, a session found by name and folder, every action by id, a stopped one woken with --bg --resume <session id>, never -c, never rm, resume refused while running, --extras; the list read past a notice line, a slow first read tried again, a quick error such as a wrapper''s said as it is and not retried, resume on an unreadable list opening Claude Code''s own picker, never a new session; the record of each agent''s session, so a retitled session is still found and never started twice, a /clear and a removed session resolved; session-stop, session-remove, record), and of claude-code-post-start (participants off: silent, nothing run; on: agents up --post-start once, never fatal; left to the agents Feature''s own hook when that Feature is installed), and of the additionalDirectories managed-settings drop-in (empty, one, several, a space in a path, ~ expanded, re-run idempotent, a relative path refused); a fake claude on PATH answers `agents --json` and records the other calls; part of lint.'
     cmds:
       - bash test/claude-code/unit/live_session_test.sh
       - bash test/claude-code/unit/adapter_test.sh
       - bash test/claude-code/unit/additional_dirs_test.sh
       - bash test/claude-code/unit/musl_test.sh
+      - bash test/claude-code/unit/post_start_test.sh
 
   test:phi-check-unit:
     desc: 'Docker-free tests of the phi-check Feature (src/phi-check): every rule with a positive and a near-miss case (never-issued SSN ranges, a lower-case MBI, an ICD code list, an NPI, a date, a name or a diagnosis word alone, an anchor outside the three-line window), no output line in any format holding the matched value, a binary or missing path failing closed, exit 2 on bad usage, the exceptions file skipping only the listed path and reporting a malformed line, --no-exceptions, standard input with --stdin-filename, the importable module; then a mutation check that three deliberately broken patterns each fail the suite; part of lint. Needs python3.'
@@ -181,7 +189,7 @@ tasks:
       - bash test/audio/unit/relay_test.sh
 
   test:agents-unit:
-    desc: 'Docker-free tests of the agents Feature''s agents command: the agent list (the YAML subset, required keys, unknown keys warned, errors with file and line), AGENTS_FILE from the task variable, .env, .devcontainer/.env, the environment or the default (a missing file named with its source), each verb per kind (start, --resume, --new and its question, up, list, stop, logs), the no-terminal rule, the fallbacks when the adapter answers exit 3, a listing that fails (state error, nothing started, the hint, never a fresh session), an on-demand agent shown none unless running, reset (a dry run by default, duplicates stopped, --purge, only listed agents and their folders, unlisted sessions untouched, a session mid-turn not stopped, uncommitted changes a warning and with --purge a refusal, --force, refused inside a Claude Code session, --all), the once-per-container-start marker, and the Feature Taskfile; a fake adapter keeps sessions in a file and records every call; part of lint. Needs task for the Taskfile part.'
+    desc: 'Docker-free tests of the agents command (the participant component, components/participant): the agent list (the YAML subset, required keys, unknown keys warned, errors with file and line), AGENTS_FILE from the task variable, .env, .devcontainer/.env, the environment or the default (a missing file named with its source), each verb per kind (start, --resume, --new and its question, up, list, stop, logs), the no-terminal rule, the fallbacks when the adapter answers exit 3, a listing that fails (state error, nothing started, the hint, never a fresh session), an on-demand agent shown none unless running, reset (a dry run by default, duplicates stopped, --purge, only listed agents and their folders, unlisted sessions untouched, a session mid-turn not stopped, uncommitted changes a warning and with --purge a refusal, --force, refused inside a Claude Code session, --all), the once-per-container-start marker, and the component Taskfile (the deprecation line of agents:version and agents:check when the agents Feature is installed, the component version alone otherwise); a fake adapter keeps sessions in a file and records every call; part of lint. Needs task for the Taskfile part.'
     cmds:
       - bash test/agents/unit/agents_test.sh
 
@@ -373,6 +381,29 @@ tasks:
           [ "$rc" -eq 0 ] && echo "common helper copies are up to date"
           exit "$rc"
 
+  components:check:
+    desc: 'Fail if a Feature''s vendored copy of a shared component (src/<id>/<name>/ or local-features/<id>/<name>/ for each components/<name>/, e.g. src/claude-code/participant/) differs from the component anywhere in the folder: every file at every depth, a file missing from the copy and a file only in the copy (diff -r; __pycache__ ignored). Run `task components:sync` to refresh the copies. Part of lint.'
+    silent: true
+    cmds:
+      - cmd: |
+          rc=0
+          for canon in components/*/; do
+            canon="${canon%/}"
+            [ -d "$canon" ] || continue
+            name="$(basename "$canon")"
+            [ -f "$canon/COMPONENT_VERSION" ] || { echo "$canon has no COMPONENT_VERSION"; rc=1; }
+            for copy in src/*/"$name" local-features/*/"$name"; do
+              [ -d "$copy" ] || continue
+              if ! out="$(diff -r -x __pycache__ "$canon" "$copy" 2>&1)"; then
+                echo "stale copy: $copy differs from $canon (task components:sync):"
+                printf '%s\n' "$out" | grep -E '^(diff|Only in|Binary)' | sed 's/^/  /'
+                rc=1
+              fi
+            done
+          done
+          [ "$rc" -eq 0 ] && echo "component copies are up to date"
+          exit "$rc"
+
   common:curl-check:
     desc: 'Fail on a download in a Feature script (src/<id>/*.sh, local-features/<id>/*.sh) that does not go through dcf_curl, the retry helper in src/common/dcf-curl.sh (a curl or wget call: the name followed by an option, a quote, a variable or a URL; comment lines skipped), and on a script that calls dcf_curl without its vendored copy beside it or without sourcing it. A justified exception carries `dcf-curl: allow <reason>` on the same line.'
     silent: true
@@ -406,12 +437,12 @@ tasks:
       - bash test/go-task/unit/aliases_test.sh
 
   taskfiles:check:
-    desc: 'Fail if a Feature Taskfile (src/<id>/taskfile.yml or local-features/<id>/taskfile.yml) breaks the mechanical rules: every task runs in the directory task was started from (dir: ''{{"{{"}}.USER_WORKING_DIR{{"}}"}}''; included through features.yml it would otherwise run in /usr/local/share/go-task/includes.d), every task has a desc, and the first task is version (NFR-2).'
+    desc: 'Fail if a Feature Taskfile (src/<id>/taskfile.yml, components/<name>/taskfile.yml or local-features/<id>/taskfile.yml) breaks the mechanical rules: every task runs in the directory task was started from (dir: ''{{"{{"}}.USER_WORKING_DIR{{"}}"}}''; included through features.yml it would otherwise run in /usr/local/share/go-task/includes.d), every task has a desc, and the first task is version (NFR-2).'
     silent: true
     cmds:
       - cmd: |
           rc=0
-          for f in src/*/taskfile.yml local-features/*/taskfile.yml; do
+          for f in src/*/taskfile.yml components/*/taskfile.yml local-features/*/taskfile.yml; do
             found="$(awk -v q="'" '
               function flush() {
                 if (task != "" && !dir) print "dir " task
@@ -454,6 +485,21 @@ tasks:
               [ "$copy" = "$canon" ] && continue
               [ -e "$copy" ] || continue
               cp "$canon" "$copy" && echo "synced $copy"
+            done
+          done
+
+  components:sync:
+    desc: 'Copy each shared component (components/<name>/) over every Feature''s vendored copy of it (src/<id>/<name>/, local-features/<id>/<name>/), whole folder, so files removed from the component go from the copies too. A Feature starts carrying a component by creating the empty folder (mkdir src/<id>/participant) and running this. After a change to a component, bump its COMPONENT_VERSION and every Feature that carries a copy.'
+    silent: true
+    cmds:
+      - cmd: |
+          for canon in components/*/; do
+            canon="${canon%/}"
+            [ -d "$canon" ] || continue
+            name="$(basename "$canon")"
+            for copy in src/*/"$name" local-features/*/"$name"; do
+              [ -d "$copy" ] || continue
+              rm -rf "$copy" && cp -r "$canon" "$copy" && rm -rf "$copy/__pycache__" && echo "synced $copy"
             done
           done
 

@@ -45,14 +45,11 @@
       "commitWhenEnv": "CLAUDECODE"
     },
     "./features/gh": {},
-    "./features/claude-code": {},
-    // The agent list is .devcontainer/agents.yml: `task agents -- host` inside,
-    // `task devcontainer:agent -- host` from the workstation. Sessions show the
-    // machine and the handle ("desk host"), so the host sessions of several
-    // machines can be told apart.
-    "./features/agents": {
-      "sessionName": "{machine} {handle}"
-    },
+    // participants: the participant component (ADR-0061; it replaces the deprecated agents
+    // Feature): the agent list is .devcontainer/agents.yml, `task agents -- host` inside,
+    // `task devcontainer:agent -- host` from the workstation. The session name template is
+    // AGENTS_SESSION_NAME in containerEnv below.
+    "./features/claude-code": { "participants": true },
     "./features/devhost": {},
     // An SSH agent for the register's operator key. The Windows engines cannot forward the
     // host's agent, so the Operator turns on key mode per machine with SSH_AGENT_MODE=key in
@@ -141,6 +138,9 @@
     "DEVHOST_LEDGER_REGISTER": "ledger",
     // The workstation's machine name, set by the launcher (devcontainer-cli 1.16.2).
     "DCF_HOST_MACHINE": "${localEnv:DCF_HOST_MACHINE}",
+    // Agent sessions show the machine and the handle ("desk host"), so the host sessions of
+    // several machines can be told apart (was the agents Feature's sessionName option).
+    "AGENTS_SESSION_NAME": "{machine} {handle}",
     // 1 when DCF_HOST_FUSE=1 in .devcontainer/.env asked the launcher for FUSE
     "DCF_HOST_FUSE": "${localEnv:DCF_HOST_FUSE}",
     // wslg when DCF_HOST_AUDIO=wslg asked the launcher to share WSLg's microphone socket, else none

@@ -8,6 +8,7 @@ flowchart TB
   subgraph tree["This repository"]
     src["src/: 20 Features"]
     lf["local-features/: devhost, agentic-register (not published)"]
+    comp["components/: participant (vendored into Features, never published alone)"]
     ra["docs/reference-architectures/: 4 assemblies"]
     pr["docs/proposals/: decided, open"]
     adr["docs/adr/: 0000 to 0060"]
@@ -25,6 +26,7 @@ flowchart TB
   registry -->|pulled by| office
   registry -->|pulled by| dsnp
   lf -.->|by local path, here only| src
+  comp -.->|copied by task components:sync| src
   pr -->|decided, then built into| src
   ra -->|assembles| src
 ```
@@ -39,8 +41,19 @@ commit that added it); every other row is "to verify against the registry".
 |---|---|
 | Host and devcontainer | `devcontainer-cli` (1.22.1), `common` (1.0.4), `cloud-folder` (1.3.3), `audio` (1.1.0) |
 | Git and identity | `git` (1.4.6), `gh` (1.1.0), `ssh-agent` (1.5.0), `openbao` (1.6.0, unreleased) |
-| Agents | `agents` (2.1.3), `claude-code` (1.9.9), `phi-check` (1.0.3), `go-task` (1.2.2), `coder-cli` (1.1.5), `dsc` (1.1.5) |
+| Agents | `agents` (2.2.0, deprecated: use `claude-code` `participants: true`), `claude-code` (1.10.0), `phi-check` (1.0.3), `go-task` (1.2.2), `coder-cli` (1.1.5), `dsc` (1.1.5) |
 | Cloud and Kubernetes | `az` (1.1.3), `kustomize` (1.0.5), `kubeconform` (1.0.5), `argocd` (1.1.5), `velero` (1.0.6), `kube-state` (1.0.4) |
+
+## Shared components: `components/`
+
+Multi-file code several Features carry, with its own `COMPONENT_VERSION` and tests, vendored
+into each by `task components:sync` and checked by `task components:check` (part of lint); no
+`devcontainer-feature.json`, so the release and test workflows, which enumerate `src/`, never
+see it ([ADR-0061](../adr/0061-the-facilitator-is-built-on-agntcy-first-with-the-mcp-split-in-two-and-the-agents-feature-moves-into-a-shared-participant-component.md)).
+
+| Component (version) | Carried by | Role |
+|---|---|---|
+| `participant` (1.0.0) | `claude-code` (`participants: true`), `agents` (deprecated) | The agent list, kinds, lease, session names, adapter verbs, `agents up` and the launcher's verbs, with the `agents:` tasks; installed once into `/usr/local/lib/dcf-participant` ([CHANGELOG](../../components/participant/CHANGELOG.md)) |
 
 ## Local and unpublished: `local-features/`
 
@@ -69,7 +82,7 @@ status lines were not (see Gaps).
 
 | Proposal | Proposals README said | Tree shows |
 |---|---|---|
-| [Agents](../proposals/agents.md), [Agents version 2](../proposals/agents-v2.md), [Session names](../proposals/session-names.md) | decided or proposed; "build not started" | `agents` 2.1.3 with a lease and `session-name` in [NOTES](../../src/agents/NOTES.md); ADRs 0036, 0041 accepted |
+| [Agents](../proposals/agents.md), [Agents version 2](../proposals/agents-v2.md), [Session names](../proposals/session-names.md) | decided or proposed; "build not started" | `agents` 2.1.3 with a lease and `session-name` in [NOTES](../../src/agents/NOTES.md); ADRs 0036, 0041 accepted; from 2.2.0 the code is the `participant` component, `agents` deprecated (ADR-0061) |
 | [Cloud folder](../proposals/cloud-folder.md) | decided; build not started | `cloud-folder` 1.3.3 exists |
 | [Host profile](../proposals/host-profile.md) | decided; build not started | built: `HOST_TYPE`, `HOST_TYPE_PRIORITY` and `DCF_HOST_*` in `devcontainer-cli` 1.22.1 ([NOTES](../../src/devcontainer-cli/NOTES.md)) |
 | [Task aliases](../proposals/task-aliases.md) | draft; build not started | `taskAliases` (team file) in `go-task` 1.2.2 ([NOTES](../../src/go-task/NOTES.md)) |
@@ -89,4 +102,6 @@ status lines were not (see Gaps).
 | Only three release tags in git | `git tag` shows `feature_*_1.0.0` for three Features; published state is in the registry, which this page did not query |
 | The devhost does not start on `wslc` | `task test` needs `--privileged` docker-in-docker ([CLAUDE.md](../../CLAUDE.md)) |
 | Agents have no least-privilege boundary yet | [agent-linux-user](../proposals/agent-linux-user.md) accepted, not built |
+| `common:check` compares single files one level deep | a helper vendored into a subfolder would not be checked; `components:check` compares whole folders (`diff -r`) |
+| `agents` 3.0.0 (retirement) waits on its conditions | [facilitator-agent](../proposals/facilitator-agent.md) 7.2: claude-code carried the component for a release, the office and DSNP moved, the launcher shown on the component alone |
 | Architecture documents are new | Data Flows and Data Inventory are written beside this page; C4 views are in `docs/model/` |

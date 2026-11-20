@@ -1202,6 +1202,21 @@ type = "product"
 term = "Shared script"
 summary = "A script in src/common vendored verbatim into the Features that use it (dcf-persist, dcf-curl)."
 
+[component]
+type = "product"
+term = "Component"
+summary = "Shared code in components/<id> with no devcontainer-feature.json, synced into each Feature that uses it and checked for drift."
+
+[participant-component]
+type = "product"
+term = "Participant component"
+summary = "The component holding the former agents Feature's code; claude-code installs it with participants: true."
+
+[deprecation]
+type = "mechanism"
+term = "Deprecation"
+summary = "A Feature or option is announced as deprecated in a minor release with behaviour unchanged and removed only in the next major."
+
 [devcontainer-hook]
 type = "mechanism"
 term = "Devcontainer hook"
@@ -1241,6 +1256,11 @@ object = "shared-script"
 subject = "setup-script"
 predicate = "runs"
 object = "devcontainer-hook"
+
+[[relation]]
+subject = "participant-component"
+predicate = "is-a"
+object = "component"
 
 [[relation]]
 subject = "launcher"

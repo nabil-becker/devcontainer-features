@@ -1,7 +1,7 @@
 
 # Agents (agents)
 
-One list of a repository's agents (.devcontainer/agents.yml, or the repo-relative path in AGENTS_FILE: name, CLI, folder, args, kind, lifecycle, identity, lease, default), two kinds and one verb for every agent CLI: task agents -- <name> makes a resident agent run in the background and attaches to it, or opens a new session of an on-demand agent (--resume, --new); a stateful agent runs as exactly one live copy, guarded by an exclusive lease (a second start joins a resident or is refused for an on-demand agent; agents:leases, agents:release); agents:up starts every resident at container start (its postStartCommand, never fatal), agents:list, agents:stop, agents:logs, agents:check. Each CLI Feature supplies an adapter (agent-adapter-<cli> on PATH; the claude-code Feature ships agent-adapter-claude); an agent's session name (the label its CLI shows) is a template, default its handle, handed to the adapter in AGENT_SESSION_NAME; a verb an adapter does not support falls back and says so. Installs a bash script and the Feature Taskfile; nothing downloaded.
+Deprecated (2.2.0): use the claude-code Feature with participants: true, which installs the same code; this Feature keeps working unchanged until 3.0.0, and installs nothing of its own when claude-code already installed it (task agents:version and agents:check print one deprecation line). One list of a repository's agents (.devcontainer/agents.yml, or the repo-relative path in AGENTS_FILE: name, CLI, folder, args, kind, lifecycle, identity, lease, default), two kinds and one verb for every agent CLI: task agents -- <name> makes a resident agent run in the background and attaches to it, or opens a new session of an on-demand agent (--resume, --new); a stateful agent runs as exactly one live copy, guarded by an exclusive lease (a second start joins a resident or is refused for an on-demand agent; agents:leases, agents:release); agents:up starts every resident at container start (its postStartCommand, never fatal), agents:list, agents:stop, agents:logs, agents:check. Each CLI Feature supplies an adapter (agent-adapter-<cli> on PATH; the claude-code Feature ships agent-adapter-claude); an agent's session name (the label its CLI shows) is a template, default its handle, handed to the adapter in AGENT_SESSION_NAME; a verb an adapter does not support falls back and says so. Installs the participant component (a bash script and the Feature Taskfile, one copy in /usr/local/lib/dcf-participant shared with claude-code); nothing downloaded.
 
 ## Example Usage
 
@@ -42,12 +42,35 @@ Tiers are the four of ADR 0045: 1 git, 2 shared folder, 3 personal folder, 4 wor
 
 Used in: [agentic-devhost](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/reference-architectures/agentic-devhost.md)
 
+## Deprecated in 2.2.0: use claude-code `participants: true`
+
+This Feature is **deprecated**. Its code moved, unchanged, into a shared participant component
+(ADR-0061) that the `claude-code` Feature installs with `"participants": true` (claude-code 1.10.0).
+**Nothing changes for you in 2.x:** the `task agents:*` names, the `agents` command,
+`.devcontainer/agents.yml`, `AGENTS_FILE`, the `sessionName` option and the verbs the
+`devcontainer-cli` launcher calls (`task devcontainer:agent`) all work as in 2.1.3. Two things are
+new: `task agents:version` and `task agents:check` print one line on stderr,
+`deprecated: use claude-code participants: true`; and when `claude-code` (or another Feature) has
+already installed the component, this Feature installs nothing of it, so the two together leave one
+copy (`/usr/local/lib/dcf-participant`). It still writes its version and its `sessionName` to
+`/usr/local/share/agents-feature`, and its own `postStartCommand` still runs `agents up`.
+
+**To move** (any time in 2.x): set `"participants": true` on `claude-code` and remove the `agents`
+line. A `sessionName` set here becomes `AGENTS_SESSION_NAME` in the container's environment
+(`containerEnv`) or in `.devcontainer/.env`; `agents.yml` keeps its name. **3.0.0 retires the
+Feature** (it will install nothing and say where to go; `:2` stays in the registry). It is released
+only once claude-code has carried the component for a release, the documented consumers have
+moved, and the launcher's `devcontainer:agent` tasks are shown to work on the component alone.
+The deprecation convention is in CONTRIBUTING ("Deprecating a Feature or an option").
+
 ## What it installs
 
 One standard way to start any agent, whatever its CLI. A repository declares its agents in one
 list; the `agents` command (on PATH, `/usr/local/bin/agents`) reads it and does the right thing
 for each agent's kind, through the adapter its CLI Feature supplies. The Feature installs that
-bash script, the Feature Taskfile and an empty state folder; nothing is downloaded, so there is
+bash script, the Feature Taskfile and an empty state folder, all from the participant component
+(since 2.2.0: `/usr/local/lib/dcf-participant`, with `/usr/local/bin/agents` a symlink into it; the
+same paths otherwise); nothing is downloaded, so there is
 nothing to verify. It installs no adapter: the `claude-code` Feature (1.7.0 or later) brings
 `agent-adapter-claude`; other CLIs follow.
 
@@ -222,7 +245,7 @@ variable's value is cut to the same set, every other character becoming `-` (`NA
 `NABIL-S PC`). A tab, quote, backslash, `
 # Agents (agents)
 
-One list of a repository's agents (.devcontainer/agents.yml, or the repo-relative path in AGENTS_FILE: name, CLI, folder, args, kind, lifecycle, identity, lease, default), two kinds and one verb for every agent CLI: task agents -- <name> makes a resident agent run in the background and attaches to it, or opens a new session of an on-demand agent (--resume, --new); a stateful agent runs as exactly one live copy, guarded by an exclusive lease (a second start joins a resident or is refused for an on-demand agent; agents:leases, agents:release); agents:up starts every resident at container start (its postStartCommand, never fatal), agents:list, agents:stop, agents:logs, agents:check. Each CLI Feature supplies an adapter (agent-adapter-<cli> on PATH; the claude-code Feature ships agent-adapter-claude); an agent's session name (the label its CLI shows) is a template, default its handle, handed to the adapter in AGENT_SESSION_NAME; a verb an adapter does not support falls back and says so. Installs a bash script and the Feature Taskfile; nothing downloaded.
+Deprecated (2.2.0): use the claude-code Feature with participants: true, which installs the same code; this Feature keeps working unchanged until 3.0.0, and installs nothing of its own when claude-code already installed it (task agents:version and agents:check print one deprecation line). One list of a repository's agents (.devcontainer/agents.yml, or the repo-relative path in AGENTS_FILE: name, CLI, folder, args, kind, lifecycle, identity, lease, default), two kinds and one verb for every agent CLI: task agents -- <name> makes a resident agent run in the background and attaches to it, or opens a new session of an on-demand agent (--resume, --new); a stateful agent runs as exactly one live copy, guarded by an exclusive lease (a second start joins a resident or is refused for an on-demand agent; agents:leases, agents:release); agents:up starts every resident at container start (its postStartCommand, never fatal), agents:list, agents:stop, agents:logs, agents:check. Each CLI Feature supplies an adapter (agent-adapter-<cli> on PATH; the claude-code Feature ships agent-adapter-claude); an agent's session name (the label its CLI shows) is a template, default its handle, handed to the adapter in AGENT_SESSION_NAME; a verb an adapter does not support falls back and says so. Installs the participant component (a bash script and the Feature Taskfile, one copy in /usr/local/lib/dcf-participant shared with claude-code); nothing downloaded.
 
 ## Example Usage
 
@@ -510,7 +533,7 @@ the background (...)`).
 - **Don't:** special-case one CLI by name in `agents` (or in an adapter's callers), or put a vendor feature such as Remote Control into the `agents` spec.
 - **Why:** 2026-10-29, "Design split agreed: Remote Control in the Claude adapter, session names in the agents spec", and 2026-10-29, "Contract test suite for agents adapters, two fake CLIs": a contract that works on one vendor only is not a contract.
 - **Instead:** each adapter chooses its own route; `agents` asks `supports` ("can it") and relies on the verb's exit code (3: not supported) at run time, with the documented fallback.
-- **Caught by:** `task test:agents-contract` (it fails when a list using only the second fake CLI runs anything named `claude`, and greps that `src/agents` names `claude` only in its documented places); ADR 0037.
+- **Caught by:** `task test:agents-contract` (it fails when a list using only the second fake CLI runs anything named `claude`, and greps that the participant component, `components/participant`, names `claude` only in its documented places); ADR 0037.
 
 ## Why it exists
 
@@ -522,7 +545,8 @@ so they live here and each CLI Feature adds only its adapter.
 ## Version and upgrade
 
 `ghcr.io/nabil-becker/devcontainer-features/agents:2` follows 2.x; rebuild to update. `agents:1` never
-moves to 2 on its own.
+moves to 2 on its own. 2.2.0 deprecates the Feature (above); 2.x after it takes bug fixes only, and
+new keys land in the participant component, which claude-code `participants: true` installs.
 
 **What 2.x holds so far.** 2.0 brings the lease and the `default` agent; 2.1 brings session names (the `sessionName` option and the `session-name:` key, with `AGENT_SESSION_NAME` handed to every CLI adapter call). The rest of version 2 arrives in steps (docs/proposals/agents-v2.md, section 12): agent integrations in 2.2 and ephemeral runs in 2.3. The Claude CLI adapter maps the session name onto `--name` in claude-code 1.9; passing `definition` (as `--agent`) follows in a later claude-code minor. Until then `definition` is stored and shown, and a start that sets it says it is not passed on yet.
 
@@ -541,6 +565,16 @@ the `SESSIONS` / `HOST_SESSION` settings, which claude-code 2.0 removes; the mig
 
 ## Changes
 
+### [2.2.0] - 2026-11-19
+
+#### Deprecated
+
+- **This Feature is deprecated: use the `claude-code` Feature with `"participants": true`** (claude-code 1.10.0), which installs the same code (ADR-0061). Nothing breaks in 2.x: the `task agents:*` names, the `agents` command, `.devcontainer/agents.yml`, `AGENTS_FILE`, the `sessionName` option and the verbs `task devcontainer:agent` calls are unchanged. `task agents:version` and `task agents:check` now print one line on stderr, `deprecated: use claude-code participants: true`. 3.0.0 retires the Feature, only after the conditions in the notes ("Deprecated in 2.2.0"). To move: set `"participants": true` on `claude-code`, remove the `agents` line, and put a `sessionName` you set here into `AGENTS_SESSION_NAME` (`containerEnv` or `.devcontainer/.env`).
+
+#### Changed
+
+- The code moved into the shared participant component (`components/participant`, vendored here in `participant/`), installed once into `/usr/local/lib/dcf-participant`, with `/usr/local/bin/agents` a symlink into it. When `claude-code` with `participants: true` (or another Feature) installed the same or a newer copy, this Feature installs nothing of it; otherwise it installs it as before. The state folders, the Taskfile include and every path a user sees are as in 2.1.3. Nothing to do.
+
 ### [2.1.3] - 2026-11-03
 
 #### Changed
@@ -552,18 +586,6 @@ the `SESSIONS` / `HOST_SESSION` settings, which claude-code 2.0 removes; the mig
 #### Added
 
 - This changelog: every release of this Feature now has an entry here, written for its users, and the Feature's README shows the latest three under "Changes". Nothing to do.
-
-### [2.1.1] - 2026-10-30
-
-#### Changed
-
-A wake answered with another session id no longer says the old session "was not woken". The line
-was written for a fresh start in place of a gone session, but a CLI may also resume a session under
-a new id that continues the same conversation (Claude Code 2.1.314, as a consumer reported; the
-CLI adapter in claude-code 1.9.4 records that id and says so on stderr). The line is now neutral,
-`<name>: running under a new session id (<new>, was <old>)`, and the adapter's own line above it
-says which case it is. Nothing else changes; the lease's carrier was already the id the adapter
-prints (2.0.3).
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/agents/CHANGELOG.md).
 

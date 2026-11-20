@@ -9,7 +9,7 @@ stateDiagram-v2
   [*] --> unreleased: PR merged, version bumped
   unreleased --> released: release workflow (manual)
   released --> released: next minor or patch, a new version
-  released --> deprecated: a task or option marked deprecated
+  released --> deprecated: a Feature, task or option marked deprecated (a minor)
   deprecated --> removed: next major
   released --> major: breaking change
   major --> [*]
@@ -17,9 +17,10 @@ stateDiagram-v2
 ```
 
 Registry tags per release: major, major.minor, full version, latest. Deprecation goes in a minor
-and removal in the next major (the rule stated for `ssh-agent` key mode in
-`docs/proposals/secrets-master-split.md`; to verify as a general rule in CONTRIBUTING.md).
-Example: `openbao` 1.6.0 is unreleased.
+(one line from `version` and `check`, NOTES, a "Deprecated" CHANGELOG heading, behaviour unchanged)
+and removal in the next major: CONTRIBUTING.md, "Deprecating a Feature or an option" (decision
+D21, ADR-0061). Examples: `openbao` 1.6.0 is unreleased; `agents` 2.2.0 is deprecated in favour of
+`claude-code` `participants: true` and retired in 3.0.0.
 
 ## A proposal
 
@@ -96,7 +97,7 @@ Start and stop are idempotent ([ADR 0018](../adr/0018-start-and-stop-are-idempot
 
 ## An agent session and its lease
 
-From `src/agents/NOTES.md` (agents 2.x, built) and [agents-v2](../proposals/agents-v2.md).
+From `src/agents/NOTES.md` (agents 2.x, built; from 2.2.0 the code is the `participant` component, `components/participant`, which claude-code installs with `participants: true`) and [agents-v2](../proposals/agents-v2.md).
 The lease belongs to a stateful agent only; an ephemeral one has none.
 
 ```mermaid

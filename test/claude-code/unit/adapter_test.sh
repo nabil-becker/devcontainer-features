@@ -583,7 +583,7 @@ mkdir -p "$CLAUDE_CONFIG_DIR/jobs/k9"
 printf '{\n  "state": "failed",\n  "detail": "source session sess-a8 not found"\n}\n' > "$CLAUDE_CONFIG_DIR/jobs/k9/state.json"
 mkdir -p "$(dirname "$records")"; printf 'host\t%s\tk9\tsess-k9\thost\n' "$repo" > "$records"
 mkdir -p "$repo/.devcontainer"; printf 'agents:\n  - name: host\n    cli: claude\n    kind: resident\n' > "$repo/.devcontainer/agents.yml"
-cp "$root/src/agents/agents.sh" "$bin/agents"; chmod +x "$bin/agents"
+cp "$root/components/participant/agents.sh" "$bin/agents"; chmod +x "$bin/agents"
 out="$(cd "$repo" && AGENTS_STATE_DIR="$T/agents-state5" PATH="$bin:$PATH" agents up --no-wait 2>&1)"; rc=$?
 check 'agents up, the record at a crashed attempt: one fresh start, no wake (exit 0)' "0:$repo|--bg|--name|host;" "$rc:$(calls)"
 contains 'agents up, the record at a crashed attempt: the lease is carried by the fresh session' "$(cd "$repo" && AGENTS_STATE_DIR="$T/agents-state5" PATH="$bin:$PATH" agents leases 2>&1)" "session:$(fresh_sid)"
@@ -830,7 +830,7 @@ check 'retitled: start-bg refuses a second session (exit 1)' 1 "$rc"
 check 'retitled: start-bg starts nothing' "" "$(calls)"
 contains 'retitled: start-bg says why' "$out" "its recorded session $newsid runs"
 # end to end: the agents command over this adapter
-cp "$root/src/agents/agents.sh" "$bin/agents"; chmod +x "$bin/agents"
+cp "$root/components/participant/agents.sh" "$bin/agents"; chmod +x "$bin/agents"
 mkdir -p "$repo/.devcontainer"
 printf 'agents:\n  - name: host\n    cli: claude\n    kind: resident\n' > "$repo/.devcontainer/agents.yml"
 : > "$FAKE_CALLS"
@@ -912,7 +912,7 @@ check 'blocked with a pid: still running' "host	sess-b2	running	$repo" "$(ad lis
 
 # the agents Feature on top of this adapter: `agents up` finds the finished resident with its live
 # process running and joins it: no stop, no resume, no start, no copy (agents.sh is the repo's own)
-agents_sh="${AGENTS_SH:-$root/src/agents/agents.sh}"
+agents_sh="${AGENTS_SH:-$root/components/participant/agents.sh}"
 if [ -f "$agents_sh" ]; then
   cp "$agents_sh" "$bin/agents"; chmod +x "$bin/agents"
   mkdir -p "$repo/.devcontainer"

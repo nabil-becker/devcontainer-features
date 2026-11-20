@@ -6,7 +6,7 @@
 #   fakeb: minimal. new, resume, attach only; start-bg, wake, list, stop, logs answer exit 3.
 # Both log every call to their own file. A fake `claude` and a fake `agent-adapter-claude`
 # are on PATH too and log if anything runs them: a list that uses only fakeb must never reach
-# them. Also greps src/agents for a hard-coded claude outside the documented places.
+# them. Also greps the participant component (components/participant) for a hard-coded claude outside the documented places.
 # `supports` must agree with the verbs (listed: never exit 3; not listed: exit 3): checked on both
 # fakes, on a deliberately lying fake (it must be caught) and on the real agent-adapter-claude
 # with a fake `claude` that starts nothing. `agents check` prints each CLI's `supports`.
@@ -15,7 +15,7 @@ set -u
 
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/../../.." && pwd)"
-agents_sh="${AGENTS_SH:-$root/src/agents/agents.sh}"
+agents_sh="${AGENTS_SH:-$root/components/participant/agents.sh}"
 src_dir="$(dirname "$agents_sh")"
 
 T="$(mktemp -d)"
@@ -295,13 +295,13 @@ lacks "session name: supports lists no session-name capability for fakea" "$OUT"
 contains "session name: check shows the name per agent" "$OUT" 'session name "b-od named"'
 cp "$T/list.plain" "$repo/.devcontainer/agents.yml"
 
-# Static: every non-comment line of src/agents naming claude must be one of the documented
-# places in the code (agents.sh, install.sh; descriptions in the JSON and Taskfile are prose) (the Feature hint for the claude cli, the Claude Code session guard in reset).
-hits="$(grep -rniE 'claude' "$src_dir/agents.sh" "$src_dir/install.sh" 2>/dev/null |
+# Static: every non-comment line of the participant component naming claude must be one of the documented
+# places in the code (agents.sh, install-participant.sh; descriptions in the JSON and Taskfile are prose) (the Feature hint for the claude cli, the Claude Code session guard in reset).
+hits="$(grep -rniE 'claude' "$src_dir/agents.sh" "$src_dir/install-participant.sh" 2>/dev/null |
   grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' |
   grep -vE "claude\) echo 'the claude-code Feature" |
   grep -vE 'CLAUDE_CODE_CHILD_SESSION' || true)"
-check "src/agents names claude only in the documented places" "" "$hits"
+check "the participant component names claude only in the documented places" "" "$hits"
 
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

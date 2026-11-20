@@ -1,4 +1,4 @@
-# The agents of this repository (the agents Feature): task agents -- <name> inside,
+# The agents of this repository (claude-code participants: true): task agents -- <name> inside,
 # task devcontainer:agent -- <name> from the workstation (no name: the default, host);
 # task agents:list shows them.
 agents:

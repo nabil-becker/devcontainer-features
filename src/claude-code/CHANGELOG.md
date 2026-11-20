@@ -8,6 +8,15 @@ here; `task lint` fails when the entry is missing.
 
 Entries from 1.0.0 to 1.9.7 were generated from the commit history (`.github/scripts/changelog.py backfill`) and the "Changes in x.y.z" sections that NOTES.md used to hold; most list commit subjects as written then; the newest of them is in wording for users.
 
+## [1.10.0] - 2026-11-19
+
+### Added
+
+- **The `participants` option** (boolean, default `false`). `true` installs the participant component: the agent list (`.devcontainer/agents.yml` or `AGENTS_FILE`), the `agents` command, the `agents:*` tasks and `agents up` at every container start, which is the code of the `agents` Feature 2.1.3 moved unchanged into a shared component (ADR-0061). One copy lands in `/usr/local/lib/dcf-participant`, shared with any other Feature that installs it; the `agents` Feature 2.2.0 finds it there and installs nothing of its own. The `agents` Feature is deprecated in favour of this option: to move, set `"participants": true` here and remove the `agents` line (a `sessionName` option there becomes `AGENTS_SESSION_NAME` in the environment or `.devcontainer/.env`). See "Participants" in the notes.
+- **A `postStartCommand`, `claude-code-post-start`,** which runs `agents up --post-start` when `participants` is on (and the `agents` Feature, whose own hook does the same, is not installed). Off, it does nothing and prints nothing.
+
+Nothing to do: with `participants` left at `false` the Feature installs what it did in 1.9.9, plus the silent post-start hook.
+
 ## [1.9.9] - 2026-11-03
 
 ### Changed

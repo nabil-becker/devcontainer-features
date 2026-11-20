@@ -25,5 +25,19 @@
       }
     },
     "remoteUser": "vscode"
+  },
+  "with_claude_code_participants": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "go-task": {},
+      "claude-code": {
+        "install": "none",
+        "participants": true
+      },
+      "agents": {
+        "sessionName": "{machine} {handle}"
+      }
+    },
+    "remoteUser": "vscode"
   }
 }
