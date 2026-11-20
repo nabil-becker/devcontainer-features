@@ -62,7 +62,9 @@ Open a "New Feature proposal" issue first. We accept two kinds of Feature:
   one in through `dependsOn` and install no binary of its own (`az` for the
   Azure CLI, `copilot` for the official `copilot-cli`, ruled 2026-11-20): its
   NOTES say so and why, and it has no `version` option, since an option cannot
-  be forwarded into `dependsOn`. Wrappers are opt-in by option, generic (no repository paths or
+  be forwarded into `dependsOn`, so it pins the version in the entry itself (`copilot` pins
+  Copilot CLI 1.0.114 and sets `COPILOT_AUTO_UPDATE=false`); each release of that Feature bumps
+  the pin after a test: bump it, run the scenarios, release. Wrappers are opt-in by option, generic (no repository paths or
   names), and fast (every call goes through them).
 
 A Feature whose tool keeps state (a login, a config dir, transcripts) owns

@@ -2,7 +2,9 @@
   "official_listed": {
     "image": "mcr.microsoft.com/devcontainers/base:debian",
     "features": {
-      "ghcr.io/devcontainers/features/copilot-cli:1": {},
+      "ghcr.io/devcontainers/features/copilot-cli:1": {
+        "version": "1.0.114"
+      },
       "copilot": {}
     },
     "remoteUser": "vscode"

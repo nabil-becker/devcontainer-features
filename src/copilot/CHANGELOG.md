@@ -19,9 +19,13 @@ here; `task lint` fails when the entry is missing.
   `dependsOn` on `ghcr.io/devcontainers/features/copilot-cli:1` installs the CLI; this Feature installs no
   binary and downloads nothing. That is this repository's exception to "`installsAfter` only", made by
   the Operator, as `az` and `phi-check` do. `installsAfter` `gh` stays. There is **no `version` option**:
-  an option cannot be forwarded into `dependsOn`, so to pin, list the official Feature with its own
-  `version` (the devcontainer CLI then installs it twice, and the final version is not fixed by the spec).
-  The official Feature's own install is not checksum-verified, `latest` self-updates, and it leaves the
+  an option cannot be forwarded into `dependsOn`, so the version is pinned in the entry itself,
+  **Copilot CLI 1.0.114**, and `COPILOT_AUTO_UPDATE=false` in `containerEnv` stops Copilot's own
+  self-update, so everyone gets the same version (the Operator's ruling S/V, 2026-11-20). Each release
+  of this Feature bumps the pin after a test. Listing the official Feature yourself with another
+  version conflicts with ours and is not supported; to update for yourself, set
+  `COPILOT_AUTO_UPDATE=true`.
+  The official Feature's own install is not checksum-verified, and it leaves the
   binary owned by uid 1001 (the release archive's owner), which this Feature hands to root; see the notes.
 - **`agent-adapter-copilot`**, the participant component's adapter for the Copilot CLI: `new`, `resume`,
   `hint`, `run-once` (one non-interactive turn through `copilot -p`, for the facilitator's pump) and

@@ -9,6 +9,8 @@ source dev-container-features-test-lib
 
 check "copilot is on PATH (from the dependsOn)" command -v copilot
 check "copilot reports a version" bash -c "copilot --version | grep -E 'Copilot CLI [0-9]+\.[0-9]+\.[0-9]+'"
+check "copilot is the pinned 1.0.114" bash -c "copilot --version | grep -q '1\.0\.114'"
+check "Copilot self-update is off" bash -c "[ \"\$COPILOT_AUTO_UPDATE\" = false ]"
 check "the binary is the official Feature's, root-owned" bash -c "[ \"\$(stat -c %U \"\$(readlink -f \"\$(command -v copilot)\")\")\" = root ]"
 check "this Feature installed no binary of its own" bash -c "[ \"\$(type -ap copilot | wc -l)\" = 1 ]"
 check "COPILOT_HOME points at the Feature's state dir" bash -c "[ \"\$COPILOT_HOME\" = /var/lib/devcontainer-features/copilot ]"

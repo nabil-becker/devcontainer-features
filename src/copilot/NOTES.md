@@ -49,7 +49,7 @@ through `dependsOn`, which is **an exception to this repository's "installsAfter
 `phi-check` do the same with the Azure CLI and Python.
 
 ```json
-"dependsOn": { "ghcr.io/devcontainers/features/copilot-cli:1": {} },
+"dependsOn": { "ghcr.io/devcontainers/features/copilot-cli:1": { "version": "1.0.114" } },
 "installsAfter": [ ".../go-task", ".../common-utils", "ghcr.io/nabil-becker/devcontainer-features/gh" ]
 ```
 
@@ -59,20 +59,25 @@ gh set up first. It is `installsAfter`, never `dependsOn`: Copilot does not need
 
 What follows from using the official Feature, which this Feature does not change:
 
-- **There is no `version` option here.** A Feature's option cannot be passed into its `dependsOn`
-  (the entry is fixed text), so there is nothing to forward. To pin, list the official Feature yourself
-  with its `version` (`"ghcr.io/devcontainers/features/copilot-cli:1": {"version": "1.0.114"}`); the
-  devcontainer CLI then installs it **twice**, once with each set of options, and which run comes last,
-  so which version stays, is not fixed by the spec (the same finding as `az`'s). Say so on the backlog
-  if you need a hard pin.
-- **Its install is not checksum-verified, and `latest` is a moving target.** The official `install.sh`
-  downloads `copilot-linux-<x64|arm64>.tar.gz` from the GitHub release with `wget` and unpacks it without
-  checking it against the release's `SHA256SUMS.txt` (NFR-3 is the official Feature's gap, not this one's,
-  which downloads nothing). With `version` on `latest` or `prerelease` it also runs `copilot update` at
-  every container start (a flag file, `/etc/devcontainer-copilot-cli/auto-update`). Copilot itself also
-  updates when a session starts, unless `COPILOT_AUTO_UPDATE=false`. A repo that needs a reproducible
-  Copilot sets a version on its own entry of the official Feature and `COPILOT_AUTO_UPDATE=false` in its
-  `containerEnv`.
+- **There is no `version` option here, and the version is pinned.** A Feature's option cannot be passed
+  into its `dependsOn` (the entry is fixed text), so the pin is fixed text too: `dependsOn` carries
+  `{"version": "1.0.114"}`, an exact release the official Feature downloads by tag (its `version` option
+  takes `latest`, `prerelease` or a version, with or without the leading `v`). Everyone who lists this
+  Feature gets the same Copilot CLI, and nothing drifts between machines. Listing the official Feature
+  yourself with **another** version conflicts with this Feature's entry, and the devcontainer CLI's
+  outcome is not fixed by the spec: that is not supported. List it with the same version (the
+  `official_listed` scenario does), or not at all.
+- **Its install is not checksum-verified.** The official `install.sh` downloads
+  `copilot-linux-<x64|arm64>.tar.gz` from the GitHub release with `wget` and unpacks it without checking it
+  against the release's `SHA256SUMS.txt` (NFR-3 is the official Feature's gap, not this one's, which
+  downloads nothing). The pinned version's `SHA256SUMS.txt` was checked by hand when the pin was chosen;
+  the install itself does not repeat that.
+- **Self-update is stopped.** The official Feature runs `copilot update` at container start only on
+  `latest` and `prerelease`, so a pinned version ends that. Copilot also updates itself when a session
+  starts unless `COPILOT_AUTO_UPDATE=false`, so this Feature sets that in `containerEnv`, and the pin holds.
+  To turn updates back on for yourself, set `COPILOT_AUTO_UPDATE=true` in your own `containerEnv`
+  or in your `.env`, or run `copilot update`; you then run a version nobody else's machine is
+  guaranteed to have.
 - **It leaves the binary owned by the publisher's CI user.** The official `install.sh` unpacks the release
   archive as root and tar keeps the archive's owner (`runner`, uid 1001), so `/usr/local/bin/copilot` is
   not root's. This Feature runs `chown root:root` on it at build (the one thing of the official install it
@@ -80,6 +85,14 @@ What follows from using the official Feature, which this Feature does not change
 - **Debian and Ubuntu only** (apt), as the official Feature says.
 - When `copilot` is absent anyway (a tool that ignores `dependsOn`), `install.sh` prints a loud warning
   and still installs the adapter, the hook and the Taskfile; `copilot-setup` repeats the warning.
+
+## Version and upgrade
+
+The Copilot CLI version is pinned in `dependsOn` (1.0.114) and its self-update is off
+(`COPILOT_AUTO_UPDATE=false`). Each `copilot` release bumps the pin after a test: change the version in
+`dependsOn`, check the new release's `SHA256SUMS.txt`, run `task test FEATURE=copilot` (the scenarios assert
+`copilot --version` against the pin), then release. Update the version in `official_listed`'s
+scenario and in this Feature's description in the same change.
 
 ## Options
 
