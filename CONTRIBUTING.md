@@ -58,7 +58,13 @@ Open a "New Feature proposal" issue first. We accept two kinds of Feature:
   order themselves after the official Feature with `installsAfter` (never
   `dependsOn`, which would force that Feature's install method on everyone),
   and install the tool themselves only when it is absent, verified and
-  pinnable. Wrappers are opt-in by option, generic (no repository paths or
+  pinnable. The exception is a Feature the Operator rules to take the official
+  one in through `dependsOn` and install no binary of its own (`az` for the
+  Azure CLI, `copilot` for the official `copilot-cli`, ruled 2026-11-20): its
+  NOTES say so and why, and it has no `version` option, since an option cannot
+  be forwarded into `dependsOn`, so it pins the version in the entry itself (`copilot` pins
+  Copilot CLI 1.0.114 and sets `COPILOT_AUTO_UPDATE=false`); each release of that Feature bumps
+  the pin after a test: bump it, run the scenarios, release. Wrappers are opt-in by option, generic (no repository paths or
   names), and fast (every call goes through them).
 
 A Feature whose tool keeps state (a login, a config dir, transcripts) owns
@@ -225,8 +231,8 @@ test/<id>/
   folder in `src/<id>/<name>/` (create the empty folder, then `task components:sync`; lint's
   `task components:check` fails when a copy differs at any depth) and installs it through the
   component's own installer, which installs one copy for every Feature that carries it (the newer
-  wins). Today: `participant` (the agent list and the `agents` command), carried by `claude-code`
-  (`participants: true`) and the deprecated `agents`. A change to a component bumps its
+  wins). Today: `participant` (the agent list and the `agents` command), carried by `claude-code` and
+  `copilot` (`participants: true`) and the deprecated `agents`. A change to a component bumps its
   `COMPONENT_VERSION` and every Feature that carries it.
 - `documentationURL` and `licenseURL` point at this repository.
 - Bump `version` per [semver](https://semver.org/) in the same PR as any

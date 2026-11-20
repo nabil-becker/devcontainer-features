@@ -1,6 +1,8 @@
 # Tasks contributed by the facilitator Feature (namespace: facilitator). Each runs the facilitator
 # command; extra arguments after --, for example:
-#   task facilitator:send -- --text '@jester tell @domain-expert-one a joke'
+#   task facilitator:transcript -- --conv c-1a2b3c4d
+# A person talks to the agents from their own Claude Code or Copilot session, over the MCP server
+# (task facilitator:snippet -- you); these tasks only read, or manage the infrastructure.
 version: '3'
 
 tasks:
@@ -30,28 +32,22 @@ tasks:
     cmds: ['facilitator participants {{.CLI_ARGS}}']
 
   register:
-    desc: 'Register participants: -- <handle>... | --all. Makes each one''s key (OpenBao, or the 0.1.0 fallback file), token and OASF record in the Directory.'
+    desc: 'Register participants and people: -- <handle>... | --all. Makes each one''s key (OpenBao, or the 0.1.0 fallback file) and token, and each participant''s OASF record in the Directory.'
     dir: '{{.USER_WORKING_DIR}}'
     cmds: ['facilitator register {{.CLI_ARGS}}']
 
   status:
-    desc: 'Who is attached (last receive) and each conversation''s messages, hops, budget and pause.'
+    desc: 'Who is attached (last receive) and each conversation''s messages, hops, budget and pause (read only).'
     dir: '{{.USER_WORKING_DIR}}'
     cmds: ['facilitator status {{.CLI_ARGS}}']
 
-  chat:
-    desc: 'Talk to the agents: one line in, the transcript followed live; @handle routes, /new group a b, /new direct a, /continue, /who, /quit. -- <conversation> to resume one.'
+  mail:
+    desc: 'A person''s unread messages, read only (the MCP tool mail of their session marks them read): -- --as <handle> [--json]; -- --notice prints one line or nothing, as the turn hook does. The handle may come from FACILITATOR_HANDLE.'
     dir: '{{.USER_WORKING_DIR}}'
-    interactive: true
-    cmds: ['facilitator chat {{.CLI_ARGS}}']
-
-  send:
-    desc: 'A message, for scripts: -- --text ''...'' [--conv <id>] [--to <handle>]. With no --conv, a conversation is made with the handles it names. -- --json for machines.'
-    dir: '{{.USER_WORKING_DIR}}'
-    cmds: ['facilitator send {{.CLI_ARGS}}']
+    cmds: ['facilitator mail {{.CLI_ARGS}}']
 
   transcript:
-    desc: 'A conversation: -- --conv <id> [--json] (every message with its routes, task states and notices).'
+    desc: 'A conversation, read only: -- --conv <id> [--limit <n>] [--json] (every message with its routes, task states and notices).'
     dir: '{{.USER_WORKING_DIR}}'
     cmds: ['facilitator transcript {{.CLI_ARGS}}']
 
@@ -61,6 +57,6 @@ tasks:
     cmds: ['facilitator verify {{.CLI_ARGS}}']
 
   snippet:
-    desc: 'How to attach a participant''s CLI: -- <handle>. Prints the MCP entry (for Claude Code, its claude mcp add command), the token line for its harness and the persona sentence. The Feature never edits a CLI''s config.'
+    desc: 'How to attach a participant''s or a person''s CLI: -- <handle>. Prints the one shared MCP entry (for Claude Code, its claude mcp add command; no handle in it), the FACILITATOR_HANDLE and FACILITATOR_TOKEN lines for the environment, the persona sentence, and for a person the Claude Code turn hook. The Feature never edits a CLI''s config.'
     dir: '{{.USER_WORKING_DIR}}'
     cmds: ['facilitator snippet {{.CLI_ARGS}}']

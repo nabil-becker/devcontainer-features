@@ -8,7 +8,7 @@ are the component's (`name`, `cli` and `kind` required; `folder`, `args`, `lifec
 three as unknown keys until it learns them; it does not refuse them.
 
 `.devcontainer/facilitator.yml` (FACILITATOR_FILE): the application's own settings, under
-`facilitator:`: `humans` (the people at a terminal, default [you]), `fallback` (the participant that
+`facilitator:`: `humans` (the people, each attached over MCP with their own token; default [you]), `fallback` (the participant that
 gets what is addressed to no one in a group), `model` (read and shown; no model is used before
 slice 6)."""
 from __future__ import annotations

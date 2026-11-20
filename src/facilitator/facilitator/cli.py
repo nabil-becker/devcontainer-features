@@ -18,8 +18,10 @@ from .participants import ListError
 from .record import FACILITATOR, RecordError
 from .settings import SettingsError
 from .signer import SignerError, openbao_status
+from .transcript import TranscriptError
 
-ERRORS = (FacilitatorError, InfraError, ListError, RecordError, SettingsError, SignerError, DirectoryError)
+ERRORS = (FacilitatorError, InfraError, ListError, RecordError, SettingsError, SignerError, DirectoryError,
+          TranscriptError)
 
 
 def _emit(a, value, text: str) -> None:
@@ -129,7 +131,7 @@ def cmd_setup(a) -> int:
         n = 0
         if a.rotate_tokens:
             for h, ident in fac.state.roster().items():
-                if ident.get("kind") == "agent":
+                if ident.get("kind") in ("agent", "human"):
                     fac.state.make_token(h)
                     n += 1
         if not a.quiet:
@@ -233,49 +235,54 @@ def cmd_status(a) -> int:
     lines += ["conversations:"] + [
         f"  {c['conversation']} {c['kind']:<6} {', '.join(c['members'])}: {c['messages']} message(s), last hops "
         f"{c['last_hops']}, budget {c['budget_used']}/{fac.limits.message_budget}, {c['waiting']} waiting"
-        + (f", PAUSED ({c['paused']}: /continue)" if c["paused"] else "") for c in convs]
+        + (f", PAUSED ({c['paused']}: a person's continue)" if c["paused"] else "") for c in convs]
     _emit(a, out, "\n".join(lines))
     return 0
 
 
-def _me(fac, a) -> str:
-    me = a.as_ or fac.humans()[0]
-    return me
+def _handle(a, required: bool = True) -> str | None:
+    """--as, else FACILITATOR_HANDLE (one MCP entry serves every agent whose harness sets it)."""
+    h = getattr(a, "as_", None) or os.environ.get("FACILITATOR_HANDLE", "").strip() or None
+    if h is None and required:
+        raise SettingsError("no handle: set FACILITATOR_HANDLE (with FACILITATOR_TOKEN) in the CLI's environment, "
+                            "or pass --as <handle>")
+    return h
 
 
-def cmd_chat(a) -> int:
-    from .chat import Chat
+def cmd_mail(a) -> int:
+    """Read only (the mail tool of a person's MCP session marks messages read; this never does)."""
+    if a.notice or a.hook:
+        # the turn hook: one line or nothing, never a failure, never a wait
+        try:
+            fac = _fac(a)
+            h = _handle(a, required=False)
+            line = fac.mail_notice(h) if h else ""
+        except Exception:                      # noqa: BLE001 - a hook must never fail a turn
+            line = ""
+        if line and a.hook:
+            print(json.dumps({"systemMessage": line, "hookSpecificOutput": {
+                "hookEventName": "UserPromptSubmit",
+                "additionalContext": line + " (the facilitator's mail tool reads them)"}}))
+        elif line:
+            print(line)
+        return 0
+    from .mcp import mail_text
     fac = _fac(a)
-    return Chat(fac, _me(fac, a), a.conversation).run()
-
-
-def cmd_send(a) -> int:
-    fac = _fac(a)
-    r = fac.send(_me(fac, a), a.text, a.conv, a.to, a.reply_to)
-    _emit(a, r, f"facilitator: {r['message_id']} in {r['conversation']} to {', '.join('@' + h for h in r['to']) or 'nobody'} "
-                f"({r['rule']})" + "".join(f"\n  ! {n}" for n in r["notices"]))
-    return 0
-
-
-def cmd_continue(a) -> int:
-    fac = _fac(a)
-    r = fac.continue_(_me(fac, a), a.conv)
-    _emit(a, r, f"facilitator: continued; {r['message_id']} routed to {', '.join('@' + h for h in r['to'])}")
+    h = _handle(a)
+    if h not in fac.humans():
+        raise FacilitatorError(f"{h} is not a human of facilitator.yml (humans: {', '.join(fac.humans())})")
+    r = fac.mail(h, a.limit, mark=False)
+    _emit(a, r, mail_text(r))
     return 0
 
 
 def cmd_transcript(a) -> int:
-    from .chat import events, transcript
+    from .transcript import lines, transcript
     fac = _fac(a)
     if a.json:
-        print(json.dumps(transcript(fac, a.conv), indent=2, sort_keys=True))
+        print(json.dumps(transcript(fac, a.conv, a.limit), indent=2, sort_keys=True))
         return 0
-    led, proj, _ = fac.record.read(a.conv)
-    if proj["thread"] is None:
-        raise FacilitatorError(f"no conversation {a.conv}")
-    print(f"conversation {a.conv} ({proj['thread']['kind']}: {', '.join(proj['thread']['members'])})")
-    for _, line in events(proj, led):
-        print(line)
+    print("\n".join(lines(fac, a.conv, a.limit)))
     return 0
 
 
@@ -298,28 +305,55 @@ def cmd_verify(a) -> int:
 
 def cmd_snippet(a) -> int:
     fac = _fac(a)
-    plist, _, _, _ = fac.participants()
+    plist, cfg, _, _ = fac.participants()
     p = next((x for x in plist if x.name == a.handle), None)
-    if p is None:
-        raise FacilitatorError(f"{a.handle} is not in the participant list")
+    human = a.handle in cfg.humans
+    if p is None and not human:
+        raise FacilitatorError(f"{a.handle} is neither in the participant list nor a human of facilitator.yml")
     tokens = fac.state.tokens / a.handle
-    cfg = {"mcpServers": {"facilitator": {"type": "stdio", "command": "facilitator", "args": ["mcp", "--as", a.handle]}}}
-    out = {"handle": a.handle, "cli": p.cli, "persona": mcp.persona(a.handle), "mcp_config": cfg,
-           "token_file": str(tokens), "env": "FACILITATOR_TOKEN"}
+    cfg_ = {"mcpServers": {"facilitator": {"type": "stdio", "command": "facilitator", "args": ["mcp"]}}}
+    env = [f"FACILITATOR_HANDLE={a.handle}", f'FACILITATOR_TOKEN="$(cat {tokens})"']
+    shared = "claude mcp add --scope user facilitator -- facilitator mcp"
+    if human:
+        hook = f"facilitator mail --as {a.handle} --hook 2>/dev/null || true"
+        settings = {"hooks": {"UserPromptSubmit": [{"hooks": [{"type": "command", "command": hook, "timeout": 10}]}]}}
+        out = {"handle": a.handle, "kind": "human", "mcp_config": cfg_, "add": shared, "env": env,
+               "token_file": str(tokens), "hook": settings, "notice": f"facilitator mail --as {a.handle} --notice",
+               "instructions": mcp.persona(a.handle, True)}
+        lines = [f"# {a.handle}: talk to the agents from your own Claude Code session, over the facilitator's MCP server",
+                 "# (the Feature never edits a CLI's settings, NFR-13: run or paste these yourself).",
+                 "# 1. The one shared MCP entry (the same for every agent and person; it names no handle):",
+                 shared,
+                 "# 2. Start your session with your handle and token in its environment (tokens are made again at",
+                 "#    each container start, so never put the token in the entry):",
+                 f"{' '.join(env)} claude",
+                 "# 3. Optional, the turn hook: a line 'Facilitator: N new messages in c-...' at each prompt, or",
+                 "#    nothing. Add this to ~/.claude/settings.json (or .claude/settings.local.json); it never",
+                 "#    fails a turn:",
+                 json.dumps(settings, indent=2),
+                 "# Copilot CLI: the same MCP entry (copilot mcp add facilitator -- facilitator mcp) and environment;",
+                 "#    it has no hook that can show a line at each turn, so ask it to call mail. In any shell:",
+                 f"#    facilitator mail --as {a.handle} --notice",
+                 "# Then: 'ask @jester for a joke'; 'any mail?'; 'continue c-...' when a conversation pauses."]
+        _emit(a, out, "\n".join(lines))
+        return 0
+    out = {"handle": a.handle, "kind": "agent", "cli": p.cli, "persona": mcp.persona(a.handle), "mcp_config": cfg_,
+           "add": shared, "env": env, "token_file": str(tokens)}
     lines = [f"# {a.handle}: attach its {p.cli} CLI to the facilitator (the Feature never edits a CLI's config, NFR-13)."]
     if p.cli == "claude":
-        lines += ["# 1. Add the MCP server, through Claude Code's own command:",
-                  f"claude mcp add --scope user facilitator -- facilitator mcp --as {a.handle}",
-                  "#    or, for one run: claude -p --mcp-config '" + json.dumps(cfg) + "' ..."]
+        lines += ["# 1. The one shared MCP entry (once for every agent; it names no handle), through Claude Code's own command:",
+                  shared,
+                  "#    or, for one run: claude -p --mcp-config '" + json.dumps(cfg_) + "' ..."]
     elif p.cli == "openai-compatible":
         lines += ["# 1. A local model needs no MCP: its harness runs the model wrapper:",
                   f"facilitator model --as {a.handle} --endpoint http://localhost:11434/v1 --model <name> "
                   f"--definition {p.definition or '<persona file>'}"]
     else:
-        lines += [f"# 1. Add this stdio MCP server through {p.cli}'s own MCP command:", json.dumps(cfg)]
-    lines += ["# 2. The harness starts the CLI with the token in its environment, never in the MCP entry of step 1",
+        lines += [f"# 1. The one shared stdio MCP entry (it names no handle), through {p.cli}'s own MCP command:",
+                  json.dumps(cfg_)]
+    lines += ["# 2. The harness starts the CLI with these two in its environment, never in the MCP entry of step 1",
               "#    (tokens are made again at each container start, so an entry would go stale):",
-              f'FACILITATOR_TOKEN="$(cat {tokens})" <the {p.cli} command>',
+              *env,
               "# 3. Add this sentence to its definition (system prompt, profile or first message):",
               mcp.persona(a.handle)]
     _emit(a, out, "\n".join(lines))
@@ -331,15 +365,18 @@ def cmd_mcp(a) -> int:
     fac = _fac(a)
     wait = fac.s.int("FACILITATOR_RECEIVE_WAIT_SECONDS")
 
+    handle = _handle(a)
+    human = fac.state.roster().get(handle, {}).get("kind") == "human"
+
     def make():
-        s = Session(fac, a.as_, os.environ.get("FACILITATOR_TOKEN"))
+        s = Session(fac, handle, os.environ.get("FACILITATOR_TOKEN"))
         try:
-            s.tr = fac.transport_for(a.as_)
+            s.tr = fac.transport_for(handle)
         except Exception as e:                 # noqa: BLE001
             raise FacilitatorError(f"SLIM is not reachable ({e}): facilitator infra up") from None
         return s
 
-    server = mcp.Server(a.as_, make, wait, out=proto, inp=sys.stdin)
+    server = mcp.Server(handle, make, wait, out=proto, inp=sys.stdin, human=human)
     try:
         return server.serve()
     finally:
@@ -385,35 +422,32 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("action", choices=["up", "down", "status", "logs"])
     c.add_argument("component", nargs="?", choices=COMPONENTS)
     c.add_argument("--lines", type=int, default=40)
-    c = command("register", cmd_register, "a participant's key, token and OASF record (and a human's key)")
+    c = command("register", cmd_register, "a participant's key, token and OASF record (a person's key and token)")
     c.add_argument("handles", nargs="*")
     c.add_argument("--all", action="store_true", help="every participant of the list and every human")
     c.add_argument("--new-key", action="store_true", help="make a new key (the old one stays valid for what it signed)")
     c.add_argument("--no-directory", action="store_true", help="do not push the OASF record")
     command("participants", cmd_participants, "the participant list and who is registered")
     command("status", cmd_status, "who is attached, and each conversation's hops, budget and pause")
-    c = command("chat", cmd_chat, "interactive: one line in, the transcript followed live", False)
-    c.add_argument("conversation", nargs="?")
+    c = command("mail", cmd_mail, "a person's unread messages, read only (the MCP tool mail marks them read); "
+                                  "--notice: one line or nothing, for a turn hook, never failing")
     c.add_argument("--as", dest="as_")
-    c = command("send", cmd_send, "a human's message, for scripts")
-    c.add_argument("--text", required=True)
-    c.add_argument("--conv")
-    c.add_argument("--to", action="append")
-    c.add_argument("--reply-to")
-    c.add_argument("--as", dest="as_")
-    c = command("continue", cmd_continue, "let a paused conversation run another hop limit")
+    c.add_argument("--limit", type=int, default=20)
+    c.add_argument("--notice", action="store_true", help="one line 'Facilitator: N new messages in ...', or nothing")
+    c.add_argument("--hook", action="store_true", help="the same line as Claude Code hook JSON (UserPromptSubmit)")
+    c = command("transcript", cmd_transcript, "a conversation, as text or --json (read only)")
     c.add_argument("--conv", required=True)
-    c.add_argument("--as", dest="as_")
-    c = command("transcript", cmd_transcript, "a conversation, as text or --json")
-    c.add_argument("--conv", required=True)
+    c.add_argument("--limit", type=int, help="its last this many messages")
     c = command("verify", cmd_verify, "walk every message back to a human-signed root; exit 0 good, 1 a break", False)
     c.add_argument("--conv", required=True)
     c.add_argument("--message")
     c.add_argument("--format", choices=["text", "json"], default="text")
-    c = command("snippet", cmd_snippet, "how to attach a participant's CLI: the MCP entry, the token, the persona")
+    c = command("snippet", cmd_snippet, "how to attach a participant's or a person's CLI: the shared MCP entry, the "
+                                        "environment, the persona; for a person, the turn hook")
     c.add_argument("handle")
-    c = command("mcp", cmd_mcp, "the MCP server (stdio) a participant's CLI starts", False)
-    c.add_argument("--as", dest="as_", required=True)
+    c = command("mcp", cmd_mcp, "the MCP server (stdio) a participant's or a person's CLI starts; the handle from "
+                                "FACILITATOR_HANDLE, or --as", False)
+    c.add_argument("--as", dest="as_")
     c = command("model", cmd_model, "the local-model wrapper: receive, /v1/chat/completions, reply", False)
     c.add_argument("--as", dest="as_", required=True)
     c.add_argument("--endpoint", required=True)

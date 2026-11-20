@@ -1,0 +1,63 @@
+{
+  "official_listed": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "ghcr.io/devcontainers/features/copilot-cli:1": {
+        "version": "1.0.114"
+      },
+      "copilot": {}
+    },
+    "remoteUser": "vscode"
+  },
+  "with_gh": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "gh": {},
+      "copilot": {}
+    },
+    "remoteUser": "vscode"
+  },
+  "participants": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "go-task": {},
+      "claude-code": {
+        "install": "none",
+        "participants": true
+      },
+      "copilot": {
+        "participants": true
+      }
+    },
+    "remoteUser": "vscode"
+  },
+  "participants_only_copilot": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "go-task": {},
+      "copilot": {
+        "participants": true
+      }
+    },
+    "remoteUser": "vscode"
+  },
+  "attach": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "copilot": {
+        "attach": "facilitator"
+      }
+    },
+    "remoteUser": "vscode"
+  },
+  "no_taskfile": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "go-task": {},
+      "copilot": {
+        "installTaskfile": false
+      }
+    },
+    "remoteUser": "vscode"
+  }
+}

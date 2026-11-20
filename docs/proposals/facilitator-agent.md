@@ -862,6 +862,25 @@ After the AGNTCY spike (`docs/spikes/2026-11-19-agntcy.md`) the Operator ruled, 
 - **P, keys when OpenBao is sealed:** the mode-600 file fallback stays for 0.x and is removed at 1.0.
 - **Q:** the Operator releases 0.1.0 after the merge; an agent does not.
 
+### Ruling on the MCP-only pivot (2026-11-20)
+
+The Operator: "remove the chat, essentially making it just accessible through the MCP." A person talks
+to the agents from their own Claude Code or Copilot session, attached to the facilitator's MCP server as
+a participant of kind `human`; this replaces the terminal of 4.9. Built in facilitator 0.2.0.
+
+1. **Seeing replies:** a non-blocking "any mail?" tool is the contract (`mail`). A turn hook that shows
+   "N new messages" at each turn is a convenience, where the CLI has one (Claude Code does:
+   `facilitator snippet <person>` prints a `UserPromptSubmit` hook; the Feature never edits Claude's
+   settings).
+2. **Loops through a person, option A:** messages sent through a person's session count as hops, like any
+   other. Only an explicit `continue` tool call (the MCP form of `/continue`, a human-kind caller only)
+   resets the hop count.
+3. **The command line:** `chat` and `send` are dropped. `transcript`, `verify`, `status` and `check` stay
+   as read-only admin tools. The other admin and infrastructure verbs stay: `version`, `setup`, `start`,
+   `infra`, `register`, `participants`, `snippet`, `mcp`, `model`.
+- **U:** `facilitator mcp` reads `FACILITATOR_HANDLE` (`--as` still accepted), so one MCP entry serves
+  every agent whose harness sets `FACILITATOR_HANDLE` and `FACILITATOR_TOKEN`.
+
 ## Architecture review (2026-11-19)
 
 **Verdict:** fit with changes

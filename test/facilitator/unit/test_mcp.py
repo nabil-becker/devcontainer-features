@@ -27,7 +27,7 @@ def test_initialize_and_tools_list():
         c = client(e, "jester")
         r = c.initialize()["result"]
         assert r["protocolVersion"] == "2025-06-18"
-        assert r["serverInfo"] == {"name": "facilitator", "version": "0.1.0"}
+        assert r["serverInfo"] == {"name": "facilitator", "version": "0.2.0"}
         assert "receive" in r["instructions"] and "@jester" in r["instructions"]
         tools = c.request("tools/list")["result"]["tools"]
         assert [t["name"] for t in tools] == ["receive", "reply", "say", "who"]

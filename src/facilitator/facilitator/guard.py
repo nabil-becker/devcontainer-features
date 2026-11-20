@@ -1,13 +1,16 @@
 """The guard module (proposal 4.5): loops and cost, bounded in the layer, deterministic, from the record.
 
 - Hop limit (hopLimit, 6): a message whose hops pass the limit is written, flagged and not delivered;
-  the conversation pauses. A human message resets hops (it starts a new chain); `/continue` lets the
-  held chain run another hopLimit.
-- Message budget (messageBudget, 40 per conversation, counted since the last `/continue`): a participant's
-  message past it is written and held the same way. A human's message always goes through.
-- Rate (rateLimit, 10 a minute per participant): a message past it is refused, not written.
-- Paused: after a hop-limit or budget hold, every participant message is written and held until a
-  human writes or continues.
+  the conversation pauses. Since 0.2.0 (the Operator's ruling of 2026-11-20, option A) a person's message
+  counts as a hop like any other: it continues the chain of the conversation it is written in, and only
+  `continue` (the MCP tool, a human-kind caller only) lets the held chain run another hopLimit. A
+  person's message in a new conversation is still a new chain's root (hops 0).
+- Message budget (messageBudget, 40 per conversation, counted since the last `continue`): a participant's
+  message past it is written and held the same way. A person's message is not held by the budget.
+- Rate (rateLimit, 10 a minute per participant): a message past it is refused, not written; a person's
+  is not counted.
+- Paused: after a hop-limit or budget hold, every message, a person's too, is written and held until a
+  person calls `continue`.
 """
 from __future__ import annotations
 
@@ -36,7 +39,7 @@ class Verdict:
 
 def allowed_hops(conv: dict, root: str, limits: Limits) -> int:
     """The highest hop count a message of the chain begun by `root` may have: hopLimit, raised by every
-    /continue on a message of that chain to the held message's hops - 1 + hopLimit."""
+    continue on a message of that chain to the held message's hops - 1 + hopLimit."""
     top = limits.hop_limit
     for c in conv["continues"]:
         m = conv["messages"].get(c["upto"])
@@ -48,19 +51,16 @@ def allowed_hops(conv: dict, root: str, limits: Limits) -> int:
 def paused(conv: dict) -> str:
     """'' when the conversation runs; else why it is paused (hop-limit | budget)."""
     why = ""
-    humans = set(conv["thread"]["humans"]) if conv["thread"] else set()
     for kind, ref in conv["events"]:
         if kind == "notice" and conv["notices"][ref]["code"] in ("hop-limit", "budget"):
             why = conv["notices"][ref]["code"]
         elif kind == "continue":
             why = ""
-        elif kind == "message" and conv["messages"][ref]["from"] in humans:
-            why = ""
     return why
 
 
 def since_continue(conv: dict) -> int:
-    """Messages written since the last /continue (or since the start)."""
+    """Messages written since the last continue (or since the start)."""
     last = None
     for n, (kind, _) in enumerate(conv["events"]):
         if kind == "continue":
@@ -75,18 +75,17 @@ def rate_ok(conv: dict, author: str, limits: Limits, now: float) -> bool:
 
 def check(conv: dict, author: str, human: bool, hops: int, root: str, limits: Limits) -> Verdict:
     """Whether a message just written (its hops and root given) is delivered. The message itself is
-    already in `conv` when this is called."""
-    if human:
-        return Verdict(True, hops=hops)
+    already in `conv` when this is called. A person's message (`human`) is held by a pause and by the hop
+    limit like any other (option A), never by the budget."""
     why = paused(conv)
     # the paused state counts notices only before this message: a notice for this message comes after it
     if why:
-        return Verdict(False, "paused", f"the conversation is paused ({why}); a human's message or /continue resumes it", hops)
+        return Verdict(False, "paused", f"the conversation is paused ({why}); only a person's continue resumes it", hops)
     if hops > allowed_hops(conv, root, limits):
         return Verdict(False, "hop-limit", f"hop limit {limits.hop_limit} reached: this message ({hops} hops from the "
-                                           f"human's) is kept and not delivered; /continue lets it run another "
-                                           f"{limits.hop_limit}", hops)
-    if since_continue(conv) > limits.message_budget:
+                                           f"person's that began the chain) is kept and not delivered; a person's "
+                                           f"continue lets it run another {limits.hop_limit}", hops)
+    if not human and since_continue(conv) > limits.message_budget:
         return Verdict(False, "budget", f"message budget {limits.message_budget} reached in this conversation; "
-                                        "/continue lets it run another budget", hops)
+                                        "a person's continue lets it run another budget", hops)
     return Verdict(True, hops=hops)

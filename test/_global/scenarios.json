@@ -30,7 +30,8 @@
       "register-engine": {},
       "packet-relay": {},
       "component-registry": {},
-      "facilitator": {}
+      "facilitator": {},
+      "copilot": {}
     },
     "remoteUser": "vscode"
   }
