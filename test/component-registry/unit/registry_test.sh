@@ -122,6 +122,32 @@ contains "worked example: explain shows each layer's version" "$ex" "1 corp-base
 contains "explain with :key shows that key only" "$(dcf-registry explain /Corp/skills/architecture-artifacts:terms)" "terms:list = C4, SLA"
 lacks "explain with :key leaves the other keys out" "$(dcf-registry explain skills/architecture-artifacts:terms)" "classification"
 
+# explain --color (1.4.0): colour by layer, plain output unchanged
+ESC="$(printf '\033')"
+plain="$(dcf-registry explain skills/architecture-artifacts --color never)"
+lacks "color never: no escape code" "$plain" "$ESC"
+check "color never: the same as the default on a non-terminal (the 1.3.0 text)" "$plain" "$ex"
+check "color=never: same as --color never" "$plain" "$(dcf-registry explain skills/architecture-artifacts --color=never)"
+col="$(dcf-registry explain skills/architecture-artifacts --color always)"
+contains "color always: escape codes are there" "$col" "${ESC}[38;5;"
+contains "color always: a legend maps layer ids to colour names" "$col" "Colour by layer:"
+contains "color always: the legend names corp-base and its colour" "$col" "[corp-base = "
+contains "color always: skipped lines are dim and struck through" "$col" "${ESC}[2;9m  skipped"
+contains "color always: every resolved line still carries its layer id" "$col" "used         corp-base@tree-"
+nolegend="$(printf '%s\n' "$col" | sed -e "s/${ESC}\\[[0-9;]*m//g" | grep -v '^Colour by layer:')"
+check "color always: stripped of escapes and the legend it is the plain text" "$plain" "$nolegend"
+check "color auto: no colour when stdout is not a terminal" "$plain" "$(dcf-registry explain skills/architecture-artifacts --color auto)"
+check "NO_COLOR with the default: no colour" "$plain" "$(NO_COLOR=1 dcf-registry explain skills/architecture-artifacts)"
+contains "NO_COLOR with --color always: the flag wins" "$(NO_COLOR=1 dcf-registry explain skills/architecture-artifacts --color always)" "${ESC}[38;5;"
+if command -v script >/dev/null 2>&1; then
+  tty_out="$(script -qec 'dcf-registry explain skills/architecture-artifacts' /dev/null 2>&1 | tr -d '\r')"
+  contains "color auto: colour on a terminal" "$tty_out" "${ESC}[38;5;"
+  tty_nc="$(NO_COLOR=1 script -qec 'dcf-registry explain skills/architecture-artifacts' /dev/null 2>&1 | tr -d '\r')"
+  lacks "color auto: NO_COLOR keeps a terminal plain" "$tty_nc" "$ESC"
+fi
+out="$(dcf-registry explain skills/architecture-artifacts --color pink 2>&1)"; rc=$?
+check "color: a bad value is refused with exit 2" 2 "$rc"
+
 # front matter of the lowest body stays at the top of SKILL.md
 printf '%s\n' '---' 'name: architecture-artifacts' 'description: Draw it.' '---' '# Architecture artifacts' > "$l1/architecture-artifacts/SKILL.md"
 dcf-registry resolve --as "$W" >/dev/null 2>&1
