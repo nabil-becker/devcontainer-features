@@ -1272,6 +1272,21 @@ type = "product"
 term = "Facilitator"
 summary = "The Feature that runs the Directory and SLIM node on loopback and routes @handle messages between named agents, keeping the conversation as a signed record."
 
+[facilitator-node]
+type = "product"
+term = "Facilitator node"
+summary = "One install of the facilitator on the network, with a role and peers or a primary; topology is configuration; it signs for its own agents."
+
+[mesh]
+type = "product"
+term = "Mesh"
+summary = "The facilitator nodes that trust each other; each node has its own mesh.yml with SPIFFE trust domains and a preset."
+
+[trust-level]
+type = "mechanism"
+term = "Trust level"
+summary = "How far a facilitator node trusts a client or peer: local, private or public; MCP over HTTP clients are public by default."
+
 [deprecation]
 type = "mechanism"
 term = "Deprecation"

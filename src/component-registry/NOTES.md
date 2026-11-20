@@ -14,7 +14,7 @@
         v
   the CLI's own skills folder (Claude Code: $CLAUDE_CONFIG_DIR/skills, marked owned)
 
-  dcf-registry explain <path> [--uses]   read-only
+  dcf-registry explain <path> [--uses] [--color auto|always|never]   read-only
 ```
 
 | Data | Where it lives | Storage tier |
@@ -283,7 +283,7 @@ list using it is refused with its line. A listed layer adapts a utility skill li
 | Skill | Runs | Does |
 | --- | --- | --- |
 | `/registry-refresh` | `dcf-registry refresh` | resolve now, for the path the current view was resolved for (so an agent's own `registry-path` is kept; `--as` names another), then `handover` to every CLI adapter on PATH. Claude Code picks the change up in the running session; a CLI that does not watch its skills folder needs its session restarted; a skill already used in a conversation keeps its old text until a new conversation |
-| `/registry-explain <path>` | `dcf-registry explain <path> [--uses]` | read-only, shown to the person |
+| `/registry-explain <path>` | `dcf-registry explain <path> [--uses] [--color auto|always|never]` | read-only, shown to the person |
 | `/registry-remember [skills/<name>] <line>` | `dcf-registry remember [--skill <name>] -- <line>` | appends `body:text = <line>` under `[skills/<name>]` (or `[skills/*]`, every skill) to `remembered.reg` in the folder of the layer marked `writable: true`, then refreshes. Refused, nothing written: no writable layer, two, a writable layer without a `path` source (a git or http layer changes through its owner's release), a folder that is not there or not writable, an empty line, a line starting with `@`. Only when the person asks (`disable-model-invocation`) |
 
 ## Handing skills to a CLI (1.1.0)
@@ -422,6 +422,7 @@ echo 'COMPONENT_REGISTRY_WHOAMI=/Corp/MyDepartment/team/me' >> .env   # git-igno
 task component-registry:resolve
 task component-registry:explain -- skills/architecture-artifacts
 task component-registry:explain -- skills/diagrams --uses
+task component-registry:explain -- skills/architecture-artifacts --color always   # a colour per layer
 ```
 
 ## Check that it works
@@ -435,7 +436,13 @@ every skipped line with its reason, and `resolved N component(s) for <W>`.
 
 - `component-registry:version`: the version, the layer list, who you are, the resolved view.
 - `component-registry:resolve`: fetch, merge and swap in the resolved view (`-- --as <path>`).
-- `component-registry:explain`: `-- <path>[:key] [--uses]`, read-only.
+- `component-registry:explain`: `-- <path>[:key] [--uses] [--color auto|always|never]`, read-only. With colour, each line is
+  painted by its layer, a legend (layer id, colour name) comes first, and skipped lines and dangling
+  refs are dim and struck through. Six colours from the Okabe-Ito set (orange, sky-blue, teal,
+  yellow, blue, purple), chosen for colour-vision deficiencies; every line also carries its layer id,
+  so colour is never the only signal. `auto` (the default) colours only on a terminal and never
+  when `NO_COLOR` is set; `always` wins over `NO_COLOR`. Without colour the text is byte for byte
+  that of 1.3.0.
 - `component-registry:setup`: re-run the start hook.
 - `component-registry:refresh`: resolve and hand over now (`-- --as <path>`); `/registry-refresh`.
 - `component-registry:remember`: `-- [--skill <name>] -- <line>`; `/registry-remember`.

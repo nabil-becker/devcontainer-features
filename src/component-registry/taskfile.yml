@@ -19,7 +19,7 @@ tasks:
 
   explain:
     dir: '{{.USER_WORKING_DIR}}'
-    desc: 'Read-only: task component-registry:explain -- skills/<name>[:key] shows every line of the resolved component with the layer it came from and the version that layer was read at, the lines skipped and why, and refs that point at nothing; -- <path> --uses lists what refers to the path.'
+    desc: 'Read-only: task component-registry:explain -- skills/<name>[:key] shows every line of the resolved component with the layer it came from and the version that layer was read at, the lines skipped and why, and refs that point at nothing; -- <path> --uses lists what refers to the path; -- <path> --color auto|always|never paints each line by its layer.'
     cmds:
       - 'dcf-registry explain {{.CLI_ARGS}}'
 

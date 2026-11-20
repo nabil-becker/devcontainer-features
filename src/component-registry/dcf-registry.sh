@@ -5,7 +5,7 @@
 # and `task component-registry:explain`.
 #
 #   dcf-registry resolve [--as <path>]          fetch each layer, merge, swap in the resolved view
-#   dcf-registry explain <path> [--uses] [--as <path>]
+#   dcf-registry explain <path> [--uses] [--as <path>] [--color auto|always|never]
 #                                               read-only: who said each line, at which version;
 #                                               --uses lists what refers to <path>
 #   dcf-registry version                        the Feature version and the layer list in use
@@ -995,17 +995,40 @@ normalise() {
   NP_COMP="$comp"
 }
 
+# Colour for explain (1.4.0): six colours of the Okabe-Ito set (distinguishable with the usual
+# colour-vision deficiencies; never red against green alone), one per layer in layer order, wrapping
+# after six. The layer id is on every line already, so colour is never the only signal. Skipped
+# lines and dangling refs are dim and struck through. Colour off prints exactly the 1.3.0 text.
+EX_PALETTE=('38;5;208' '38;5;74' '38;5;36' '38;5;220' '38;5;33' '38;5;175')
+EX_NAMES=(orange sky-blue teal yellow blue purple)
+declare -A EX_LAYER_COLOUR=()
+EX_COLOUR=0
+# paint <sgr> <text>: the text in that style when colour is on.
+paint() { if [ "$EX_COLOUR" -eq 1 ]; then printf '\033[%sm%s\033[0m' "$1" "$2"; else printf '%s' "$2"; fi; }
+# lcolour <layer id>: the SGR code of a layer's colour (none for an unknown id, such as a lock's).
+lcolour() { printf '%s' "${EX_LAYER_COLOUR[$1]:-}"; }
+# pline <sgr> <text>: a whole line, painted.
+pline() { if [ -n "$1" ]; then paint "$1" "$2"; printf '\n'; else printf '%s\n' "$2"; fi; }
+
 cmd_explain() {
-  local path='' uses=0 as='' who st key type layer ver loc data why k t s
+  local path='' uses=0 as='' color=auto who st key type layer ver loc data why k t s i n id sgr
   while [ $# -gt 0 ]; do
     case "$1" in
       --uses) uses=1; shift ;;
       --as) [ $# -ge 2 ] || die 2 "--as needs a path"; as="$2"; shift 2 ;;
-      -*) die 2 "explain: unknown option '$1' (explain <path> [--uses])" ;;
+      --color) [ $# -ge 2 ] || die 2 "--color needs auto, always or never"; color="$2"; shift 2 ;;
+      --color=*) color="${1#--color=}"; shift ;;
+      -*) die 2 "explain: unknown option '$1' (explain <path> [--uses] [--color auto|always|never])" ;;
       *) [ -z "$path" ] || die 2 "explain takes one path"; path="$1"; shift ;;
     esac
   done
   [ -n "$path" ] || die 2 "explain needs a path: dcf-registry explain skills/<name>[:key] [--uses]"
+  case "$color" in
+    always) EX_COLOUR=1 ;;
+    never) EX_COLOUR=0 ;;
+    auto) if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then EX_COLOUR=1; else EX_COLOUR=0; fi ;;
+    *) die 2 "--color takes auto, always or never, not '$color'" ;;
+  esac
   view_path
   who="$(cat "$VIEW/whoami")"
   if [ -n "$as" ] && [ "${as%/}" != "$who" ]; then
@@ -1021,8 +1044,25 @@ cmd_explain() {
   fi
   [ -f "$VIEW/meta/$NP_COMP/provenance.tsv" ] || die 1 "no component $NP_COMP in the view resolved for $who (dcf-registry resolve, or check the path)"
   printf '%s, resolved for %s at %s\n' "$NP_COMP" "$who" "$(cat "$VIEW/resolved")"
+  if [ "$EX_COLOUR" -eq 1 ]; then
+    i=0
+    while IFS=$'\t' read -r n id _; do
+      EX_LAYER_COLOUR[$id]="${EX_PALETTE[$((i % 6))]}"
+      i=$((i + 1))
+    done < <(awk -F'\t' 'NR > 1 { print $1 "\t" $2 }' "$VIEW/layers.tsv")
+    printf 'Colour by layer:'
+    i=0
+    while IFS=$'\t' read -r n id _; do
+      printf ' '; paint "${EX_PALETTE[$((i % 6))]}" "[$id = ${EX_NAMES[$((i % 6))]}]"
+      i=$((i + 1))
+    done < <(awk -F'\t' 'NR > 1 { print $1 "\t" $2 }' "$VIEW/layers.tsv")
+    printf '; skipped lines and dangling refs are dim and struck through\n'
+  fi
   echo "Layers (lowest first):"
-  awk -F'\t' 'NR > 1 { printf "  %s %s at %s, source %s (%s): %s, %s%s\n", $1, $2, $3, $4, $5, $7, $6, ($7 == "offline" ? ", the last good copy from " $8 : "") }' "$VIEW/layers.tsv"
+  while IFS= read -r s; do
+    id="$(printf '%s' "$s" | awk '{ print $2 }')"
+    pline "$(lcolour "$id")" "$s"
+  done < <(awk -F'\t' 'NR > 1 { printf "  %s %s at %s, source %s (%s): %s, %s%s\n", $1, $2, $3, $4, $5, $7, $6, ($7 == "offline" ? ", the last good copy from " $8 : "") }' "$VIEW/layers.tsv")
   while IFS=$'\t' read -r k t s; do
     [ -n "$NP_KEY" ] && [ "$k" != "$NP_KEY" ] && continue
     printf '\n%s:%s = %s\n' "$k" "$t" "$s"
@@ -1030,14 +1070,22 @@ cmd_explain() {
       [ "$key" = "$k" ] || continue
       [ "$why" != - ] || why=''
       if [ "$type" = lock ]; then s="lock $key"; else s="$key:$type = $data"; fi
-      printf '  %-12s %s@%s %s  %s%s\n' "$st" "$layer" "$ver" "$loc" "$s" "${why:+  ($why)}"
+      printf -v s '  %-12s %s@%s %s  %s%s' "$st" "$layer" "$ver" "$loc" "$s" "${why:+  ($why)}"
+      case "$st" in used) sgr="$(lcolour "$layer")" ;; *) sgr='2;9' ;; esac
+      pline "$sgr" "$s"
     done < "$VIEW/meta/$NP_COMP/provenance.tsv"
   done < "$VIEW/meta/$NP_COMP/keys.tsv"
   # Lines that did not make a key: skipped, dropped, excluded, not applying, locks.
   s="$(awk -F'\t' -v k="$NP_KEY" 'FILENAME == ARGV[1] { has[$1] = 1; next } (k == "" || $2 == k) && !($2 in has) { printf "  %-12s %s@%s %s  %s  (%s)\n", $1, $4, $6, $7, ($3 == "lock" ? "lock " $2 : $2 ":" $3 " = " $8), $9 }' "$VIEW/meta/$NP_COMP/keys.tsv" "$VIEW/meta/$NP_COMP/provenance.tsv")"
-  [ -z "$s" ] || printf '\nOther lines:\n%s\n' "$s"
+  if [ -n "$s" ]; then
+    printf '\nOther lines:\n'
+    while IFS= read -r t; do pline "$([ "$EX_COLOUR" -eq 1 ] && echo '2;9')" "$t"; done <<< "$s"
+  fi
   s="$(awk -F'\t' -v c="$NP_COMP" -v k="$NP_KEY" '$1 == c && $6 == "dangling" && (k == "" || $2 == k) { printf "  %s:%s -> %s (%s)\n", $1, $2, $3, $7 }' "$VIEW/meta/refs.tsv")"
-  [ -z "$s" ] || printf '\nDangling refs:\n%s\n' "$s"
+  if [ -n "$s" ]; then
+    printf '\nDangling refs:\n'
+    while IFS= read -r t; do pline "$([ "$EX_COLOUR" -eq 1 ] && echo '2;9')" "$t"; done <<< "$s"
+  fi
   return 0
 }
 
