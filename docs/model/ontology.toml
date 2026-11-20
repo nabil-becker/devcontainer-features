@@ -545,6 +545,26 @@ type = "concept"
 term = ".reg file"
 summary = "A component registry file of sections of paths with :key value lines."
 
+[built-in-base-layer]
+type = "mechanism"
+term = "Built-in base layer"
+summary = "The rank-0 registry layer the Feature ships, holding the utility skills; every other layer wins over it."
+
+[hand-over]
+type = "mechanism"
+term = "Hand-over"
+summary = "dcf-registry handover: gives the resolved view's skills to a CLI adapter's skills verb under the view lock (ADR-0064)."
+
+[owned-copy]
+type = "concept"
+term = "Owned copy"
+summary = "A skill the registry copied into a CLI's skills folder, marked by .component-registry; only these are replaced or removed."
+
+[registry-path]
+type = "concept"
+term = "registry-path"
+summary = "The agents list key giving one agent its who-you-are path for the start hook."
+
 [key-mode]
 type = "mechanism"
 term = "Key mode"
