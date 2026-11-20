@@ -1,4 +1,4 @@
-"""The routing rules (proposal 4.4) and the addressed-mention reading of rule 1."""
+"""The routing rules (proposal 4.4)."""
 import sys
 from pathlib import Path
 
@@ -12,18 +12,18 @@ MSGS = {"m-1": {"from": "jester"}, "m-2": {"from": "you"}}
 KNOWN = {"you", "jester", "domain-expert-one", "third", "outsider"}
 
 
-def test_mentions_and_addressed():
+def test_mentions():
     assert router.mentions("Hey @jester tell @domain-expert-one a joke") == ["jester", "domain-expert-one"]
-    assert router.addressed("Hey @jester tell @domain-expert-one a joke") == ["jester"]
-    assert router.addressed("@jester, @third and @domain-expert-one: compare") == ["jester", "third", "domain-expert-one"]
-    assert router.addressed("mail me at a@b.c, no mention") == []
+    assert router.mentions("mail me at a@b.c, no mention") == []
     assert router.mentions("@Jester @jester") == ["jester"]
 
 
-def test_rule1_addressed_mention_only():
+def test_rule1_every_mention_is_delivered():
     d = router.route(G, MSGS, "you", "@jester tell @domain-expert-one a joke", known=KNOWN)
-    assert (d.to, d.rule) == (["jester"], "mention")
+    assert (d.to, d.rule) == (["jester", "domain-expert-one"], "mention")
     assert d.mentions == ["jester", "domain-expert-one"]
+    d = router.route(G, MSGS, "you", "@jester, @third and @domain-expert-one: compare", known=KNOWN)
+    assert d.to == ["jester", "third", "domain-expert-one"]
 
 
 def test_rule1_to_argument_and_all():

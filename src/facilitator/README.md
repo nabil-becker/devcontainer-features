@@ -66,9 +66,11 @@ it, how replies come back, routing, limits and the record.
 
 - **Attachment:** a participant's CLI starts `facilitator mcp --as <handle>`, an MCP server over stdio with
   four tools. A participant asks for its mail: `receive` blocks until a message is delivered.
-- **Routing, deterministic** (no model in 0.1.0): the addressed `@handle`s (the first mention and those right
-  after it), `to`, or `@all`; no mention in a direct conversation goes to the other member, in a group to
-  the `fallback` participant or everyone; a reply with no mention goes back to the asker. A participant
+- **Routing, deterministic** (no model in 0.1.0): every `@handle` in the text is delivered, each once
+  ("@jester tell @domain-expert-one a joke" goes to both; the Operator's ruling of 2026-11-20 undid the
+  first version's addressed-only reading), plus `to`, or `@all`; the hop count bounds the chain. No mention
+  in a direct conversation goes to the other member, in a group to the `fallback` participant or everyone;
+  a reply with no mention goes back to the asker. A participant
   that is not attached is never skipped: its message waits, the sender is told, and it is delivered when
   the participant calls `receive`.
 - **Limits:** hop limit (6), message budget (40), rate (10 a minute); `/continue` resumes.
@@ -199,14 +201,18 @@ never committed (D12); a tier-2 mirror is a later item.
 facilitator's own ssh-agent for the sitting, and packets are signed through the agent. **When OpenBao is
 not ready, the private key is kept in `keys/<handle>`, mode 600, in the volume, and `keys/FALLBACK` says
 so.** This is a written exception to ADR-0048 for 0.1.0 only: a downloader without the openbao Feature can
-still sign. `facilitator register <handle> --new-key` moves a key into OpenBao once it is there.
+still sign. The fallback stays for the 0.x versions and is removed at 1.0 (the Operator's ruling of
+2026-11-20): from 1.0 a key is only ever in OpenBao. `facilitator register <handle> --new-key` moves a key
+into OpenBao once it is there.
 `FACILITATOR_KEYS=openbao` refuses the fallback.
 
 ### Participant tokens (the ADR-0048 exception of ADR-0061)
 
 `tokens/<handle>` (mode 600) is made at registration and again at every container start
 (`facilitator-start`), valid only in this container. The participant's harness puts it in the CLI's
-environment as `FACILITATOR_TOKEN`; the MCP server it starts inherits it and is refused without it. Every
+environment as `FACILITATOR_TOKEN`; the MCP server it starts inherits it and is refused without it. The
+token is never written into the CLI's MCP entry (`claude mcp add`, an MCP config file), because tokens are
+made again at each start and an entry would go stale; `facilitator snippet` says so. Every
 process of one Linux user can read every token: this stops one participant writing as another by
 mistake, not an attacker.
 
@@ -339,7 +345,12 @@ Tests: `test/facilitator/unit/` (`task test:facilitator-unit`, part of `task lin
 - The infrastructure on loopback, started by `facilitator infra up` and by `autostart`: the AGNTCY Directory
   (dirctl 1.9.1) and a SLIM node (slimctl 3.4.6), each pinned by SHA-256; slim-bindings 3.3.9 in the
   Feature's own venv.
-- Keys in OpenBao when it is ready; otherwise, for this version only, in mode-600 files in the volume.
+- Keys in OpenBao when it is ready; otherwise, in mode-600 files in the volume. This fallback stays for the 0.x
+  versions and is removed at 1.0, when a key will only ever be in OpenBao.
+- Every `@handle` in a message is delivered, each once, as the proposal's routing rule 1 says: "@jester tell
+  @domain-expert-one a joke" goes to both (the Operator's ruling of 2026-11-20). The hop count bounds the chain.
+- The participant token reaches `facilitator mcp` through the agent's environment, set by its harness, never in
+  the CLI's MCP entry, because tokens are made again at each start.
 - Version 0.1.0 rather than 1.0.0: the MCP tools, the packet fields and the verbs may change before 1.0.
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/facilitator/CHANGELOG.md).

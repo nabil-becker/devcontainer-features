@@ -55,6 +55,10 @@ facilitator: c-ce4df564: 16 entries, 4 message chain(s) walked: every chain veri
 
 ## What it taught
 
+> **Note (2026-11-20, after the Operator's ruling):** the addressed-only reading of rule 1 described below was
+> dropped. The Operator ruled "both": every `@handle` in a message is delivered, each once, as proposal
+> section 4.4 rule 1 says, and the hop count bounds the chain. The record of the run is unchanged.
+
 - **Rule 1 as written does not give the scenario.** "@handle in the text delivers to that participant,
   each mention once" would deliver the human's request to both the jester and the expert. The build reads
   rule 1 as the *addressed* mentions: the first `@handle` and those right after it; later mentions are

@@ -317,7 +317,8 @@ def cmd_snippet(a) -> int:
                   f"--definition {p.definition or '<persona file>'}"]
     else:
         lines += [f"# 1. Add this stdio MCP server through {p.cli}'s own MCP command:", json.dumps(cfg)]
-    lines += ["# 2. The harness starts it with its token in the environment (made again at each container start):",
+    lines += ["# 2. The harness starts the CLI with the token in its environment, never in the MCP entry of step 1",
+              "#    (tokens are made again at each container start, so an entry would go stale):",
               f'FACILITATOR_TOKEN="$(cat {tokens})" <the {p.cli} command>',
               "# 3. Add this sentence to its definition (system prompt, profile or first message):",
               mcp.persona(a.handle)]

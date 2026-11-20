@@ -1,11 +1,10 @@
 """The router module, deterministic (proposal 4.4; no model before slice 6).
 
-1. The `to` argument, and the **addressed** mentions in the text, deliver to those members, each once;
-   `@all` to every member of the conversation but the writer. The addressed mentions are the first
-   `@handle` and those right after it (separated by spaces, commas or "and"): in "Hey @jester tell
-   @domain-expert-one a joke" the jester is addressed and the expert is only named, so the joke, not
-   the request, reaches the expert (the scenario of proposal section 2). Every mention is recorded in
-   the message (`mentions`). A model can never redirect an addressed mention.
+1. The `to` argument and every `@handle` in the text deliver to those members, each once; `@all` to
+   every member of the conversation but the writer. "Hey @jester tell @domain-expert-one a joke" goes to
+   both (the Operator's ruling of 2026-11-20; the first version delivered only to the addressed ones).
+   Every mention is recorded in the message (`mentions`). The hop count bounds the chain. A model can
+   never redirect a mention.
 2. No mention, in a direct conversation: the other member. In a group: the participant that
    facilitator.yml names as `fallback` (when it is a member), else every member but the writer.
 3. A reply with no mention goes to the asker: the writer of the message it answers. (Checked before 2.)
@@ -18,23 +17,6 @@ import re
 from dataclasses import dataclass, field
 
 MENTION_RE = re.compile(r"(?<![A-Za-z0-9_.@-])@([A-Za-z0-9][A-Za-z0-9_-]{0,63})")
-
-
-ADDRESS_GAP_RE = re.compile(r"^(?:\s|,|;|:|\band\b|&)*$", re.IGNORECASE)
-
-
-def addressed(text: str) -> list[str]:
-    """The first mention and the mentions right after it: who the text is addressed to."""
-    out: list[str] = []
-    end = None
-    for m in MENTION_RE.finditer(text or ""):
-        if end is not None and not ADDRESS_GAP_RE.match(text[end:m.start()]):
-            break
-        h = m.group(1).lower()
-        if h not in out:
-            out.append(h)
-        end = m.end()
-    return out
 
 
 def mentions(text: str) -> list[str]:
@@ -61,7 +43,7 @@ def route(thread: dict, messages: dict, author: str, text: str, to: list[str] | 
     is not in this conversation from one that does not exist)."""
     members = list(thread["members"])
     named: list[str] = []
-    for h in [x.lower().lstrip("@") for x in (to or [])] + addressed(text):
+    for h in [x.lower().lstrip("@") for x in (to or [])] + mentions(text):
         if h not in named:
             named.append(h)
     notices: list[tuple[str, str]] = []

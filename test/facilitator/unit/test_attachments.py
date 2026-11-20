@@ -82,8 +82,11 @@ def test_mcp_client_and_model_wrapper_in_one_conversation():
         out = {}
 
         def expert_turn():
-            out["got"] = expert.call("receive", {"wait_seconds": 30}, timeout=60)
-            out["reply"] = expert.call("reply", {"text": "Ha. Old, but good."})
+            out["got"] = []                       # both mentions are delivered: the request, then the joke
+            for answer in ("Ready for the joke.", "Ha. Old, but good."):
+                got = expert.call("receive", {"wait_seconds": 30}, timeout=60)
+                out["got"].append(got["structuredContent"]["message"]["from"])
+                expert.call("reply", {"text": answer})
         th = threading.Thread(target=expert_turn)
         th.start()
         time.sleep(1.5)
@@ -93,20 +96,24 @@ def test_mcp_client_and_model_wrapper_in_one_conversation():
         end = time.time() + 30
         while time.time() < end:
             _, proj, _ = fac.record.read(conv)
-            if len(proj["order"]) >= 4:
+            if len(proj["order"]) >= 5 and all(m in proj["routes"] for m in proj["order"]):
                 break
             time.sleep(0.3)
         msgs = [proj["messages"][m] for m in proj["order"]]
-        assert [m["from"] for m in msgs] == ["you", "jester", "domain-expert-one", "jester"], [m["from"] for m in msgs]
-        assert out["got"]["structuredContent"]["message"]["from"] == "jester"
-        assert [r["to"] for m in msgs for r in proj["routes"][m["message_id"]]] == \
-            [["jester"], ["domain-expert-one"], ["jester"], ["you"]]
+        assert sorted(m["from"] for m in msgs) == ["domain-expert-one", "domain-expert-one", "jester", "jester", "you"], \
+            [m["from"] for m in msgs]
+        assert out["got"] == ["you", "jester"]
+        assert sorted(str(r["to"]) for m in msgs for r in proj["routes"][m["message_id"]]) == \
+            sorted(str(t) for t in [["jester", "domain-expert-one"], ["domain-expert-one"], ["you"], ["jester"], ["you"]])
         first = fake.requests[0]["body"]
         assert fake.requests[0]["path"] == "/v1/chat/completions" and first["model"] == "tiny"
         assert first["messages"][0]["role"] == "system" and "the jester" in first["messages"][0]["content"]
-        assert first["messages"][-1] == {"role": "user", "content": "@you: @jester tell @domain-expert-one a joke"}
+        assert {"role": "user", "content": "@you: @jester tell @domain-expert-one a joke"} in first["messages"]
         second = fake.requests[1]["body"]["messages"]
-        assert [m["role"] for m in second[1:]] == ["user", "assistant", "user"]       # the history, rebuilt from the record
+        # the history, rebuilt from the record: the request, the jester's own joke, then what others said in the group
+        roles = [m["role"] for m in second[1:]]
+        assert roles[0] == "user" and roles[-1] == "user" and roles.count("assistant") == 1, second   # the expert's "Ready" races the joke
+        assert second[-1]["content"] == "@domain-expert-one: Ha. Old, but good.", second
         from facilitator.verify import verify
         assert verify(fac, conv)["ok"]
         assert not log.exists(), f"a vendor CLI was run: {log.read_text()}"

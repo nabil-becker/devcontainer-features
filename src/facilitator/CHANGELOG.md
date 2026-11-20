@@ -20,5 +20,10 @@ here; `task lint` fails when the entry is missing.
 - The infrastructure on loopback, started by `facilitator infra up` and by `autostart`: the AGNTCY Directory
   (dirctl 1.9.1) and a SLIM node (slimctl 3.4.6), each pinned by SHA-256; slim-bindings 3.3.9 in the
   Feature's own venv.
-- Keys in OpenBao when it is ready; otherwise, for this version only, in mode-600 files in the volume.
+- Keys in OpenBao when it is ready; otherwise, in mode-600 files in the volume. This fallback stays for the 0.x
+  versions and is removed at 1.0, when a key will only ever be in OpenBao.
+- Every `@handle` in a message is delivered, each once, as the proposal's routing rule 1 says: "@jester tell
+  @domain-expert-one a joke" goes to both (the Operator's ruling of 2026-11-20). The hop count bounds the chain.
+- The participant token reaches `facilitator mcp` through the agent's environment, set by its harness, never in
+  the CLI's MCP entry, because tokens are made again at each start.
 - Version 0.1.0 rather than 1.0.0: the MCP tools, the packet fields and the verbs may change before 1.0.

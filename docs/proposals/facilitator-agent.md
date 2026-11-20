@@ -854,6 +854,14 @@ After the AGNTCY spike (`docs/spikes/2026-11-19-agntcy.md`) the Operator ruled, 
 - **G. SLIM is pinned to slimctl 3.4.6** (released, sigstore-signed, amd64 and arm64); move up when
   3.5.0 has a release, not only an image.
 
+### Ruling on the first version (2026-11-20)
+
+- **M, both:** every `@handle` in a message is delivered, each once (rule 1 as written); the first version's addressed-only reading is dropped, and the hop count bounds the chain.
+- **N:** the participant component's keys are handled on a separate branch; the facilitator's own parser is left as it is.
+- **O, token delivery:** the participant token reaches `facilitator mcp` through the agent's environment, set by its harness, never inside the CLI's MCP entry, because tokens are remade at each start.
+- **P, keys when OpenBao is sealed:** the mode-600 file fallback stays for 0.x and is removed at 1.0.
+- **Q:** the Operator releases 0.1.0 after the merge; an agent does not.
+
 ## Architecture review (2026-11-19)
 
 **Verdict:** fit with changes

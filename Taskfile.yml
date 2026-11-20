@@ -185,7 +185,7 @@ tasks:
       - for t in test/facilitator/unit/test_*.py; do echo "== $t"; python3 -I "$t" || exit 1; done
 
   test:facilitator-integration:
-    desc: 'The jester flow on the real AGNTCY components (test/facilitator/integration/jester_flow.py): infra up twice, register (OASF records in the Directory), two fake agents through facilitator mcp over SLIM, the four messages routed by the rules, every task completed, verify; everything stopped by pid. Needs an installed facilitator Feature (the jester_flow scenario runs it), or FACILITATOR_BIN, FACILITATOR_DIRCTL and FACILITATOR_SLIMCTL; not part of lint (it needs the 250 MB of AGNTCY binaries).'
+    desc: 'The jester flow on the real AGNTCY components (test/facilitator/integration/jester_flow.py): infra up twice, register (OASF records in the Directory), two fake agents through facilitator mcp over SLIM, the five messages routed by the rules (every mention delivered), every task completed, verify; everything stopped by pid. Needs an installed facilitator Feature (the jester_flow scenario runs it), or FACILITATOR_BIN, FACILITATOR_DIRCTL and FACILITATOR_SLIMCTL; not part of lint (it needs the 250 MB of AGNTCY binaries).'
     cmds:
       - python3 -I test/facilitator/integration/jester_flow.py
 

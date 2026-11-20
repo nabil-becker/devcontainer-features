@@ -113,14 +113,14 @@ def main() -> int:
         tj = threading.Thread(target=agent, args=(jester, "jester", [
             {"text": "@domain-expert-one Why did the packet cross the network? To get to the other signature."},
             {"text": "Thanks.", "to": ["you"]}]))
-        te = threading.Thread(target=agent, args=(expert, "domain-expert-one", [{"text": "Ha. Old, but good."}]))
+        te = threading.Thread(target=agent, args=(expert, "domain-expert-one", [{"text": "Ready for the joke."}, {"text": "Ha. Old, but good."}]))
         tj.start()
         te.start()
         time.sleep(2.5)                                      # both are in receive (attached)
         sent_at = time.time()
         r = json.loads(run("send", "--text", "@jester tell @domain-expert-one a joke", "--json").stdout)
         conv = r["conversation"]
-        expect(r["to"] == ["jester"] and r["notified"] == ["jester"], "send: routed to @jester and delivered over SLIM")
+        expect(sorted(r["to"]) == ["domain-expert-one", "jester"] and "jester" in r["notified"], "send: every mention is delivered (both), over SLIM")
         tj.join(120)
         te.join(120)
         for when, who_, text in log:
@@ -130,16 +130,18 @@ def main() -> int:
         tr = json.loads(run("transcript", "--conv", conv, "--json").stdout)
         got = [(m["from"], [r["rule"] for r in m["routes"]], [r["to"] for r in m["routes"]]) for m in tr["messages"]]
         print("  " + json.dumps(got))
-        expect(got == [("you", ["mention"], [["jester"]]), ("jester", ["mention"], [["domain-expert-one"]]),
-                       ("domain-expert-one", ["asker"], [["jester"]]), ("jester", ["mention"], [["you"]])],
-               "the jester flow: you -> jester -> domain-expert-one -> jester (the asker) -> you")
-        expect([m["hops"] for m in tr["messages"]] == [0, 1, 2, 3], "hops 0, 1, 2, 3")
-        expect(all(t["state"] == "completed" for m in tr["messages"][:3] for r in m["routes"] for t in r["tasks"]),
+        want = [("you", ["mention"], [["jester", "domain-expert-one"]]), ("jester", ["mention"], [["domain-expert-one"]]),
+                ("domain-expert-one", ["asker"], [["you"]]), ("domain-expert-one", ["asker"], [["jester"]]),
+                ("jester", ["mention"], [["you"]])]
+        expect(sorted(got) == sorted(want),
+               "the flow: you -> jester and expert (both); jester -> expert; expert -> you and jester (the askers); jester -> you")
+        expect(sorted(m["hops"] for m in tr["messages"]) == [0, 1, 1, 2, 3], "hops 0, 1, 1, 2, 3")
+        expect(all(t["state"] == "completed" for m in tr["messages"] for r in m["routes"] if r["to"] != ["you"] for t in r["tasks"]),
                "every delivery's A2A task is completed")
         v = run("verify", "--conv", conv, check=False)
         expect(v.returncode == 0, "verify: the chain verifies back to the human")
         vj = json.loads(run("verify", "--conv", conv, "--format", "json", check=False).stdout)
-        expect(vj["ok"] and vj["messages"] == 4, "verify --format json: 4 chains, no problem")
+        expect(vj["ok"] and vj["messages"] == 5, "verify --format json: 5 chains, no problem")
         print(f"elapsed {time.time() - t0:.1f}s")
     finally:
         for c in clients:
