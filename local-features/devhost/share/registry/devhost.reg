@@ -1,0 +1,7 @@
+; The devhost Feature's registry layer (the component registry, ADR-0063): the generic half of
+; the devhost skills, which a repository adapts in a layer of its own. Installed with the Feature at
+; /usr/local/share/devhost/registry; a repository's .devcontainer/registry.yml names it with
+;   - { kind: path, path: /usr/local/share/devhost/registry }
+; Its sections are relative, so with `at: /` they apply to everyone.
+[skills/architecture-review]
+body:text = @file architecture-review/SKILL.md

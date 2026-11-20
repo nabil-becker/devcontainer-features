@@ -49,6 +49,11 @@
     // Feature): the agent list is .devcontainer/agents.yml, `task agents -- host` inside,
     // `task devcontainer:agent -- host` from the workstation. The session name template is
     // AGENTS_SESSION_NAME in containerEnv below.
+    // The component registry (ADR-0063): the layer list is .devcontainer/registry.yml (the devhost
+    // Feature's generic layer, then this repository's .devcontainer/registry/repo). At every
+    // agent's start the participant component resolves it and hands the skills to Claude Code's
+    // personal skills folder. Who you are is COMPONENT_REGISTRY_WHOAMI in containerEnv below.
+    "./features/component-registry": {},
     "./features/claude-code": { "participants": true },
     "./features/devhost": {},
     // An SSH agent for the register's operator key. The Windows engines cannot forward the
@@ -144,7 +149,12 @@
     // 1 when DCF_HOST_FUSE=1 in .devcontainer/.env asked the launcher for FUSE
     "DCF_HOST_FUSE": "${localEnv:DCF_HOST_FUSE}",
     // wslg when DCF_HOST_AUDIO=wslg asked the launcher to share WSLg's microphone socket, else none
-    "DCF_HOST_AUDIO": "${localEnv:DCF_HOST_AUDIO}"
+    "DCF_HOST_AUDIO": "${localEnv:DCF_HOST_AUDIO}",
+    // Who you are in the component registry (a path; a role default, never a person's value):
+    // set COMPONENT_REGISTRY_WHOAMI in .devcontainer/.env (git-ignored). dcf-registry reads that
+    // file at every resolve, so a change needs no rebuild; Task's dotenv also passes it here
+    // through ${localEnv}. The two layers of this repository apply to every path.
+    "COMPONENT_REGISTRY_WHOAMI": "${localEnv:COMPONENT_REGISTRY_WHOAMI:/devcontainer-features/operator}"
   },
   "postCreateCommand": "bash .devcontainer/post-create.sh",
   "remoteUser": "vscode",

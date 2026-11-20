@@ -33,6 +33,7 @@
 #       at: /Corp                 # where its relative section paths are mounted
 #       required: true            # optional: never fetched stops resolve (on a source too)
 #       writable: true            # optional: where remember appends (one layer, a path source)
+#       heading: false            # optional (1.3.0): stack its text without a "## Layer <id>" line
 #       sources:                  # merged in this order
 #         - kind: git             # registry-source-git on PATH
 #           url: https://git.example.invalid/corp/registry.git
@@ -153,7 +154,7 @@ resolve_whoami() { # $1: the --as value, may be empty
 # ------------------------------------------------------------- the layer list ----
 # The parser: the YAML subset above, one record per line out (tab-separated):
 #   Y <n> <line>                      layer n starts
-#   K <n> <key> <value> <line>        id, at, required, writable
+#   K <n> <key> <value> <line>        id, at, required, writable, heading
 #   S <n> <m> <line>                  source m of layer n starts
 #   P <n> <m> <key> <value> <line>    kind, url, branch, tag, commit, path, remote, required,
 #                                     allow-insecure, auth.type, auth.secret, auth.user, auth.header
@@ -192,7 +193,7 @@ function scalar(s, what) {
 function setkey(where, k, v,   id) {
   if (v ~ /\t/) fail("a tab in the value of '" k "'")
   if (where == "layer") {
-    if (k !~ /^(id|at|required|writable)$/) fail("unknown key '" k "' in a layer (id, at, sources, required, writable)")
+    if (k !~ /^(id|at|required|writable|heading)$/) fail("unknown key '" k "' in a layer (id, at, sources, required, writable, heading)")
     if ((n, k) in seen) fail("'" k "' appears twice in one layer")
     seen[n, k] = 1
     printf "K\t%d\t%s\t%s\t%d\n", n, k, v, NR
@@ -349,11 +350,11 @@ load_list() {
   local out rc rec a b c d errs=0 i j at k v
   [ -f "$RF_ABS" ] || die 2 "no layer list at $RF_ABS (from $RF_SOURCE); write one (see the component-registry Feature notes) or set COMPONENT_REGISTRY_FILE to its path relative to $ROOT."
   out="$(awk "$LIST_PARSER" "$RF_ABS")"; rc=$?
-  NL=0; L_ID=() L_AT=() L_WR=() L_REQ=() L_LINE=() L_NSRC=() S_KIND=() S_REQ=() S_LINE=() S_ARGS=() S_PIN=()
+  NL=0; L_ID=() L_AT=() L_WR=() L_HD=() L_REQ=() L_LINE=() L_NSRC=() S_KIND=() S_REQ=() S_LINE=() S_ARGS=() S_PIN=()
   while IFS=$'\t' read -r rec a b c d _; do
     case "$rec" in
       Y) NL="$a"; L_LINE[a]="$b" L_NSRC[a]=0 L_REQ[a]=false ;;
-      K) case "$b" in id) L_ID[a]="$c" ;; at) L_AT[a]="$c" ;; required) L_REQ[a]="$c" ;; writable) L_WR[a]="$c" ;; esac ;;
+      K) case "$b" in id) L_ID[a]="$c" ;; at) L_AT[a]="$c" ;; required) L_REQ[a]="$c" ;; writable) L_WR[a]="$c" ;; heading) L_HD[a]="$c" ;; esac ;;
       S) L_NSRC[a]="$b"; S_LINE["$a.$b"]="$c" S_REQ["$a.$b"]=false S_ARGS["$a.$b"]='' ;;
       P) case "$c" in
            kind) S_KIND["$a.$b"]="$d" ;;
@@ -380,6 +381,7 @@ load_list() {
     fi
     case "${L_REQ[i]}" in true | false) ;; *) warn "$at: required is true or false"; errs=$((errs + 1)) ;; esac
     case "${L_WR[i]:-false}" in true | false) ;; *) warn "$at: writable is true or false"; errs=$((errs + 1)) ;; esac
+    case "${L_HD[i]:-true}" in true | false) ;; *) warn "$at: heading is true or false"; errs=$((errs + 1)) ;; esac
     [ "${L_NSRC[i]}" -gt 0 ] || { warn "$at has no sources"; errs=$((errs + 1)); }
     for ((j = 1; j <= L_NSRC[i]; j++)); do
       k="$i.$j"; at="$RF:${S_LINE[$k]}: layer ${L_ID[i]:-$i} source $j"
@@ -584,6 +586,22 @@ function parse(file,   ln, nr, t, loc, p, hdr, dir) {
   }
   close(file)
 }
+# nohead(layer): 1 when the layer stacks its text without a heading (heading: false in the list)
+function nohead(l) { return index(NOHEAD, " " l " ") > 0 }
+# setfm(fm, key, val): the front matter (---...---, or none) with key: val, replacing the key's line
+# and its indented continuation lines, else added before the closing ---
+function setfm(fm, key, val,   ln, nl, x, o, done, skip) {
+  if (fm == "") fm = "---\n---"
+  nl = split(fm, ln, "\n"); o = ""; done = 0; skip = 0
+  for (x = 1; x <= nl; x++) {
+    if (skip && ln[x] ~ /^[ \t]/) continue
+    skip = 0
+    if (x > 1 && x < nl && !done && index(ln[x], key ":") == 1) { o = o "\n" key ": " val; done = 1; skip = 1; continue }
+    if (x == nl && !done) o = o "\n" key ": " val
+    o = o (x > 1 ? "\n" : "") ln[x]
+  }
+  return o
+}
 function isperm(k) { return k == "allowed-tools" || k == "disallowed-tools" || k ~ /^permission/ }
 # safe relative name inside a layer copy: no leading /, no .. segment
 function inside(r) { return r != "" && substr(r, 1, 1) != "/" && r !~ /(^|\/)\.\.(\/|$)/ }
@@ -725,8 +743,9 @@ function resolve(c,   i, j, n, d, x, y, cand, cs, lowrank, rmax, rloc, rlay, k, 
       }
       RES[k] = out
     } else {
-      # text: stacked from the lowest layer to the highest, one heading per layer
-      out = ""; lastlay = ""; fm = ""
+      # text: stacked from the lowest layer to the highest, one heading per layer unless the layer
+      # says heading: false (1.3.0), then its text follows the one before after a blank line
+      out = ""; lastlay = ""; fm = ""; bare = 0
       for (a = 1; a <= n; a++) {
         i = cand[a]; if (Lkey[i] != k || ST[i] != "alive") continue
         blk = Ldata[i]
@@ -741,13 +760,30 @@ function resolve(c,   i, j, n, d, x, y, cand, cs, lowrank, rmax, rloc, rlay, k, 
           if (p) { fm = substr(blk, 1, p + 7); blk = substr(blk, p + 8); sub(/^\n+/, "", blk) }
         }
         ST[i] = "used"; WHY[i] = "stacked"
-        if (Llayer[i] != lastlay) { out = out (out == "" ? "" : "\n\n") "## Layer " Llayer[i] "\n\n" blk; lastlay = Llayer[i] }
-        else out = out "\n\n" blk
+        if (out == "") bare = nohead(Llayer[i])
+        if (Llayer[i] != lastlay && !nohead(Llayer[i])) out = out (out == "" ? "" : "\n\n") "## Layer " Llayer[i] "\n\n" blk
+        else out = out (out == "" ? "" : "\n\n") blk
+        lastlay = Llayer[i]
       }
       RES[k] = out
-      if (k == "body") { printf "%s%s\n", (fm == "" ? "" : fm "\n"), out > (base "/body.md"); close(base "/body.md") }
+      if (k == "body") { HASBODY = 1; BODYFM = fm; BODYOUT = out; BODYBARE = bare }
     }
   }
+  # SKILL.md: the body, its front matter carrying the resolved name and description values (1.3.0)
+  if (HASBODY) {
+    fm = BODYFM
+    if (c ~ /^skills\//) {
+      for (x = 1; x <= 2; x++) {
+        k = (x == 1 ? "name" : "description")
+        if (!(k in RES) || KT[k] != "value" || RES[k] == "") continue
+        fm = setfm(fm, k, RES[k])
+        for (a = 1; a <= n; a++) { i = cand[a]; if (Lkey[i] == k && ST[i] == "used" && WHY[i] == "the strongest line") WHY[i] = "the strongest line; written into SKILL.md's front matter" }
+      }
+    }
+    # a bare first block (heading: false) keeps the blank line between the front matter and the text
+    printf "%s%s\n", (fm == "" ? "" : fm (BODYBARE ? "\n\n" : "\n")), BODYOUT > (base "/body.md"); close(base "/body.md")
+  }
+  HASBODY = 0; BODYFM = ""; BODYOUT = ""; BODYBARE = 0
   # provenance: every candidate line, then lines that do not apply
   for (a = 1; a <= n; a++) {
     i = cand[a]
@@ -900,7 +936,9 @@ cmd_resolve() {
 
   printf '%s\n' "$WHOAMI" > "$stage/whoami"
   date -u +%Y-%m-%dT%H:%M:%SZ > "$stage/resolved"
-  out="$(awk -v WHO="$WHOAMI" -v KINDLIST="$KINDS" -v ACTIVE="$ACTIVE_KINDS" -v META="$stage/meta" "$RESOLVER" "$TMP/manifest")"; rc=$?
+  # The layers that stack their text without a heading (heading: false), space-separated.
+  nohead=' '; for ((n = 1; n <= NL; n++)); do [ "${L_HD[n]:-true}" = false ] && nohead+="${L_ID[n]} "; done
+  out="$(awk -v WHO="$WHOAMI" -v KINDLIST="$KINDS" -v ACTIVE="$ACTIVE_KINDS" -v META="$stage/meta" -v NOHEAD="$nohead" "$RESOLVER" "$TMP/manifest")"; rc=$?
   [ "$rc" -eq 0 ] || { rm -rf "$stage"; die 1 "the merge failed (awk exit $rc); the resolved view was left as it was"; }
   local nres=0 nskip=0 nprob=0
   while IFS=$'\t' read -r line c layer loc key why; do

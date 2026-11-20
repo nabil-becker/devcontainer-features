@@ -48,6 +48,8 @@ participant component runs `resolve` at every agent's start and `dcf-registry ha
 skills to the CLI adapter's `skills` verb (ADR-0064). The dashed relations come later: the
 launcher's share mount and who-you-are path, and the `http` and cloud-folder sources (slice 3).
 OpenBao gives a `git` source its secret today, through `dcf-secret`.
+Slice 4 (the first real use) adds the devhost Feature as a layer's owner: its image folder holds
+the generic `architecture-review`, which this repository's own layer stacks on.
 
 ```mermaid
 flowchart LR
@@ -62,4 +64,5 @@ flowchart LR
   launcher -.->|later: mounts shares, sets whoami for| component-registry
   participant-component -->|runs resolve at start| component-registry
   component-registry -->|hands skills to| cli-adapter
+  devhost["devhost Feature: the generic layer"] -->|a path layer for| component-registry
 ```

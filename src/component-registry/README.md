@@ -1,7 +1,7 @@
 
 # Component registry (component-registry)
 
-A registry for agentic components, shaped like the Windows Registry (ADR-0063). Layers from any number of sources (a git branch, tag or commit; one .reg file over http(s) with bearer, header or basic log-in, the secret through dcf-secret and never over plain http without allow-insecure; a folder or mounted file share; a folder in the cloud folder, from the cloud-folder Feature) are fetched into local layer copies (version first, so an unchanged layer is skipped; offline, the last good copy is used and said) and merged by value type into one resolved view for who you are (COMPONENT_REGISTRY_WHOAMI, a path such as /Corp/MyDepartment/team/me): value replaces, list combines (!item takes out), text stacks in layer order, ref points at another path; the higher layer wins, the more specific scope inside a layer, a locked key beats both, and a permission key comes from a component's lowest layer only. dcf-registry resolve and dcf-registry explain <path> [--uses] (task component-registry:resolve, :explain); release 1 resolves skills, and dcf-registry handover gives them to a CLI's adapter (agent-adapter-<cli> skills; Claude Code: its personal skills folder, live in running sessions), which the participant component (claude-code participants: true) does at every agent's start. A built-in base layer ships the utility skills /registry-refresh, /registry-explain and /registry-remember (appends to the layer marked writable: true). The layer list is .devcontainer/registry.yml (option registryFile, COMPONENT_REGISTRY_FILE). Layer copies and the resolved view live owner-only in a named volume at COMPONENT_REGISTRY_STATE_DIR=/var/lib/devcontainer-features/component-registry, made usable by component-registry-setup at start. Bash, awk and sed; nothing downloaded at build.
+A registry for agentic components, shaped like the Windows Registry (ADR-0063). Layers from any number of sources (a git branch, tag or commit; one .reg file over http(s) with bearer, header or basic log-in, the secret through dcf-secret and never over plain http without allow-insecure; a folder or mounted file share; a folder in the cloud folder, from the cloud-folder Feature) are fetched into local layer copies (version first, so an unchanged layer is skipped; offline, the last good copy is used and said) and merged by value type into one resolved view for who you are (COMPONENT_REGISTRY_WHOAMI, a path such as /Corp/MyDepartment/team/me): value replaces, list combines (!item takes out), text stacks in layer order (under a heading per layer, or none with the layer key heading: false), a skill's name and description values go into its SKILL.md front matter, ref points at another path; the higher layer wins, the more specific scope inside a layer, a locked key beats both, and a permission key comes from a component's lowest layer only. dcf-registry resolve and dcf-registry explain <path> [--uses] (task component-registry:resolve, :explain); release 1 resolves skills, and dcf-registry handover gives them to a CLI's adapter (agent-adapter-<cli> skills; Claude Code: its personal skills folder, live in running sessions), which the participant component (claude-code participants: true) does at every agent's start. A built-in base layer ships the utility skills /registry-refresh, /registry-explain and /registry-remember (appends to the layer marked writable: true). The layer list is .devcontainer/registry.yml (option registryFile, COMPONENT_REGISTRY_FILE). Layer copies and the resolved view live owner-only in a named volume at COMPONENT_REGISTRY_STATE_DIR=/var/lib/devcontainer-features/component-registry, made usable by component-registry-setup at start. Bash, awk and sed; nothing downloaded at build.
 
 ## Example Usage
 
@@ -69,6 +69,8 @@ the resolved skills to a CLI through its adapter's `skills` verb, the participan
 resolves and hands over at every agent's start (with a per-agent who-you-are path), and a built-in
 base layer ships the utility skills `/registry-refresh`, `/registry-explain`, `/registry-remember`.
 Release 1.2.0 adds the `http` source (and, with cloud-folder 1.4.0, the `cloud-folder` source).
+Release 1.3.0 adds the layer key `heading: false` (stack a layer's text without a heading) and
+writes a skill's `name` and `description` values into its `SKILL.md` front matter.
 It resolves **skills** only. Not yet: the `db` source; a layer list naming it is read, and
 `resolve` says that kind is not in this release.
 
@@ -130,7 +132,14 @@ layers:
     sources:
       - { kind: path, path: .registry-mine }   # git-ignored in this repository
     writable: true              # /registry-remember appends here (one layer, a path source)
+    heading: false              # 1.3.0: its text stacks with no "## Layer mine" line
 ```
+
+`heading` (1.3.0, `true` by default) says whether a layer's `text` lines are stacked under a
+`## Layer <id>` heading. With `heading: false` the layer's text follows the text before it after
+one blank line, as if the two were one file; `explain` still names each line's layer. Use it when
+the layers are written to read as one document (the first real use, below); keep the heading when
+a reader should see who said what.
 
 Only this YAML subset is read: comments, plain and quoted values, block entries and one-line
 `{ }` maps. An unknown key, a missing `url` or ref, two refs, or a relative `at` is refused with
@@ -210,6 +219,13 @@ lock key                  a higher layer cannot change this key
   copies a folder's files into the skill, every such line overlaid from the weakest to the
   strongest, so a higher layer's file of the same name replaces a lower one. `SKILL.md` comes
   from `body` when there is one.
+- **Front matter values** (1.3.0): a skill's `name:value` and `description:value` are written into
+  the front matter of the `SKILL.md` that `body` makes, the strongest line winning as for any
+  `value`: the key's line (and its indented continuation lines) is replaced, or added before the
+  closing `---`, or a front matter is made when the body has none. Only these two keys; the value
+  is written as it is, one line (quote it in the `.reg` line if YAML needs that). Any other front
+  matter line stays the first block's, so a permission key (`allowed-tools`) keeps the lowest
+  layer's, as rule 3 of the match rule says. A `SKILL.md` that comes from `files` is not changed.
 
 A line that cannot be read (no section, an unknown type, a bad header, a kind not in this
 release) is reported with `source:file:line` and skipped; content never fails a `resolve`.
@@ -267,8 +283,10 @@ For who you are, `W`:
    skipped and reported.
 7. **Merge by type**: `value` and `ref`, the strongest line; `list`, items combined from the
    weakest line to the strongest, each `!item` removing what came before; `text`, every line
-   stacked from the lowest layer to the highest, one `## Layer <id>` heading per layer (the first
-   block's `---` front matter stays at the top of `SKILL.md`).
+   stacked from the lowest layer to the highest, one `## Layer <id>` heading per layer unless the
+   layer says `heading: false` (1.3.0; then one blank line only); the first block's `---` front
+   matter stays at the top of `SKILL.md`, with the resolved `name` and `description` values
+   written into it (1.3.0).
 
 `resolve` fails only for a missing who-you-are path or a `required` layer never fetched.
 
@@ -297,6 +315,58 @@ setup script sets the folder to `0700` at every start and `dcf-registry` writes 
 None of it is committed. `resolve` removes the copies no layer still names; a changed pin is a
 new copy, never the old one as a fallback. A bind mount on the same target keeps it on the host
 disk instead.
+
+## First real use: architecture-review in two layers (slice 4)
+
+This repository's own devhost is the first user. `.devcontainer/registry.yml` lists two layers,
+both `required` (a missing one leaves the last view, never a half skill that would shadow the
+committed one) and both `at: /` (they apply to every who-you-are path):
+
+| Rank | Layer | Source | Holds |
+| --- | --- | --- | --- |
+| 1 | `devhost` | `path` `/usr/local/share/devhost/registry` (the devhost Feature 1.16.0, from `local-features/devhost/share/registry`) | the review method: front matter, steps, the section format, "never edit the design sections"; usable alone |
+| 2 | `devcontainer-features` | `path` `.devcontainer/registry/repo` (committed) | "In this repository": the NFR file, the CLI capability matrix and NFR-12, NFR-13, the placement layers |
+
+Both say `heading: false` (component-registry 1.3.0), so the two read as one skill. The
+participant start hook resolves it for `COMPONENT_REGISTRY_WHOAMI` (containerEnv, a role
+default `/devcontainer-features/operator`; a person sets theirs in `.devcontainer/.env`) and hands
+the skills to Claude Code.
+
+**The equality check** (`task test:registry-first-use`, part of lint) resolves the real layer
+list and compares the resolved `skills/architecture-review/SKILL.md` with the committed
+`.claude/skills/architecture-review/SKILL.md`: **byte for byte equal**. What this use found, and
+what 1.3.0 changed for it:
+
+- **A heading for every layer** (the first included) made byte equality impossible in 1.2.0;
+  the layer key `heading: false` (1.3.0) stacks without one.
+- **Front matter came from the lowest block only**: a `description:value` in a higher layer was
+  never written into `SKILL.md`. From 1.3.0 `name` and `description` values are.
+- **Text only appends, layer by layer.** The repository-specific lines sat inside the method
+  (two of the seven checks, the NFR path in the first, the placement layers in the sixth); no
+  `.reg` line can put a higher layer's text between a lower layer's lines. The committed skill
+  was restated once, in the same words, as the method then an "In this repository" section the
+  method points to; the Operator accepted the restated skill as the reference (2026-11-20), with
+  no anchors or slots.
+- **A relative link breaks.** The resolved copy lives in the CLI's skills folder, so a link such
+  as `../../../PROCESS.md` points nowhere; the base layer names files as plain paths.
+
+### Switch-over (proposed, not done)
+
+Today both the committed skill (`.claude/skills/architecture-review/`, project scope) and the
+resolved one (Claude Code's personal skills folder, handed over at the agent's start) exist; the
+personal one wins the name, so after the next rebuild the session runs the resolved skill, equal
+to the committed one byte for byte. Switching over (the Operator: it waits) would take:
+
+- **This repository**: delete `.claude/skills/architecture-review/` (the resolved copy is then
+  the only one; a session started without the registry, on the workstation for example, has no
+  architecture review), and drop the template copy's equality check from the test.
+- **The devhost Feature's consumers**: `devhost-init` copies the template (`init.py`) into each
+  consumer's `.claude/skills/`; that copy holds this repository's section too. Either the template
+  becomes the base layer only (consumers keep a committed skill, generic), or consumers add the
+  component-registry Feature and a `registry.yml` naming the devhost layer (plus their own layer
+  for their rules) and `devhost-init` stops copying it. Each consumer's
+  `DEVCONTAINER_CONTRIBUTION.md` would say which.
+- **Nothing a reader sees**: the resolved skill already equals the committed one byte for byte.
 
 ## Use it
 
@@ -352,7 +422,8 @@ every skipped line with its reason, and `resolved N component(s) for <W>`.
 - Sources `git` and `path` only. A `path` source's version is a fingerprint of names, sizes and
   modification times, so a change that keeps all three is not seen.
 - `*` and `**` are whole segments; there are no value filters.
-- The text heading is fixed (`## Layer <id>`).
+- The text heading is `## Layer <id>` or none (`heading: false`), per layer, never per line; a
+  higher layer's text only appends. Of the front matter only `name` and `description` are values.
 - A `ref` is checked against this view only: its scope part is ignored, its component and key
   must resolve for the same who-you-are path.
 
@@ -370,6 +441,25 @@ Pin the major in the Feature reference (`component-registry:1`); a rebuild picks
 else; the `.reg` grammar and the layer list keys only grow within 1.x.
 
 ## Changes
+
+### [1.3.0] - 2026-11-20
+
+#### Added
+
+- **`heading: false` on a layer.** A layer in the layer list can say `heading: false`: its `text`
+  lines (a skill's `body`) are stacked with no `## Layer <id>` heading, after one blank line, so
+  layers written to read as one document resolve to exactly that document. `explain` still names
+  each line's layer. The default, `true`, is the 1.2.0 rendering, unchanged. A value other than
+  `true` or `false` is refused with its line.
+- **Front matter values.** A skill's `name:value` and `description:value` are written into the
+  front matter of its `SKILL.md` (the strongest line wins, as for any value): the key's line is
+  replaced, or added, or a front matter is made for a body that has none. Only these two keys; a
+  permission key such as `allowed-tools` still comes from the lowest layer. `explain` says the
+  value was written into the front matter.
+
+Nothing to do: a layer list and `.reg` files of 1.2.0 resolve as before, except that a skill whose
+higher layer already set `name` or `description` values now has them in its front matter. Rebuild
+to get it.
 
 ### [1.2.0] - 2026-11-20
 
@@ -414,21 +504,6 @@ else; the `.reg` grammar and the layer list keys only grow within 1.x.
 
 - The layer id `component-registry` is reserved for the base layer: a layer list using it is refused
   with its line. Rename such a layer.
-
-### [1.0.0] - 2026-11-20
-
-#### Added
-
-- The component registry, release 1 (ADR-0063): `dcf-registry resolve` fetches each layer of the
-  layer list (`.devcontainer/registry.yml`, option `registryFile`, `COMPONENT_REGISTRY_FILE`) from
-  its `git` or `path` source into a layer copy (an unchanged layer is skipped; an unreachable one
-  uses its last good copy and says so; a `required` layer never fetched stops it), merges the
-  `.reg` files by value type for who you are (`COMPONENT_REGISTRY_WHOAMI` or `--as`), and swaps
-  the resolved view in; `dcf-registry explain <path> [--uses]` says who said each line, at which
-  version, what was skipped and why, and what refers to a path. Skills only. Tasks
-  `component-registry:resolve`, `:explain`, `:version`, `:setup`. Layer copies and the view are
-  owner-only in a volume the Feature owns. Nothing to do until you write a layer list and set who
-  you are.
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/component-registry/CHANGELOG.md).
 
