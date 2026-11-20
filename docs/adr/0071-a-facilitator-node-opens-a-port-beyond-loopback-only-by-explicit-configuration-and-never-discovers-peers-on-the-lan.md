@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | proposed |
+| **Status** | accepted |
 | **Date** | 2026-11-20 |
 | **Deciders** | the Operator; proposed by the host |
 
@@ -57,11 +57,11 @@ Zero configuration, but any host on the network that dials the bootstrap address
   case is not checked.
 - N3 must find the mDNS switch or add the firewall rule; a node needs routable addresses,
   `bootstrap_peers` and a shorter `publication.scheduler_interval` to sync.
-- The status is `proposed`: the Operator ruled the no-discovery part (SP5); the broader revision of
-  the two written rules is a review finding applied to the proposal without its own ruling.
+- The Operator ruled the no-discovery part (SP5) and accepted the ports rule as written on 2026-11-20.
 
 ## Change log
 
 | Date | Change |
 |---|---|
 | 2026-11-20 | First draft, proposed; SP5 ruled by the Operator, the rest awaiting confirmation. |
+| 2026-11-20 | Accepted by the Operator. |
