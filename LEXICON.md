@@ -63,6 +63,14 @@ The domain words of the project itself are not here; they live with the project'
   Directory daemon and the SLIM node on loopback (never the agents); its deterministic core routes
   every `@handle` and keeps each conversation as a signed record in a register of its own type; only
   a person's `continue` resets the hop count (ADR-0061, ADR-0066).
+- **Facilitator node**: one install of the facilitator seen from the network: it has a role and
+  either peers or a primary, so hub-and-spoke or peer-to-peer is configuration, not code. Local CLIs
+  reach it through the thin client plus SLIM, cloud AIs through MCP over HTTP with OAuth (ADR-0067;
+  not built yet).
+- **Mesh**: the set of facilitator nodes that trust each other, configured by one `mesh.yml` with SPIFFE
+  identities and one of three presets: solo, team or open (ADR-0067; not built yet).
+- **Trust level**: how far a facilitator node trusts a client or peer: local, private or public. A
+  client that arrives over MCP over HTTP is public unless marked trusted (ADR-0067; not built yet).
 - **Deprecation**: how a Feature or option goes away: announced in a minor release (a one-line
   notice from `version` and `check`, the NOTES, and a "Deprecated" heading in the CHANGELOG, behaviour
   unchanged) and removed only in the next major (CONTRIBUTING.md).
