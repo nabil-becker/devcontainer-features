@@ -28,7 +28,8 @@
       "audio": {},
       "sign-packet": {},
       "register-engine": {},
-      "packet-relay": {}
+      "packet-relay": {},
+      "component-registry": {}
     },
     "remoteUser": "vscode"
   }

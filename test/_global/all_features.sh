@@ -38,13 +38,14 @@ check "rec" command -v rec
 check "sign-packet" bash -c "sign-packet version | grep -E '^sign-packet [0-9]'"
 check "register-engine" bash -c "register-engine version | grep -E '^register-engine [0-9]'"
 check "packet-relay" bash -c "packet-relay version | grep -E '^packet-relay [0-9]'"
+check "dcf-registry" command -v dcf-registry
 check "dcf-persist" command -v dcf-persist
 check "node not leaked onto PATH" bash -c "! command -v node"
 
 # Every state-owning Feature points its tool at its own mounted directory,
 # and the post-create hooks (run by `devcontainer up` before this script)
 # have made them usable by the remote user.
-for v in CLAUDE_CONFIG_DIR GH_CONFIG_DIR AZURE_CONFIG_DIR KUBECONFIG GIT_CONFIG_GLOBAL CODER_CONFIG_DIR ARGOCD_CONFIG_DIR OPENBAO_STATE_DIR SIGN_PACKET_HOME PACKET_RELAY_HOME; do
+for v in CLAUDE_CONFIG_DIR GH_CONFIG_DIR AZURE_CONFIG_DIR KUBECONFIG GIT_CONFIG_GLOBAL CODER_CONFIG_DIR ARGOCD_CONFIG_DIR OPENBAO_STATE_DIR SIGN_PACKET_HOME PACKET_RELAY_HOME COMPONENT_REGISTRY_STATE_DIR; do
   check "$v points under /var/lib/devcontainer-features" bash -c "case \"\$$v\" in /var/lib/devcontainer-features/*) ;; *) exit 1 ;; esac"
 done
 check "claude-code state dir writable" test -w "$CLAUDE_CONFIG_DIR"
@@ -57,13 +58,14 @@ check "argocd state dir writable" test -w "$ARGOCD_CONFIG_DIR"
 check "openbao state dir writable" test -w "$OPENBAO_STATE_DIR"
 check "sign-packet state dir writable" test -w "$SIGN_PACKET_HOME"
 check "packet-relay state dir writable" test -w "$PACKET_RELAY_HOME"
+check "component-registry state dir writable and owner-only" bash -c "[ -w \"\$COMPONENT_REGISTRY_STATE_DIR\" ] && [ \"\$(stat -c %a \"\$COMPONENT_REGISTRY_STATE_DIR\")\" = 700 ]"
 check "ssh-agent socket folder writable" test -w /var/lib/devcontainer-features/ssh-agent
 check "ssh-agent key volume present" test -d /var/lib/devcontainer-features/ssh-agent-key
 
 registry=/usr/local/share/go-task/features.yml
 # shellcheck disable=SC2016  # expansion is meant to happen inside the inner bash
-check "registry lists every Feature" bash -c 'for f in common go-task claude-code agents devcontainer-cli coder-cli openbao velero kustomize kubeconform argocd dsc git gh ssh-agent cloud-folder az kube-state phi-check audio sign-packet register-engine packet-relay; do grep -q "^  $f:" /usr/local/share/go-task/features.yml || { echo "missing $f"; exit 1; }; done'
-check "feature tasks resolve through the registry" bash -c "task -t $registry --list-all | grep -c -E '^\\* (dsc:get|velero:backups|kustomize:build:all|argocd:apps|openbao:status|coder-cli:workspaces|claude-code:host|agents:list|devcontainer-cli:version|kubeconform:validate:kustomize|go-task:registered|git:setup|gh:status|ssh-agent:check|cloud-folder:status|az:account|kube-state:contexts|phi-check:check|audio:check|common:persist|sign-packet:check|register-engine:types|packet-relay:status):' | grep -qx 23"
+check "registry lists every Feature" bash -c 'for f in common go-task claude-code agents devcontainer-cli coder-cli openbao velero kustomize kubeconform argocd dsc git gh ssh-agent cloud-folder az kube-state phi-check audio sign-packet register-engine packet-relay component-registry; do grep -q "^  $f:" /usr/local/share/go-task/features.yml || { echo "missing $f"; exit 1; }; done'
+check "feature tasks resolve through the registry" bash -c "task -t $registry --list-all | grep -c -E '^\\* (dsc:get|velero:backups|kustomize:build:all|argocd:apps|openbao:status|coder-cli:workspaces|claude-code:host|agents:list|devcontainer-cli:version|kubeconform:validate:kustomize|go-task:registered|git:setup|gh:status|ssh-agent:check|cloud-folder:status|az:account|kube-state:contexts|phi-check:check|audio:check|common:persist|sign-packet:check|register-engine:types|packet-relay:status|component-registry:resolve):' | grep -qx 24"
 check "feature task runs" task -t "$registry" dsc:version
 check "registered list task" bash -c "task -t $registry go-task:registered | grep -qx dsc"
 
