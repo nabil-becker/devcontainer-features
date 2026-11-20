@@ -34,6 +34,9 @@ for f in dcf-registry registry-source-git registry-source-path component-registr
   cp "$src/$f.sh" "$bin/$f"; chmod +x "$bin/$f"
 done
 export PATH="$bin:$PATH" COMPONENT_REGISTRY_SHARE_DIR="$T/share"
+# refresh and remember hand over to every adapter on PATH, and a devhost with the Feature
+# installed has a real one: keep it away from the real Claude config folder.
+export CLAUDE_CONFIG_DIR="$T/claude-config"; mkdir -p "$CLAUDE_CONFIG_DIR"
 unset COMPONENT_REGISTRY_WHOAMI COMPONENT_REGISTRY_FILE COMPONENT_REGISTRY_WHOAMI_TASK_VAR COMPONENT_REGISTRY_FILE_TASK_VAR
 export GIT_CONFIG_GLOBAL="$T/gitconfig" GIT_CONFIG_NOSYSTEM=1
 git config --global user.email test@example.invalid; git config --global user.name test
