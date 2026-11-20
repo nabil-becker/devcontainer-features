@@ -2,7 +2,7 @@
 
 Status: accepted by the Operator 2026-11-19, with the architecture review's changes applied (the
 last section) and the rule that no layer widens a permission; ADR-0063. Supersedes the
-[personalization](personalization.md) proposal. Slice 1 (section 12) is built: `component-registry` 1.0.0 (2026-11-20); slices 2 to 5 are not.
+[personalization](personalization.md) proposal. Slice 1 (section 12) is built: `component-registry` 1.0.0 (2026-11-20); slice 2 is built: `component-registry` 1.1.0, `claude-code` 1.12.0, participant 1.2.0, ADR-0064 (2026-11-20); slices 3 to 5 are not.
 
 Who this serves: the Operator, who rules on it and is its first user (their own layer: "I'm
 colour-blind, adapt diagram colours"); a consumer's maintainer, who points devhosts at an

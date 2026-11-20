@@ -30,7 +30,7 @@ here; `task lint` fails when the entry is missing.
   ephemeral, never resident. The contract tests (`test/agents/unit/contract_test.sh`) now run against the
   real Copilot adapter as well as the two fakes.
 - **The `participants` option** (boolean, default `false`): installs the participant component exactly as
-  `claude-code` does, one shared copy in `/usr/local/lib/dcf-participant` (component 1.1.0).
+  `claude-code` does, one shared copy in `/usr/local/lib/dcf-participant` (component 1.2.0).
 - **The `attach` option** (`facilitator`, or empty): registers the facilitator's MCP entry through
   `copilot mcp add facilitator` at post-create and by `task copilot:attach`. It needs no login. The entry
   holds no token and no handle: start copilot with `FACILITATOR_HANDLE` and `FACILITATOR_TOKEN` in its

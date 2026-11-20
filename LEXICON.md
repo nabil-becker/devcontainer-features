@@ -373,6 +373,17 @@ The domain words of the project itself are not here; they live with the project'
   agent, given to `resolve` and `explain` (`--as`).
 - **.reg file**: a file of the component registry's format: sections of paths with `:key` value
   lines, read from a layer copy in name order.
+- **Built-in base layer**: the registry layer at rank 0 (id `component-registry`) that the Feature
+  ships itself, holding the three utility skills (`registry-refresh`, `registry-explain`,
+  `registry-remember`); every other layer wins over it, and its id is reserved.
+- **Hand-over**: `dcf-registry handover <cli>`: the step that gives the resolved view's skills to a
+  CLI adapter's `skills` verb, under the view lock; exit 3 means the CLI cannot take skills
+  (ADR-0064).
+- **Owned copy**: a skill the registry copied into a CLI's skills folder, marked by a
+  `.component-registry` file; only owned copies are replaced or removed, a skill without the marker
+  is never touched.
+- **registry-path**: the agents list key that gives one agent its who-you-are path for the start
+  hook, overriding `COMPONENT_REGISTRY_WHOAMI`.
 
 ## Secrets
 

@@ -466,6 +466,7 @@ native = a command or flag does it; fallback = workable with something `agents` 
 | Trust gate, pre-approve | `hasTrustDialogAccepted` (by hand) | `--trust-folder` (one run); `trustedFolders` | `projects.<path>.trust_level` | `GEMINI_CLI_TRUST_WORKSPACE=true` or `--skip-trust` | no folder gate; `external_directory` asks |
 | One-shot, non-interactive | native `-p` | native `-p` | native `exec` (`--ephemeral`) | native `-p` | native `run` |
 | Unattended permissions | native modes | `--allow-all-tools`, `--allow-all`, `--no-ask-user` | `approval_policy`, `sandbox_mode`, `--yolo` | `--approval-mode`, `--yolo` | `--auto`, permission rules |
+| Skills folder (the component registry's `skills` verb, ADR-0064; checked 2026-11-20) | native: `$CLAUDE_CONFIG_DIR/skills` (personal), watched, a change is live in the running session; a folder created after the session started needs `/reload-skills`; personal wins over project ([skills docs](https://code.claude.com/docs/en/skills), checked 2026-11-19) | not yet: its adapter answers exit 3, plain skills | not yet: exit 3, plain skills | not yet: exit 3, plain skills | not yet: exit 3, plain skills |
 
 ### 14.2 Per CLI
 

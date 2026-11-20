@@ -129,18 +129,24 @@ A merged branch is never pushed to again; a new branch starts the next piece of 
 
 ## 7. Resolving the component registry
 
-Built in slice 1 ([component-registry](../proposals/component-registry.md), ADR-0063): `resolve`
-run by hand (`task component-registry:resolve`). Later (slice 2): the agents start sequence runs it
-with the agent's who-you-are path, and the CLI adapter's `skills` verb hands the skills over;
-`/registry-refresh` runs the same mid-session.
+Built in slices 1 and 2 ([component-registry](../proposals/component-registry.md), ADR-0063,
+ADR-0064): the participant component's start sequence (`agents start`, `agents up`) runs `resolve`
+with the agent's who-you-are path (its `registry-path`, else `COMPONENT_REGISTRY_WHOAMI`), then
+`dcf-registry handover`, which calls the CLI adapter's `skills` verb when `supports` lists it, and
+only then starts the CLI. `task component-registry:resolve` runs the resolve by hand;
+`/registry-refresh` runs resolve and the hand-over mid-session. No step ever blocks the start.
 
 ```mermaid
 sequenceDiagram
-  actor person as Person or (later) the agents Feature
+  actor person as Person, or the participant component at an agent's start
   participant R as component-registry
   participant S as registry source
-  participant C as CLI adapter (later)
-  person->>R: resolve, for COMPONENT_REGISTRY_WHOAMI or --as
+  participant C as CLI adapter
+  person->>R: layer-list (is there a list?)
+  alt no layer list
+    R-->>person: one line, the agent starts with its plain skills
+  end
+  person->>R: resolve, for registry-path, COMPONENT_REGISTRY_WHOAMI or --as
   R->>R: take the lock (flock)
   loop each layer, each source
     R->>S: version
@@ -152,7 +158,7 @@ sequenceDiagram
     else unreachable
       R->>R: use the last good copy, say so
     else never fetched and required
-      R-->>person: fail, the view left as it was
+      R-->>person: fail, the view left as it was; the agent still starts, said
     end
   end
   R->>R: match for who you are, merge by value type
@@ -161,5 +167,14 @@ sequenceDiagram
   end
   R->>R: write a new view, swap the symlink, drop copies no layer names
   R-->>person: resolved N components, lines skipped
-  R-->>C: skills (later, slice 2)
+  person->>R: handover <cli> <name> <folder>
+  R->>C: supports
+  alt skills listed
+    R->>C: skills, COMPONENT_REGISTRY_SKILLS = the view's skills (lock held shared)
+    C->>C: copy, mark owned, remove owned copies no longer resolved
+  else not listed or exit 3
+    R-->>person: one line, the CLI keeps its plain skills
+  end
+  person->>person: start the CLI
+  Note over R,C: /registry-refresh runs resolve and handover to every adapter, mid-session
 ```

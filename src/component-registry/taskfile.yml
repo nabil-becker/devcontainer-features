@@ -28,3 +28,15 @@ tasks:
     desc: 'Re-run the start hook: make the state folder (COMPONENT_REGISTRY_STATE_DIR) usable by the current user and owner-only, and say whether a resolved view is there (idempotent).'
     cmds:
       - component-registry-setup
+
+  refresh:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Resolve now (for the path the current view was resolved for, or -- --as <path>) and hand the resolved skills to every CLI adapter on PATH that takes them (agent-adapter-<cli> skills); Claude Code picks them up in running sessions, a CLI that cannot take them is named. What /registry-refresh runs.'
+    cmds:
+      - '{{if .COMPONENT_REGISTRY_FILE}}COMPONENT_REGISTRY_FILE_TASK_VAR={{shellQuote .COMPONENT_REGISTRY_FILE}} {{end}}{{if .COMPONENT_REGISTRY_WHOAMI}}COMPONENT_REGISTRY_WHOAMI_TASK_VAR={{shellQuote .COMPONENT_REGISTRY_WHOAMI}} {{end}}dcf-registry refresh {{.CLI_ARGS}}'
+
+  remember:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'task component-registry:remember -- [--skill <name>] -- <line>: append the line (body:text of that skill, or of every skill) to the layer the layer list marks writable: true (a path source, the person''s own), then refresh. Refused, nothing written, when no layer or two are writable or the writable layer is not a folder. What /registry-remember runs.'
+    cmds:
+      - '{{if .COMPONENT_REGISTRY_FILE}}COMPONENT_REGISTRY_FILE_TASK_VAR={{shellQuote .COMPONENT_REGISTRY_FILE}} {{end}}dcf-registry remember {{.CLI_ARGS}}'

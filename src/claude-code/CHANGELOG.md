@@ -8,6 +8,27 @@ here; `task lint` fails when the entry is missing.
 
 Entries from 1.0.0 to 1.9.7 were generated from the commit history (`.github/scripts/changelog.py backfill`) and the "Changes in x.y.z" sections that NOTES.md used to hold; most list commit subjects as written then; the newest of them is in wording for users.
 
+## [1.12.0] - 2026-11-20
+
+### Added
+
+- **`agent-adapter-claude skills`**, the new optional verb of the CLI adapter contract (ADR-0064,
+  amending ADR-0037), listed by `supports`. Given the component registry's resolved skills folder in
+  `COMPONENT_REGISTRY_SKILLS` (the `component-registry` Feature hands it over), it copies each
+  resolved skill into Claude Code's personal skills folder, `$CLAUDE_CONFIG_DIR/skills` (the Feature's
+  volume), marks each copy with a `.component-registry` file, removes the copies the registry no
+  longer resolves and never touches a skill folder without that mark (a name clash is said). It never
+  writes the repository's `.claude/skills`. Claude Code picks the change up in running sessions; a
+  skill already used in a conversation keeps its old text until a new conversation.
+- **`claude-code-setup` creates `$CLAUDE_CONFIG_DIR/skills`** at every create, even empty: Claude Code
+  watches a skills folder only if it existed when the session started (otherwise `/reload-skills`).
+- With `participants: true`, the participant component 1.2.0: the component registry's resolve and
+  skills hand-over at an agent's start, bounded by `COMPONENT_REGISTRY_START_WAIT` (default 15 s; past
+  it the agent starts with the skills already in its folder), and the agents list key
+  `registry-path` (see the notes).
+
+Nothing to do: without the `component-registry` Feature nothing calls the new verb.
+
 ## [1.11.0] - 2026-11-20
 
 ### Added

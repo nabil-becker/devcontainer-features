@@ -42,6 +42,9 @@
 #     logs       claude logs <id> of its newest session
 #     hint       how to find and resume the agent by hand (when the list cannot be read)
 #     record     record the agent's running session as the agent's (or clear its record)
+#     skills     (1.12.0, optional in the contract, ADR-0064) the component registry's resolved
+#                skills, the folder in $COMPONENT_REGISTRY_SKILLS, copied into Claude Code's own
+#                (personal) skills folder, $CLAUDE_CONFIG_DIR/skills; see "skills" below
 #   agent-adapter-claude session-busy <id>     exit 0 when that session is mid-turn, 1 when not, 3 unknown
 #   agent-adapter-claude session-stop <id>     claude stop that session (the list's id)
 #   agent-adapter-claude session-remove <id>   claude rm that ended session (never a running one)
@@ -564,6 +567,66 @@ session_gone() {
 # seconds; and a new id that continues the conversation is recorded as the agent's session.
 config_dir() { printf '%s' "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"; }
 
+# skills (1.12.0): the component registry's resolved skills into Claude Code's personal skills
+# folder, $CLAUDE_CONFIG_DIR/skills (the claude-code volume, tier 4; never the repository's
+# .claude/skills: a resolved skill can carry personal facts). dcf-registry hands the folder over in
+# COMPONENT_REGISTRY_SKILLS (a resolved view's skills/, one folder per skill). Each copy is marked
+# owned by the registry with a file .component-registry in it; a copy the registry no longer
+# resolves is removed; a skill folder without the marker is someone else's and is never touched
+# (the registry's skill of that name is not installed, and that is said). The skills folder is
+# created even when there is nothing to copy: Claude Code watches a skills folder that existed when
+# a session started and picks changes up in that session, but one created later needs
+# /reload-skills. A personal skill wins over a project skill of the same name, so a resolved copy
+# wins a name clash with the repository's .claude/skills. (Claude Code skills documentation,
+# https://code.claude.com/docs/en/skills, checked 2026-11-19.) Idempotent: an unchanged skill is
+# not rewritten. Owner-only (umask 077): as sensitive as the resolved view.
+SKILLS_MARK=.component-registry
+skills_handover() {
+  local src="${COMPONENT_REGISTRY_SKILLS:-}" dest d nm tmp new='' copied=0 same=0 removed=0 mine=0 rc=0
+  [ -n "$src" ] || die 2 "skills needs COMPONENT_REGISTRY_SKILLS, the resolved skills folder (dcf-registry handover sets it)."
+  [ -d "$src" ] || die 2 "skills: COMPONENT_REGISTRY_SKILLS is '$src', which is not a folder."
+  dest="$(config_dir)/skills"
+  [ -d "$dest" ] || new=1
+  (umask 077 && mkdir -p "$dest") 2>/dev/null || die 1 "skills: cannot create $dest."
+  umask 077
+  for d in "$dest"/.*.new.*; do [ -e "$d" ] && rm -rf "$d"; done
+  for d in "$src"/*/; do
+    [ -d "$d" ] || continue
+    nm="$(basename "$d")"
+    if ! [[ "$nm" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ ]]; then note "skills: '$nm' is not a skill name; skipped."; continue; fi
+    if [ -e "$dest/$nm" ] && [ ! -f "$dest/$nm/$SKILLS_MARK" ]; then
+      note "skills: $dest/$nm is not the registry's (no $SKILLS_MARK in it), so it is left as it is and the registry's $nm is not installed."
+      mine=$((mine + 1)); continue
+    fi
+    if [ -f "$dest/$nm/$SKILLS_MARK" ] && diff -rq -x "$SKILLS_MARK" "$d" "$dest/$nm" >/dev/null 2>&1; then same=$((same + 1)); continue; fi
+    tmp="$dest/.$nm.new.$$"
+    rm -rf "$tmp"
+    if ! { mkdir -p "$tmp" && cp -R "$d." "$tmp/"; } 2>/dev/null; then
+      rm -rf "$tmp"; note "skills: copying $nm into $dest failed."; rc=1; continue
+    fi
+    printf '%s\n' "Owned by the component registry (dcf-registry): the next resolve replaces or removes this folder. Change the layer, not this copy." > "$tmp/$SKILLS_MARK"
+    if ! { rm -rf "${dest:?}/$nm" && mv "$tmp" "$dest/$nm"; }; then
+      rm -rf "$tmp"; note "skills: replacing $dest/$nm failed."; rc=1; continue
+    fi
+    copied=$((copied + 1))
+  done
+  for d in "$dest"/*/; do
+    [ -f "$d$SKILLS_MARK" ] || continue
+    nm="$(basename "$d")"
+    [ -d "$src/$nm" ] && continue
+    rm -rf "${dest:?}/$nm" && removed=$((removed + 1))
+  done
+  local own=''
+  [ "$mine" -eq 0 ] || own=", $mine left to their owner"
+  echo "claude: $((copied + same)) resolved skill(s) in $dest ($copied copied, $same unchanged, $removed removed$own)."
+  if [ -n "$new" ]; then
+    echo "claude: $dest is new; a session started before now needs /reload-skills, one started from now on reads it."
+  else
+    echo "claude: running sessions pick the change up; a skill already used in a conversation keeps its old text until it is used in a new conversation."
+  fi
+  return "$rc"
+}
+
 # transcript_state <session id>: 0 Claude Code keeps a transcript of it
 # ($CLAUDE_CONFIG_DIR/projects/<folder>/<session id>.jsonl, in any folder), 1 it keeps none,
 # 2 not known (no projects folder: then the wake goes ahead, as before 1.9.4).
@@ -990,7 +1053,7 @@ extras_note() { # extras_note <running lines>
 verb="${1:-}"
 [ $# -gt 0 ] && shift
 case "$verb" in
-  supports) printf '%s\n' start-bg wake attach resume new list stop logs hint record session-busy session-stop session-remove supports; exit 0 ;;
+  supports) printf '%s\n' start-bg wake attach resume new list stop logs hint record session-busy session-stop session-remove skills supports; exit 0 ;;
   list)
     # newest first, an agent's recorded session before the others (it is the one the agent is)
     ALL="$(sessions)" || exit 1
@@ -1031,7 +1094,7 @@ case "$verb" in
       echo "$want: removed from the session list"
     fi
     exit 0 ;;
-  start-bg | wake | attach | resume | new | stop | logs | hint | record) ;;
+  start-bg | wake | attach | resume | new | stop | logs | hint | record | skills) ;;
   '') die 2 "usage: agent-adapter-claude <verb> <name> <folder> [-- claude args]" ;;
   *) die 3 "'$verb' is not supported" ;;
 esac
@@ -1086,6 +1149,7 @@ fi
 set -- "${rc_args[@]}"
 
 case "$verb" in
+  skills) skills_handover; exit $? ;;
   start-bg | new) ;;
   record)
     # record the session the agent is now: its running one (recorded first), else none

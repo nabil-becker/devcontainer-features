@@ -8,6 +8,17 @@ here; `task lint` fails when the entry is missing.
 
 Entries from 1.0.0 to 2.1.1 were generated from the commit history (`.github/scripts/changelog.py backfill`) and the "Changes in x.y.z" sections that NOTES.md used to hold; most list commit subjects as written then; the newest of them is in wording for users.
 
+## [2.4.0] - 2026-11-20
+
+### Added
+
+- The participant component 1.2.0 (shared with `claude-code` `participants: true`): with the
+  `component-registry` Feature installed, an agent's start resolves the component registry and hands
+  the resolved skills to the agent's CLI, never blocking the start and waiting at most
+  `COMPONENT_REGISTRY_START_WAIT` seconds (default 15); the agents list key
+  `registry-path` gives one agent its own who-you-are path. This Feature stays deprecated; nothing to
+  do.
+
 ## [2.3.0] - 2026-11-20
 
 ### Changed
