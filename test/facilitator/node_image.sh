@@ -34,9 +34,10 @@ fi
 if out="$("${compose[@]}" exec -T hub facilitator check)"; then ok "facilitator check is green"; else no "facilitator check"; fi
 printf '%s\n' "$out" | while IFS= read -r line; do echo "     $line"; done
 if [ "$("${compose[@]}" exec -T hub id -u)" != 0 ]; then ok "the hub runs as a non-root user"; else no "the hub runs as root"; fi
-# Every listening TCP socket of the hub on 127.0.0.1 (/proc/net/tcp state 0A; 0100007F is 127.0.0.1).
+# Every listening TCP socket of the hub on 127.0.0.0/8 (/proc/net/tcp state 0A; the address is little-endian, so
+# 127.x.y.z ends in 7F: 0100007F is 127.0.0.1, 0B00007F Docker's own resolver at 127.0.0.11). No tcp6 listener.
 listening="$("${compose[@]}" exec -T hub sh -c 'cat /proc/net/tcp /proc/net/tcp6' | awk '$4 == "0A" { print $2 }')"
-if [ -n "$listening" ] && ! echo "$listening" | grep -qv '^0100007F:'; then ok "every port of the hub on loopback"
+if [ -n "$listening" ] && ! echo "$listening" | grep -Eqv '^[0-9A-F]{6}7F:'; then ok "every port of the hub on loopback"
 else no "a port of the hub beyond loopback: $listening"; fi
 manifest="$("${compose[@]}" exec -T hub cat /opt/facilitator/MANIFEST.json)"
 if echo "$manifest" | grep -q "\"version\": \"$version\""; then ok "the bundle $version (MANIFEST.json)"; else no "MANIFEST.json"; fi
