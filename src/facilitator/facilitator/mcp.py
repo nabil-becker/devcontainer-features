@@ -1,12 +1,23 @@
-"""`facilitator mcp --as <handle>`: the MCP server a participant's CLI starts (stdio, JSON-RPC 2.0, one
-message per line). Four tools, the attachment contract (proposal 4.2, ADR-0061 ruling 2):
+"""`facilitator mcp` (the handle from FACILITATOR_HANDLE, or `--as <handle>`): the MCP server a CLI starts
+(stdio, JSON-RPC 2.0, one message per line). The attachment contract (proposal 4.2, ADR-0061 ruling 2;
+the person's side from the Operator's MCP-only ruling of 2026-11-20). An agent gets four tools:
 
     receive {wait_seconds?}            blocks until a message is delivered to you, or the wait ends ("nothing yet")
     reply   {text, to?}                answers what receive handed you; no mention: back to the asker
     say     {text, conversation?, to?} a turn in another conversation (an id, or "new" with to)
     who     {}                         the handles, whether each is attached, your conversations
 
-The caller is authenticated by its participant token (FACILITATOR_TOKEN, which the harness puts in the
+A person (a human of facilitator.yml, registered) gets five, none of which blocks:
+
+    say        {text, conversation?, to?}   start a conversation ("new", or none: with the handles named) or
+                                            write in one of yours (it answers its last message: one hop more)
+    mail       {limit?}                     the unread messages of your conversations, then marked read
+    transcript {conversation, limit?}       a conversation of yours, its last `limit` messages
+    continue   {conversation}               a paused conversation runs another hop limit (the only reset)
+    who        {}
+
+The tools offered follow the handle's kind in the roster; a tool of the other kind is refused. The
+caller is authenticated by its token (FACILITATOR_TOKEN, which the harness, or the person, puts in the
 CLI's environment from tokens/<handle>). Every message it writes is signed by the signer module with
 its key; the participant never holds a key. SLIM's own logging writes to standard output, so the
 protocol gets a private copy of standard output and everything else that prints goes to standard error.
@@ -25,7 +36,16 @@ PROTOCOLS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
 MAX_WAIT = 3600
 
 
-def persona(handle: str) -> str:
+def persona(handle: str, human: bool = False) -> str:
+    if human:
+        return (f"You are the session of @{handle}, a person, in the facilitator's conversations with agents. When "
+                "the person asks you to talk to an agent ('ask @jester for a joke'), call say with their words, "
+                "keeping the @handle (with no conversation a new one is made; pass conversation to write in one "
+                "you are in). Answers do not come by themselves: call mail (it never waits) when the person asks, "
+                "or when a line 'Facilitator: N new messages' appears, and show the person what came in. Never "
+                "answer an agent on your own: say only what the person asked you to say, since every message "
+                "counts as a hop. When a conversation is paused, tell the person; call continue only when they "
+                "ask. Use transcript to read a conversation and who to see the handles; never invent one.")
     return (f"You are @{handle} in the facilitator's conversations with other agents and people. Loop: call the "
             "receive tool; when it returns a message, answer it with reply (start your text with @handle, or pass "
             "to, to address someone else; with no mention your reply goes back to whoever asked), then call "
@@ -54,13 +74,72 @@ TOOLS = [
                                    "attached, and the conversations you are in.",
      "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False}},
 ]
+MAX_MAIL = 200
+MAX_LINES = 500
+
+HUMAN_TOOLS = [
+    {"name": "say", "description": "Write to agents. With no conversation (or 'new'), starts one with the handles "
+                                   "you @mention or pass in to; your message begins the chain. With a conversation "
+                                   "id, writes in it, answering its last message (one hop more, like any message).",
+     "inputSchema": {"type": "object", "properties": {"text": {"type": "string", "minLength": 1},
+                                                      "conversation": {"type": "string"},
+                                                      "to": {"type": "array", "items": {"type": "string"}}},
+                     "required": ["text"], "additionalProperties": False}},
+    {"name": "mail", "description": "The messages that came in, unread, from every conversation you are in, "
+                                    "oldest conversation first, each in its order; they are then marked read. "
+                                    "Never waits: 'no new messages' when there are none.",
+     "inputSchema": {"type": "object", "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": MAX_MAIL,
+                                                                "description": "at most this many (default 20); "
+                                                                               "the rest stay unread"}},
+                     "additionalProperties": False}},
+    {"name": "transcript", "description": "A conversation you are in: every message with its routes and notices.",
+     "inputSchema": {"type": "object", "properties": {"conversation": {"type": "string"},
+                                                      "limit": {"type": "integer", "minimum": 1, "maximum": MAX_LINES,
+                                                                "description": "its last this many messages "
+                                                                               "(default 50)"}},
+                     "required": ["conversation"], "additionalProperties": False}},
+    {"name": "continue", "description": "Let a paused conversation (hop limit or message budget reached) run "
+                                        "another hop limit; its last held message is delivered. Only a person "
+                                        "may; it is the only thing that resets the hops.",
+     "inputSchema": {"type": "object", "properties": {"conversation": {"type": "string"}},
+                     "required": ["conversation"], "additionalProperties": False}},
+    TOOLS[3],
+]
+
+
+def mail_text(r: dict) -> str:
+    """The mail tool's text: each conversation with its unread messages under it, in order."""
+    if not r["messages"]:
+        out = "no new messages"
+    else:
+        out, conv = [], None
+        members = {c["conversation"]: c["members"] for c in r["conversations"]}
+        paused = set(r["paused"])
+        n = len(r["messages"])
+        out.append(f"{n} new message{'s' if n != 1 else ''}:")
+        for m in r["messages"]:
+            if m["conversation"] != conv:
+                conv = m["conversation"]
+                out.append(f"conversation {conv} ({', '.join(members.get(conv, []))})"
+                           + (" PAUSED: continue lets it go on" if conv in paused else ""))
+            note = ("" if m["for_you"] else " (not addressed to you)") + (f" (held: {m['held']})" if m["held"] else "")
+            out.append(f"  {m['message_id']} @{m['from']} [{m['hops']} hop{'s' if m['hops'] != 1 else ''}]{note}: {m['text']}")
+        if r["more"]:
+            out.append(f"{r['more']} more unread: call mail again")
+        out = "\n".join(out)
+    rest = [c for c in r["paused"] if c not in {m["conversation"] for m in r["messages"]}]
+    if rest:
+        out += f"\npaused, nothing new: {', '.join(rest)}"
+    return out
 
 
 class Server:
-    def __init__(self, handle: str, make_session, wait_default: int, out=None, inp=None):
+    def __init__(self, handle: str, make_session, wait_default: int, out=None, inp=None, human: bool = False):
         """`make_session()` returns a Session (app.Session) or raises; called on the first tool call, so the
-        handshake works even when the session cannot (the tool call then says why)."""
+        handshake works even when the session cannot (the tool call then says why). `human`: the handle's
+        kind in the roster, which picks the tools listed; the session checks it again on every call."""
         self.handle = handle
+        self.human = human
         self.make_session = make_session
         self.wait_default = wait_default
         self.out = out
@@ -108,6 +187,36 @@ class Server:
 
         try:
             s = self.get_session()
+            if name in ("receive", "reply") and s.human:
+                return text(f"{name} is an agent's tool; a person reads with mail and writes with say", err=True)
+            if name in ("mail", "transcript", "continue") and not s.human:
+                return text(f"{name} is refused: only a person (a human of facilitator.yml) may call it; "
+                            f"@{self.handle} is an agent", err=True)
+            if name == "mail":
+                lim = args.get("limit", 20)
+                if not isinstance(lim, int) or isinstance(lim, bool) or not 1 <= lim <= MAX_MAIL:
+                    return text(f"limit: a whole number, 1 to {MAX_MAIL}", err=True)
+                with self.tool_lock:
+                    r = s.mail(lim)
+                return text(mail_text(r), r)
+            if name == "transcript":
+                conv = args.get("conversation")
+                lim = args.get("limit", 50)
+                if not isinstance(conv, str) or not conv:
+                    return text("transcript needs a conversation (who lists yours)", err=True)
+                if not isinstance(lim, int) or isinstance(lim, bool) or not 1 <= lim <= MAX_LINES:
+                    return text(f"limit: a whole number, 1 to {MAX_LINES}", err=True)
+                with self.tool_lock:
+                    ls = s.transcript(conv, lim)
+                return text("\n".join(ls), {"conversation": conv, "lines": ls})
+            if name == "continue":
+                conv = args.get("conversation")
+                if not isinstance(conv, str) or not conv:
+                    return text("continue needs a conversation", err=True)
+                with self.tool_lock:
+                    r = s.continue_(conv)
+                return text(f"continued {conv}: {r['message_id']} delivered to "
+                            f"{', '.join('@' + h for h in r['to']) or 'nobody'}.", r)
             if name == "receive":
                 wait = args.get("wait_seconds", self.wait_default)
                 if not isinstance(wait, int) or isinstance(wait, bool) or not 0 <= wait <= MAX_WAIT:
@@ -182,11 +291,11 @@ class Server:
             self.result(rid, {"protocolVersion": want if want in PROTOCOLS else PROTOCOLS[0],
                               "capabilities": {"tools": {"listChanged": False}},
                               "serverInfo": {"name": "facilitator", "version": __version__},
-                              "instructions": persona(self.handle)})
+                              "instructions": persona(self.handle, self.human)})
         elif method == "ping":
             self.result(rid, {})
         elif method == "tools/list":
-            self.result(rid, {"tools": TOOLS})
+            self.result(rid, {"tools": HUMAN_TOOLS if self.human else TOOLS})
         elif method == "tools/call":
             name, args = params.get("name"), params.get("arguments") or {}
             threading.Thread(target=lambda: self._call(rid, name, args), daemon=True).start()

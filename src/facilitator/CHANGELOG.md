@@ -6,6 +6,48 @@ of the Feature and whether they must act (an option renamed, a task removed, a r
 The version in `devcontainer-feature.json` is bumped in the same change that adds its entry
 here; `task lint` fails when the entry is missing.
 
+## [0.2.0] - 2026-11-20
+
+The facilitator is reached only through MCP (the Operator's ruling of 2026-11-20: "remove the chat,
+essentially making it just accessible through the MCP").
+
+### Added
+
+- A person attaches their own Claude Code or Copilot session to `facilitator mcp` with their own handle and
+  token, as a participant of kind `human` (a human of `facilitator.yml`, registered), and gets the tools
+  `say` (start a conversation, or write in one of theirs), `mail` (the unread messages of their
+  conversations, never waiting, then marked read), `transcript` (a conversation, with a limit), `continue`
+  (a paused conversation runs another hop limit) and `who`. An agent keeps `receive`, `reply`, `say` and
+  `who`; a person's tools are refused to it, and the kind comes from the roster, never from the caller.
+- `facilitator mail [--as <handle>] [--notice | --hook]`, read only: `--notice` prints one line
+  ("Facilitator: 2 new messages in c-1a2b3c4d") or nothing, `--hook` the same as Claude Code hook JSON;
+  both always exit 0. Task `facilitator:mail`.
+- `facilitator snippet <person>`: the shared MCP entry, the environment and a Claude Code `UserPromptSubmit`
+  hook to paste (the Feature never edits Claude's settings, NFR-13). Copilot CLI has no hook that can show
+  the line; ask it to call `mail`.
+- `transcript --limit <n>`.
+
+### Changed
+
+- `facilitator mcp` takes the handle from `FACILITATOR_HANDLE` when `--as` is absent (exit 2 naming both when
+  neither is set), so one MCP entry serves every agent whose harness sets `FACILITATOR_HANDLE` and
+  `FACILITATOR_TOKEN`. `snippet` prints that one entry (no `--as`) and the two environment lines.
+- **A person's message counts as a hop** (option A): in an existing conversation it answers the
+  conversation's last message, one hop more, and is held by a pause or the hop limit like any other. Only
+  `continue` resets the hops. A message in a new conversation still begins a chain at hop 0. With the
+  default limit of 6 a person has three exchanges with one agent before `continue`. The message budget and
+  the rate are unchanged.
+- `register` makes a token for each person too (`register you`, or `--all`, once after the upgrade), and
+  `facilitator-start` makes it again at each start, as for a participant.
+
+### Removed
+
+- `facilitator chat` and the task `facilitator:chat`: ask your own Claude Code session instead (NOTES,
+  "Talking to the agents from Claude Code").
+- `facilitator send` and the task `facilitator:send`.
+- `facilitator continue`: the MCP tool `continue` of a person's session replaces it, so continuing needs
+  the person's token.
+
 ## [0.1.0] - 2026-11-20
 
 ### Added

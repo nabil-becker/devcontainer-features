@@ -1,10 +1,11 @@
 """The facilitator application's deterministic core (proposal 4.3): intake, guard, router, dispatcher,
 collector, signer, over the record (register-engine) and the transport (SLIM). It runs in whichever
-process writes: the MCP server of a participant, the model wrapper, `chat` and `send`. No model is
+process writes: the MCP server of a participant or of a person, and the model wrapper. No model is
 called in this version; nothing here starts or stops a participant."""
 from __future__ import annotations
 
 import datetime as dt
+import json
 import time
 from dataclasses import dataclass, field
 
@@ -95,9 +96,10 @@ class Facilitator:
         pub, where = self.signer.ensure_key(handle, new=new_key)
         out = {"handle": handle, "key": pub, "keystore": where,
                "kind": "facilitator" if handle == FACILITATOR else "human" if human else "agent"}
-        if p is not None:
-            self.state.make_token(handle)
+        if p is not None or human:
+            self.state.make_token(handle)            # a person attaches over MCP too (0.2.0)
             out["token"] = str(self.state.tokens / handle)
+        if p is not None:
             if push:
                 try:
                     out["cid"] = self.directory().push(directory.record(p, __version__))
@@ -195,7 +197,7 @@ class Facilitator:
             now = time.time()
             for h in dec.to:
                 if h in humans:
-                    continue                   # a human reads the transcript (chat follows it)
+                    continue                   # a person reads it with the mail tool (no task, no delivery)
                 t = new_id("t")
                 tasks.append({"task": t, "assignee": h})
                 if self.state.attached(h, self.stale, now):
@@ -229,26 +231,37 @@ class Facilitator:
                 "notices": [t for _, t in notices], "delivered": verdict.deliver}
 
     def send(self, author: str, text: str, conv: str | None = None, to: list[str] | None = None,
-             reply_to: str | None = None, tr=None) -> dict:
-        """A human's message (send, chat): hops 0, its own root. With no conversation, one is made with
-        the handles it names: direct for one, a group for more."""
+             tr=None) -> dict:
+        """A person's message (the MCP tool `say` of a human-kind session). With no conversation (or
+        "new"), one is made with the handles it names (direct for one, a group for more) and the message is
+        its chain's root, hops 0. In an existing conversation it answers the conversation's last message
+        and counts as a hop like any other (option A, the Operator's ruling of 2026-11-20): only
+        `continue` lets a held chain run on."""
         if author not in self.humans():
             raise FacilitatorError(f"{author} is not a human of facilitator.yml (humans: {', '.join(self.humans())}); "
                                    "participants write through their MCP server")
         self.ensure_identity(author)
-        if not conv:
-            named = [h for h in dict.fromkeys([*(to or []), *router.mentions(text)]) if h != "all"]
+        if not conv or conv == "new":
+            named = [h for h in dict.fromkeys([*(to or []), *router.mentions(text)]) if h not in ("all", author)]
             if not named:
-                raise FacilitatorError("no conversation given and nobody named: --conv <id>, or @handle someone")
+                raise FacilitatorError("a new conversation needs someone to talk to: @handle them, or pass to")
             conv = self.new_conversation(author, named)
-        mid = self.write(conv, author, text, to, reply_to, None, None, 0)
+        _, proj, _ = self.record.read(conv)
+        if proj["thread"] is None:
+            raise FacilitatorError(f"no conversation {conv}")
+        if proj["order"]:
+            last = proj["messages"][proj["order"][-1]]
+            root_thread = last["refs"][-1]["thread"] if last["hops"] > 0 and last.get("refs") else conv
+            mid = self.write(conv, author, text, to, last["message_id"], last["root"], root_thread, last["hops"] + 1)
+        else:
+            mid = self.write(conv, author, text, to, None, None, None, 0)
         return self.dispatch(conv, mid, tr)
 
     def continue_(self, author: str, conv: str, tr=None) -> dict:
-        """/continue: lets the held chain run another hop limit (and resets the budget); the latest held
-        message is routed again."""
+        """The person's `continue`: lets the held chain run another hop limit (and resets the budget); the
+        latest held message is routed again. The only thing that resets hops (option A)."""
         if author not in self.humans():
-            raise FacilitatorError("only a human continues a conversation")
+            raise FacilitatorError("only a person (a human of facilitator.yml) continues a conversation")
         _, proj, _ = self.record.read(conv)
         held = [mid for mid in proj["order"] if (rs := proj["routes"].get(mid)) and not any(r["tasks"] for r in rs)
                 and any(h["reason"] in ("hop-limit", "budget", "paused") for r in rs for h in r["held"])]
@@ -352,22 +365,115 @@ class Facilitator:
         return out
 
 
+    # ------------------------------------------------------------ a person's side: mail
+
+    def unread(self, handle: str) -> tuple[list[dict], list[dict]]:
+        """(the messages `handle` has not read, in each conversation's order; the conversations it is in,
+        with how many each holds unread and whether it is paused). A message is unread when another member
+        wrote it in a conversation `handle` is in and the mail tool has not handed it over yet."""
+        marks = self.state.read_marks(handle)
+        msgs, convs = [], []
+        for c in self.conversations_of(handle):
+            _, proj, _ = self.record.read(c)
+            seen = set(marks.get(c, []))
+            n = 0
+            for mid in proj["order"]:
+                m = proj["messages"][mid]
+                if m["from"] == handle or mid in seen:
+                    continue
+                routes = proj["routes"].get(mid, [])
+                held = sorted({h["reason"] for r in routes for h in r["held"] if h["reason"] != "stale"})
+                msgs.append({"conversation": c, "message_id": mid, "from": m["from"], "text": m["text"],
+                             "hops": m["hops"], "at": m["at"], "for_you": any(handle in r["to"] for r in routes),
+                             "held": held[0] if held else ""})
+                n += 1
+            convs.append({"conversation": c, "members": proj["thread"]["members"], "unread": n,
+                          "paused": guard.paused(proj)})
+        first = {}
+        for m in msgs:
+            first.setdefault(m["conversation"], m["at"])
+        msgs.sort(key=lambda m: (first[m["conversation"]], m["conversation"]))      # stable: each conversation's order kept
+        return msgs, convs
+
+    def mail(self, handle: str, limit: int = 20, mark: bool = True) -> dict:
+        """What came in for a person, never blocking: up to `limit` unread messages, grouped by conversation,
+        marked read when `mark`; `more` says how many stay unread."""
+        msgs, convs = self.unread(handle)
+        out, rest = msgs[:limit], msgs[limit:]
+        if mark:
+            read: dict[str, list[str]] = {}
+            for m in out:
+                read.setdefault(m["conversation"], []).append(m["message_id"])
+            self.state.mark_read(handle, read)
+        return {"messages": out, "more": len(rest), "conversations": convs,
+                "paused": [c["conversation"] for c in convs if c["paused"]]}
+
+    def mail_notice(self, handle: str) -> str:
+        """The turn hook's one line ('' when nothing is unread), read only. A fingerprint of the
+        conversations and of what was read lets a turn with nothing new skip reading the record."""
+        fp = [self.state.conversations_stamp(), self.state.marks_stamp(handle)]
+        cache = self.state.mail / f"{handle}.notice"
+        try:
+            c = json.loads(cache.read_text())
+            if c.get("fp") == fp:
+                return c.get("line", "")
+        except (OSError, ValueError):
+            pass
+        msgs, convs = self.unread(handle)
+        line = notice_line(msgs, convs)
+        try:
+            self.state.write_private(cache, json.dumps({"fp": fp, "line": line}) + "\n")
+        except OSError:
+            pass
+        return line
+
+
+def notice_line(msgs: list[dict], convs: list[dict]) -> str:
+    if not msgs:
+        return ""
+    ids = list(dict.fromkeys(m["conversation"] for m in msgs))
+    paused = [c["conversation"] for c in convs if c["paused"] and c["conversation"] in ids]
+    n = len(msgs)
+    line = f"Facilitator: {n} new message{'s' if n != 1 else ''} in {', '.join(ids)}"
+    if paused:
+        line += f" ({', '.join(paused)} paused: continue it to let the agents go on)"
+    return line
+
+
 class Session:
-    """One participant's attachment (the MCP server, the model wrapper): receive, reply, say, who."""
+    """One attachment over MCP (or the model wrapper): an agent's (receive, reply, say, who) or, since
+    0.2.0, a person's (say, mail, transcript, continue, who). The kind comes from the roster, made by
+    `register` from facilitator.yml's humans; the caller only proves its handle with its token, and can
+    never choose its kind."""
 
     def __init__(self, fac: Facilitator, handle: str, token: str | None, tr=None):
         roster = fac.state.roster()
-        if handle not in roster or roster[handle].get("kind") != "agent":
+        kind = roster.get(handle, {}).get("kind")
+        if kind not in ("agent", "human"):
             raise FacilitatorError(f"{handle} is not a registered participant: facilitator register {handle}")
+        if kind == "human" and handle not in fac.humans():
+            raise FacilitatorError(f"{handle} was registered as a person but is not in facilitator.yml's humans "
+                                   f"({', '.join(fac.humans())})")
         if not fac.state.token_ok(handle, token):
             raise FacilitatorError(f"FACILITATOR_TOKEN does not match the token of {handle} "
                                    f"({fac.state.tokens / handle}); tokens are made again at each container start")
         self.fac, self.handle, self.tr = fac, handle, tr
+        self.human = kind == "human"
         self.turn: Turn | None = None
         self.received: list[dict] = []
 
+    def _agent_only(self, what: str) -> None:
+        if self.human:
+            raise FacilitatorError(f"{what} is an agent's tool; a person reads with mail and writes with say")
+
+    def _human_only(self, what: str) -> None:
+        if not self.human:
+            raise FacilitatorError(f"{what} is a person's tool: only a human-kind participant (facilitator.yml's "
+                                   f"humans) may call it; @{self.handle} is an agent")
+
     def receive(self, wait: float) -> dict | None:
         """Blocks until a delivery waits for this participant, or `wait` seconds pass (then None)."""
+        self._agent_only("receive")
         end = time.time() + max(0.0, wait)
         while True:
             self.fac.state.seen(self.handle)
@@ -394,11 +500,30 @@ class Session:
                     pass
 
     def reply(self, text: str, to: list[str] | None = None) -> dict:
-        r = self.fac.reply(self.handle, self.turn, text, to, self.tr)
-        return r
+        self._agent_only("reply")
+        return self.fac.reply(self.handle, self.turn, text, to, self.tr)
 
     def say(self, conv: str | None, text: str, to: list[str] | None = None) -> dict:
+        if self.human:
+            return self.fac.send(self.handle, text, conv, to, self.tr)
         return self.fac.say(self.handle, self.turn, conv, text, to, self.tr)
 
     def who(self) -> dict:
         return self.fac.who(self.handle)
+
+    def mail(self, limit: int = 20) -> dict:
+        self._human_only("mail")
+        return self.fac.mail(self.handle, limit)
+
+    def transcript(self, conv: str, limit: int | None = None) -> list[str]:
+        from .transcript import lines
+        self._human_only("transcript")
+        if conv not in self.fac.conversations_of(self.handle):
+            raise FacilitatorError(f"you are not in {conv} (who lists your conversations)")
+        return lines(self.fac, conv, limit)
+
+    def continue_(self, conv: str) -> dict:
+        self._human_only("continue")
+        if conv not in self.fac.conversations_of(self.handle):
+            raise FacilitatorError(f"you are not in {conv} (who lists your conversations)")
+        return self.fac.continue_(self.handle, conv, self.tr)

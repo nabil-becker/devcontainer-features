@@ -64,7 +64,7 @@ class Walker:
             top = guard.allowed_hops(proj, m["root"], self.fac.limits)
             routes = proj["routes"].get(mid, [])
             if m["hops"] > top and any(r["tasks"] for r in routes):
-                self.problems.append(f"{c}/{mid}: delivered at {m['hops']} hops, past the limit {top}, with no /continue")
+                self.problems.append(f"{c}/{mid}: delivered at {m['hops']} hops, past the limit {top}, with no continue")
             if m["hops"] == 0:
                 if m["from"] not in proj["thread"]["humans"]:
                     self.problems.append(f"{c}/{mid}: the root is by {m['from']}, not by a human of the conversation")

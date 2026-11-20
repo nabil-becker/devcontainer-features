@@ -57,11 +57,12 @@ The domain words of the project itself are not here; they live with the project'
   `agents` Feature (list reader, kinds, lease, session names, adapter verbs, `agents up`); `claude-code`
   installs it into `/usr/local/lib/dcf-participant` with the option `participants: true`, and
   `agents` 2.2.0 installs it only when `claude-code` has not (ADR-0061).
-- **Facilitator**: the Feature `src/facilitator` (0.1.0, backend `agntcy` only) that runs a
-  conversation between named agents and an engineer: it starts the Directory daemon and the SLIM
-  node on loopback (never the agents), and its deterministic core (intake, guard, router) routes
-  `@handle` messages and keeps the conversation as a signed record in a register of its own type
-  (ADR-0061).
+- **Facilitator**: the Feature `src/facilitator` (0.2.0, backend `agntcy` only) that runs
+  conversations between named agents and people, reached only through MCP: agents and a person's own
+  CLI session attach to one shared MCP entry, told apart by `FACILITATOR_HANDLE`. It starts the
+  Directory daemon and the SLIM node on loopback (never the agents); its deterministic core routes
+  every `@handle` and keeps each conversation as a signed record in a register of its own type; only
+  a person's `continue` resets the hop count (ADR-0061, ADR-0066).
 - **Deprecation**: how a Feature or option goes away: announced in a minor release (a one-line
   notice from `version` and `check`, the NOTES, and a "Deprecated" heading in the CHANGELOG, behaviour
   unchanged) and removed only in the next major (CONTRIBUTING.md).

@@ -58,9 +58,9 @@ def route(thread: dict, messages: dict, author: str, text: str, to: list[str] | 
                 out.append(h)
             elif h in known:
                 notices.append(("not-member", f"@{h} is not in this conversation; the mention was not delivered "
-                                              f"(start a group with them: /new group ...)"))
+                                              f"(start a conversation with them: say with conversation new and to)"))
             else:
-                notices.append(("unknown-handle", f"@{h} is no participant (who: /who); the mention was not delivered"))
+                notices.append(("unknown-handle", f"@{h} is no participant (who lists the handles); the mention was not delivered"))
         if out:
             return Decision(out, "mention", mentions(text), notices)
         if notices:

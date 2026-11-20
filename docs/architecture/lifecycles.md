@@ -124,13 +124,15 @@ over by guess. A forced release is `task agents:release` with `--force`. Per-age
 
 ## A facilitator delivery (an A2A task)
 
-From `src/facilitator/NOTES.md` (facilitator 0.1.0). One task per participant a message is routed to,
-in the message's `route` entry; the states are A2A's, written as `status` entries by the assignee.
+From `src/facilitator/NOTES.md` (facilitator 0.2.0). One task per participant a message is routed to,
+in the message's `route` entry; the states are A2A's, written as `status` entries by the assignee. A
+message routed to a person makes no task: it stays unread until the person's `mail` hands it over.
+Since 0.2.0 a person's own message is held like any other (option A).
 
 ```mermaid
 stateDiagram-v2
   [*] --> held_by_guard: hop limit, budget or pause (no task; a notice)
-  held_by_guard --> submitted: a human's /continue routes it again
+  held_by_guard --> submitted: a person's continue tool call routes it again (the only reset)
   [*] --> submitted: route entry (the assignee attached, or a notice that it waits)
   submitted --> working: the assignee's receive takes it
   working --> completed: the assignee replies, or takes its next turn

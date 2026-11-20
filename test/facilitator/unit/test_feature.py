@@ -42,7 +42,7 @@ def test_installs_the_tree_and_options():
         assert "FACILITATOR_BACKEND=agntcy" in opts
         v = subprocess.run([f"{t}/usr/local/bin/facilitator", "version", "--json"], capture_output=True, text=True,
                            env={**os.environ, "FACILITATOR_HOME": f"{t}/state"}, cwd=t)
-        assert v.returncode == 0 and '"facilitator": "0.1.0"' in v.stdout, v.stderr
+        assert v.returncode == 0 and '"facilitator": "0.2.0"' in v.stdout, v.stderr
         assert '"backend": "agntcy"' in v.stdout
         again = install(t, HOPLIMIT=4)
         assert again.returncode == 0, again.stderr                   # idempotent
