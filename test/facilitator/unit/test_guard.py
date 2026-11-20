@@ -1,5 +1,6 @@
-"""The guard (proposal 4.5): hop limit and /continue, the message budget, the rate, a human resetting
-the chain, and a stale participant held, never dropped (rule 4)."""
+"""The guard (proposal 4.5): hop limit and continue, the message budget, the rate, a person's message
+counted as a hop with only continue resetting (option A, 0.2.0), and a stale participant held, never
+dropped (rule 4)."""
 import sys
 from pathlib import Path
 
@@ -50,20 +51,74 @@ def test_hop_limit_pauses_and_continue_resumes():
         e.close()
 
 
-def test_human_message_resets_hops():
+def test_a_persons_message_counts_as_a_hop_and_only_continue_resets():
+    """Option A (the Operator's ruling of 2026-11-20): a person's message in a conversation answers its last
+    message, one hop more, and is held by a pause like any other; only continue lets the chain run on."""
+    from facilitator import guard
     e = helpers.Env(FACILITATOR_HOP_LIMIT=2)
     try:
         fac = e.register_all()
         for h in ("jester", "domain-expert-one"):
             fac.state.seen(h)
         conv = fac.new_conversation("you", ["jester", "domain-expert-one"])
-        fac.send("you", "@jester go", conv)
+        first = fac.send("you", "@jester go", conv)
         last = ping_pong(e, fac, conv, 5)
         assert last["held"] and last["held"][0]["reason"] == "hop-limit", last
-        r = fac.send("you", "@jester again", conv)
-        assert r["delivered"] and r["to"] == ["jester"]
         _, proj, _ = fac.record.read(conv)
-        assert proj["messages"][r["message_id"]]["hops"] == 0
+        assert guard.paused(proj) == "hop-limit"
+        r = fac.send("you", "@jester again", conv)              # no reset: held by the pause
+        assert not r["delivered"] and r["held"][0]["reason"] == "paused", r
+        _, proj, _ = fac.record.read(conv)
+        m = proj["messages"][r["message_id"]]
+        assert m["hops"] == 4 and m["root"] == first["message_id"], m
+        assert m["reply_to"] == proj["order"][-2]                 # it answers the conversation's last message
+        assert guard.paused(proj) == "hop-limit"                  # a person's message no longer resumes it
+        assert e.session(fac, "jester").receive(0) is None
+        c = fac.continue_("you", conv)                          # the only reset: the person's message goes
+        assert c["delivered"] and c["message_id"] == r["message_id"] and c["to"] == ["jester"], c
+        got = e.session(fac, "jester").receive(0)
+        assert got and got["message_id"] == r["message_id"]
+        from facilitator.verify import verify
+        assert verify(fac, conv)["ok"], verify(fac, conv)["problems"]
+    finally:
+        e.close()
+
+
+def test_a_persons_messages_alone_reach_the_hop_limit():
+    """A person talking with one agent, hop limit 3: you 0, jester 1, you 2, jester 3, you 4 held. The
+    person's own turns count, so an exchange through a person's session cannot loop without a continue."""
+    e = helpers.Env(FACILITATOR_HOP_LIMIT=3)
+    try:
+        fac = e.register_all()
+        fac.state.seen("jester")
+        r = fac.send("you", "@jester one")
+        conv = r["conversation"]
+        assert fac.record.read(conv)[1]["messages"][r["message_id"]]["hops"] == 0
+        j = e.session(fac, "jester")
+        j.receive(0)
+        j.reply("a")                                            # 1
+        r2 = fac.send("you", "two", conv)                       # 2: no mention, back to the other member
+        assert r2["delivered"] and r2["to"] == ["jester"], r2
+        j.receive(0)
+        j.reply("b")                                            # 3
+        r3 = fac.send("you", "three", conv)                     # 4 > 3: held, the conversation pauses
+        assert not r3["delivered"] and r3["held"][0]["reason"] == "hop-limit", r3
+        assert fac.continue_("you", conv)["delivered"]
+        assert j.receive(0)["message_id"] == r3["message_id"]
+    finally:
+        e.close()
+
+
+def test_a_new_conversation_is_a_new_root():
+    e = helpers.Env()
+    try:
+        fac = e.register_all()
+        a = fac.send("you", "@jester hello")
+        b = fac.send("you", "@jester hello again", "new")
+        assert a["conversation"] != b["conversation"]
+        for r in (a, b):
+            m = fac.record.read(r["conversation"])[1]["messages"][r["message_id"]]
+            assert m["hops"] == 0 and m["root"] == r["message_id"]
     finally:
         e.close()
 

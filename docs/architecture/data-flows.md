@@ -165,14 +165,19 @@ flowchart TB
 
 ### 3a. A facilitator conversation
 
-The facilitator Feature (0.1.0): a message from a person or a participant becomes a signed entry in the
+The facilitator Feature (0.2.0): a message from a person or a participant becomes a signed entry in the
 conversation's register, a route entry by the facilitator, and a delivery over SLIM; everything on
-loopback, in one container.
+loopback, in one container. A person talks from their own Claude Code or Copilot session through the
+same MCP server (since 0.2.0 there is no terminal chat) and reads what came in with `mail`, from the
+record; nothing is delivered to a person over SLIM.
 
 ```mermaid
 flowchart LR
   subgraph external-zone-ct["Container (loopback only)"]
-    human["you: facilitator chat / send"]
+    human["you: your own Claude Code session"]
+    hmcp["facilitator mcp (FACILITATOR_HANDLE=you)"]
+    hook["turn hook: facilitator mail --hook"]
+    admin["facilitator register (command line)"]
     claude["Claude Code participant"]
     mcp["facilitator mcp (per participant)"]
     wrapper["facilitator model (local model)"]
@@ -186,22 +191,27 @@ flowchart LR
     keys["facilitator/keys/<handle>, facilitator/slim"]
   end
   claude -->|stdio MCP: receive, reply, say, who| mcp
-  human -->|signed message| reg
+  human -->|stdio MCP: say, mail, transcript, continue, who| hmcp
+  hmcp -->|signed message, continue| reg
+  reg -->|unread messages, read only| hmcp
+  reg -->|N new messages| hook
+  hook -->|one line at the prompt| human
   mcp -->|signed message, status| reg
   wrapper -->|signed message, status| reg
   wrapper -->|chat/completions| endpoint
   reg -->|route entry by facilitator| reg
   mcp -->|packets of a delivery| slim
-  human -->|packets of a delivery| slim
+  hmcp -->|packets of a delivery| slim
   slim -->|wakes receive| wrapper
   slim -->|wakes receive| mcp
   keys -->|private key through a pipe| agent
   agent -->|signs| reg
-  human -.->|register: OASF record| dir
+  admin -.->|register: OASF record| dir
 ```
 
 - The record is the truth: a delivery that SLIM cannot make (the participant is not attached) waits in the record and is found by `receive`.
 - Keys fall back to mode-600 files in the volume when OpenBao is not ready (0.1.0 exception).
+- One shared MCP entry: who attaches comes from `FACILITATOR_HANDLE` and `FACILITATOR_TOKEN` in the CLI's environment; whether it is a person or an agent comes from the roster.
 - Sources: `src/facilitator/NOTES.md`, `docs/proposals/facilitator-agent.md` sections 4 and 5.
 
 ## 4. Secrets

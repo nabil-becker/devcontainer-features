@@ -133,11 +133,11 @@ def test_fallback_keys_and_tokens_are_private():
     e = helpers.Env()
     try:
         e.register_all().record.facilitator_key()
-        for f in ("keys/jester", "keys/you", "keys/facilitator", "tokens/jester", "keys/FALLBACK"):
+        for f in ("keys/jester", "keys/you", "keys/facilitator", "tokens/jester", "tokens/you", "keys/FALLBACK"):
             mode = stat.S_IMODE(os.stat(e.home / f).st_mode)
             assert mode == 0o600, (f, oct(mode))
         assert "0.1.0 fallback" in (e.home / "keys" / "FALLBACK").read_text()
-        assert not (e.home / "tokens" / "you").exists()    # a human has a key, no token
+        assert not (e.home / "tokens" / "facilitator").exists()   # a person has a token since 0.2.0; the facilitator none
     finally:
         e.close()
 

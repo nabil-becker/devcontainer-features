@@ -42,7 +42,7 @@ commit that added it); every other row is "to verify against the registry".
 | Host and devcontainer | `devcontainer-cli` (1.22.1), `common` (1.0.4), `cloud-folder` (1.3.3), `audio` (1.1.0) |
 | Git and identity | `git` (1.4.6), `gh` (1.1.0), `ssh-agent` (1.5.0), `openbao` (1.6.0, unreleased) |
 | Agents | `agents` (2.4.0, deprecated: use `claude-code` `participants: true`), `claude-code` (1.12.0, unreleased: the `skills` adapter verb; 1.11.0 the participants list keys), `component-registry` (1.2.0, unreleased: [the component registry](../proposals/component-registry.md) slices 1 to 3; 1.0.0 published), `phi-check` (1.0.3), `go-task` (1.2.2), `coder-cli` (1.1.5), `dsc` (1.1.5) |
-| Agent communication | `sign-packet` (0.6.0), `register-engine` (0.3.0), `packet-relay` (0.4.0), `facilitator` (0.1.0, unreleased: the first version on AGNTCY, slice 3 of the [facilitator proposal](../proposals/facilitator-agent.md); its own copies of register-engine's and sign-packet's libraries, checked by `task registerengine:check` and `task signpacket:check`) |
+| Agent communication | `sign-packet` (0.6.0), `register-engine` (0.3.0), `packet-relay` (0.4.0), `facilitator` (0.2.0, unreleased: MCP only, a person attaches their own Claude Code or Copilot session as a `human`-kind participant; 0.1.0 the first version on AGNTCY, slice 3 of the [facilitator proposal](../proposals/facilitator-agent.md); its own copies of register-engine's and sign-packet's libraries, checked by `task registerengine:check` and `task signpacket:check`) |
 | Cloud and Kubernetes | `az` (1.1.3), `kustomize` (1.0.5), `kubeconform` (1.0.5), `argocd` (1.1.5), `velero` (1.0.6), `kube-state` (1.0.4) |
 
 ## Shared components: `components/`
@@ -92,7 +92,7 @@ status lines were not (see Gaps).
 | [Personalization](../proposals/personalization.md) | open | superseded by the component registry (ADR-0063) |
 | [Component registry](../proposals/component-registry.md) | accepted 2026-11-19 | slice 1 built: `component-registry` 1.0.0 (resolve, explain, the `.reg` grammar and match rule, `git` and `path` sources; skills only); slice 2 built: the adapter step (`component-registry` 1.1.0, `claude-code` 1.12.0, participant 1.2.0, ADR-0064). slice 3 built: the `http` source (`component-registry` 1.2.0) and the `cloud-folder` source (`cloud-folder` 1.4.0). Later: first real use (slice 4) |
 | [Secrets distribution (phase 2)](../proposals/secrets-distribution.md) | research notes, not designed | not built |
-| [Facilitator](../proposals/facilitator-agent.md) | ruled 2026-11-19; slices 0 to 2 done | `facilitator` 0.1.0 (slice 3, unreleased): `agntcy` backend only, no model, the vendor Features' `attach` and the pump not built; rule 1 reads only the addressed mentions (the first `@handle` and those right after it), which the scenario of section 2 needs |
+| [Facilitator](../proposals/facilitator-agent.md) | ruled 2026-11-19; MCP-only pivot ruled 2026-11-20; slices 0 to 2 done | `facilitator` 0.1.0 (slice 3, unreleased) and 0.2.0 (unreleased): `agntcy` backend only, no model, the pump not built; every `@handle` delivered (ruling M); no terminal chat: a person attaches over MCP (`say`, `mail`, `transcript`, `continue`, `who`), a person's message counts as a hop and only `continue` resets (option A); one shared MCP entry, the handle from `FACILITATOR_HANDLE` |
 | Decided and closed: [King Arthur theme](../proposals/king-arthur-theme.md) (superseded), [Journalist back](../proposals/journalist-back.md), [Feature principles](../proposals/feature-principles.md), [Agent principles](../proposals/agent-principles.md), [Iteration package](../proposals/iteration-package.md) | decided or superseded | in the ADRs and [docs/principles/](../principles/) |
 
 ## Known gaps
@@ -109,6 +109,8 @@ status lines were not (see Gaps).
 | `agents` 3.0.0 (retirement) waits on its conditions | [facilitator-agent](../proposals/facilitator-agent.md) 7.2: claude-code carried the component for a release, the office and DSNP moved, the launcher shown on the component alone |
 | The participant component does not know the facilitator's keys | `components/participant` 1.0.0 reads `agents:` and `agents.yml` only and warns on `attachment`, `description`, `skills`; the facilitator reads `participants.yml` (alias `agents.yml`) itself |
 | The facilitator is the first published Feature with an MCP server and with daemons it starts | `src/facilitator/NOTES.md`; the NFR decision "MCP: none for now" is revised in `docs/principles/non-functional-requirements.md` |
+| A person's session is not woken by a facilitator message | facilitator 0.2.0: `mail` is called, never pushed; Claude Code's turn hook shows a line at the next prompt; Copilot CLI has no such hook |
+| Every token is readable by every process of the one Linux user | facilitator 0.2.0 gives a person a token too: an agent with a shell could read `tokens/you` and attach as the person; [agent-linux-user](../proposals/agent-linux-user.md) is the boundary that would close it |
 | Architecture documents are new | Data Flows and Data Inventory are written beside this page; C4 views are in `docs/model/` |
 
 ## Component registry (ADR-0063)

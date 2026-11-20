@@ -5,7 +5,7 @@
 #   /usr/local/lib/facilitator/venv/          the Feature's own venv: slim-bindings, from its wheel (SHA-256 pinned
 #                                             below, then pip --require-hashes, no index)
 #   /usr/local/lib/facilitator/facilitator/   the application: intake, guard, router, dispatcher, collector, the MCP
-#                                             server, the model wrapper, chat, infra, verify
+#                                             server, the model wrapper, mail, infra, verify
 #   /usr/local/lib/facilitator/registerengine/, signpacket/   this Feature's own copies of register-engine's and
 #                                             sign-packet's libraries (ADR-0062: each Feature installs alone)
 #   /usr/local/lib/facilitator/types.d/facilitator.py   the conversation register type (also into
