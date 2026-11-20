@@ -76,6 +76,12 @@ named in the rows ("bounded loss", "to verify").
 | Audio relay folder (microphone socket, only while the gate is on) | `/mnt/wsl/devhost-audio` | launcher, audio gate | none | personal (live audio, stored nowhere) | no | `src/audio/NOTES.md`, `docs/adr/0058-*.md` |
 | Audio ALSA default | `/etc/asound.conf` in the image | audio Feature | 4 (image) | public | no (rebuilt) | `src/audio/NOTES.md` |
 | PHI-check exceptions (synthetic fixtures only) | a file named by the `exceptions` option | phi-check Feature, the repo | 1 | internal | yes | `src/phi-check/NOTES.md` |
+| Facilitator conversations: one register-engine register (`conversation` type) per conversation, every message signed | volume `facilitator-state-${devcontainerId}` at `/var/lib/devcontainer-features/facilitator` (`conversations/`) | facilitator Feature | 4 (working data, D12; a tier-2 mirror is a later item) | personal (what people and models said) | yes | `src/facilitator/NOTES.md` |
+| Facilitator identity keys (each participant, each human, `facilitator`) | OpenBao `facilitator/keys/<handle>`; the 0.1.0 fallback `keys/<handle>` (mode 600) in the same volume | facilitator Feature | none (OpenBao); 4 for the fallback (ADR-0048 exception) | secret | yes | `src/facilitator/NOTES.md` ("Keys") |
+| Facilitator participant tokens | `tokens/<handle>` (mode 600) in the same volume, made again at every container start | facilitator Feature | 4 (ADR-0048 exception, ADR-0061) | secret (worthless outside the container) | yes, replaced at start | `src/facilitator/NOTES.md` |
+| SLIM's basic-auth password and app secret | OpenBao `facilitator/slim`; fallback `secrets/slim.json` (mode 600) | facilitator Feature | none (OpenBao); 4 for the fallback | secret | yes | `src/facilitator/NOTES.md` |
+| AGNTCY Directory data (OASF records, SQLite, OCI store, `node.key`) | `dir/` in the same volume | facilitator Feature (dirctl daemon) | 4 | internal | yes | `src/facilitator/NOTES.md` |
+| Participant list keys `attachment`, `description`, `skills`; facilitator settings | `.devcontainer/participants.yml` (alias `agents.yml`), `.devcontainer/facilitator.yml` | the repo | 1 | public | yes | `src/facilitator/NOTES.md` |
 | Journal pieces, night-shift reports, iteration papers | `docs/journal/`, `docs/night-shift/`, `docs/iterations/` | host, journalist | 1 | public (name guard applies) | yes | `docs/journal/README.md`, `local-features/devhost/NOTES.md` |
 
 ### Features that hold nothing

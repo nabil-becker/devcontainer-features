@@ -1,12 +1,12 @@
 # State of the Architecture
 
-As of 2026-11-19. Read from the files named in each table; this page links out and does not
+As of 2026-11-20. Read from the files named in each table; this page links out and does not
 restate them. Part of the [six](README.md).
 
 ```mermaid
 flowchart TB
   subgraph tree["This repository"]
-    src["src/: 20 Features"]
+    src["src/: 24 Features"]
     lf["local-features/: devhost, agentic-register (not published)"]
     comp["components/: participant (vendored into Features, never published alone)"]
     ra["docs/reference-architectures/: 4 assemblies"]
@@ -42,6 +42,7 @@ commit that added it); every other row is "to verify against the registry".
 | Host and devcontainer | `devcontainer-cli` (1.22.1), `common` (1.0.4), `cloud-folder` (1.3.3), `audio` (1.1.0) |
 | Git and identity | `git` (1.4.6), `gh` (1.1.0), `ssh-agent` (1.5.0), `openbao` (1.6.0, unreleased) |
 | Agents | `agents` (2.2.0, deprecated: use `claude-code` `participants: true`), `claude-code` (1.10.0), `phi-check` (1.0.3), `go-task` (1.2.2), `coder-cli` (1.1.5), `dsc` (1.1.5) |
+| Agent communication | `sign-packet` (0.6.0), `register-engine` (0.3.0), `packet-relay` (0.4.0), `facilitator` (0.1.0, unreleased: the first version on AGNTCY, slice 3 of the [facilitator proposal](../proposals/facilitator-agent.md); its own copies of register-engine's and sign-packet's libraries, checked by `task registerengine:check` and `task signpacket:check`) |
 | Cloud and Kubernetes | `az` (1.1.3), `kustomize` (1.0.5), `kubeconform` (1.0.5), `argocd` (1.1.5), `velero` (1.0.6), `kube-state` (1.0.4) |
 
 ## Shared components: `components/`
@@ -90,6 +91,7 @@ status lines were not (see Gaps).
 | [Least privilege for agents, ending in one agent Linux user](../proposals/agent-linux-user.md) | accepted 2026-11-08; build not started | not built |
 | [Personalization](../proposals/personalization.md) | open | not built |
 | [Secrets distribution (phase 2)](../proposals/secrets-distribution.md) | research notes, not designed | not built |
+| [Facilitator](../proposals/facilitator-agent.md) | ruled 2026-11-19; slices 0 to 2 done | `facilitator` 0.1.0 (slice 3, unreleased): `agntcy` backend only, no model, the vendor Features' `attach` and the pump not built; rule 1 reads only the addressed mentions (the first `@handle` and those right after it), which the scenario of section 2 needs |
 | Decided and closed: [King Arthur theme](../proposals/king-arthur-theme.md) (superseded), [Journalist back](../proposals/journalist-back.md), [Feature principles](../proposals/feature-principles.md), [Agent principles](../proposals/agent-principles.md), [Iteration package](../proposals/iteration-package.md) | decided or superseded | in the ADRs and [docs/principles/](../principles/) |
 
 ## Known gaps
@@ -104,4 +106,6 @@ status lines were not (see Gaps).
 | Agents have no least-privilege boundary yet | [agent-linux-user](../proposals/agent-linux-user.md) accepted, not built |
 | `common:check` compares single files one level deep | a helper vendored into a subfolder would not be checked; `components:check` compares whole folders (`diff -r`) |
 | `agents` 3.0.0 (retirement) waits on its conditions | [facilitator-agent](../proposals/facilitator-agent.md) 7.2: claude-code carried the component for a release, the office and DSNP moved, the launcher shown on the component alone |
+| The participant component does not know the facilitator's keys | `components/participant` 1.0.0 reads `agents:` and `agents.yml` only and warns on `attachment`, `description`, `skills`; the facilitator reads `participants.yml` (alias `agents.yml`) itself |
+| The facilitator is the first published Feature with an MCP server and with daemons it starts | `src/facilitator/NOTES.md`; the NFR decision "MCP: none for now" is revised in `docs/principles/non-functional-requirements.md` |
 | Architecture documents are new | Data Flows and Data Inventory are written beside this page; C4 views are in `docs/model/` |

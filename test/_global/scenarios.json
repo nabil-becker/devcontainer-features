@@ -28,7 +28,8 @@
       "audio": {},
       "sign-packet": {},
       "register-engine": {},
-      "packet-relay": {}
+      "packet-relay": {},
+      "facilitator": {}
     },
     "remoteUser": "vscode"
   }

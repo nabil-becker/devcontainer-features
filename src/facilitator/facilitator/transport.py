@@ -161,6 +161,14 @@ class SlimTransport:
                 self._run(app.unsubscribe_async(self.sb.Name(ORG, NS, self.me), self.conn), 3)
             except Exception:       # noqa: BLE001
                 pass
+        async def _stop():
+            for t in asyncio.all_tasks(self.loop):
+                if t is not asyncio.current_task():
+                    t.cancel()
+        try:
+            self._run(_stop(), 3)
+        except Exception:           # noqa: BLE001
+            pass
         self.loop.call_soon_threadsafe(self.loop.stop)
 
 
