@@ -6,6 +6,26 @@ of the Feature and whether they must act (an option renamed, a task removed, a r
 The version in `devcontainer-feature.json` is bumped in the same change that adds its entry
 here; `task lint` fails when the entry is missing.
 
+## [1.5.0] - 2026-11-20
+
+### Added
+
+- **The `db` source.** A layer can be the rows of a database: `kind: db` with `driver: sqlite`
+  (`path`) or `driver: postgres` (`host`, `port`, `database`, `user`, `sslmode`, and the password
+  as `auth.secret`, a `dcf-secret` name), and one of `table` or `query`, returning the columns
+  `section`, `key`, `type`, `data`, `locked`. The source (`registry-source-db`) renders them into a
+  `.reg` file in the layer copy (a multi-line `text` into a file read with `@file`); its version is
+  a hash of the rendered files; a bad row or an empty result fails the fetch with the reason, and
+  `resolve` keeps the last good copy. The database is opened read-only; the password reaches
+  `psql` in its environment only. Any other driver exits 3. The contract is in the Feature's notes.
+
+### Changed
+
+- A layer list naming `kind: db` is no longer reported as "not in this release".
+
+Needs `sqlite3` or `psql` in the image for the driver in use (this Feature does not install them;
+the source says how). Nothing to do for a layer list without a `db` source. Rebuild to get it.
+
 ## [1.3.0] - 2026-11-20
 
 ### Added

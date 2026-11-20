@@ -42,6 +42,8 @@
 #         - { kind: http, url: "https://registry.example.invalid/corp.reg", auth: { type: bearer, secret: registry/corp } }
 #         - { kind: cloud-folder, remote: registry/mine }   # a folder under the cloud folder
 #         - { kind: path, path: .registry-mine }   # repo-relative or absolute folder
+#         - { kind: db, driver: postgres, host: db.example.invalid, database: registry, user: reader, table: registry_rows, auth: { secret: registry/db } }   # 1.5.0
+#         - { kind: db, driver: sqlite, path: registry.db, query: "SELECT section, key, type, data, locked FROM rows" }
 #
 # Only that subset of YAML is read (comments, plain and quoted scalars, block entries, one-line
 # { } maps); unknown keys are refused with file:line. The parser is awk (NFR-7).
@@ -157,7 +159,7 @@ resolve_whoami() { # $1: the --as value, may be empty
 #   K <n> <key> <value> <line>        id, at, required, writable, heading
 #   S <n> <m> <line>                  source m of layer n starts
 #   P <n> <m> <key> <value> <line>    kind, url, branch, tag, commit, path, remote, required,
-#                                     allow-insecure, auth.type, auth.secret, auth.user, auth.header
+#                                     driver, host, port, database, user, sslmode, table, query, allow-insecure, auth.type, auth.secret, auth.user, auth.header
 #   E <line> <message>                an error (the last line)
 # Written for mawk as well as gawk: no gensub, no regex intervals.
 read -r -d '' LIST_PARSER <<'AWK'
@@ -200,7 +202,7 @@ function setkey(where, k, v,   id) {
     return
   }
   if (where == "source") {
-    if (k !~ /^(kind|url|branch|tag|commit|path|remote|required|allow-insecure)$/) fail("unknown key '" k "' in a source (kind, url, branch, tag, commit, path, remote, required, allow-insecure, auth)")
+    if (k !~ /^(kind|url|branch|tag|commit|path|remote|required|allow-insecure|driver|host|port|database|user|sslmode|table|query)$/) fail("unknown key '" k "' in a source (kind, url, branch, tag, commit, path, remote, required, allow-insecure, driver, host, port, database, user, sslmode, table, query, auth)")
     id = k
   } else {
     if (k !~ /^(type|secret|user|header)$/) fail("unknown key '" k "' in auth (type, secret, user, header)")
@@ -402,6 +404,18 @@ load_list() {
           grep -q '^url=' <<< "${S_ARGS[$k]}" || { warn "$at: a git source needs url"; errs=$((errs + 1)); }
           [ "$(grep -c '^\(branch\|tag\|commit\)=' <<< "${S_ARGS[$k]}")" -eq 1 ] || { warn "$at: a git source needs exactly one of branch, tag, commit"; errs=$((errs + 1)); }
           grep -q '^\(path\|remote\|allow-insecure\|auth\.header\)=' <<< "${S_ARGS[$k]}" && { warn "$at: a git source takes url, branch, tag or commit, and auth (type, user, secret)"; errs=$((errs + 1)); } ;;
+        db)
+          grep -q '^driver=' <<< "${S_ARGS[$k]}" || { warn "$at: a db source needs driver (sqlite or postgres)"; errs=$((errs + 1)); }
+          [ "$(grep -c '^\(table\|query\)=' <<< "${S_ARGS[$k]}")" -eq 1 ] || { warn "$at: a db source needs exactly one of table, query"; errs=$((errs + 1)); }
+          grep -q '^\(url\|branch\|tag\|commit\|remote\|allow-insecure\|auth\.\(type\|user\|header\)\)=' <<< "${S_ARGS[$k]}" && { warn "$at: a db source takes driver, path or host, port, database, user, sslmode, table or query, and auth.secret only"; errs=$((errs + 1)); }
+          if grep -q '^driver=sqlite$' <<< "${S_ARGS[$k]}"; then
+            grep -q '^path=' <<< "${S_ARGS[$k]}" || { warn "$at: a sqlite db source needs path"; errs=$((errs + 1)); }
+            # A relative path is the repository's; the source gets it absolute.
+            v="$(sed -n 's/^path=//p' <<< "${S_ARGS[$k]}")"
+            case "$v" in /* | '') ;; *) S_ARGS[$k]="$(grep -v '^path=' <<< "${S_ARGS[$k]}")"$'\n'"path=$ROOT/$v"$'\n' ;; esac
+          elif grep -q '^driver=postgres$' <<< "${S_ARGS[$k]}"; then
+            for v in host database user; do grep -q "^$v=" <<< "${S_ARGS[$k]}" || { warn "$at: a postgres db source needs $v"; errs=$((errs + 1)); }; done
+          fi ;;
         path)
           grep -q '^path=' <<< "${S_ARGS[$k]}" || { warn "$at: a path source needs path"; errs=$((errs + 1)); }
           grep -q '^\(url\|branch\|tag\|commit\|remote\|auth\.[a-z]*\)=' <<< "${S_ARGS[$k]}" && { warn "$at: a path source takes path only (the folder's own permissions are its log-in)"; errs=$((errs + 1)); }
@@ -437,7 +451,7 @@ fetch_source() {
   fi
   if ! command -v "$cmd" >/dev/null 2>&1; then
     case "$kind" in
-      db) SRC_NOTE="kind db is not in this release of component-registry (no $cmd on PATH)" ;;
+      db) SRC_NOTE="no $cmd on PATH (component-registry 1.5.0 or later installs it)" ;;
       http) SRC_NOTE="no $cmd on PATH (component-registry 1.2.0 or later installs it)" ;;
       cloud-folder) SRC_NOTE="no $cmd on PATH (the cloud-folder Feature, 1.4.0 or later, installs it)" ;;
       *) SRC_NOTE="no $cmd on PATH (the Feature that owns the $kind transport installs it)" ;;

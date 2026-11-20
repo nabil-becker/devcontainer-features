@@ -1,7 +1,7 @@
 
 # Component registry (component-registry)
 
-A registry for agentic components, shaped like the Windows Registry (ADR-0063). Layers from any number of sources (a git branch, tag or commit; one .reg file over http(s) with bearer, header or basic log-in, the secret through dcf-secret and never over plain http without allow-insecure; a folder or mounted file share; a folder in the cloud folder, from the cloud-folder Feature) are fetched into local layer copies (version first, so an unchanged layer is skipped; offline, the last good copy is used and said) and merged by value type into one resolved view for who you are (COMPONENT_REGISTRY_WHOAMI, a path such as /Corp/MyDepartment/team/me): value replaces, list combines (!item takes out), text stacks in layer order (under a heading per layer, or none with the layer key heading: false), a skill's name and description values go into its SKILL.md front matter, ref points at another path; the higher layer wins, the more specific scope inside a layer, a locked key beats both, and a permission key comes from a component's lowest layer only. dcf-registry resolve and dcf-registry explain <path> [--uses] (task component-registry:resolve, :explain); release 1 resolves skills, and dcf-registry handover gives them to a CLI's adapter (agent-adapter-<cli> skills; Claude Code: its personal skills folder, live in running sessions), which the participant component (claude-code participants: true) does at every agent's start. A built-in base layer ships the utility skills /registry-refresh, /registry-explain and /registry-remember (appends to the layer marked writable: true). The layer list is .devcontainer/registry.yml (option registryFile, COMPONENT_REGISTRY_FILE). Layer copies and the resolved view live owner-only in a named volume at COMPONENT_REGISTRY_STATE_DIR=/var/lib/devcontainer-features/component-registry, made usable by component-registry-setup at start. Bash, awk and sed; nothing downloaded at build.
+A registry for agentic components, shaped like the Windows Registry (ADR-0063). Layers from any number of sources (a git branch, tag or commit; one .reg file over http(s) with bearer, header or basic log-in, the secret through dcf-secret and never over plain http without allow-insecure; a folder or mounted file share; a folder in the cloud folder, from the cloud-folder Feature; the rows of a SQLite or PostgreSQL table or query, rendered into a .reg file, the password through dcf-secret into the client's environment only) are fetched into local layer copies (version first, so an unchanged layer is skipped; offline, the last good copy is used and said) and merged by value type into one resolved view for who you are (COMPONENT_REGISTRY_WHOAMI, a path such as /Corp/MyDepartment/team/me): value replaces, list combines (!item takes out), text stacks in layer order (under a heading per layer, or none with the layer key heading: false), a skill's name and description values go into its SKILL.md front matter, ref points at another path; the higher layer wins, the more specific scope inside a layer, a locked key beats both, and a permission key comes from a component's lowest layer only. dcf-registry resolve and dcf-registry explain <path> [--uses] (task component-registry:resolve, :explain); release 1 resolves skills, and dcf-registry handover gives them to a CLI's adapter (agent-adapter-<cli> skills; Claude Code: its personal skills folder, live in running sessions), which the participant component (claude-code participants: true) does at every agent's start. A built-in base layer ships the utility skills /registry-refresh, /registry-explain and /registry-remember (appends to the layer marked writable: true). The layer list is .devcontainer/registry.yml (option registryFile, COMPONENT_REGISTRY_FILE). Layer copies and the resolved view live owner-only in a named volume at COMPONENT_REGISTRY_STATE_DIR=/var/lib/devcontainer-features/component-registry, made usable by component-registry-setup at start. Bash, awk and sed; nothing downloaded at build.
 
 ## Example Usage
 
@@ -71,8 +71,8 @@ base layer ships the utility skills `/registry-refresh`, `/registry-explain`, `/
 Release 1.2.0 adds the `http` source (and, with cloud-folder 1.4.0, the `cloud-folder` source).
 Release 1.3.0 adds the layer key `heading: false` (stack a layer's text without a heading) and
 writes a skill's `name` and `description` values into its `SKILL.md` front matter.
-It resolves **skills** only. Not yet: the `db` source; a layer list naming it is read, and
-`resolve` says that kind is not in this release.
+Release 1.5.0 adds the `db` source (`sqlite` and `postgres`).
+It resolves **skills** only.
 
 ## What it installs
 
@@ -82,14 +82,14 @@ work; no python3, no jq):
 - `dcf-registry` (`/usr/local/bin`): `resolve`, `explain`, `version`, and (1.1.0) `handover`,
   `refresh`, `remember`, `layer-list`.
 - `/usr/local/share/component-registry-feature/base/`: the built-in base layer, the utility skills.
-- `registry-source-git` and `registry-source-path`: the two **registry sources** of this release.
+- `registry-source-git`, `registry-source-path`, `registry-source-http` and (1.5.0) `registry-source-db`: the **registry sources** of this release.
 - `component-registry-setup`: the `postStartCommand`.
 - `dcf-persist`, the collection's helper behind every setup script.
 - `/usr/local/share/component-registry-feature/` with the version and the `registryFile` option.
 - The Feature Taskfile (`installTaskfile`).
 
 `resolve` needs `flock` (util-linux, in every Debian and Ubuntu image); a `git` source needs git,
-which this Feature does not install (the base image, or the `git` Feature).
+which this Feature does not install (the base image, or the `git` Feature); a `db` source needs `sqlite3` or `psql`, which it does not install either (see the `db` source).
 
 ## Options
 
@@ -151,7 +151,7 @@ Only this YAML subset is read: comments, plain and quoted values, block entries 
 | `path` | `path` (repository-relative or absolute); `required` | the folder's own permissions |
 | `http` | `url` (one `.reg` file); `allow-insecure`; `required` | `auth`: `type` `bearer`, `header` (`header` names it) or `basic` (`user`), and `secret`, a `dcf-secret` name; none (the default without a secret) reads an open endpoint |
 | `cloud-folder` | `remote` (a folder under the cloud folder); `required` | the cloud folder's own set-up (cloud-folder Feature 1.4.0 or later installs the source) |
-| `db` | a later release | |
+| `db` | `driver` (`sqlite`, `postgres`); `path` or `host`, `port`, `database`, `user`, `sslmode`; one of `table`, `query`; `required` | `auth.secret`, a `dcf-secret` name, the postgres password; sqlite: the file's own permissions |
 
 ### The `http` source
 
@@ -181,6 +181,66 @@ URL and how to log in.
 - { kind: http, url: "https://registry.example.invalid/open.reg" }          # an open endpoint
 - { kind: http, url: "https://registry.example.invalid/x.reg", auth: { type: header, header: X-Api-Key, secret: registry/x } }
 ```
+
+### The `db` source (1.5.0)
+
+`registry-source-db` reads the rows a table or a query returns and renders them into one
+`<layer>.reg` file in the layer copy. Review and release are the database owner's; the layer list
+pins only what to read and how to log in.
+
+```yaml
+- { kind: db, driver: sqlite, path: .registry/layer.db, table: registry_rows }   # path: repository-relative or absolute
+- kind: db
+  driver: postgres
+  host: db.example.invalid
+  port: 5432                  # default 5432
+  database: registry
+  user: reader
+  sslmode: verify-full        # disable, allow, prefer (default), require, verify-ca, verify-full
+  query: "SELECT section, key, type, data, locked FROM registry_rows WHERE layer = 'corp'"
+  auth: { secret: registry/db }   # the password, a dcf-secret name
+```
+
+- **The row contract.** `table: <name>` (`name` or `schema.name`) reads
+  `SELECT section, key, type, data, locked FROM <name> ORDER BY section, key`; `query: <select>`
+  is one `SELECT` (or `WITH`) statement whose result has the columns named `section`, `key`,
+  `type`, `data`, `locked`, in the order it returns them (it may not hold a semicolon; quote it in
+  the layer list when it holds a comma or a colon). Exactly one of `table` and `query`.
+
+  | Column | Holds | Becomes |
+  | --- | --- | --- |
+  | `section` | a section path as in a `.reg` file (`skills/web`, `/Corp/skills/*`, no brackets) | `[section]`, written once per run of equal values |
+  | `key` | letters, digits, `.`, `_`, `-` | the entry's key |
+  | `type` | `value`, `list`, `text` or `ref` | the entry's type |
+  | `data` | the entry's data, as in a `.reg` file | `key:type = data`; a `text` that is not one plain line (a newline, a leading `@`, edge blanks) goes to `text/<n>.txt` and reads `@file text/<n>.txt` |
+  | `locked` | `1`, `t`, `true`, `yes` locks the key; `0`, `f`, `false`, `no`, empty does not | a `lock <key>` line after the entry |
+
+  Rows come in the order the statement returns them (the table form: by section, then key), and
+  the later line wins a tie, as in a file. A `NULL` reads as empty.
+- **Bad rows are refused.** One row with an empty or unreadable section, a key with a space, a type
+  that is not one of the four, a `locked` that is not a flag, a line break in a non-`text` value,
+  data starting with `@` or an exclusion section (`!`) with an entry fails the fetch (exit 1) with
+  the row's number and the reason, and so does a result with no rows. Nothing is written; `resolve`
+  says it and uses the last good copy. A layer is all of its rows or none: a skipped row could be a
+  lock. (`@replace` is not in the contract: put it in a `path` or `git` layer.)
+- **Version.** `sha256:<hash>` of the rendered files, so `version` runs the query (cheaply: no
+  copy is kept) and `resolve` skips the layer when nothing changed. A database that is unreachable
+  or fails the query gives the last good copy.
+- **Drivers and clients.** `sqlite` takes `path` and reads it with `sqlite3 -readonly`; `postgres`
+  takes `host`, `database`, `user` (and `port`, `sslmode`, `auth.secret`) and runs `psql`; the
+  connection goes in `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGSSLMODE` (and a 10 s
+  `PGCONNECT_TIMEOUT`), the SQL on standard input, and the transaction is read-only. Any other
+  driver exits 3 and `resolve` says so. The clients are **not installed by this Feature** (the
+  same choice as `git` and `curl`: the base image or another Feature brings them, and a Feature
+  that pulled in a PostgreSQL client would add packages to every devhost that never uses a
+  database); without one the source exits 1 and says `apt-get install sqlite3` or
+  `apt-get install postgresql-client`, and `install.sh` prints a note when neither is present.
+- **Secret.** `auth.secret` is read with `dcf-secret` at each run and handed to `psql` as
+  `PGPASSWORD` in that child's environment only: never an argument, a file (`PGPASSFILE` is
+  `/dev/null`), the copy or a log; the client's first error line is all that is said (a test reads
+  every process's arguments while the client runs). Without `dcf-secret` on PATH the source says
+  so and goes on without a password. TLS is the `sslmode` the source pins; the password goes
+  over whatever that negotiates, so use `require` or stricter for a remote database.
 
 ### The `cloud-folder` source
 
@@ -407,7 +467,7 @@ every skipped line with its reason, and `resolved N component(s) for <W>`.
 - `claude-code` 1.12.0: its adapter's `skills` verb, and with `participants: true` the participant
   component, which resolves and hands over at every agent's start. Neither is required: without
   them `handover` and `refresh` say no adapter takes skills.
-- `cloud-folder` 1.4.0: its `cloud-folder` source. `curl` in the image for `http` sources.
+- `cloud-folder` 1.4.0: its `cloud-folder` source. `curl` in the image for `http` sources; `sqlite3` or `psql` for `db` sources.
 - Later releases: the launcher (a file share mount, `COMPONENT_REGISTRY_WHOAMI` from the
   workstation).
 
@@ -419,7 +479,7 @@ every skipped line with its reason, and `resolved N component(s) for <W>`.
   session of that CLI reads.
 - `remember` writes to a `path` source only, appends, and never edits or removes a line; to take
   one back, edit `remembered.reg` in your layer.
-- Sources `git` and `path` only. A `path` source's version is a fingerprint of names, sizes and
+- A `path` source's version is a fingerprint of names, sizes and
   modification times, so a change that keeps all three is not seen.
 - `*` and `**` are whole segments; there are no value filters.
 - The text heading is `## Layer <id>` or none (`heading: false`), per layer, never per line; a
@@ -441,6 +501,26 @@ Pin the major in the Feature reference (`component-registry:1`); a rebuild picks
 else; the `.reg` grammar and the layer list keys only grow within 1.x.
 
 ## Changes
+
+### [1.5.0] - 2026-11-20
+
+#### Added
+
+- **The `db` source.** A layer can be the rows of a database: `kind: db` with `driver: sqlite`
+  (`path`) or `driver: postgres` (`host`, `port`, `database`, `user`, `sslmode`, and the password
+  as `auth.secret`, a `dcf-secret` name), and one of `table` or `query`, returning the columns
+  `section`, `key`, `type`, `data`, `locked`. The source (`registry-source-db`) renders them into a
+  `.reg` file in the layer copy (a multi-line `text` into a file read with `@file`); its version is
+  a hash of the rendered files; a bad row or an empty result fails the fetch with the reason, and
+  `resolve` keeps the last good copy. The database is opened read-only; the password reaches
+  `psql` in its environment only. Any other driver exits 3. The contract is in the Feature's notes.
+
+#### Changed
+
+- A layer list naming `kind: db` is no longer reported as "not in this release".
+
+Needs `sqlite3` or `psql` in the image for the driver in use (this Feature does not install them;
+the source says how). Nothing to do for a layer list without a `db` source. Rebuild to get it.
 
 ### [1.3.0] - 2026-11-20
 
@@ -479,31 +559,6 @@ to get it.
   rebuild to get it.
 - The `cloud-folder` source's command comes with the cloud-folder Feature 1.4.0; `kind: cloud-folder`
   no longer says "later release" here. `db` is still not in a release.
-
-### [1.1.0] - 2026-11-20
-
-#### Added
-
-- **The adapter step** (ADR-0064): `dcf-registry handover <cli> [<name> <folder>]` hands the resolved
-  view's skills to that CLI's adapter (`agent-adapter-<cli> skills`, when its `supports` lists it;
-  Claude Code: `claude-code` 1.12.0); a CLI that cannot take them is named and keeps its plain skills.
-  The participant component (`claude-code` with `participants: true`) runs resolve and the hand-over
-  at every agent's start, with an agent's own `registry-path` from the agents list.
-- **The three utility skills, in a built-in base layer**: `/registry-refresh` (resolve now for the
-  path the current view was resolved for, then hand over to every CLI adapter on PATH: live in Claude
-  Code, a restart for a CLI that does not watch its skills folder), `/registry-explain <path>`, and
-  `/registry-remember [skills/<name>] <line>` (appends the line to the layer marked `writable: true`,
-  which must have a `path` source, then refreshes; refused, nothing written, otherwise). The base
-  layer is rank 0, the id `component-registry` at `/`, below every listed layer; `explain` shows it as
-  `0 component-registry at /, source 1 (builtin)`. A listed layer adapts the utility skills like any
-  skill.
-- `dcf-registry layer-list`, `refresh`, `remember`; tasks `component-registry:refresh` and
-  `component-registry:remember`.
-
-#### Changed
-
-- The layer id `component-registry` is reserved for the base layer: a layer list using it is refused
-  with its line. Rename such a layer.
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/component-registry/CHANGELOG.md).
 

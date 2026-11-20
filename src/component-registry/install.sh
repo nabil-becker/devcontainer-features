@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Installs the component-registry Feature: the dcf-registry command (resolve, explain, handover,
-# refresh, remember), the three registry sources this release ships (registry-source-git,
-# registry-source-path, registry-source-http, which reads dcf-curl.sh from the share folder), the built-in base layer with the utility skills, the postStartCommand
+# refresh, remember), the registry sources this release ships (registry-source-git,
+# registry-source-path, registry-source-http, which reads dcf-curl.sh from the share folder, and
+# registry-source-db, 1.5.0, which needs sqlite3 or psql in the image for its driver), the built-in base layer with the utility skills, the postStartCommand
 # component-registry-setup, the dcf-persist helper and the Feature Taskfile.
 # Feature options arrive as upper-cased environment variables (see devcontainer-feature.json):
 # REGISTRYFILE, INSTALLTASKFILE.
@@ -42,6 +43,7 @@ install -m 0755 "$feature_dir/dcf-registry.sh" /usr/local/bin/dcf-registry
 install -m 0755 "$feature_dir/registry-source-git.sh" /usr/local/bin/registry-source-git
 install -m 0755 "$feature_dir/registry-source-path.sh" /usr/local/bin/registry-source-path
 install -m 0755 "$feature_dir/registry-source-http.sh" /usr/local/bin/registry-source-http
+install -m 0755 "$feature_dir/registry-source-db.sh" /usr/local/bin/registry-source-db
 install -m 0644 "$feature_dir/dcf-curl.sh" "$share/dcf-curl.sh"
 install -m 0755 "$feature_dir/component-registry-setup.sh" /usr/local/bin/component-registry-setup
 install -m 0755 "$feature_dir/dcf-persist.sh" /usr/local/bin/dcf-persist
@@ -54,6 +56,7 @@ find "$share/base" -type d -exec chmod 0755 {} +
 find "$share/base" -type f -exec chmod 0644 {} +
 
 command -v flock >/dev/null 2>&1 || echo "component-registry: flock (util-linux) is not in the image; dcf-registry resolve needs it" >&2
+command -v sqlite3 >/dev/null 2>&1 || command -v psql >/dev/null 2>&1 || echo "component-registry: neither sqlite3 nor psql in the image; a db layer source will fail until one is added (apt-get install sqlite3 or postgresql-client)"
 command -v git >/dev/null 2>&1 || echo "component-registry: no git in the image; a git layer source will fail until one is added (the git Feature)"
 echo "component-registry: installed ${version:-unknown}; layer list ${REGISTRYFILE} (COMPONENT_REGISTRY_FILE overrides)"
 
