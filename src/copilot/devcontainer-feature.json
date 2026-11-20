@@ -1,0 +1,48 @@
+{
+  "id": "copilot",
+  "version": "0.1.0",
+  "name": "GitHub Copilot CLI (copilot)",
+  "description": "GitHub Copilot CLI (https://docs.github.com/copilot/concepts/agents/about-copilot-cli) as a member of this collection's ecosystem, and the second vendor for the participant component's contracts: brings the CLI in through dependsOn on the official ghcr.io/devcontainers/features/copilot-cli (which installs it; this Feature installs no binary of its own) and adds agent-adapter-copilot (new, resume, run-once for the facilitator's pump, mcp-attach; exit 3 for the verbs Copilot has no local route for), the participants option (the participant component, one shared copy with claude-code), the attach option (attach: facilitator registers the facilitator's MCP entry through `copilot mcp add`, with no token in it), COPILOT_HOME as a named volume so a copilot login survives rebuilds, and a post-create hook (copilot-setup) that makes it usable and private. Never logs in and never stores a token. Plus the Feature Taskfile.",
+  "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/copilot",
+  "licenseURL": "https://github.com/nabil-becker/devcontainer-features/blob/main/LICENSE",
+  "options": {
+    "installTaskfile": {
+      "type": "boolean",
+      "default": true,
+      "description": "Also install this Feature's Taskfile into /usr/local/share/go-task/includes.d so its tasks appear under the <id>: namespace of a root Taskfile that includes /usr/local/share/go-task/features.yml (see the go-task Feature)."
+    },
+    "participants": {
+      "type": "boolean",
+      "default": false,
+      "description": "Install the participant component: the agent list (.devcontainer/participants.yml or PARTICIPANTS_FILE; agents.yml and AGENTS_FILE still work), the agents command and the agents:* tasks, which call agent-adapter-copilot for an entry with cli: copilot. One copy in /usr/local/lib/dcf-participant, shared with claude-code and the deprecated agents Feature, whichever installs it (the newest wins). Copilot has no local background mode, so a copilot participant is on-demand or ephemeral, never resident."
+    },
+    "attach": {
+      "type": "string",
+      "proposals": [
+        "",
+        "facilitator"
+      ],
+      "default": "",
+      "description": "'facilitator': at post-create (and by task copilot:attach) register the facilitator's MCP entry through Copilot's own command (copilot mcp add facilitator ...), so a Copilot session can use receive, reply, say and who. The entry carries no token: the harness starts copilot with FACILITATOR_HANDLE and FACILITATOR_TOKEN in its environment. Does nothing, and says so, while the facilitator Feature is not installed. Empty: nothing is registered. Other values are reserved and fail the build."
+    }
+  },
+  "containerEnv": {
+    "COPILOT_HOME": "/var/lib/devcontainer-features/copilot"
+  },
+  "mounts": [
+    {
+      "source": "copilot-home-${devcontainerId}",
+      "target": "/var/lib/devcontainer-features/copilot",
+      "type": "volume"
+    }
+  ],
+  "postCreateCommand": "copilot-setup",
+  "dependsOn": {
+    "ghcr.io/devcontainers/features/copilot-cli:1": {}
+  },
+  "installsAfter": [
+    "ghcr.io/nabil-becker/devcontainer-features/go-task",
+    "ghcr.io/devcontainers/features/common-utils",
+    "ghcr.io/nabil-becker/devcontainer-features/gh"
+  ]
+}

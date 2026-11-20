@@ -41,7 +41,7 @@ commit that added it); every other row is "to verify against the registry".
 |---|---|
 | Host and devcontainer | `devcontainer-cli` (1.22.1), `common` (1.0.4), `cloud-folder` (1.3.3), `audio` (1.1.0) |
 | Git and identity | `git` (1.4.6), `gh` (1.1.0), `ssh-agent` (1.5.0), `openbao` (1.6.0, unreleased) |
-| Agents | `agents` (2.2.0, deprecated: use `claude-code` `participants: true`), `claude-code` (1.10.0), `component-registry` (1.0.0, unreleased: the core of [the component registry](../proposals/component-registry.md), slice 1), `phi-check` (1.0.3), `go-task` (1.2.2), `coder-cli` (1.1.5), `dsc` (1.1.5) |
+| Agents | `agents` (2.2.0, deprecated: use `claude-code` `participants: true`), `claude-code` (1.10.0), `copilot` (0.1.0, unreleased: Copilot CLI as the second vendor of the participant component, [facilitator proposal](../proposals/facilitator-agent.md) slice 4; `dependsOn` on the official `copilot-cli` Feature, ruled by the Operator 2026-11-20), `component-registry` (1.0.0, unreleased: the core of [the component registry](../proposals/component-registry.md), slice 1), `phi-check` (1.0.3), `go-task` (1.2.2), `coder-cli` (1.1.5), `dsc` (1.1.5) |
 | Agent communication | `sign-packet` (0.6.0), `register-engine` (0.3.0), `packet-relay` (0.4.0), `facilitator` (0.1.0, unreleased: the first version on AGNTCY, slice 3 of the [facilitator proposal](../proposals/facilitator-agent.md); its own copies of register-engine's and sign-packet's libraries, checked by `task registerengine:check` and `task signpacket:check`) |
 | Cloud and Kubernetes | `az` (1.1.3), `kustomize` (1.0.5), `kubeconform` (1.0.5), `argocd` (1.1.5), `velero` (1.0.6), `kube-state` (1.0.4) |
 
@@ -54,7 +54,7 @@ see it ([ADR-0061](../adr/0061-the-facilitator-is-built-on-agntcy-first-with-the
 
 | Component (version) | Carried by | Role |
 |---|---|---|
-| `participant` (1.0.0) | `claude-code` (`participants: true`), `agents` (deprecated) | The agent list, kinds, lease, session names, adapter verbs, `agents up` and the launcher's verbs, with the `agents:` tasks; installed once into `/usr/local/lib/dcf-participant` ([CHANGELOG](../../components/participant/CHANGELOG.md)) |
+| `participant` (1.0.0) | `claude-code` (`participants: true`), `copilot` (`participants: true`), `agents` (deprecated) | The agent list, kinds, lease, session names, adapter verbs, `agents up` and the launcher's verbs, with the `agents:` tasks; installed once into `/usr/local/lib/dcf-participant` ([CHANGELOG](../../components/participant/CHANGELOG.md)) |
 
 ## Local and unpublished: `local-features/`
 
@@ -92,7 +92,7 @@ status lines were not (see Gaps).
 | [Personalization](../proposals/personalization.md) | open | superseded by the component registry (ADR-0063) |
 | [Component registry](../proposals/component-registry.md) | accepted 2026-11-19 | slice 1 built: `component-registry` 1.0.0 (resolve, explain, the `.reg` grammar and match rule, `git` and `path` sources; skills only). Later: the adapter step (slice 2), `http` and `cloud-folder` sources (slice 3), first real use (slice 4) |
 | [Secrets distribution (phase 2)](../proposals/secrets-distribution.md) | research notes, not designed | not built |
-| [Facilitator](../proposals/facilitator-agent.md) | ruled 2026-11-19; slices 0 to 2 done | `facilitator` 0.1.0 (slice 3, unreleased): `agntcy` backend only, no model, the vendor Features' `attach` and the pump not built; rule 1 reads only the addressed mentions (the first `@handle` and those right after it), which the scenario of section 2 needs |
+| [Facilitator](../proposals/facilitator-agent.md) | ruled 2026-11-19; slices 0 to 2 done | `facilitator` 0.1.0 (slice 3, unreleased): `agntcy` backend only, no model, the pump not built; `copilot` 0.1.0 (slice 4, unreleased) has the `attach` option (claude-code's is not built); rule 1 reads only the addressed mentions (the first `@handle` and those right after it), which the scenario of section 2 needs |
 | Decided and closed: [King Arthur theme](../proposals/king-arthur-theme.md) (superseded), [Journalist back](../proposals/journalist-back.md), [Feature principles](../proposals/feature-principles.md), [Agent principles](../proposals/agent-principles.md), [Iteration package](../proposals/iteration-package.md) | decided or superseded | in the ADRs and [docs/principles/](../principles/) |
 
 ## Known gaps
@@ -109,6 +109,8 @@ status lines were not (see Gaps).
 | `agents` 3.0.0 (retirement) waits on its conditions | [facilitator-agent](../proposals/facilitator-agent.md) 7.2: claude-code carried the component for a release, the office and DSNP moved, the launcher shown on the component alone |
 | The participant component does not know the facilitator's keys | `components/participant` 1.0.0 reads `agents:` and `agents.yml` only and warns on `attachment`, `description`, `skills`; the facilitator reads `participants.yml` (alias `agents.yml`) itself |
 | The facilitator is the first published Feature with an MCP server and with daemons it starts | `src/facilitator/NOTES.md`; the NFR decision "MCP: none for now" is revised in `docs/principles/non-functional-requirements.md` |
+| `copilot` depends on the official Feature, whose install is unverified and self-updating | `src/copilot/NOTES.md`; `dependsOn` is the Operator's ruling of 2026-11-20 (NFR-4), an exception to "installsAfter only"; no `version` option, since an option cannot be forwarded into `dependsOn` |
+| `attach` registers one MCP entry that takes the handle from `FACILITATOR_HANDLE` | `src/copilot/NOTES.md`; the facilitator's own snippet names the handle in the entry; unverified that Copilot passes its environment to a stdio server without a login |
 | Architecture documents are new | Data Flows and Data Inventory are written beside this page; C4 views are in `docs/model/` |
 
 ## Component registry (ADR-0063)

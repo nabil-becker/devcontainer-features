@@ -237,6 +237,9 @@ task of each delivery in its route.
 - **openbao**: keeps the keys and SLIM's secrets; without it, the 0.1.0 fallback files.
 - **claude-code**: a Claude Code participant; `facilitator snippet <handle>` prints its `claude mcp add`.
   The claude-code Feature's `attach` option (a later step) will run that through the CLI's own command.
+- **copilot**: a GitHub Copilot CLI participant; its `attach: facilitator` registers one MCP entry through
+  `copilot mcp add` that takes the handle from `FACILITATOR_HANDLE` and the token from `FACILITATOR_TOKEN` in
+  the environment (no token in the entry), and its `agent-adapter-copilot run-once` is the pump's route.
 - **register-engine**: optional; with it, `register-engine verify <store> --register <id> --type conversation`
   reads a conversation too. This Feature carries its own copy of the engine and of sign-packet's library.
 - **go-task**: the Taskfile. Needs Python 3.11 and OpenSSH, installed with apt when missing.

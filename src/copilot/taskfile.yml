@@ -1,0 +1,37 @@
+# Tasks contributed by the copilot Feature (namespace: copilot).
+version: '3'
+
+tasks:
+  version:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Show which copilot binary runs and its version (the official ghcr.io/devcontainers/features/copilot-cli Feature installs it; with its version option on latest it runs copilot update at every container start).'
+    cmds:
+      - command -v copilot
+      - copilot --version
+
+  login:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Sign in to Copilot with your own subscription (copilot login, the device-code flow in a devcontainer). The login is kept in COPILOT_HOME, the Feature''s volume, so it survives rebuilds. This Feature never logs in for you and never stores a token; COPILOT_GITHUB_TOKEN, GH_TOKEN or GITHUB_TOKEN in the environment works instead.'
+    interactive: true
+    cmds:
+      - copilot login {{.CLI_ARGS}}
+
+  config:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Show where Copilot keeps its state in this container (COPILOT_HOME), what backs it (volume, bind, image), whether it is writable, which token variable the environment has (never its value), and the facilitator entry if attach registered it.'
+    silent: true
+    cmds:
+      - copilot-setup
+      - copilot mcp list
+
+  setup:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Re-run the post-create setup: create COPILOT_HOME (by default the Feature''s named volume), hand it to the current user and keep it private to them, and register the facilitator entry when attach is facilitator. Idempotent.'
+    cmds:
+      - copilot-setup
+
+  attach:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Register the facilitator''s MCP entry in Copilot through its own command (copilot mcp add facilitator), whatever the attach option says; no login needed, and no token goes in the entry. Start copilot with FACILITATOR_HANDLE and FACILITATOR_TOKEN set to use it. Does nothing while the facilitator Feature is not installed. Idempotent.'
+    cmds:
+      - copilot-setup attach
