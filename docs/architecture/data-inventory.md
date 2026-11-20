@@ -93,6 +93,8 @@ named in the rows ("bounded loss", "to verify").
 | SLIM's basic-auth password and app secret | OpenBao `facilitator/slim`; fallback `secrets/slim.json` (mode 600) | facilitator Feature | none (OpenBao); 4 for the fallback | secret | yes | `src/facilitator/NOTES.md` |
 | AGNTCY Directory data (OASF records, SQLite, OCI store, `node.key`) | `dir/` in the same volume | facilitator Feature (dirctl daemon) | 4 | internal | yes | `src/facilitator/NOTES.md` |
 | Participant list keys `attachment`, `description`, `skills`; facilitator settings | `.devcontainer/participants.yml` (alias `agents.yml`), `.devcontainer/facilitator.yml` | the repo | 1 | public | yes | `src/facilitator/NOTES.md` |
+| Copilot login (`copilot login`), settings, sessions and the facilitator MCP entry (`mcp-config.json`, no token in it) | volume `copilot-home-${devcontainerId}` at `COPILOT_HOME` (`/var/lib/devcontainer-features/copilot`), owner-only; a repo may bind-mount a host folder | copilot Feature (the CLI writes it) | 4 | secret (the login file) | no | `src/copilot/NOTES.md` |
+| A Copilot token in `COPILOT_GITHUB_TOKEN`, `GH_TOKEN` or `GITHUB_TOKEN` | the environment of the process that starts copilot; the Feature stores none (NFR-13) | the harness or the engineer | not stored | secret | not applicable | `src/copilot/NOTES.md` |
 | Journal pieces, night-shift reports, iteration papers | `docs/journal/`, `docs/night-shift/`, `docs/iterations/` | host, journalist | 1 | public (name guard applies) | yes | `docs/journal/README.md`, `local-features/devhost/NOTES.md` |
 
 ### Features that hold nothing

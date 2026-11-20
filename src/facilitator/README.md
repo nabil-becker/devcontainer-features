@@ -351,8 +351,9 @@ each delivery in its route.
 - **claude-code**: a Claude Code participant, or your own session; `facilitator snippet <handle>` prints
   the shared `claude mcp add` and, for a person, the turn hook. The claude-code Feature's `attach` option (a
   later step) will run that through the CLI's own command.
-- **copilot**: its `attach: facilitator` registers the same shared entry; the handle and token come from
-  the environment.
+- **copilot**: a GitHub Copilot CLI participant, or your own session; its `attach: facilitator` registers the
+  same shared entry through `copilot mcp add`, with the handle and token from the environment (no token in
+  the entry), and its `agent-adapter-copilot run-once` is the pump's route.
 - **register-engine**: optional; with it, `register-engine verify <store> --register <id> --type conversation`
   reads a conversation too. This Feature carries its own copy of the engine and of sign-packet's library.
 - **go-task**: the Taskfile. Needs Python 3.11 and OpenSSH, installed with apt when missing.
