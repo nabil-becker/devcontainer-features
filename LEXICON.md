@@ -338,6 +338,11 @@ The domain words of the project itself are not here; they live with the project'
 - **Non-functional requirement** (NFR): one of thirteen requirements (NFR-1 to NFR-13) that every work
   item touching a Feature must meet, or else record a backlog item or a written exception in the
   Feature's NOTES (`docs/principles/non-functional-requirements.md`).
+- **Component registry**: the `component-registry` Feature's registry of agentic components (skills,
+  agent definitions, prompts, settings, lexicons), shaped like the Windows Registry: any number of
+  ordered layers from any sources, one tree of paths with typed `:key` values (`value`, `list`,
+  `text`, `ref`) that merge by type, gitignore-style patterns, locks; the higher layer wins.
+  Read with `dcf-registry resolve` and `explain` (ADR-0063). Not the `agentic-register`.
 
 ## Secrets
 

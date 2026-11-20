@@ -1,6 +1,6 @@
 # Proposal: personal preferences across sessions, repos and agents
 
-Status: draft, for the Operator to decide. Nothing here is implemented.
+Status: superseded 2026-11-19 by [the component registry](component-registry.md) (ADR-0063); its one preferences file becomes one person's layer. Was: draft, for the Operator to decide. Nothing here is implemented.
 
 **The problem.** The Operator says "I like diagrams", "name backlog items by what they are", "delegate
 to cons". Today that lands in the host's auto-memory, which only the host reads, only in this repo,

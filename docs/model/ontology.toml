@@ -505,6 +505,11 @@ type = "concept"
 term = "Recovery key"
 summary = "The register's second operator key, kept offline outside OpenBao."
 
+[component-registry]
+type = "mechanism"
+term = "Component registry"
+summary = "Agentic components in ordered layers from any sources, one path tree of typed values merged by type; higher layer wins, a lock beats it (ADR-0063)."
+
 [key-mode]
 type = "mechanism"
 term = "Key mode"
