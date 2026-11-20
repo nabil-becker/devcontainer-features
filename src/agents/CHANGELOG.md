@@ -8,6 +8,14 @@ here; `task lint` fails when the entry is missing.
 
 Entries from 1.0.0 to 2.1.1 were generated from the commit history (`.github/scripts/changelog.py backfill`) and the "Changes in x.y.z" sections that NOTES.md used to hold; most list commit subjects as written then; the newest of them is in wording for users.
 
+## [2.6.0] - 2026-11-20
+
+### Changed
+
+- The participant component 1.4.0 (shared with `claude-code` `participants: true`): an agent's
+  hand-over names its own `registry-path`, and `agents up` forgets the agents no longer in the list
+  (ADR-0068). This Feature stays deprecated; nothing to do.
+
 ## [2.4.0] - 2026-11-20
 
 ### Added

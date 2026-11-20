@@ -8,6 +8,25 @@ here; `task lint` fails when the entry is missing.
 
 Entries from 1.0.0 to 1.9.7 were generated from the commit history (`.github/scripts/changelog.py backfill`) and the "Changes in x.y.z" sections that NOTES.md used to hold; most list commit subjects as written then; the newest of them is in wording for users.
 
+## [1.14.0] - 2026-11-20
+
+### Added
+
+- **Each agent its own registry skills** (ADR-0068, backlog `agent-skills-folders`). The adapter's
+  `skills` verb keeps every agent's resolved view and splits it at each hand-over: the skills every
+  agent's view has alike stay in the personal folder, `$CLAUDE_CONFIG_DIR/skills`; the rest go to
+  the agent's own folder, `$CLAUDE_CONFIG_DIR/registry-agents/<name>.<sum>/registry/.claude/skills`,
+  which `start-bg`, `new` and `resume` pass to Claude Code with `--add-dir` (last, once). Agents
+  with different `registry-path`s no longer overwrite each other's skills; one login and one Claude
+  Code state serve them all. When a project skill of the same name exists, it wins in that agent's
+  sessions and the registry's runs as `/registry:<name>` (said at the hand-over).
+- `COMPONENT_REGISTRY_FORGET=1` (`dcf-registry forget`) drops an agent's own folder; an agent whose
+  folder no longer exists is dropped at any hand-over.
+
+Nothing to do where every agent shares one who-you-are path: everything stays personal, and the
+added directory is empty. A background session started before this version lacks the flag; its
+wake says so, and `/add-dir <folder>` in it (the line names the folder) reads its own skills.
+
 ## [1.12.0] - 2026-11-20
 
 ### Added

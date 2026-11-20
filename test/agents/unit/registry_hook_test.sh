@@ -12,7 +12,9 @@
 # refused when not an absolute path, with file:line; resolved --as it), one resolve per path in
 # agents up, and on-demand agents too; the start limit (participant 1.2.0,
 # COMPONENT_REGISTRY_START_WAIT): the fast path, a hanging layer source stopped at the limit, a lock
-# held by another resolve, a bad value. Part of `task lint` (`task test:agents-registry`).
+# held by another resolve, a bad value; each agent its own path's view (participant 1.4.0,
+# ADR-0068: handover --as the registry-path, the records) and an agent taken out of the list
+# forgotten at agents up. Part of `task lint` (`task test:agents-registry`).
 set -u
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -45,7 +47,8 @@ echo "$verb|$*" >> "$CALLS_A"
 [ "$verb" = list ] && { cat "$SESS_A" 2>/dev/null; exit 0; }
 name="$1" folder="$2"
 case "$verb" in
-  skills) [ -n "${FAKEA_SKILLS_FAIL:-}" ] && { echo "fakea: cannot write" >&2; exit 1; }
+  skills) [ "${COMPONENT_REGISTRY_FORGET:-}" = 1 ] && { echo "forget|$name" >> "$CALLS_A"; exit 0; }
+    [ -n "${FAKEA_SKILLS_FAIL:-}" ] && { echo "fakea: cannot write" >&2; exit 1; }
     printf 'skills-from|%s|%s\n' "$COMPONENT_REGISTRY_SKILLS" "$(ls "$COMPONENT_REGISTRY_SKILLS" | tr '\n' ' ')" >> "$CALLS_A"
     cat "$COMPONENT_REGISTRY_SKILLS/demo/SKILL.md" > "$T_SKILL" 2>/dev/null; exit 0 ;;
   start-bg) n=$(( $(grep -c . "$SESS_A" 2>/dev/null) + 1 ))
@@ -197,6 +200,27 @@ check 'up: exit 0' 0 "$RC"
 check 'up: one resolve per path (host for the setting, rev for its own)' 2 "$(grep -c '^resolve' "$T/reg-calls")"
 check 'up: each resident handed over' 2 "$(skills_calls)"
 lacks 'up: an on-demand agent is not resolved for' "$OUT" 'od: the registry'
+
+# ------------------------------------- each agent its own path's view (participant 1.4.0) ----
+reset
+run 1 start rev
+run 1 start host
+contains 'own view: the hand-over names the agent'"'"'s path' "$(cat "$T/reg-calls")" "handover fakea rev $repo --as /Corp/review"
+check 'own view: records both agents with their paths' "host /Corp/me whoami|rev /Corp/review as" "$(cd "$repo" && PATH="$regbin:$PATH" dcf-registry handovers | awk -F'\t' '{ print $2, $4, $5 }' | sort | paste -sd'|')"
+check 'own view: a view kept per path' "for the reviewer only|for everyone at Corp" "$(tail -n 1 "$T/regstate/paths/+Corp+review/skills/demo/SKILL.md")|$(tail -n 1 "$T/regstate/paths/+Corp+me/skills/demo/SKILL.md")"
+f1="$(grep '^skills-from' "$CALLS_A" | sed -n 1p | cut -d'|' -f2)"; f2="$(grep '^skills-from' "$CALLS_A" | sed -n 2p | cut -d'|' -f2)"
+check 'own view: the two agents got two different views' yes "$([ -n "$f1" ] && [ "$f1" != "$f2" ] && echo yes || echo no)"
+# an agent taken out of the list is forgotten at the next up; the sessions no agent started are not
+(cd "$repo" && PATH="$bin:$regbin:/usr/bin:/bin" dcf-registry handover fakea >/dev/null 2>&1)
+cp "$repo/.devcontainer/agents.yml" "$T/agents.keep2"
+printf 'agents:\n  - name: host\n    cli: fakea\n    kind: resident\n' > "$repo/.devcontainer/agents.yml"
+: > "$CALLS_A"
+run 1 up
+contains 'forget: said at up' "$OUT" 'rev: no longer in the agent list; its own registry skills are removed.'
+contains 'forget: the adapter drops its copies' "$(cat "$CALLS_A")" 'forget|rev'
+check 'forget: its record goes' "component-registry host" "$(cd "$repo" && PATH="$regbin:$PATH" dcf-registry handovers | cut -f2 | sort | paste -sd' ')"
+lacks 'forget: a listed agent is never forgotten' "$(cat "$CALLS_A")" 'forget|host'
+cp "$T/agents.keep2" "$repo/.devcontainer/agents.yml"
 
 # ------------------------------------------------ the start limit (participant 1.2.0) ----
 # COMPONENT_REGISTRY_START_WAIT bounds resolve and the hand-over; past it the agent starts with the

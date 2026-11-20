@@ -6,6 +6,27 @@ of the Feature and whether they must act (an option renamed, a task removed, a r
 The version in `devcontainer-feature.json` is bumped in the same change that adds its entry
 here; `task lint` fails when the entry is missing.
 
+## [1.7.0] - 2026-11-20
+
+### Added
+
+- **A view per who-you-are path** (ADR-0068, backlog `agent-skills-folders`). `resolve` keeps the
+  latest view of every path (`paths/<path>` in the state folder) besides `view`, the latest of all;
+  `handover <cli> <name> <folder> --as <path>` hands that path's view, and without `--as` the view
+  of the who-you-are setting. `explain --as <path>` reads a path's own view. The one resolve lock
+  stays: the layer copies are shared.
+- **Hand-over records** (`dcf-registry handovers`): cli, agent, folder, path and whether the path
+  was the agent's own or the setting. `forget <cli> <name> <folder>` asks the adapter to drop the
+  agent's own copies, removes the record, and the views no record names any more.
+- **`refresh --session <id>`**: the agent whose session that is (each adapter's `list`) is
+  refreshed for its own path, alone. Without it (or with an id no agent has), `refresh` repeats
+  every recorded hand-over, each path resolved once; with no record, as before.
+- `/registry-refresh` runs `dcf-registry refresh --session "${CLAUDE_SESSION_ID}"`, so it refreshes
+  the calling agent in Claude Code.
+
+Nothing to do. The adapter's `skills` verb also gets `COMPONENT_REGISTRY_PATH`; with claude-code
+1.14.0 agents of different paths keep their own skills.
+
 ## [1.4.0] - 2026-11-20
 
 ### Added

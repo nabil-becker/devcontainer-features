@@ -6,6 +6,14 @@ of the Feature and whether they must act (an option renamed, a task removed, a r
 The version in `devcontainer-feature.json` is bumped in the same change that adds its entry
 here; `task lint` fails when the entry is missing.
 
+## [0.1.2] - 2026-11-20
+
+### Changed
+
+- The participant component 1.4.0 it carries: an agent's hand-over names its own `registry-path`,
+  and `agents up` forgets the agents no longer in the list (ADR-0068). The Copilot adapter has no
+  `skills` verb, so nothing changes for a Copilot agent; nothing to do.
+
 ## [0.1.0] - 2026-11-20
 
 ### Added

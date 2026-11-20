@@ -399,9 +399,13 @@ exists, `agents start` and `agents up` do two things for each agent before its C
 
 1. `dcf-registry resolve`, `--as` the entry's `registry-path`, else for
    `COMPONENT_REGISTRY_WHOAMI`. Once per path in one run (`agents up` with several agents).
-2. `dcf-registry handover <cli> <name> <folder>`, which asks the adapter's `supports` for `skills`
-   and, when listed, calls `agent-adapter-<cli> skills <name> <folder>` with the resolved skills
-   folder in `COMPONENT_REGISTRY_SKILLS`.
+2. `dcf-registry handover <cli> <name> <folder>` (`--as` the `registry-path`, participant 1.4.0),
+   which asks the adapter's `supports` for `skills` and, when listed, calls
+   `agent-adapter-<cli> skills <name> <folder>` with that path's resolved skills folder in
+   `COMPONENT_REGISTRY_SKILLS`.
+
+`agents up` (participant 1.4.0) first forgets (`dcf-registry forget`) every agent of this
+repository the registry handed skills to that is no longer in the list.
 
 Both steps together wait at most `COMPONENT_REGISTRY_START_WAIT` seconds per agent (default 15; a
 whole number, a bad value means 15), a layer fetch that hangs and the wait for another resolve's
@@ -413,10 +417,10 @@ skills already in its skills folder, and one line says so (`did not resolve with
 It never blocks a start (NFR-12). Each case is one line, and the agent starts with the skills it
 has: no layer list (`the component registry has no layer list`), a failed resolve (the reason, for
 example no who-you-are path), a CLI whose adapter has no `skills` verb (`takes no resolved
-skills`), a hand-over that fails. Without `dcf-registry` nothing is run or said. The resolved view
-and the CLI's skills folder are one per container: two agents of one CLI with different
-`registry-path`s each resolve at their start, and the later start's skills are what both see (see
-Limits).
+skills`), a hand-over that fails. Without `dcf-registry` nothing is run or said. Each path keeps
+its own resolved view (component-registry 1.7.0), and a CLI whose adapter keeps an agent's own skills
+apart (Claude Code from claude-code 1.14.0: an added directory per agent) gives two agents with
+different `registry-path`s each their own skills ([ADR-0068](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/adr/0068-each-agent-reads-the-skills-its-registry-path-resolves-through-an-added-directory-and-the-personal-folder-keeps-what-every-agent-shares.md), proposed).
 
 ## The adapter contract
 
@@ -448,7 +452,11 @@ agent-adapter-<cli> <verb> <name> <folder>, optional (exit 3 or missing: skipped
                                never touch a skill it does not own, never the repository's skills
                                folder; create the skills folder even when empty; idempotent. Called
                                by dcf-registry handover only when supports lists it; exit 3 or not
-                               listed: the CLI keeps its plain skills, said in one line
+                               listed: the CLI keeps its plain skills, said in one line.
+                               (ADR-0068) COMPONENT_REGISTRY_PATH names the path of that view; where
+                               a CLI can, it keeps each agent's skills apart and has the agent's
+                               sessions read them; COMPONENT_REGISTRY_FORGET=1 (no
+                               COMPONENT_REGISTRY_SKILLS) drops the agent's own copies
 agent-adapter-<cli> session-busy <id>     exit 0 mid-turn now, 1 not (idle, waiting, ended), 3 cannot tell
 agent-adapter-<cli> session-stop <id>     stop that session (the id `list` printed); conversation kept
 agent-adapter-<cli> session-remove <id>   remove that ended session from the CLI's list
@@ -558,10 +566,10 @@ the background (...)`).
 - The lease guards starts through `agents` only; `claude --bg --name <agent>` by hand takes none.
 - `AGENTS_LEASE_WAIT` (default 20 s) bounds the wait for a start in progress; a container start
   with several residents waits at most that per agent held `starting`.
-- The component registry's resolved view and a CLI's skills folder are one per container (one
-  `CLAUDE_CONFIG_DIR`): agents of one CLI with different `registry-path`s do not each keep their
-  own skills; the latest start's resolve is what all of them read. A per-agent skills folder needs
-  a per-agent CLI configuration folder, which no adapter has yet.
+- Agents of one CLI with different `registry-path`s keep their own skills only where the CLI's
+  adapter keeps them apart (Claude Code from claude-code 1.14.0, ADR-0068). A session not started
+  through `agents` reads only the skills every agent's view has alike, and in Claude Code a project
+  skill of the same name beats an agent's own copy (the registry's runs as `/registry:<name>`).
 - The start hook waits for `dcf-registry resolve` and the hand-over for at most
   `COMPONENT_REGISTRY_START_WAIT` seconds (default 15) per agent; it never fails the start.
 - Tested with fake adapters and a fake `claude` (`task test:agents-unit`, `task
@@ -613,6 +621,14 @@ the `SESSIONS` / `HOST_SESSION` settings, which claude-code 2.0 removes; the mig
 
 ## Changes
 
+### [2.6.0] - 2026-11-20
+
+#### Changed
+
+- The participant component 1.4.0 (shared with `claude-code` `participants: true`): an agent's
+  hand-over names its own `registry-path`, and `agents up` forgets the agents no longer in the list
+  (ADR-0068). This Feature stays deprecated; nothing to do.
+
 ### [2.4.0] - 2026-11-20
 
 #### Added
@@ -634,16 +650,6 @@ the `SESSIONS` / `HOST_SESSION` settings, which claude-code 2.0 removes; the mig
   this release only keeps its copy of the component equal to the one in `claude-code`. Nothing to do:
   an existing `agents.yml` and `AGENTS_FILE` behave exactly as before. The new names are documented
   under `claude-code`'s "Participants".
-
-### [2.2.0] - 2026-11-19
-
-#### Deprecated
-
-- **This Feature is deprecated: use the `claude-code` Feature with `"participants": true`** (claude-code 1.10.0), which installs the same code (ADR-0061). Nothing breaks in 2.x: the `task agents:*` names, the `agents` command, `.devcontainer/agents.yml`, `AGENTS_FILE`, the `sessionName` option and the verbs `task devcontainer:agent` calls are unchanged. `task agents:version` and `task agents:check` now print one line on stderr, `deprecated: use claude-code participants: true`. 3.0.0 retires the Feature, only after the conditions in the notes ("Deprecated in 2.2.0"). To move: set `"participants": true` on `claude-code`, remove the `agents` line, and put a `sessionName` you set here into `AGENTS_SESSION_NAME` (`containerEnv` or `.devcontainer/.env`).
-
-#### Changed
-
-- The code moved into the shared participant component (`components/participant`, vendored here in `participant/`), installed once into `/usr/local/lib/dcf-participant`, with `/usr/local/bin/agents` a symlink into it. When `claude-code` with `participants: true` (or another Feature) installed the same or a newer copy, this Feature installs nothing of it; otherwise it installs it as before. The state folders, the Taskfile include and every path a user sees are as in 2.1.3. Nothing to do.
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/agents/CHANGELOG.md).
 

@@ -45,7 +45,8 @@ flowchart TB
 
 Built in slices 1 and 2: `component-registry` fetches its layers and resolves them; the
 participant component runs `resolve` at every agent's start and `dcf-registry handover` gives the
-skills to the CLI adapter's `skills` verb (ADR-0064). The dashed relations come later: the
+skills to the CLI adapter's `skills` verb (ADR-0064); each who-you-are path keeps its own view and
+each agent its own skills (ADR-0068, proposed). The dashed relations come later: the
 launcher's share mount and who-you-are path, and the `http` and cloud-folder sources (slice 3).
 OpenBao gives a `git` source its secret today, through `dcf-secret`.
 Slice 4 (the first real use) adds the devhost Feature as a layer's owner: its image folder holds

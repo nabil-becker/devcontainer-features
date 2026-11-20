@@ -1,7 +1,7 @@
 
 # Claude Code (claude-code)
 
-Claude Code (https://code.claude.com/docs) as a member of this collection's ecosystem: installs the sha256-verified native release binary at /usr/local/bin/claude (no Node.js, version pinnable) unless a claude is already in the image - e.g. from the official ghcr.io/anthropics/devcontainer-features/claude-code, which is then augmented instead of replaced - and adds agent-adapter-claude (Claude Code's adapter for the agent list: task agents -- <name> finds a session by its name and folder and acts on it by id; its skills verb copies the component registry's resolved skills into $CLAUDE_CONFIG_DIR/skills, marked owned), with participants: true the participant component (the agent list, the agents command and the agents:* tasks that the deprecated agents Feature installed, one shared copy in /usr/local/lib/dcf-participant; residents started at each container start), the deprecated claude-host launcher, claude-fleet command and claude-host-pin hook (still working, each printing one deprecation line; claude-code 2.0 removes them), a named volume mounted at CLAUDE_CONFIG_DIR (/var/lib/devcontainer-features/claude-code) so login and sessions survive rebuilds, a post-create hook that makes that directory usable by the remote user, and the Feature Taskfile. The in-app auto-updater is off; a rebuild updates.
+Claude Code (https://code.claude.com/docs) as a member of this collection's ecosystem: installs the sha256-verified native release binary at /usr/local/bin/claude (no Node.js, version pinnable) unless a claude is already in the image - e.g. from the official ghcr.io/anthropics/devcontainer-features/claude-code, which is then augmented instead of replaced - and adds agent-adapter-claude (Claude Code's adapter for the agent list: task agents -- <name> finds a session by its name and folder and acts on it by id; its skills verb copies the component registry's resolved skills into $CLAUDE_CONFIG_DIR/skills, marked owned, and the skills an agent's own registry path changes into that agent's own folder, which its sessions read through --add-dir), with participants: true the participant component (the agent list, the agents command and the agents:* tasks that the deprecated agents Feature installed, one shared copy in /usr/local/lib/dcf-participant; residents started at each container start), the deprecated claude-host launcher, claude-fleet command and claude-host-pin hook (still working, each printing one deprecation line; claude-code 2.0 removes them), a named volume mounted at CLAUDE_CONFIG_DIR (/var/lib/devcontainer-features/claude-code) so login and sessions survive rebuilds, a post-create hook that makes that directory usable by the remote user, and the Feature Taskfile. The in-app auto-updater is off; a rebuild updates.
 
 ## Example Usage
 
@@ -137,7 +137,7 @@ else should. The contract (verbs, exit codes) is in the `agents` Feature's notes
 | `hint` | how to find and resume the agent by hand (`claude agents`; `cd <folder> && claude --resume`, pick it), for when the list cannot be read (1.8.0) |
 | `stop` | `claude stop <id>` of its newest running session; `--extras` stops every other running one instead. Never `claude rm`. |
 | `logs` | `claude logs <id>` |
-| `skills` | (1.12.0, optional in the contract, ADR-0064) copies the component registry's resolved skills (the folder in `COMPONENT_REGISTRY_SKILLS`, handed over by `dcf-registry handover`) into Claude Code's personal skills folder, `$CLAUDE_CONFIG_DIR/skills`; never `claude`, never the repository's `.claude/skills`. See "Resolved skills" below |
+| `skills` | (1.12.0, optional in the contract, ADR-0064) copies the component registry's resolved skills (the folder in `COMPONENT_REGISTRY_SKILLS`, handed over by `dcf-registry handover`) into Claude Code's personal skills folder, `$CLAUDE_CONFIG_DIR/skills`; per agent (1.14.0, ADR-0068) the skills the agents' views disagree on go to the agent's own folder, read through `--add-dir`; `COMPONENT_REGISTRY_FORGET=1` drops it; never `claude`, never the repository's `.claude/skills`. See "Resolved skills" below |
 
 **Identity by name and folder, action by id.** A session is the agent's when its `cwd` is the
 agent's folder and its `name` is the agent's name, or that name with Claude Code's collision
@@ -230,6 +230,50 @@ or `/registry-refresh`) calls it with the resolved view's `skills/` folder in
   nothing to copy (and says when it was new); a personal skill wins over a project skill of the
   same name, so a resolved copy wins a clash with the repository's `.claude/skills`. A skill already
   used in a conversation keeps its old text until it is used in a new conversation.
+
+### Each agent its own registry skills (1.14.0)
+
+Agents with different `registry-path`s in one container each read their own resolved skills, under
+one login and one Claude Code state ([ADR-0068](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/adr/0068-each-agent-reads-the-skills-its-registry-path-resolves-through-an-added-directory-and-the-personal-folder-keeps-what-every-agent-shares.md), proposed).
+
+```text
+  dcf-registry handover claude <agent> <folder> --as <its path>
+        | COMPONENT_REGISTRY_SKILLS = that path's view
+        v
+  $CLAUDE_CONFIG_DIR/registry-agents/<agent>.<sum>/want/      every agent's full view, kept
+        | split at each hand-over, under registry-agents/.lock
+        +--> $CLAUDE_CONFIG_DIR/skills/          what every agent's view has alike (personal:
+        |                                        every session, also one no agent started)
+        +--> registry-agents/<agent>.<sum>/registry/.claude/skills/
+                                                 the rest of that agent's view, read through
+                                                 claude ... --add-dir <that>/registry
+```
+
+- **Why the split.** Claude Code loads `.claude/skills` inside a folder given with `--add-dir`, and
+  watches it, but on a name clash a personal or a project skill wins and the added folder's runs as
+  `/<folder name>:<skill>`, here `/registry:<skill>` (https://code.claude.com/docs/en/skills,
+  "Resolve skills that share a name", checked 2026-11-20; Claude Code 2.1.309 or later). So a name
+  the agents' views disagree on is never personal. Where every agent shares one path, everything is
+  personal and the added folders are empty: the 1.12.0 behaviour.
+- **The flag.** `start-bg`, `new` and `resume` add `--add-dir <the agent's folder>` after the
+  agent's args (the flag takes several folders, so it goes last), once, and only after a hand-over
+  made the folder. A wake is bare (1.9.3): Claude Code puts back the options it saved, and when
+  those lack the flag (a session started before 1.14.0) the wake says so; `/add-dir <folder>` in
+  that session reads the agent's skills (the line names the folder).
+- **A project skill of the same name** (`<folder>/.claude/skills/<name>`) beats the agent's own copy;
+  the hand-over says so, and the registry's runs as `/registry:<name>`. The switch-over of the
+  component registry notes removes such committed copies.
+- **Cleanup.** `COMPONENT_REGISTRY_FORGET=1` (from `dcf-registry forget`, which `agents up` runs for
+  an agent no longer in the list) removes the agent's folder; an agent whose folder is gone is
+  dropped at any hand-over; the split is made again without it.
+- **Disk.** Each agent's view is kept twice at most (its `want` copy and its own folder), small text
+  files, in this Feature's volume (tier 4, owner-only).
+- **Not chosen:** a `CLAUDE_CONFIG_DIR` per agent (separate logins, session lists and jobs), the
+  `permissions.additionalDirectories` setting (file access only, it loads no skills), a plugin per
+  agent (every skill renamed `/<plugin>:<skill>`). ADR-0068 has the comparison.
+- **Not stated by Claude Code, and so not relied on:** whether `--add-dir` is saved in a background
+  session's options, and whether an added folder's skills folder created after the session started
+  is watched (the folder is made before the first start that passes it).
 
 ## Additional working directories (`additionalDirectories`, 1.8.0)
 
@@ -495,6 +539,25 @@ the CLI) contend for `.claude.json.lock`; run one.
 
 ## Changes
 
+### [1.14.0] - 2026-11-20
+
+#### Added
+
+- **Each agent its own registry skills** (ADR-0068, backlog `agent-skills-folders`). The adapter's
+  `skills` verb keeps every agent's resolved view and splits it at each hand-over: the skills every
+  agent's view has alike stay in the personal folder, `$CLAUDE_CONFIG_DIR/skills`; the rest go to
+  the agent's own folder, `$CLAUDE_CONFIG_DIR/registry-agents/<name>.<sum>/registry/.claude/skills`,
+  which `start-bg`, `new` and `resume` pass to Claude Code with `--add-dir` (last, once). Agents
+  with different `registry-path`s no longer overwrite each other's skills; one login and one Claude
+  Code state serve them all. When a project skill of the same name exists, it wins in that agent's
+  sessions and the registry's runs as `/registry:<name>` (said at the hand-over).
+- `COMPONENT_REGISTRY_FORGET=1` (`dcf-registry forget`) drops an agent's own folder; an agent whose
+  folder no longer exists is dropped at any hand-over.
+
+Nothing to do where every agent shares one who-you-are path: everything stays personal, and the
+added directory is empty. A background session started before this version lacks the flag; its
+wake says so, and `/add-dir <folder>` in it (the line names the folder) reads its own skills.
+
 ### [1.12.0] - 2026-11-20
 
 #### Added
@@ -530,15 +593,6 @@ Nothing to do: without the `component-registry` Feature nothing calls the new ve
 
 Nothing to do: an existing `agents.yml` behaves exactly as before. To adopt the new name, rename the
 file to `participants.yml` (and `agents:` to `participants:`) and delete `agents.yml`.
-
-### [1.10.0] - 2026-11-19
-
-#### Added
-
-- **The `participants` option** (boolean, default `false`). `true` installs the participant component: the agent list (`.devcontainer/agents.yml` or `AGENTS_FILE`), the `agents` command, the `agents:*` tasks and `agents up` at every container start, which is the code of the `agents` Feature 2.1.3 moved unchanged into a shared component (ADR-0061). One copy lands in `/usr/local/lib/dcf-participant`, shared with any other Feature that installs it; the `agents` Feature 2.2.0 finds it there and installs nothing of its own. The `agents` Feature is deprecated in favour of this option: to move, set `"participants": true` here and remove the `agents` line (a `sessionName` option there becomes `AGENTS_SESSION_NAME` in the environment or `.devcontainer/.env`). See "Participants" in the notes.
-- **A `postStartCommand`, `claude-code-post-start`,** which runs `agents up --post-start` when `participants` is on (and the `agents` Feature, whose own hook does the same, is not installed). Off, it does nothing and prints nothing.
-
-Nothing to do: with `participants` left at `false` the Feature installs what it did in 1.9.9, plus the silent post-start hook.
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/claude-code/CHANGELOG.md).
 

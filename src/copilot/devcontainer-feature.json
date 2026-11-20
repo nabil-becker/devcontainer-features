@@ -1,6 +1,6 @@
 {
   "id": "copilot",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "name": "GitHub Copilot CLI (copilot)",
   "description": "GitHub Copilot CLI (https://docs.github.com/copilot/concepts/agents/about-copilot-cli) as a member of this collection's ecosystem, and the second vendor for the participant component's contracts: brings the CLI in through dependsOn on the official ghcr.io/devcontainers/features/copilot-cli (which installs it, pinned to Copilot CLI 1.0.114; this Feature installs no binary of its own) and adds agent-adapter-copilot (new, resume, run-once for the facilitator's pump, mcp-attach; exit 3 for the verbs Copilot has no local route for), the participants option (the participant component, one shared copy with claude-code), the attach option (attach: facilitator registers the facilitator's MCP entry through `copilot mcp add`, with no token in it), COPILOT_HOME as a named volume so a copilot login survives rebuilds, and a post-create hook (copilot-setup) that makes it usable and private. Never logs in and never stores a token. Plus the Feature Taskfile.",
   "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/copilot",

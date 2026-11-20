@@ -14,7 +14,7 @@ check "agents on PATH points into it" bash -c "[ \"\$(readlink -f \"\$(command -
 check "no second agents command" bash -c "[ \"\$(type -ap agents | wc -l)\" = 1 ]"
 check "one installer recorded" bash -c "[ \"\$(wc -l < $lib/installed-by)\" = 1 ] && grep -qxE 'agents|claude-code' $lib/installed-by"
 check "one agents include" bash -c "[ \"\$(grep -c '^  agents:' /usr/local/share/go-task/features.yml)\" = 1 ]"
-check "the agents Feature version is baked" grep -qx '2.4.0' /usr/local/share/agents-feature/version
+check "the agents Feature version is baked" grep -qx '2.6.0' /usr/local/share/agents-feature/version
 check "its sessionName option is kept" grep -qxF '{machine} {handle}' /usr/local/share/agents-feature/session-name
 check "the adapter is there" command -v agent-adapter-claude
 

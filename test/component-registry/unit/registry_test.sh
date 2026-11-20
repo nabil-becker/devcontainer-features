@@ -34,6 +34,9 @@ for f in dcf-registry registry-source-git registry-source-path component-registr
   cp "$src/$f.sh" "$bin/$f"; chmod +x "$bin/$f"
 done
 export PATH="$bin:$PATH" COMPONENT_REGISTRY_SHARE_DIR="$T/share"
+# refresh hands over to every agent-adapter-<cli> on PATH, an installed agent-adapter-claude too:
+# its skills folders must be a temp folder's, never the real Claude Code configuration's
+export CLAUDE_CONFIG_DIR="$T/claude-config"
 unset COMPONENT_REGISTRY_WHOAMI COMPONENT_REGISTRY_FILE COMPONENT_REGISTRY_WHOAMI_TASK_VAR COMPONENT_REGISTRY_FILE_TASK_VAR
 export GIT_CONFIG_GLOBAL="$T/gitconfig" GIT_CONFIG_NOSYSTEM=1
 git config --global user.email test@example.invalid; git config --global user.name test
@@ -372,7 +375,8 @@ check "a required layer never fetched: exit 1" 1 "$rc"
 contains "a required layer never fetched: said" "$out" "layer corp source 1 (path) is required and has never been fetched"
 check "a required layer never fetched: no view is made" no "$([ -e "$(V)" ] && echo yes || echo no)"
 printf 'layers:\n  - id: corp\n    at: /Corp\n    sources:\n      - { kind: http, url: "https://registry.example.invalid/l.reg", required: true }\n' > .devcontainer/registry.yml
-out="$(dcf-registry resolve --as /Corp 2>&1)"; rc=$?
+# only the test's folder and the system's on PATH: a devhost with the Feature installed has one
+out="$(PATH="$bin:/usr/bin:/bin" dcf-registry resolve --as /Corp 2>&1)"; rc=$?
 check "a required http source with no registry-source-http on PATH: exit 1" 1 "$rc"
 contains "an http source with no command says so" "$out" "no registry-source-http on PATH"
 
@@ -519,7 +523,10 @@ out="$(PATH="$abin:$PATH" FAKE_SKILLS_RC=1 dcf-registry handover takes 2>&1)"; r
 check "handover: the adapter's failure is passed on (exit 1)" 1 "$rc"
 dcf-registry handover >/dev/null 2>&1; check "handover without a CLI: exit 2" 2 $?
 
-# refresh: resolve for the view's path, then every adapter on PATH
+# refresh: resolve for the view's path, then every adapter on PATH (with no hand-over recorded:
+# the records the hand-overs above made are taken away; 1.7.0 refreshes the recorded ones, below)
+check "handover: recorded (cli, name, folder, path, mode)" "takes	host	/some/folder	/Corp/me	whoami" "$(dcf-registry handovers | head -n 1)"
+rm -f "$COMPONENT_REGISTRY_STATE_DIR/handovers.tsv"
 out="$(PATH="$abin:$PATH" dcf-registry refresh 2>&1)"; rc=$?
 check "refresh: exit 0" 0 "$rc"
 contains "refresh: for the path the current view was resolved for" "$out" "refreshing for /Corp/me, the path the current view was resolved for"
@@ -533,6 +540,85 @@ l="$(layer a)"; printf '[skills/one]\nbody:text = one\n' > "$l/a.reg"; path_list
 out="$(PATH="$abin:$PATH" dcf-registry refresh 2>&1)"; rc=$?
 check "refresh with no view and no who-you-are path: exit 2" 2 "$rc"
 contains "refresh failing: nothing handed over" "$out" "nothing was handed over"
+
+# ------------------------------- 1.7.0: a view per who-you-are path, records, refresh, forget ----
+rbin="$T/rec-adapter"; mkdir -p "$rbin"
+# a fake adapter that takes skills and lists sessions: it logs each hand-over (agent, folder, path,
+# the last line of the skill "mine") and each forget to rec-log; its list is the file rec-list
+# shellcheck disable=SC2016
+printf '#!/usr/bin/env bash\ncase "$1" in\n  supports) printf "skills\\nlist\\n" ;;\n  list) cat "%s/rec-list" 2>/dev/null ;;\n  skills) if [ "${COMPONENT_REGISTRY_FORGET:-}" = 1 ]; then echo "forget $2 $3" >> "%s/rec-log"; else echo "skills $2 $3 $COMPONENT_REGISTRY_PATH $(tail -n 1 "$COMPONENT_REGISTRY_SKILLS/mine/SKILL.md" 2>/dev/null)" >> "%s/rec-log"; fi ;;\n  *) exit 3 ;;\nesac\n' "$T" "$T" "$T" > "$rbin/agent-adapter-rec"
+chmod +x "$rbin/agent-adapter-rec"
+RP="$rbin:$bin:/usr/bin:/bin"
+P() { printf '%s' "$COMPONENT_REGISTRY_STATE_DIR/paths/$1"; }
+new_case perpath
+l="$(layer a)"
+printf '[/**/skills/shared]\nbody:text = same\n[/Corp/x/skills/mine]\nbody:text = for x\n[/Corp/y/skills/mine]\nbody:text = for y\n' > "$l/a.reg"
+path_list "a:/Corp:$l"
+dcf-registry resolve --as /Corp/x >/dev/null 2>&1; dcf-registry resolve --as /Corp/y >/dev/null 2>&1
+check "per path: a view kept for /Corp/x" "for x" "$(tail -n 1 "$(P +Corp+x)/skills/mine/SKILL.md" 2>/dev/null)"
+check "per path: a view kept for /Corp/y" "for y" "$(tail -n 1 "$(P +Corp+y)/skills/mine/SKILL.md" 2>/dev/null)"
+check "per path: view is the latest resolve" /Corp/y "$(cat "$(V)/whoami")"
+check "per path: two views on disk" 2 "$(find "$COMPONENT_REGISTRY_STATE_DIR/views" -mindepth 1 -maxdepth 1 | wc -l)"
+: > "$T/rec-log"
+PATH="$RP" dcf-registry handover rec ax /fx --as /Corp/x >/dev/null 2>&1
+PATH="$RP" dcf-registry handover rec ay /fy --as /Corp/y >/dev/null 2>&1
+PATH="$RP" dcf-registry handover rec az /fz --as /Corp/x >/dev/null 2>&1
+check "two agents, two paths: each gets its own path's skills" "skills ax /fx /Corp/x for x|skills ay /fy /Corp/y for y|skills az /fz /Corp/x for x" "$(paste -sd'|' "$T/rec-log")"
+check "same path: one view shared" "$(readlink -f "$(P +Corp+x)")" "$(grep -c . "$COMPONENT_REGISTRY_STATE_DIR/handovers.tsv" >/dev/null; readlink -f "$(P +Corp+x)")"
+check "records: one line per agent" 3 "$(dcf-registry handovers | grep -c .)"
+check "records: an agent's own path is mode as" "rec	ax	/fx	/Corp/x	as" "$(dcf-registry handovers | grep -P '\tax\t')"
+out="$(PATH="$RP" dcf-registry handover rec aq /fq --as /Corp/never 2>&1)"; rc=$?
+check "handover --as a path never resolved: exit 1" 1 "$rc"
+contains "handover --as a path never resolved: says how" "$out" "resolve --as /Corp/never"
+: > "$T/rec-log"
+COMPONENT_REGISTRY_WHOAMI=/Corp/x PATH="$RP" dcf-registry handover rec aw /fw >/dev/null 2>&1
+check "no --as: the who-you-are setting's view, not the latest" "skills aw /fw /Corp/x for x" "$(cat "$T/rec-log")"
+check "no --as: recorded mode whoami" "rec	aw	/fw	/Corp/x	whoami" "$(dcf-registry handovers | grep -P '\taw\t')"
+out="$(dcf-registry explain skills/mine --as /Corp/x 2>&1)"
+contains "explain --as a path with its own view, not the latest" "$out" "resolved for /Corp/x"
+# a resolve keeps every path's view (an agent may not have been handed its skills yet) and drops
+# the views no pointer names; forget drops the pointers no record names (below)
+dcf-registry resolve --as /Corp/z >/dev/null 2>&1; dcf-registry resolve --as /Corp/y >/dev/null 2>&1
+check "prune: a resolve keeps an unrecorded path's view" yes "$([ -f "$(P +Corp+z)/whoami" ] && echo yes || echo no)"
+check "prune: a recorded path's view stays" yes "$([ -f "$(P +Corp+x)/whoami" ] && echo yes || echo no)"
+check "prune: only views a pointer names stay (x, y, z)" 3 "$(find "$COMPONENT_REGISTRY_STATE_DIR/views" -mindepth 1 -maxdepth 1 | wc -l)"
+# refresh --session: the calling agent alone, for its own path
+printf '[/Corp/x/skills/mine]\nbody:text = for x, changed\n' > "$l/b.reg"
+printf 'ax\tsid-ax\trunning\t/fx\n' > "$T/rec-list"
+: > "$T/rec-log"
+out="$(PATH="$RP" dcf-registry refresh --session sid-ax 2>&1)"; rc=$?
+check "refresh --session: exit 0" 0 "$rc"
+contains "refresh --session: names the agent and its path" "$out" "refreshing ax (rec) for /Corp/x, its own path"
+check "refresh --session: that agent alone, the new text" "skills ax /fx /Corp/x for x, changed" "$(cat "$T/rec-log")"
+: > "$T/rec-log"
+out="$(PATH="$RP" dcf-registry refresh --session no-such-session 2>&1)"
+contains "refresh --session unknown: says so" "$out" "is no agent the registry has handed skills to"
+check "refresh --session unknown: every recorded hand-over" 4 "$(grep -c '^skills ' "$T/rec-log")"
+check "refresh: each path resolved once" 1 "$(printf '%s\n' "$out" | grep -c 'resolving for /Corp/x')"
+: > "$T/rec-log"
+# shellcheck disable=SC2016  # the literal text another CLI leaves in the skill
+PATH="$RP" dcf-registry refresh --session '${CLAUDE_SESSION_ID}' >/dev/null 2>&1
+check "refresh --session not substituted: taken as none, everything refreshed" 4 "$(grep -c '^skills ' "$T/rec-log")"
+# forget
+: > "$T/rec-log"
+out="$(PATH="$RP" dcf-registry forget rec ay /fy 2>&1)"; rc=$?
+check "forget: exit 0" 0 "$rc"
+check "forget: the adapter drops the agent's copies" "forget ay /fy" "$(cat "$T/rec-log")"
+check "forget: the record goes" 0 "$(dcf-registry handovers | grep -cP '\tay\t')"
+check "forget: a path no record names loses its view" no "$([ -e "$(P +Corp+z)" ] && echo yes || echo no)"
+lw="$(cat "$(V)/whoami")"
+check "forget: the latest view's path keeps its view" yes "$([ -f "$(P "${lw//\//+}")/whoami" ] && echo yes || echo no)"
+check "forget: a recorded path keeps its view" yes "$([ -f "$(P +Corp+x)/whoami" ] && echo yes || echo no)"
+dcf-registry forget rec >/dev/null 2>&1; check "forget without name and folder: exit 2" 2 $?
+# the lock: two resolves for two paths at once both finish, each with its own view
+new_case perpathlock
+l="$(layer a)"; printf '[/**/skills/shared]\nbody:text = same\n' > "$l/a.reg"; path_list "a:/Corp:$l"
+dcf-registry resolve --as /Corp/p >/dev/null 2>&1 & p1=$!
+dcf-registry resolve --as /Corp/q >/dev/null 2>&1 & p2=$!
+wait "$p1"; r1=$?; wait "$p2"; r2=$?
+check "lock: two paths resolved at once, both exit 0" "0 0" "$r1 $r2"
+check "lock: the first path's view is there" yes "$([ -f "$(P +Corp+p)/whoami" ] && echo yes || echo no)"
+check "lock: the second path's view is there" yes "$([ -f "$(P +Corp+q)/whoami" ] && echo yes || echo no)"
 
 # remember
 new_case remember

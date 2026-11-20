@@ -11,13 +11,19 @@
 #   dcf-registry version                        the Feature version and the layer list in use
 #   dcf-registry layer-list                     print the layer list's path; exit 0 when it is
 #                                               there, 1 when not (the agents start hook asks)
-#   dcf-registry handover <cli> [<name> <folder>]
-#                                               hand the resolved view's skills to that CLI's adapter
+#   dcf-registry handover <cli> [<name> <folder>] [--as <path>]
+#                                               hand the view resolved for that path (default: the
+#                                               who-you-are setting's) to that CLI's adapter
 #                                               (agent-adapter-<cli> skills, when its supports lists
-#                                               it; exit 3 when it cannot take them)
-#   dcf-registry refresh [--as <path>]          resolve, then hand over to every CLI adapter on PATH
-#                                               (/registry-refresh); for the path the current view
-#                                               was resolved for unless --as names another
+#                                               it; exit 3 when it cannot take them) and record it
+#   dcf-registry forget <cli> <name> <folder>   (1.7.0) the adapter drops that agent's own copies
+#                                               and the record goes
+#   dcf-registry handovers                      (1.7.0) the records: cli, name, folder, path, mode
+#   dcf-registry refresh [--as <path>] [--session <id>]
+#                                               resolve, then hand over (/registry-refresh): --as
+#                                               one path to every CLI adapter on PATH; --session the
+#                                               agent whose session that is (an adapter's list);
+#                                               else every recorded hand-over, each path resolved once
 #   dcf-registry remember [--skill <name>] [--] <line>
 #                                               append the line to the layer marked writable: true
 #                                               (a path source), then refresh (/registry-remember)
@@ -53,8 +59,15 @@
 # (/var/lib/devcontainer-features/component-registry):
 #   copies/<layer>/<n>/        the layer copy of the layer's n-th source; <n>.meta its pin,
 #                              version and fetch time
-#   views/<stamp>/ and view    the resolved views; `view` is a symlink swapped in one rename
-#   resolve.lock               flock, so two resolves never interleave
+#   views/<stamp>/ and view    the resolved views; `view` is a symlink swapped in one rename,
+#                              to the latest resolve
+#   paths/<key>                (1.7.0) one symlink per who-you-are path (/ becomes +), to that
+#                              path's latest view, swapped the same way: agents with different
+#                              paths each keep their own view
+#   handovers.tsv              (1.7.0) cli, name, folder, path, mode (as: the agent's own path;
+#                              whoami: the who-you-are setting) of every hand-over, for refresh
+#   resolve.lock               flock, so two resolves never interleave (one lock for every path:
+#                              the layer copies are shared); handovers.lock guards the records
 # The resolved view: skills/<name>/ (SKILL.md and its files, what a consumer copies),
 # meta/skills/<name>/ (provenance.tsv, keys.tsv, values/<key>), meta/refs.tsv,
 # meta/problems.tsv, layers.tsv and whoami.
@@ -957,7 +970,11 @@ cmd_resolve() {
   # Swap in: `view` is a symlink replaced in one rename, so a reader sees the old or the new.
   ln -s "views/$stamp" "$STATE_DIR/view.new.$$"
   mv -Tf "$STATE_DIR/view.new.$$" "$STATE_DIR/view"
-  for dir in "$STATE_DIR"/views/*; do [ "$(basename "$dir")" = "$stamp" ] || rm -rf "$dir"; done
+  # (1.7.0) the same for this path's own pointer, so an agent of another path keeps its view
+  mkdir -p "$STATE_DIR/paths"
+  ln -s "../views/$stamp" "$STATE_DIR/paths/$(path_key "$WHOAMI").new.$$"
+  mv -Tf "$STATE_DIR/paths/$(path_key "$WHOAMI").new.$$" "$STATE_DIR/paths/$(path_key "$WHOAMI")"
+  prune_views
   say "resolved $nres component(s) for $WHOAMI into $STATE_DIR/view ($nskip line(s) skipped, $nprob unreadable; dcf-registry explain <path> says why)"
 }
 
@@ -965,6 +982,69 @@ cmd_resolve() {
 view_path() {
   VIEW="$STATE_DIR/view"
   [ -f "$VIEW/whoami" ] || die 1 "no resolved view in $STATE_DIR yet; run dcf-registry resolve (task component-registry:resolve)"
+}
+
+# path_key <path> (1.7.0): the file name of a who-you-are path's pointer under paths/ (/ becomes +;
+# a path holds letters, digits, . _ - and /, so the key is one file name and never collides)
+path_key() { printf '%s' "${1//\//+}"; }
+
+# prune_views [--pointers] (1.7.0, under the resolve lock held exclusive): every view that neither
+# `view` nor a path pointer names goes. With --pointers (forget), first the pointers of paths no
+# hand-over record names, but the latest view's; a resolve never drops a pointer, so a path resolved
+# for an agent that has not been handed its skills yet keeps its view.
+prune_views() {
+  local p k t d
+  declare -A keep=() inuse=()
+  t="$(cat "$STATE_DIR/view/whoami" 2>/dev/null)" && keep["$(path_key "$t")"]=1
+  if [ "${1:-}" != --pointers ]; then for d in "$STATE_DIR"/paths/*; do keep["$(basename "$d")"]=1; done; fi
+  if [ -f "$STATE_DIR/handovers.tsv" ]; then
+    while IFS=$'\t' read -r _ _ _ p _; do [ -n "$p" ] && keep["$(path_key "$p")"]=1; done < "$STATE_DIR/handovers.tsv"
+  fi
+  for d in "$STATE_DIR"/paths/*; do
+    [ -L "$d" ] || { [ -e "$d" ] && rm -rf "$d"; continue; }
+    k="$(basename "$d")"
+    if [ -z "${keep[$k]:-}" ]; then rm -f "$d"; continue; fi
+    t="$(readlink "$d")"; inuse["${t##*/}"]=1
+  done
+  t="$(readlink "$STATE_DIR/view" 2>/dev/null)" && inuse["${t##*/}"]=1
+  for d in "$STATE_DIR"/views/*; do
+    [ -d "$d" ] || continue
+    [ -n "${inuse[$(basename "$d")]:-}" ] || rm -rf "$d"
+  done
+}
+
+# view_for [<path>] (1.7.0): VIEW, the view to read, and VPATH and VMODE, what a hand-over records.
+# A path given: that path's own view (or die). None: the view of the who-you-are setting when it has
+# one, else the latest view.
+view_for() {
+  local as="${1:-}" s
+  if [ -n "$as" ]; then
+    as="${as%/}"; [ -n "$as" ] || as=/
+    valid_path "$as" || die 2 "'$as' is not a who-you-are path (absolute, segments of letters, digits, . _ and -)"
+    VIEW="$STATE_DIR/paths/$(path_key "$as")" VMODE=as
+    [ -f "$VIEW/whoami" ] || die 1 "no view resolved for $as yet; run dcf-registry resolve --as $as"
+  else
+    VMODE=whoami VIEW="$STATE_DIR/view"
+    s="$(setting COMPONENT_REGISTRY_WHOAMI)"
+    if [ -n "$s" ]; then
+      s="${s%%$'\t'*}"; s="${s%/}"; [ -n "$s" ] || s=/
+      valid_path "$s" && [ -f "$STATE_DIR/paths/$(path_key "$s")/whoami" ] && VIEW="$STATE_DIR/paths/$(path_key "$s")"
+    fi
+    [ -f "$VIEW/whoami" ] || die 1 "no resolved view in $STATE_DIR yet; run dcf-registry resolve (task component-registry:resolve)"
+  fi
+  VPATH="$(cat "$VIEW/whoami")"
+}
+
+# record_handover <cli> <name> <folder> <path> <mode> | forget: one line per cli, name and folder
+record_handover() {
+  local cli="$1" name="$2" folder="$3" path="${4:-}" mode="${5:-}" f="$STATE_DIR/handovers.tsv"
+  exec 6>>"$STATE_DIR/handovers.lock"
+  flock -w 30 6 || { warn "the hand-over records are busy ($STATE_DIR/handovers.lock); not recorded"; exec 6>&-; return 0; }
+  (umask 077
+   { [ -f "$f" ] && awk -F'\t' -v c="$cli" -v n="$name" -v d="$folder" '!($1 == c && $2 == n && $3 == d)' "$f"
+     [ "$mode" = forget ] || printf '%s\t%s\t%s\t%s\t%s\n' "$cli" "$name" "$folder" "$path" "$mode"
+   } > "$f.new.$$" && mv -f "$f.new.$$" "$f")
+  exec 6>&-
 }
 
 # normalise <path>: [scope/]kind/name[:key] -> NP_COMP, NP_KEY
@@ -1018,7 +1098,12 @@ cmd_explain() {
   view_path
   who="$(cat "$VIEW/whoami")"
   if [ -n "$as" ] && [ "${as%/}" != "$who" ]; then
-    die 1 "the resolved view is for $who, not $as; run dcf-registry resolve --as $as first (explain never resolves)"
+    # (1.7.0) that path's own view, when one was resolved
+    if valid_path "${as%/}" && [ -f "$STATE_DIR/paths/$(path_key "${as%/}")/whoami" ]; then
+      VIEW="$STATE_DIR/paths/$(path_key "${as%/}")"; who="$(cat "$VIEW/whoami")"
+    else
+      die 1 "no view is resolved for $as (the latest is for $who); run dcf-registry resolve --as $as first (explain never resolves)"
+    fi
   fi
   normalise "$path"
   [ -n "$NP_COMP" ] || die 2 "'$path' names no component (a path with a ${KINDS// /, } segment, like skills/diagrams)"
@@ -1083,6 +1168,10 @@ cmd_version() {
   s="$(setting COMPONENT_REGISTRY_WHOAMI)"
   if [ -n "$s" ]; then echo "who you are: ${s%%$'\t'*} (from ${s#*$'\t'})"; else echo "who you are: not set (COMPONENT_REGISTRY_WHOAMI)"; fi
   if [ -f "$STATE_DIR/view/whoami" ]; then echo "resolved view: for $(cat "$STATE_DIR/view/whoami") at $(cat "$STATE_DIR/view/resolved")"; else echo "resolved view: none yet"; fi
+  for s in "$STATE_DIR"/paths/*; do
+    [ -f "$s/whoami" ] && echo "  a view for $(cat "$s/whoami") at $(cat "$s/resolved")"
+  done
+  return 0
 }
 
 cmd_layer_list() {
@@ -1092,55 +1181,165 @@ cmd_layer_list() {
   [ -f "$RF_ABS" ]
 }
 
-# handover <cli> [<name> <folder>] (1.1.0): the consumer step of release 1, skills. The CLI's
-# adapter (agent-adapter-<cli>, installed by that CLI's Feature) copies the resolved view's skills
-# into the CLI's own skills folder with its optional `skills` verb (ADR-0064, amending the CLI
-# contract of ADR-0037), given the folder in COMPONENT_REGISTRY_SKILLS. The view is read under a
-# shared hold of resolve.lock, so a resolve never swaps it out mid-copy. <name> and <folder> are
-# the agent's, as every adapter verb takes them (default: component-registry and the repository
-# root). Exit 0 handed over, 1 failed or no view, 2 bad use, 3 the CLI cannot take resolved skills
-# (no adapter, or its supports does not list skills, or the verb answers 3): its sessions keep
-# their plain skills (NFR-12), and one line says so.
-cmd_handover() {
-  local cli="${1:-}" name="${2:-$BASE_ID}" folder="${3:-}" ad sup real rc
-  [ -n "$cli" ] || die 2 "handover needs a CLI: dcf-registry handover <cli> [<name> <folder>]"
-  [[ "$cli" =~ ^[A-Za-z0-9_-]+$ ]] || die 2 "handover: '$cli' is not a CLI name"
-  [ -n "$folder" ] || { resolve_settings; folder="$ROOT"; }
-  ad="$(command -v "agent-adapter-$cli" 2>/dev/null)" || ad=''
-  if [ -z "$ad" ]; then say "$cli: no agent-adapter-$cli on PATH; its sessions keep their plain skills"; return 3; fi
-  sup="$("$ad" supports </dev/null 2>/dev/null)" || sup=''
+# handover <cli> [<name> <folder>] [--as <path>] (1.1.0; --as and the record 1.7.0): the consumer
+# step of release 1, skills. The CLI's adapter (agent-adapter-<cli>, installed by that CLI's
+# Feature) copies the resolved view's skills into the CLI's own skills folders with its optional
+# `skills` verb (ADR-0064, amending the CLI contract of ADR-0037), given the folder in
+# COMPONENT_REGISTRY_SKILLS and the path in COMPONENT_REGISTRY_PATH. The view is the one resolved for
+# --as (an agent's registry-path), else for the who-you-are setting, else the latest (1.7.0, ADR-0068:
+# agents with different paths each get their own). It is read under a shared hold of resolve.lock,
+# so a resolve never swaps it out mid-copy. <name> and <folder> are the agent's, as every adapter verb
+# takes them (default: component-registry and the repository root, the sessions no agent started).
+# A hand-over is recorded in handovers.tsv (refresh repeats it). Exit 0 handed over, 1 failed or no
+# view, 2 bad use, 3 the CLI cannot take resolved skills (no adapter, or its supports does not list
+# skills, or the verb answers 3): its sessions keep their plain skills (NFR-12), and one line says so.
+skills_adapter() { # skills_adapter <cli>: AD, the adapter that takes skills; returns 3 (said) when none
+  AD="$(command -v "agent-adapter-$1" 2>/dev/null)" || AD=''
+  if [ -z "$AD" ]; then say "$1: no agent-adapter-$1 on PATH; its sessions keep their plain skills"; return 3; fi
+  # read whole first: grep -q stops early, and under pipefail the adapter's SIGPIPE would fail it
+  local sup; sup="$("$AD" supports </dev/null 2>/dev/null)" || sup=''
   if ! printf '%s\n' "$sup" | grep -qx skills; then
-    say "$cli: its adapter takes no resolved skills (no skills verb); its sessions keep their plain skills"
+    say "$1: its adapter takes no resolved skills (no skills verb); its sessions keep their plain skills"
     return 3
   fi
+}
+cmd_handover() {
+  local cli name folder as='' real rc
+  local -a pos=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --as) [ $# -ge 2 ] || die 2 "--as needs a path"; as="$2"; shift 2 ;;
+      --as=*) as="${1#--as=}"; shift ;;
+      -*) die 2 "handover: unknown option '$1' (handover <cli> [<name> <folder>] [--as <path>])" ;;
+      *) pos+=("$1"); shift ;;
+    esac
+  done
+  cli="${pos[0]:-}" name="${pos[1]:-$BASE_ID}" folder="${pos[2]:-}"
+  [ -n "$cli" ] || die 2 "handover needs a CLI: dcf-registry handover <cli> [<name> <folder>] [--as <path>]"
+  [[ "$cli" =~ ^[A-Za-z0-9_-]+$ ]] || die 2 "handover: '$cli' is not a CLI name"
+  [[ "$name" =~ ^[A-Za-z0-9_-]+$ ]] || die 2 "handover: '$name' is not an agent name"
+  resolve_settings
+  [ -n "$folder" ] || folder="$ROOT"
+  skills_adapter "$cli" || return 3
   [ -d "$STATE_DIR" ] || die 1 "no state folder $STATE_DIR; run dcf-registry resolve first"
   command -v flock >/dev/null 2>&1 || die 1 "flock (util-linux) is needed to read the view while no resolve swaps it"
   exec 8>>"$STATE_DIR/resolve.lock"
   flock -s -w "${COMPONENT_REGISTRY_LOCK_WAIT:-120}" 8 || die 1 "a resolve has held $STATE_DIR/resolve.lock for ${COMPONENT_REGISTRY_LOCK_WAIT:-120}s; try again"
-  view_path
+  view_for "$as"
   real="$(readlink -f "$VIEW")"
   [ -d "$real/skills" ] || die 1 "the resolved view $real has no skills folder; run dcf-registry resolve"
-  COMPONENT_REGISTRY_SKILLS="$real/skills" "$ad" skills "$name" "$folder" </dev/null; rc=$?
+  COMPONENT_REGISTRY_SKILLS="$real/skills" COMPONENT_REGISTRY_PATH="$VPATH" "$AD" skills "$name" "$folder" </dev/null; rc=$?
+  [ "$rc" -eq 0 ] && record_handover "$cli" "$name" "$folder" "$VPATH" "$VMODE"
   exec 8>&-
   if [ "$rc" -eq 3 ]; then say "$cli: its adapter answered that it cannot take resolved skills; its sessions keep their plain skills"; fi
   return "$rc"
 }
 
-# refresh [--as <path>] (1.1.0, /registry-refresh): resolve now, for the path the current view was
-# resolved for (a refresh repeats what the agent's start did, a per-agent path included), else
-# the who-you-are setting; then hand the skills to every CLI adapter on PATH. A CLI whose adapter
-# cannot take them is named (exit 3 of handover); the refresh still succeeds.
+# forget <cli> <name> <folder> (1.7.0): the agent is gone (the participant component calls it for an
+# agent no longer in the agents list); the adapter's skills verb with COMPONENT_REGISTRY_FORGET=1
+# drops the agent's own copies, the record goes, and a path no record names any more loses its view.
+cmd_forget() {
+  local cli="${1:-}" name="${2:-}" folder="${3:-}" rc=0
+  [ $# -eq 3 ] && [ -n "$cli" ] && [ -n "$name" ] && [ -n "$folder" ] || die 2 "forget needs <cli> <name> <folder>"
+  [[ "$cli" =~ ^[A-Za-z0-9_-]+$ ]] || die 2 "forget: '$cli' is not a CLI name"
+  [ -d "$STATE_DIR" ] || { say "nothing recorded"; return 0; }
+  if skills_adapter "$cli" >/dev/null; then
+    COMPONENT_REGISTRY_FORGET=1 "$AD" skills "$name" "$folder" </dev/null; rc=$?
+    [ "$rc" -ne 3 ] || rc=0
+  fi
+  [ "$rc" -eq 0 ] || { warn "$cli: the adapter could not drop $name's copies (exit $rc); its record is kept"; return "$rc"; }
+  record_handover "$cli" "$name" "$folder" '' forget
+  if command -v flock >/dev/null 2>&1; then
+    exec 9>>"$STATE_DIR/resolve.lock"
+    if flock -w "${COMPONENT_REGISTRY_LOCK_WAIT:-120}" 9; then prune_views --pointers; fi
+    exec 9>&-
+  fi
+  say "forgot $name ($cli, $folder)"
+}
+
+cmd_handovers() {
+  [ $# -eq 0 ] || die 2 "handovers takes no arguments"
+  [ -f "$STATE_DIR/handovers.tsv" ] && cat "$STATE_DIR/handovers.tsv"
+  return 0
+}
+
+# refresh [--as <path>] [--session <id>] (1.1.0; per agent 1.7.0, /registry-refresh): resolve now and
+# hand over again.
+#   --as <path>     that path, handed to every CLI adapter on PATH for the sessions no agent started
+#   --session <id>  the agent whose session that is (the id in an adapter's list): its own path
+#                   (its record), resolved and handed to it alone; an unknown id refreshes everything
+#   neither         every recorded hand-over, each distinct path resolved once (an agent of the
+#                   who-you-are setting: the setting now); with no record, the path the latest view
+#                   was resolved for, to every CLI adapter on PATH (1.1.0)
+# A CLI whose adapter cannot take them is named (exit 3 of handover); the refresh still succeeds.
+refresh_paths() { # refresh_paths <path>...: resolve each once; RESOLVED[path]=ok or failed
+  local p rc
+  for p in "$@"; do
+    [ -n "${RESOLVED[$p]:-}" ] && continue
+    bash "$0" resolve --as "$p"; rc=$?
+    if [ "$rc" -eq 0 ]; then RESOLVED[$p]=ok; else RESOLVED[$p]=failed; warn "resolve for $p failed (exit $rc); the skills of that path stay as they were"; fi
+  done
+}
 cmd_refresh() {
-  local as='' cli n=0 rc fail=0
+  local as='' sid='' cli n=0 rc fail=0 s c nm fo p mode who cur=''
+  local -a recs=()
+  declare -gA RESOLVED=()
   while [ $# -gt 0 ]; do
     case "$1" in
       --as) [ $# -ge 2 ] || die 2 "--as needs a path"; as="$2"; shift 2 ;;
       --as=*) as="${1#--as=}"; shift ;;
-      *) die 2 "refresh: unknown argument '$1' (refresh [--as <path>])" ;;
+      --session) [ $# -ge 2 ] || die 2 "--session needs a session id"; sid="$2"; shift 2 ;;
+      --session=*) sid="${1#--session=}"; shift ;;
+      *) die 2 "refresh: unknown argument '$1' (refresh [--as <path>] [--session <id>])" ;;
     esac
   done
-  if [ -z "$as" ] && [ -f "$STATE_DIR/view/whoami" ]; then
+  # a session id the CLI did not substitute (another CLI reads ${CLAUDE_SESSION_ID} as it is) is none
+  [[ "$sid" =~ ^[A-Za-z0-9_-]+$ ]] || sid=''
+  resolve_settings
+  s="$(setting COMPONENT_REGISTRY_WHOAMI)"; [ -z "$s" ] || { cur="${s%%$'\t'*}"; cur="${cur%/}"; [ -n "$cur" ] || cur=/; }
+  [ -f "$STATE_DIR/handovers.tsv" ] && mapfile -t recs < "$STATE_DIR/handovers.tsv"
+  if [ -z "$as" ] && [ -n "$sid" ]; then
+    for cli in $(compgen -c agent-adapter- 2>/dev/null | sed 's/^agent-adapter-//' | LC_ALL=C sort -u); do
+      [[ "$cli" =~ ^[A-Za-z0-9_-]+$ ]] || continue
+      s="$(agent-adapter-"$cli" list </dev/null 2>/dev/null | awk -F'\t' -v w="$sid" '$2 == w { print $1 "\t" $4; exit }')"
+      [ -n "$s" ] || continue
+      nm="${s%%$'\t'*}" fo="${s#*$'\t'}"
+      for s in "${recs[@]+"${recs[@]}"}"; do
+        IFS=$'\t' read -r c n2 f2 p mode <<< "$s"
+        [ "$c" = "$cli" ] && [ "$n2" = "$nm" ] && [ "$f2" = "$fo" ] || continue
+        [ "$mode" = whoami ] && [ -n "$cur" ] && p="$cur"
+        say "refreshing $nm ($cli) for $p, its own path"
+        refresh_paths "$p"
+        [ "${RESOLVED[$p]}" = ok ] || die 1 "resolve failed; nothing was handed over, the skills stay as they were"
+        if [ "$mode" = as ] || [ -z "$cur" ]; then ( cmd_handover "$cli" "$nm" "$fo" --as "$p" ); else ( cmd_handover "$cli" "$nm" "$fo" ); fi
+        rc=$?
+        say "a CLI that does not watch its skills folder reads the new skills when its session is restarted"
+        return "$rc"
+      done
+    done
+    say "session $sid is no agent the registry has handed skills to; refreshing every recorded hand-over"
+  fi
+  if [ -z "$as" ] && [ "${#recs[@]}" -gt 0 ]; then
+    for s in "${recs[@]}"; do
+      IFS=$'\t' read -r c nm fo p mode <<< "$s"
+      [ "$mode" = whoami ] && [ -n "$cur" ] && p="$cur"
+      [ -n "$p" ] || continue
+      refresh_paths "$p"
+      [ "${RESOLVED[$p]}" = ok ] || { fail=1; continue; }
+      if [ "$mode" = as ] || [ -z "$cur" ]; then ( cmd_handover "$c" "$nm" "$fo" --as "$p" ); else ( cmd_handover "$c" "$nm" "$fo" ); fi
+      rc=$?
+      case "$rc" in 0 | 3) ;; *) fail=1; warn "$c: the handover to $nm failed (exit $rc)" ;; esac
+    done
+    who="$(printf '%s\n' "${!RESOLVED[@]}" | LC_ALL=C sort | tr '\n' ' ')"
+    say "refreshed ${#recs[@]} hand-over(s) for ${who% }"
+    say "a CLI that does not watch its skills folder reads the new skills when its session is restarted"
+    return "$fail"
+  fi
+  local -a hv=()
+  if [ -n "$as" ]; then hv=(--as "$as")
+  elif [ -f "$STATE_DIR/view/whoami" ]; then
     as="$(cat "$STATE_DIR/view/whoami")"
+    [ "$as" = "$cur" ] || hv=(--as "$as")
     say "refreshing for $as, the path the current view was resolved for (--as names another)"
   fi
   if [ -n "$as" ]; then bash "$0" resolve --as "$as"; else bash "$0" resolve; fi
@@ -1149,7 +1348,7 @@ cmd_refresh() {
   for cli in $(compgen -c agent-adapter- 2>/dev/null | sed 's/^agent-adapter-//' | LC_ALL=C sort -u); do
     [[ "$cli" =~ ^[A-Za-z0-9_-]+$ ]] || continue
     n=$((n + 1))
-    ( cmd_handover "$cli" ); rc=$?
+    ( cmd_handover "$cli" "${hv[@]+"${hv[@]}"}" ); rc=$?
     case "$rc" in 0 | 3) ;; *) fail=1; warn "$cli: the handover failed (exit $rc)" ;; esac
   done
   [ "$n" -gt 0 ] || say "no CLI adapter on PATH (agent-adapter-<cli>); the resolved view is ready, nothing was handed over"
@@ -1211,8 +1410,10 @@ case "${1:-}" in
   version) shift; cmd_version ;;
   layer-list) shift; cmd_layer_list "$@" ;;
   handover) shift; cmd_handover "$@" ;;
+  forget) shift; cmd_forget "$@" ;;
+  handovers) shift; cmd_handovers "$@" ;;
   refresh) shift; cmd_refresh "$@" ;;
   remember) shift; cmd_remember "$@" ;;
   -h | --help | help | '') usage ;;
-  *) die 2 "unknown verb '$1' (resolve, explain, version, layer-list, handover, refresh, remember)" ;;
+  *) die 2 "unknown verb '$1' (resolve, explain, version, layer-list, handover, forget, handovers, refresh, remember)" ;;
 esac

@@ -6,7 +6,10 @@
 # (and said new, for /reload-skills); an unchanged skill not rewritten (idempotent); a changed one
 # replaced; an owned copy no longer resolved removed; a skill folder without the marker never
 # touched (a name clash said, the registry's copy not installed); never the repository's
-# .claude/skills; owner-only copies; bad use without COMPONENT_REGISTRY_SKILLS. No claude runs:
+# .claude/skills; owner-only copies; bad use without COMPONENT_REGISTRY_SKILLS. Per agent (1.14.0,
+# ADR-0068): two agents of different paths split into personal and own folders, one path shared,
+# a refresh that agrees again, a project clash said, forget, an agent whose folder is gone, two
+# hand-overs at once, --add-dir on new and start-bg (once, none without a folder). No claude runs:
 # the verb never calls the CLI. Part of `task lint` (`task test:claude-unit`).
 set -u
 
@@ -97,6 +100,89 @@ check 'a leftover temporary copy is removed' no "$([ -e "$S/.diagrams.new.999" ]
 
 out="$(PATH="$T/bin:/usr/bin:/bin" CLAUDE_CONFIG_DIR="$T/cfg" COMPONENT_REGISTRY_SKILLS="$T/nosuch" bash "$adapter" skills host "$T/repo" 2>&1)"; rc=$?
 check 'a folder that is not there: bad use (exit 2)' 2 "$rc"
+
+# ------------------------------------------------- per agent (claude-code 1.14.0, ADR-0068) ----
+# Two agents of different registry paths: what their views share is personal, what differs goes to
+# each agent's own folder (read through --add-dir); one path shared by two agents: all personal.
+R="$T/pa"; mkdir -p "$R/cfg" "$R/fa" "$R/fb" "$R/fc/.claude/skills/review"
+echo 'the project review' > "$R/fc/.claude/skills/review/SKILL.md"
+view() { # view <name> <skill=text>...: a resolved view's skills folder
+  local v="$R/view-$1" kv; shift; rm -rf "$v"; mkdir -p "$v"
+  for kv in "$@"; do mkdir -p "$v/${kv%%=*}"; printf '%s\n' "${kv#*=}" > "$v/${kv%%=*}/SKILL.md"; done
+}
+hand() { # hand <agent> <folder> <view>
+  (cd "$2" && PATH="$T/bin:/usr/bin:/bin" CLAUDE_CONFIG_DIR="$R/cfg" COMPONENT_REGISTRY_SKILLS="$R/view-$3" COMPONENT_REGISTRY_PATH="/Corp/$3" bash "$adapter" skills "$1" "$2" 2>&1)
+}
+PS="$R/cfg/skills"
+key() { printf '%s.%s' "$1" "$(printf '%s' "$2" | cksum | cut -d' ' -f1)"; }
+own() { printf '%s/cfg/registry-agents/%s/registry/.claude/skills' "$R" "$(key "$1" "$2")"; }
+view x 'shared=same' 'diagrams=for x' 'xonly=x alone'
+view y 'shared=same' 'diagrams=for y'
+out="$(hand ana "$R/fa" x)"; rc=$?
+check 'per agent: one agent, exit 0' 0 "$rc"
+check 'per agent: one agent, its whole view is personal' 'for x' "$(cat "$PS/diagrams/SKILL.md" 2>/dev/null)"
+check 'per agent: one agent, its own folder made and empty' 0 "$(find "$(own ana "$R/fa")" -mindepth 1 | wc -l)"
+contains 'per agent: one agent, says where its own skills are read from' "$out" "--add-dir $R/cfg/registry-agents/$(key ana "$R/fa")/registry"
+out="$(hand bob "$R/fb" y)"
+check 'two paths: the shared skill stays personal' 'same' "$(cat "$PS/shared/SKILL.md" 2>/dev/null)"
+check 'two paths: a skill they disagree on leaves the personal folder' no "$([ -e "$PS/diagrams" ] && echo yes || echo no)"
+check 'two paths: a skill only one view has leaves the personal folder' no "$([ -e "$PS/xonly" ] && echo yes || echo no)"
+check 'two paths: agent a gets its own diagrams' 'for x' "$(cat "$(own ana "$R/fa")/diagrams/SKILL.md" 2>/dev/null)"
+check 'two paths: agent a gets its only skill' 'x alone' "$(cat "$(own ana "$R/fa")/xonly/SKILL.md" 2>/dev/null)"
+check 'two paths: agent b gets its own diagrams' 'for y' "$(cat "$(own bob "$R/fb")/diagrams/SKILL.md" 2>/dev/null)"
+check 'two paths: agent b never gets the other view'"'"'s skill' no "$([ -e "$(own bob "$R/fb")/xonly" ] && echo yes || echo no)"
+check 'two paths: an own copy is marked owned' yes "$([ -f "$(own bob "$R/fb")/diagrams/.component-registry" ] && echo yes || echo no)"
+check 'two paths: the agents folder is owner-only' 700 "$(stat -c %a "$R/cfg/registry-agents")"
+check 'two paths: the shared skill is not copied to an own folder' no "$([ -e "$(own ana "$R/fa")/shared" ] && echo yes || echo no)"
+out="$(hand cat "$R/fc" x)"
+check 'same path: a third agent of path x gets the own copy of its path (diagrams is contested by b)' 'for x' "$(cat "$(own cat "$R/fc")/diagrams/SKILL.md" 2>/dev/null)"
+check 'same path: the two x agents hold the same text' "$(cat "$(own ana "$R/fa")/diagrams/SKILL.md")" "$(cat "$(own cat "$R/fc")/diagrams/SKILL.md" 2>/dev/null)"
+# a refresh: b's view changes to agree with x; diagrams becomes shared again and leaves the own folders
+view y 'shared=same' 'diagrams=for x' 'xonly=x alone'
+out="$(hand bob "$R/fb" y)"
+check 'refresh: views agree again, the skill is personal' 'for x' "$(cat "$PS/diagrams/SKILL.md" 2>/dev/null)"
+gone="$([ -e "$(own ana "$R/fa")/diagrams" ] && echo yes || echo no) $([ -e "$(own bob "$R/fb")/diagrams" ] && echo yes || echo no) $([ -e "$(own cat "$R/fc")/diagrams" ] && echo yes || echo no)"
+check 'refresh: and gone from every own folder' "no no no" "$gone"
+# a project skill of the same name beats an added directory's: said
+view y 'shared=same' 'review=the registry review'
+out="$(hand cat "$R/fc" y)"
+contains 'project clash: said, with the prefixed name' "$out" "the project's $R/fc/.claude/skills/review wins in cat's sessions; the registry's runs as /registry:review"
+check 'project clash: the repository skill is never touched' 'the project review' "$(cat "$R/fc/.claude/skills/review/SKILL.md")"
+# cleanup: forget drops the agent's folder and the split is made again without it
+out="$(cd "$R/fc" && PATH="$T/bin:/usr/bin:/bin" CLAUDE_CONFIG_DIR="$R/cfg" COMPONENT_REGISTRY_FORGET=1 bash "$adapter" skills cat "$R/fc" 2>&1)"; rc=$?
+check 'forget: exit 0' 0 "$rc"
+check 'forget: the agent folder is gone' no "$([ -e "$R/cfg/registry-agents/$(key cat "$R/fc")" ] && echo yes || echo no)"
+check 'forget: ana and bob agree again, so everything is personal' 'x alone' "$(cat "$PS/xonly/SKILL.md" 2>/dev/null)"
+check 'forget: an own folder empties' 0 "$(find "$(own bob "$R/fb")" -mindepth 1 -maxdepth 1 | wc -l)"
+# an agent whose folder is gone is dropped at the next hand-over
+view y 'shared=same' 'diagrams=for y'
+hand bob "$R/fb" y >/dev/null
+rm -rf "$R/fa"
+out="$(hand bob "$R/fb" y)"
+contains 'sweep: an agent whose folder is gone is said dropped' "$out" '1 agent(s) whose folder is gone'
+check 'sweep: its folder is removed' no "$([ -e "$R/cfg/registry-agents/$(key ana "$R/fa")" ] && echo yes || echo no)"
+check 'sweep: bob alone, its whole view personal' 'for y' "$(cat "$PS/diagrams/SKILL.md" 2>/dev/null)"
+# the lock: two hand-overs at once both finish and leave a consistent split
+mkdir -p "$R/fa"
+view x 'shared=same' 'diagrams=for x'
+hand ana "$R/fa" x >/dev/null & p1=$!; hand bob "$R/fb" y >/dev/null & p2=$!
+wait "$p1"; r1=$?; wait "$p2"; r2=$?
+check 'lock: two hand-overs at once, both exit 0' "0 0" "$r1 $r2"
+check 'lock: the split is consistent (diagrams contested, in both own folders)' "for x|for y|no" "$(cat "$(own ana "$R/fa")/diagrams/SKILL.md" 2>/dev/null)|$(cat "$(own bob "$R/fb")/diagrams/SKILL.md" 2>/dev/null)|$([ -e "$PS/diagrams" ] && echo yes || echo no)"
+# the agent's sessions get --add-dir <its folder>, last, once; an agent with no folder gets none
+: > "$T/claude-calls"
+(cd "$R/fa" && PATH="$T/bin:/usr/bin:/bin" CLAUDE_CONFIG_DIR="$R/cfg" bash "$adapter" new ana "$R/fa" -- --model opus >/dev/null 2>&1)
+contains 'new: --add-dir the agent'"'"'s own folder, after its args' "$(cat "$T/claude-calls")" "--model opus --add-dir $R/cfg/registry-agents/$(key ana "$R/fa")/registry"
+: > "$T/claude-calls"
+(cd "$R/fa" && PATH="$T/bin:/usr/bin:/bin" CLAUDE_CONFIG_DIR="$R/cfg" bash "$adapter" new ana "$R/fa" -- --add-dir "$R/cfg/registry-agents/$(key ana "$R/fa")/registry" >/dev/null 2>&1)
+check 'new: never twice' 1 "$(grep -o -- '--add-dir' "$T/claude-calls" | wc -l)"
+: > "$T/claude-calls"
+(cd "$R/fa" && PATH="$T/bin:/usr/bin:/bin" CLAUDE_CONFIG_DIR="$R/cfg" bash "$adapter" start-bg ana "$R/fa" >/dev/null 2>&1)
+contains 'start-bg: --add-dir the agent'"'"'s own folder' "$(cat "$T/claude-calls")" "--bg --name ana --add-dir $R/cfg/registry-agents/$(key ana "$R/fa")/registry"
+: > "$T/claude-calls"
+mkdir -p "$R/fz"
+(cd "$R/fz" && PATH="$T/bin:/usr/bin:/bin" CLAUDE_CONFIG_DIR="$R/cfg" bash "$adapter" new zed "$R/fz" >/dev/null 2>&1)
+check 'new: an agent never handed skills gets no --add-dir' 0 "$(grep -c -- '--add-dir' "$T/claude-calls")"
 
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

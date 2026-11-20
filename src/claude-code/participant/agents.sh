@@ -79,8 +79,10 @@
 # The component registry (participant 1.2.0, ADR-0064). When dcf-registry (the component-registry
 # Feature) is on PATH and its layer list exists, starting an agent first runs
 # `dcf-registry resolve` (--as the entry's registry-path, else COMPONENT_REGISTRY_WHOAMI) and then
-# `dcf-registry handover <cli> <name> <folder>`, which calls the adapter's optional `skills` verb
-# when its `supports` lists it. Never blocking: a failed resolve, a CLI that cannot take resolved
+# `dcf-registry handover <cli> <name> <folder>` (with --as the registry-path, participant 1.4.0:
+# each agent its own path's view, ADR-0068), which calls the adapter's optional `skills` verb
+# when its `supports` lists it. `agents up` forgets (dcf-registry forget) an agent the registry
+# handed skills to that is no longer in the list. Never blocking: a failed resolve, a CLI that cannot take resolved
 # skills (exit 3) or no layer list each say so in one line, and the agent starts with the skills
 # it has. Without dcf-registry nothing is said or run. Resolve and the hand-over get at most
 # COMPONENT_REGISTRY_START_WAIT seconds (default 15); past it the CLI starts with the last good
@@ -1079,7 +1081,11 @@ registry_step() {
     warn "$nm: the ${limit}s for the component registry were used by resolve; starting with the last good skills already in ${CLI[i]}'s skills folder (/registry-refresh hands the new ones over)."
     return 0
   fi
-  registry_run "$left" handover "${CLI[i]}" "$nm" "$DIR"; rc=$?
+  # (participant 1.4.0, ADR-0068) the view of the agent's own path: another agent's resolve in between
+  # never hands it the wrong one, and its CLI keeps each agent's skills apart
+  if [ -n "$as" ]; then registry_run "$left" handover "${CLI[i]}" "$nm" "$DIR" --as "$as"
+  else registry_run "$left" handover "${CLI[i]}" "$nm" "$DIR"; fi
+  rc=$?
   case "$rc" in
     0) echo "$nm: the registry's resolved skills handed to ${CLI[i]}${as:+ (as $as)}." ;;
     3) echo "$nm: ${CLI[i]} takes no resolved skills (its adapter has no skills verb); starting with its plain skills." ;;
@@ -1090,6 +1096,35 @@ registry_step() {
          warn "$nm: handing the registry's skills to ${CLI[i]} failed (${last:-exit $rc}); starting with the skills as they were."
        fi ;;
   esac
+  return 0
+}
+
+# registry_forget_gone (participant 1.4.0, ADR-0068): at agents up, an agent the registry handed
+# skills to (dcf-registry handovers) that is no longer in the agent list, in a folder of this
+# repository, is forgotten (dcf-registry forget: its CLI drops the agent's own skills folder, so its
+# view no longer splits the shared one). The sessions no agent started (component-registry) and
+# other repositories' agents are left alone. Never fatal; without dcf-registry nothing is run.
+registry_forget_gone() {
+  command -v dcf-registry >/dev/null 2>&1 || return 0
+  local recs c n f out i d root
+  recs="$(cd "$ROOT" && dcf-registry handovers </dev/null 2>/dev/null)" || return 0
+  [ -n "$recs" ] || return 0
+  root="$(cd "$ROOT" && pwd -P)"
+  declare -A listed=()
+  for ((i = 1; i <= N; i++)); do
+    d="$(cd "$ROOT/${FOLDER[i]}" 2>/dev/null && pwd -P)" || continue
+    listed["${CLI[i]}"$'\t'"${NAME[i]}"$'\t'"$d"]=1
+  done
+  while IFS=$'\t' read -r c n f _; do
+    [ -n "$c" ] && [ -n "$n" ] && [ "$n" != component-registry ] || continue
+    case "$f/" in "$root"/*) ;; *) continue ;; esac
+    [ -z "${listed["$c"$'\t'"$n"$'\t'"$f"]:-}" ] || continue
+    if out="$(cd "$ROOT" && timeout -k 2 30 dcf-registry forget "$c" "$n" "$f" </dev/null 2>&1)"; then
+      echo "$n: no longer in the agent list; its own registry skills are removed."
+    else
+      warn "$n: no longer in the agent list, but its own registry skills could not be removed ($(printf '%s\n' "$out" | awk 'NF { l = $0 } END { print l }' | sed 's/^dcf-registry: //' | cut -c1-200))."
+    fi
+  done <<< "$recs"
   return 0
 }
 
@@ -1316,6 +1351,7 @@ cmd_up_body() {
   local wait="$1" i rc=0 r
   PASS=()
   load_list
+  registry_forget_gone
   declare -A settled=()
   for ((i = 1; i <= N; i++)); do
     if [ "${KIND[i]}" != resident ]; then

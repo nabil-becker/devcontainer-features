@@ -359,9 +359,13 @@ exists, `agents start` and `agents up` do two things for each agent before its C
 
 1. `dcf-registry resolve`, `--as` the entry's `registry-path`, else for
    `COMPONENT_REGISTRY_WHOAMI`. Once per path in one run (`agents up` with several agents).
-2. `dcf-registry handover <cli> <name> <folder>`, which asks the adapter's `supports` for `skills`
-   and, when listed, calls `agent-adapter-<cli> skills <name> <folder>` with the resolved skills
-   folder in `COMPONENT_REGISTRY_SKILLS`.
+2. `dcf-registry handover <cli> <name> <folder>` (`--as` the `registry-path`, participant 1.4.0),
+   which asks the adapter's `supports` for `skills` and, when listed, calls
+   `agent-adapter-<cli> skills <name> <folder>` with that path's resolved skills folder in
+   `COMPONENT_REGISTRY_SKILLS`.
+
+`agents up` (participant 1.4.0) first forgets (`dcf-registry forget`) every agent of this
+repository the registry handed skills to that is no longer in the list.
 
 Both steps together wait at most `COMPONENT_REGISTRY_START_WAIT` seconds per agent (default 15; a
 whole number, a bad value means 15), a layer fetch that hangs and the wait for another resolve's
@@ -373,10 +377,10 @@ skills already in its skills folder, and one line says so (`did not resolve with
 It never blocks a start (NFR-12). Each case is one line, and the agent starts with the skills it
 has: no layer list (`the component registry has no layer list`), a failed resolve (the reason, for
 example no who-you-are path), a CLI whose adapter has no `skills` verb (`takes no resolved
-skills`), a hand-over that fails. Without `dcf-registry` nothing is run or said. The resolved view
-and the CLI's skills folder are one per container: two agents of one CLI with different
-`registry-path`s each resolve at their start, and the later start's skills are what both see (see
-Limits).
+skills`), a hand-over that fails. Without `dcf-registry` nothing is run or said. Each path keeps
+its own resolved view (component-registry 1.7.0), and a CLI whose adapter keeps an agent's own skills
+apart (Claude Code from claude-code 1.14.0: an added directory per agent) gives two agents with
+different `registry-path`s each their own skills ([ADR-0068](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/adr/0068-each-agent-reads-the-skills-its-registry-path-resolves-through-an-added-directory-and-the-personal-folder-keeps-what-every-agent-shares.md), proposed).
 
 ## The adapter contract
 
@@ -408,7 +412,11 @@ agent-adapter-<cli> <verb> <name> <folder>, optional (exit 3 or missing: skipped
                                never touch a skill it does not own, never the repository's skills
                                folder; create the skills folder even when empty; idempotent. Called
                                by dcf-registry handover only when supports lists it; exit 3 or not
-                               listed: the CLI keeps its plain skills, said in one line
+                               listed: the CLI keeps its plain skills, said in one line.
+                               (ADR-0068) COMPONENT_REGISTRY_PATH names the path of that view; where
+                               a CLI can, it keeps each agent's skills apart and has the agent's
+                               sessions read them; COMPONENT_REGISTRY_FORGET=1 (no
+                               COMPONENT_REGISTRY_SKILLS) drops the agent's own copies
 agent-adapter-<cli> session-busy <id>     exit 0 mid-turn now, 1 not (idle, waiting, ended), 3 cannot tell
 agent-adapter-<cli> session-stop <id>     stop that session (the id `list` printed); conversation kept
 agent-adapter-<cli> session-remove <id>   remove that ended session from the CLI's list
@@ -518,10 +526,10 @@ the background (...)`).
 - The lease guards starts through `agents` only; `claude --bg --name <agent>` by hand takes none.
 - `AGENTS_LEASE_WAIT` (default 20 s) bounds the wait for a start in progress; a container start
   with several residents waits at most that per agent held `starting`.
-- The component registry's resolved view and a CLI's skills folder are one per container (one
-  `CLAUDE_CONFIG_DIR`): agents of one CLI with different `registry-path`s do not each keep their
-  own skills; the latest start's resolve is what all of them read. A per-agent skills folder needs
-  a per-agent CLI configuration folder, which no adapter has yet.
+- Agents of one CLI with different `registry-path`s keep their own skills only where the CLI's
+  adapter keeps them apart (Claude Code from claude-code 1.14.0, ADR-0068). A session not started
+  through `agents` reads only the skills every agent's view has alike, and in Claude Code a project
+  skill of the same name beats an agent's own copy (the registry's runs as `/registry:<name>`).
 - The start hook waits for `dcf-registry resolve` and the hand-over for at most
   `COMPONENT_REGISTRY_START_WAIT` seconds (default 15) per agent; it never fails the start.
 - Tested with fake adapters and a fake `claude` (`task test:agents-unit`, `task

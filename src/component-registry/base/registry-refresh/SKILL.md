@@ -8,8 +8,12 @@ description: "Rebuild the skills the component registry resolves, now: fetch eve
 Run this with the Bash tool, from the repository root, and show the person its output as it is:
 
 ```sh
-dcf-registry refresh
+dcf-registry refresh --session "${CLAUDE_SESSION_ID}"
 ```
+
+The session id says which agent is asking, so its own registry path is refreshed (an agent can
+have its own); a CLI that leaves `${CLAUDE_SESSION_ID}` as it is, or a session no agent started,
+refreshes every agent the registry has handed skills to.
 
 Then tell them, in at most three short lines:
 
