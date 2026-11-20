@@ -565,6 +565,16 @@ type = "concept"
 term = "registry-path"
 summary = "The agents list key giving one agent its who-you-are path for the start hook."
 
+[own-skills-folder]
+type = "concept"
+term = "Own skills folder"
+summary = "The directory of registry skills one agent alone reads, added to Claude Code with --add-dir; the skills its view does not share with the other agents stay out of the personal folder."
+
+[hand-over-record]
+type = "concept"
+term = "Hand-over record"
+summary = "The record dcf-registry keeps of which agent got which who-you-are path's view and own skills folder; agents no longer listed are forgotten."
+
 [key-mode]
 type = "mechanism"
 term = "Key mode"
