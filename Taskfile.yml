@@ -390,12 +390,14 @@ tasks:
         platforms: [linux, darwin]
 
   test:devhost:docker:
-    desc: 'Run the devhost Feature''s Docker tests (test/devhost: defaults and the non_root scenario) for local-features/devhost, which is not under src/ and so is outside `task test`, CI and the global scenarios. Copies it and its tests into a temporary project folder shaped like a collection (src/devhost, test/devhost) and runs `devcontainer features test` there. IMAGE overrides the base image. Needs a Docker daemon and the devcontainer CLI. Linux/macOS only.'
+    desc: 'Run the devhost Feature''s Docker tests (test/devhost: defaults and the non_root scenario) for local-features/devhost, which is not under src/ and so is outside `task test`, CI and the global scenarios. Copies it and its tests into a temporary project folder shaped like a collection (src/devhost, test/devhost) and runs `devcontainer features test` there. IMAGE overrides the base image. Needs a Docker daemon and the devcontainer CLI. Linux/macOS only. Same free-space guard (FORCE=1 overrides) and the same prune of the whole docker-in-docker daemon afterwards, pass or fail.'
     platforms: [linux, darwin]
     preconditions:
       - sh: docker info >/dev/null 2>&1
         msg: 'no Docker daemon here; the devhost Docker tests run only where Docker does'
     cmds:
+      - bash {{.ROOT_DIR}}/.devcontainer/dind-guard.sh
+      - defer: bash {{.ROOT_DIR}}/.devcontainer/dind-clean.sh
       - cmd: |
           tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
           mkdir -p "$tmp/src" "$tmp/test"

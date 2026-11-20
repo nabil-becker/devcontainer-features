@@ -352,8 +352,8 @@ filled the host drive. So:
 - Every start of the devhost empties the daemon (`.devcontainer/dind-clean.sh`,
   run by `postStartCommand`): images, containers, volumes and the build cache.
   It skips with one line when no daemon answers (wslc).
-- `task test` and `task test:global` do the same after each run, pass or fail.
-- Both refuse to start with less than 20 GB free where `/var/lib/docker`
+- `task test`, `task test:global` and `task test:devhost:docker` do the same after each run, pass or fail.
+- All three refuse to start with less than 20 GB free where `/var/lib/docker`
   lives (`.devcontainer/dind-guard.sh`). `FORCE=1 task test` overrides.
 - The build cache is not capped with a BuildKit setting: the Feature starts
   dockerd before any script of this repo runs, so a `daemon.json` written
