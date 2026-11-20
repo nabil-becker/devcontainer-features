@@ -76,6 +76,13 @@ named in the rows ("bounded loss", "to verify").
 | Audio relay folder (microphone socket, only while the gate is on) | `/mnt/wsl/devhost-audio` | launcher, audio gate | none | personal (live audio, stored nowhere) | no | `src/audio/NOTES.md`, `docs/adr/0058-*.md` |
 | Audio ALSA default | `/etc/asound.conf` in the image | audio Feature | 4 (image) | public | no (rebuilt) | `src/audio/NOTES.md` |
 | PHI-check exceptions (synthetic fixtures only) | a file named by the `exceptions` option | phi-check Feature, the repo | 1 | internal | yes | `src/phi-check/NOTES.md` |
+| Registry layer list | `.devcontainer/registry.yml` (option `registryFile`, `COMPONENT_REGISTRY_FILE`) | component-registry Feature, the repo | 1 | public | yes | `src/component-registry/NOTES.md` |
+| Who-you-are path (`COMPONENT_REGISTRY_WHOAMI`) | `.env` (git-ignored) or the launcher (later), per person | the person | none (a setting) | internal | not applicable (set again) | `src/component-registry/NOTES.md`, `docs/adr/0063-*.md` |
+| A registry layer's `.reg` files and skill files | its source: a git repository, a folder or file share (later: http, the cloud folder) | the layer's owner | the owner's choice | internal; a person's own layer is personal | follows its source | `docs/proposals/component-registry.md` |
+| Registry layer copies, the resolved view, `resolve.lock` | volume `component-registry-state-${devcontainerId}` at `/var/lib/devcontainer-features/component-registry`, owner-only | component-registry Feature | 4 | as its most sensitive layer (may be personal) | yes (refetched, rebuilt) | `src/component-registry/NOTES.md` |
+| `explain` output | the terminal only | component-registry Feature | none | as the resolved view | not kept | `src/component-registry/NOTES.md` |
+| Registry source secrets | OpenBao, read with `dcf-secret` | the layer's owner or the person | OpenBao's | secret | yes | `src/component-registry/NOTES.md` |
+| Later (slice 2): resolved skills in the CLI | the CLI's skills folder (Claude: the claude-code volume) | the CLI adapter | 4 | as the resolved view | rebuilt | `docs/proposals/component-registry.md` |
 | Journal pieces, night-shift reports, iteration papers | `docs/journal/`, `docs/night-shift/`, `docs/iterations/` | host, journalist | 1 | public (name guard applies) | yes | `docs/journal/README.md`, `local-features/devhost/NOTES.md` |
 
 ### Features that hold nothing
@@ -294,3 +301,35 @@ erDiagram
 Three more views are derived from it: `themes/*.toml` (labels, `id = "label"`), the C4 Markdown
 files (Mermaid whose node ids are ids), and `LEXICON.md` (prose). `devhost-verify` guard `model`
 keeps them in agreement.
+
+### The component registry: layer, entry, resolved component
+
+Source: `src/component-registry/NOTES.md` (component-registry 1.0.0), `docs/proposals/component-registry.md` sections 3.2 and 3.3.
+
+```mermaid
+classDiagram
+  class Layer {
+    id
+    rank
+    at
+    sources
+  }
+  class Entry {
+    path
+    key
+    type
+    data
+    locked
+  }
+  class ResolvedComponent {
+    path
+    values
+    sourceOfEachValue
+  }
+  Layer "1" --> "*" Entry : holds
+  Entry "*" --> "1" ResolvedComponent : merged into
+```
+
+On disk the resolved component is `skills/<name>/` (`SKILL.md` and its files) and
+`meta/skills/<name>/`: `values/<key>`, `keys.tsv` (key, type, summary) and `provenance.tsv` (state,
+key, type, layer, rank, version, `source:file:line`, data, why: `sourceOfEachValue`).

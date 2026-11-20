@@ -1,0 +1,35 @@
+{
+  "id": "component-registry",
+  "version": "1.0.0",
+  "name": "Component registry",
+  "description": "A registry for agentic components, shaped like the Windows Registry (ADR-0063). Layers from any number of sources (a git branch, tag or commit; a folder or mounted file share) are fetched into local layer copies (version first, so an unchanged layer is skipped; offline, the last good copy is used and said) and merged by value type into one resolved view for who you are (COMPONENT_REGISTRY_WHOAMI, a path such as /Corp/MyDepartment/team/me): value replaces, list combines (!item takes out), text stacks in layer order, ref points at another path; the higher layer wins, the more specific scope inside a layer, a locked key beats both, and a permission key comes from a component's lowest layer only. dcf-registry resolve and dcf-registry explain <path> [--uses] (task component-registry:resolve, :explain); release 1 resolves skills. The layer list is .devcontainer/registry.yml (option registryFile, COMPONENT_REGISTRY_FILE). Layer copies and the resolved view live owner-only in a named volume at COMPONENT_REGISTRY_STATE_DIR=/var/lib/devcontainer-features/component-registry, made usable by component-registry-setup at start. Bash, awk and sed; nothing downloaded at build.",
+  "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/component-registry",
+  "licenseURL": "https://github.com/nabil-becker/devcontainer-features/blob/main/LICENSE",
+  "options": {
+    "registryFile": {
+      "type": "string",
+      "default": ".devcontainer/registry.yml",
+      "description": "The layer list, relative to the repository root (or absolute): which layers, at which paths, from which sources. Shared and committed; it never says who you are. COMPONENT_REGISTRY_FILE in .env or the environment overrides it without a rebuild."
+    },
+    "installTaskfile": {
+      "type": "boolean",
+      "default": true,
+      "description": "Also install this Feature's Taskfile into /usr/local/share/go-task/includes.d so its tasks appear under the <id>: namespace of a root Taskfile that includes /usr/local/share/go-task/features.yml (see the go-task Feature)."
+    }
+  },
+  "containerEnv": {
+    "COMPONENT_REGISTRY_STATE_DIR": "/var/lib/devcontainer-features/component-registry"
+  },
+  "mounts": [
+    {
+      "source": "component-registry-state-${devcontainerId}",
+      "target": "/var/lib/devcontainer-features/component-registry",
+      "type": "volume"
+    }
+  ],
+  "postStartCommand": "component-registry-setup",
+  "installsAfter": [
+    "ghcr.io/nabil-becker/devcontainer-features/go-task",
+    "ghcr.io/devcontainers/features/common-utils"
+  ]
+}

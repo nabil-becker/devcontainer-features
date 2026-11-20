@@ -1,0 +1,30 @@
+# Tasks contributed by the component-registry Feature (namespace: component-registry).
+# COMPONENT_REGISTRY_WHOAMI (who you are, a path) and COMPONENT_REGISTRY_FILE (the layer list,
+# repository-relative) from the command line, a .env file or the environment; dcf-registry
+# resolves the order.
+version: '3'
+
+tasks:
+  version:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Show the Feature version, which layer list is used (the path and where COMPONENT_REGISTRY_FILE came from), who you are (COMPONENT_REGISTRY_WHOAMI and its source) and the resolved view (for whom, when).'
+    cmds:
+      - '{{if .COMPONENT_REGISTRY_FILE}}COMPONENT_REGISTRY_FILE_TASK_VAR={{shellQuote .COMPONENT_REGISTRY_FILE}} {{end}}{{if .COMPONENT_REGISTRY_WHOAMI}}COMPONENT_REGISTRY_WHOAMI_TASK_VAR={{shellQuote .COMPONENT_REGISTRY_WHOAMI}} {{end}}dcf-registry version'
+
+  resolve:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Fetch each layer of the layer list (.devcontainer/registry.yml, or COMPONENT_REGISTRY_FILE; an unchanged layer is skipped, an unreachable one uses its last good copy and says so), merge them by value type for who you are (COMPONENT_REGISTRY_WHOAMI, or -- --as <path>), and swap the resolved view in; skipped lines are reported. Fails only for a required layer never fetched or no who-you-are path. Idempotent.'
+    cmds:
+      - '{{if .COMPONENT_REGISTRY_FILE}}COMPONENT_REGISTRY_FILE_TASK_VAR={{shellQuote .COMPONENT_REGISTRY_FILE}} {{end}}{{if .COMPONENT_REGISTRY_WHOAMI}}COMPONENT_REGISTRY_WHOAMI_TASK_VAR={{shellQuote .COMPONENT_REGISTRY_WHOAMI}} {{end}}dcf-registry resolve {{.CLI_ARGS}}'
+
+  explain:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Read-only: task component-registry:explain -- skills/<name>[:key] shows every line of the resolved component with the layer it came from and the version that layer was read at, the lines skipped and why, and refs that point at nothing; -- <path> --uses lists what refers to the path.'
+    cmds:
+      - 'dcf-registry explain {{.CLI_ARGS}}'
+
+  setup:
+    dir: '{{.USER_WORKING_DIR}}'
+    desc: 'Re-run the start hook: make the state folder (COMPONENT_REGISTRY_STATE_DIR) usable by the current user and owner-only, and say whether a resolved view is there (idempotent).'
+    cmds:
+      - component-registry-setup

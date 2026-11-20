@@ -1,0 +1,969 @@
+#!/usr/bin/env bash
+# dcf-registry: the component registry's command. Layers of agentic components, read from any
+# number of sources, merged by value type into one resolved view for who you are.
+# Installed on PATH by the component-registry Feature; behind `task component-registry:resolve`
+# and `task component-registry:explain`.
+#
+#   dcf-registry resolve [--as <path>]          fetch each layer, merge, swap in the resolved view
+#   dcf-registry explain <path> [--uses] [--as <path>]
+#                                               read-only: who said each line, at which version;
+#                                               --uses lists what refers to <path>
+#   dcf-registry version                        the Feature version and the layer list in use
+#
+# Who you are is a path (/Corp/MyDepartment/team/me): --as, else COMPONENT_REGISTRY_WHOAMI from
+# the task variable, the root .env, .devcontainer/.env or the environment (NFR-6); never in a
+# committed file. The layer list is .devcontainer/registry.yml (the Feature option registryFile)
+# unless COMPONENT_REGISTRY_FILE names another path relative to the repository root (the nearest
+# folder at or above here holding .devcontainer), found in the same order.
+#
+#   layers:                       # lowest first
+#     - id: corp-base             # unique; letters, digits, - and _
+#       at: /Corp                 # where its relative section paths are mounted
+#       required: true            # optional: never fetched stops resolve (on a source too)
+#       writable: true            # optional: read by a later release (/registry-remember)
+#       sources:                  # merged in this order
+#         - kind: git             # registry-source-git on PATH
+#           url: https://git.example.invalid/corp/registry.git
+#           tag: v3               # exactly one of branch, tag, commit
+#           auth: { type: basic, user: bot, secret: registry/corp }   # optional, dcf-secret
+#         - { kind: path, path: .registry-mine }   # repo-relative or absolute folder
+#
+# Only that subset of YAML is read (comments, plain and quoted scalars, block entries, one-line
+# { } maps); unknown keys are refused with file:line. The parser is awk (NFR-7).
+#
+# A layer's content is one or more *.reg files at the root of its copy (the grammar is in the
+# Feature NOTES and docs/proposals/component-registry.md section 3.2); the merge is section 3.3.
+#
+# State (owner-only, never committed) in COMPONENT_REGISTRY_STATE_DIR
+# (/var/lib/devcontainer-features/component-registry):
+#   copies/<layer>/<n>/        the layer copy of the layer's n-th source; <n>.meta its pin,
+#                              version and fetch time
+#   views/<stamp>/ and view    the resolved views; `view` is a symlink swapped in one rename
+#   resolve.lock               flock, so two resolves never interleave
+# The resolved view: skills/<name>/ (SKILL.md and its files, what a consumer copies),
+# meta/skills/<name>/ (provenance.tsv, keys.tsv, values/<key>), meta/refs.tsv,
+# meta/problems.tsv, layers.tsv and whoami.
+#
+# Exit: 0 done, 1 failed (a required layer never fetched, the lock, no resolved view), 2 bad use
+# (no who-you-are path, a bad layer list, an unknown verb).
+set -uo pipefail
+
+STATE_DIR="${COMPONENT_REGISTRY_STATE_DIR:-/var/lib/devcontainer-features/component-registry}"
+SHARE_DIR="${COMPONENT_REGISTRY_SHARE_DIR:-/usr/local/share/component-registry-feature}"
+# Component kinds: a path is split at the first of these segments. Only ACTIVE_KINDS are
+# resolved in this release; lines of the others are reported, not merged.
+KINDS="skills agents prompts settings lexicon"
+ACTIVE_KINDS="skills"
+declare -A S_KIND S_REQ S_LINE S_ARGS S_PIN
+
+warn() { printf 'dcf-registry: %s\n' "$*" >&2; }
+say() { printf 'dcf-registry: %s\n' "$*"; }
+die() { local rc="$1"; shift; printf 'dcf-registry: %s\n' "$*" >&2; exit "$rc"; }
+usage() { sed -n '2,/^set -uo/p' "$0" | sed '$d; s/^# \{0,1\}//'; }
+
+# Everything this command writes is as sensitive as its most sensitive layer (a person's own
+# layer may hold health facts): owner-only.
+umask 077
+
+# ------------------------------------------------------------------ settings ----
+find_root() { # the nearest folder at or above here holding .devcontainer; else here
+  local d
+  d="$(pwd -P)"
+  while :; do
+    [ -d "$d/.devcontainer" ] && { printf '%s' "$d"; return 0; }
+    [ "$d" = / ] && break
+    d="$(dirname "$d")"
+  done
+  pwd -P
+}
+
+# dotenv_value <file> <var>: the value of the last line for var (quotes, export and a trailing
+# comment dropped); 1 when the file has no line for it.
+dotenv_value() {
+  grep -q "^[[:space:]]*\(export[[:space:]]\{1,\}\)\{0,1\}$2=" "$1" 2>/dev/null || return 1
+  sed -n "s/^[[:space:]]*\(export[[:space:]]\{1,\}\)\{0,1\}$2=[[:space:]]*//p" "$1" | tail -n 1 | tr -d '\r' |
+    sed "s/[[:space:]]\{1,\}#.*\$//; s/[[:space:]]*\$//; s/^\"\(.*\)\"\$/\1/; s/^'\(.*\)'\$/\1/"
+}
+
+# setting <VAR>: prints value<TAB>source. The task variable (VAR_TASK_VAR) when it differs from
+# both .env and the environment (Task fills it from those too), then .env, .devcontainer/.env,
+# then the environment; nothing when unset.
+setting() {
+  local var="$1" tvn="${1}_TASK_VAR" tv ev dv='' dsrc='' f v
+  tv="${!tvn:-}" ev="${!var:-}"
+  for f in "$ROOT/.env" "$ROOT/.devcontainer/.env"; do
+    if [ -f "$f" ] && v="$(dotenv_value "$f" "$var")"; then dv="$v" dsrc="${f#"$ROOT"/}"; break; fi
+  done
+  if [ -n "$tv" ] && [ "$tv" != "$dv" ] && [ "$tv" != "$ev" ]; then printf '%s\tthe task variable %s' "$tv" "$var"
+  elif [ -n "$dv" ]; then printf '%s\t%s in %s' "$dv" "$var" "$dsrc"
+  elif [ -n "$ev" ]; then printf '%s\t%s in the environment' "$ev" "$var"
+  fi
+}
+
+resolve_settings() {
+  local s def=.devcontainer/registry.yml
+  ROOT="$(find_root)"
+  # shellcheck disable=SC1091  # written by install.sh at image build
+  [ -f "$SHARE_DIR/options.env" ] && . "$SHARE_DIR/options.env"
+  s="$(setting COMPONENT_REGISTRY_FILE)"
+  if [ -n "$s" ]; then RF="${s%%$'\t'*}" RF_SOURCE="${s#*$'\t'}"
+  elif [ -n "${REGISTRYFILE:-}" ]; then RF="$REGISTRYFILE" RF_SOURCE='the Feature option registryFile'
+  else RF="$def" RF_SOURCE='the default (COMPONENT_REGISTRY_FILE is not set)'
+  fi
+  case "$RF" in /*) RF_ABS="$RF" ;; *) RF_ABS="$ROOT/$RF" ;; esac
+}
+
+# valid_path <path>: absolute, segments of letters, digits, . _ -, no wildcards
+valid_path() { [[ "$1" =~ ^(/[A-Za-z0-9._-]+)+$ ]] || [ "$1" = / ]; }
+
+resolve_whoami() { # $1: the --as value, may be empty
+  local s
+  if [ -n "$1" ]; then WHOAMI="$1" WHOAMI_SOURCE='--as'
+  else
+    s="$(setting COMPONENT_REGISTRY_WHOAMI)"
+    [ -n "$s" ] || die 2 "who are you? Set COMPONENT_REGISTRY_WHOAMI to your path in the registry, for example COMPONENT_REGISTRY_WHOAMI=/Corp/MyDepartment/team/me in $ROOT/.env (git-ignored) or from the launcher, or pass --as <path>. It is per person and never goes in a committed file."
+    WHOAMI="${s%%$'\t'*}" WHOAMI_SOURCE="${s#*$'\t'}"
+  fi
+  WHOAMI="${WHOAMI%/}"; [ -n "$WHOAMI" ] || WHOAMI=/
+  valid_path "$WHOAMI" || die 2 "who-you-are path '$WHOAMI' (from $WHOAMI_SOURCE) must be absolute, like /Corp/MyDepartment/team/me: segments of letters, digits, . _ and -, no wildcards."
+}
+
+# ------------------------------------------------------------- the layer list ----
+# The parser: the YAML subset above, one record per line out (tab-separated):
+#   Y <n> <line>                      layer n starts
+#   K <n> <key> <value> <line>        id, at, required, writable
+#   S <n> <m> <line>                  source m of layer n starts
+#   P <n> <m> <key> <value> <line>    kind, url, branch, tag, commit, path, remote, required,
+#                                     auth.type, auth.secret, auth.user, auth.header
+#   E <line> <message>                an error (the last line)
+# Written for mawk as well as gawk: no gensub, no regex intervals.
+read -r -d '' LIST_PARSER <<'AWK'
+function fail(msg) { printf "E\t%d\t%s\n", NR, msg; failed = 1; exit 2 }
+function ind(s) { match(s, /^ */); return RLENGTH }
+function plain(s,   i) {
+  if (substr(s, 1, 1) == "#") return ""
+  i = index(s, " #"); if (i > 0) s = substr(s, 1, i - 1)
+  sub(/[ \t]+$/, "", s); return s
+}
+# quoted(s): s starts with a quote; sets QV (the value) and QR (the text after it)
+function quoted(s,   q, i, ch, r, n) {
+  q = substr(s, 1, 1); r = ""; i = 2; n = length(s)
+  while (i <= n) {
+    ch = substr(s, i, 1)
+    if (q == "'" && ch == "'") { if (substr(s, i + 1, 1) == "'") { r = r "'"; i += 2; continue } ; break }
+    if (q == "\"" && ch == "\\") { r = r substr(s, i + 1, 1); i += 2; continue }
+    if (q == "\"" && ch == "\"") break
+    r = r ch; i++
+  }
+  if (i > n) fail("a quoted value is not closed")
+  QV = r; QR = substr(s, i + 1); sub(/^[ \t]+/, "", QR)
+}
+function scalar(s, what) {
+  if (s ~ /^["']/) {
+    quoted(s)
+    if (QR != "" && substr(QR, 1, 1) != "#") fail("text after the quoted value of " what)
+    return QV
+  }
+  if (s ~ /^[\[\{|>&*!%@`]/) fail(what " must be a plain or quoted value")
+  return plain(s)
+}
+function setkey(where, k, v,   id) {
+  if (v ~ /\t/) fail("a tab in the value of '" k "'")
+  if (where == "layer") {
+    if (k !~ /^(id|at|required|writable)$/) fail("unknown key '" k "' in a layer (id, at, sources, required, writable)")
+    if ((n, k) in seen) fail("'" k "' appears twice in one layer")
+    seen[n, k] = 1
+    printf "K\t%d\t%s\t%s\t%d\n", n, k, v, NR
+    return
+  }
+  if (where == "source") {
+    if (k !~ /^(kind|url|branch|tag|commit|path|remote|required)$/) fail("unknown key '" k "' in a source (kind, url, branch, tag, commit, path, remote, required, auth)")
+    id = k
+  } else {
+    if (k !~ /^(type|secret|user|header)$/) fail("unknown key '" k "' in auth (type, secret, user, header)")
+    id = "auth." k
+  }
+  if ((n, m, id) in seen) fail("'" id "' appears twice in one source")
+  seen[n, m, id] = 1
+  printf "P\t%d\t%d\t%s\t%s\t%d\n", n, m, id, v, NR
+}
+# flowmap(s, where): a { k: v, k: "v", auth: { ... } } map on one line; FR is the text after it
+function flowmap(s, where,   k, v, ch) {
+  s = substr(s, 2)
+  while (1) {
+    sub(/^[ \t]+/, "", s)
+    if (s == "") fail("a { map must close on the same line")
+    if (substr(s, 1, 1) == "}") { s = substr(s, 2); break }
+    if (!match(s, /^[A-Za-z0-9_-]+:/)) fail("expected key: value in the { map")
+    k = substr(s, 1, RLENGTH - 1); s = substr(s, RLENGTH + 1)
+    sub(/^[ \t]+/, "", s)
+    ch = substr(s, 1, 1)
+    if (ch == "{") {
+      if (where != "source" || k != "auth") fail("only auth may hold a { map")
+      if ((n, m, "auth") in seen) fail("'auth' appears twice in one source")
+      seen[n, m, "auth"] = 1
+      flowmap(s, "auth"); s = FR
+    } else if (ch == "\"" || ch == "'") { quoted(s); setkey(where, k, QV); s = QR }
+    else {
+      if (k == "auth") fail("auth must be a map: auth: { type: basic, secret: <name> }")
+      v = s; sub(/[,}].*$/, "", v); s = substr(s, length(v) + 1); sub(/[ \t]+$/, "", v)
+      if (v == "") fail("'" k "' has no value")
+      if (s == "") fail("a { map must close on the same line")
+      setkey(where, k, v)
+    }
+    sub(/^[ \t]+/, "", s)
+    ch = substr(s, 1, 1)
+    if (ch == ",") { s = substr(s, 2); continue }
+    if (ch == "}") { s = substr(s, 2); break }
+    fail("expected , or } in the { map")
+  }
+  FR = s
+}
+function after(s) { sub(/^[ \t]+/, "", s); if (s != "" && substr(s, 1, 1) != "#") fail("text after the { map") }
+# keyline(t, where): one key: value line of a layer, a source or an auth map
+function keyline(t, where,   k, v) {
+  if (t !~ /^[A-Za-z0-9_-]+:/) fail("expected key: value")
+  k = t; sub(/:.*/, "", k)
+  v = substr(t, length(k) + 2)
+  if (v != "" && v !~ /^[ \t]/) fail("expected a space after " k ":")
+  sub(/^[ \t]+/, "", v)
+  if (where == "layer" && k == "sources") {
+    if ((n, "sources") in seen) fail("'sources' appears twice in one layer")
+    seen[n, "sources"] = 1
+    if (v == "" || substr(v, 1, 1) == "#") { ctx = "srcwait"; return }
+    if (plain(v) ~ /^\[[ ]*\]$/) return
+    fail("sources must be a list: one '- kind: ...' entry per line below it")
+  }
+  if (where == "source" && k == "auth") {
+    if ((n, m, "auth") in seen) fail("'auth' appears twice in one source")
+    seen[n, m, "auth"] = 1
+    if (v == "" || substr(v, 1, 1) == "#") { ctx = "authwait"; return }
+    if (substr(v, 1, 1) == "{") { flowmap(v, "auth"); after(FR); return }
+    fail("auth must be a map: auth: { type: basic, secret: <name> }")
+  }
+  if (v == "" || substr(v, 1, 1) == "#") fail("'" k "' has no value")
+  setkey(where, k, scalar(v, "'" k "'"))
+}
+function newlayer(t, i,   rest) {
+  n++; m = 0; ctx = "layer"; LK = -1; SI = -1
+  printf "Y\t%d\t%d\n", n, NR
+  rest = substr(t, 2)
+  if (rest ~ /^ *(#.*)?$/) return
+  LK = i + 1 + ind(rest); sub(/^ +/, "", rest)
+  if (substr(rest, 1, 1) == "{") fail("write a layer as key: value lines, not { }")
+  keyline(rest, "layer")
+}
+function newsource(t, i,   rest) {
+  m++; ctx = "source"; SK = -1
+  printf "S\t%d\t%d\t%d\n", n, m, NR
+  rest = substr(t, 2)
+  if (rest ~ /^ *(#.*)?$/) return
+  SK = i + 1 + ind(rest); sub(/^ +/, "", rest)
+  if (substr(rest, 1, 1) == "{") { flowmap(rest, "source"); after(FR); SK = -2; return }
+  keyline(rest, "source")
+}
+BEGIN { n = 0; ctx = "top"; LI = -1; sawlayers = 0 }
+{
+  line = $0; sub(/\r$/, "", line)
+  t = line; sub(/^ +/, "", t)
+  if (t == "" || substr(t, 1, 1) == "#") next
+  if (substr(t, 1, 1) == "\t") fail("a tab in the indentation; indent with spaces")
+  i = ind(line)
+  dash = (t == "-" || substr(t, 1, 2) == "- ")
+  if (i == 0) {
+    if (t == "---") next
+    if (t ~ /^layers:/) {
+      if (sawlayers) fail("'layers' appears twice")
+      sawlayers = 1
+      v = plain(substr(t, 8)); sub(/^[ \t]+/, "", v)
+      if (v == "") { ctx = "layers"; next }
+      if (v ~ /^\[[ ]*\]$/) { ctx = "none"; next }
+      fail("layers must be a list of entries, one '- id: ...' each")
+    }
+    if (t ~ /^[A-Za-z0-9_-]+:/) { k = t; sub(/:.*/, "", k); fail("unknown top-level key '" k "' (the file holds layers: only)") }
+    fail("expected layers: at the top level")
+  }
+  if (ctx == "authwait") {
+    if (!dash && i > SK) { AK = i; ctx = "auth" }
+    else fail("auth: needs its keys indented below it, or auth: { type: basic, secret: <name> }")
+  }
+  if (ctx == "auth") {
+    if (!dash && i == AK) { keyline(t, "auth"); next }
+    if (i > AK) fail("unexpected indentation")
+    ctx = "source"
+  }
+  if (ctx == "source") {
+    if (SK == -1 && !dash && i > SI) SK = i
+    if (!dash && i == SK) { keyline(t, "source"); next }
+    if (dash && i == SI) { newsource(t, i); next }
+    if (i > SK && SK >= 0) fail("unexpected indentation")
+    ctx = "layer"
+  }
+  if (ctx == "srcwait") {
+    if (dash && i > LK) { SI = i; newsource(t, i); next }
+    ctx = "layer"
+  }
+  if (ctx == "layer") {
+    if (LK == -1 && !dash && i > LI) LK = i
+    if (!dash && i == LK) { keyline(t, "layer"); next }
+    if (dash && i == LI) { newlayer(t, i); next }
+    fail("unexpected indentation")
+  }
+  if (ctx == "layers") {
+    if (dash) { LI = i; newlayer(t, i); next }
+    fail("expected a list item, - id: ...")
+  }
+  fail("unexpected indentation")
+}
+END {
+  if (failed) exit 2
+  if (!sawlayers) { printf "E\t0\tno layers: list in the file\n"; exit 2 }
+}
+AWK
+
+# load_list: parse and check RF_ABS into NL and the arrays L_ID, L_AT, L_REQ, L_LINE, L_NSRC and,
+# keyed "<n>.<m>", S_KIND, S_REQ, S_LINE, S_ARGS (key=value lines handed to the source).
+load_list() {
+  local out rc rec a b c d errs=0 i j at k v
+  [ -f "$RF_ABS" ] || die 2 "no layer list at $RF_ABS (from $RF_SOURCE); write one (see the component-registry Feature notes) or set COMPONENT_REGISTRY_FILE to its path relative to $ROOT."
+  out="$(awk "$LIST_PARSER" "$RF_ABS")"; rc=$?
+  NL=0; L_ID=() L_AT=() L_WR=() L_REQ=() L_LINE=() L_NSRC=() S_KIND=() S_REQ=() S_LINE=() S_ARGS=() S_PIN=()
+  while IFS=$'\t' read -r rec a b c d _; do
+    case "$rec" in
+      Y) NL="$a"; L_LINE[a]="$b" L_NSRC[a]=0 L_REQ[a]=false ;;
+      K) case "$b" in id) L_ID[a]="$c" ;; at) L_AT[a]="$c" ;; required) L_REQ[a]="$c" ;; writable) L_WR[a]="$c" ;; esac ;;
+      S) L_NSRC[a]="$b"; S_LINE["$a.$b"]="$c" S_REQ["$a.$b"]=false S_ARGS["$a.$b"]='' ;;
+      P) case "$c" in
+           kind) S_KIND["$a.$b"]="$d" ;;
+           required) S_REQ["$a.$b"]="$d" ;;
+           *) S_ARGS["$a.$b"]+="$c=$d"$'\n' ;;
+         esac ;;
+      E) die 2 "$RF:$a: $b" ;;
+    esac
+  done <<< "$out"
+  [ "$rc" -eq 0 ] || die 2 "$RF: could not be read"
+  for ((i = 1; i <= NL; i++)); do
+    at="$RF:${L_LINE[i]}: layer $i"
+    if [ -z "${L_ID[i]:-}" ]; then warn "$at has no id"; errs=$((errs + 1))
+    elif ! [[ "${L_ID[i]}" =~ ^[A-Za-z0-9_-]+$ ]]; then warn "$at: id '${L_ID[i]}' may hold only letters, digits, - and _"; errs=$((errs + 1))
+    fi
+    for ((j = 1; j < i; j++)); do
+      [ -n "${L_ID[i]:-}" ] && [ "${L_ID[i]}" = "${L_ID[j]:-}" ] && { warn "$at: id '${L_ID[i]}' is already used by layer $j"; errs=$((errs + 1)); }
+    done
+    if [ -z "${L_AT[i]:-}" ]; then warn "$at has no at (the path the layer is mounted at, like /Corp)"; errs=$((errs + 1))
+    else
+      L_AT[i]="${L_AT[i]%/}"; [ -n "${L_AT[i]}" ] || L_AT[i]=/
+      valid_path "${L_AT[i]}" || { warn "$at: at '${L_AT[i]}' must be an absolute path without wildcards"; errs=$((errs + 1)); }
+    fi
+    case "${L_REQ[i]}" in true | false) ;; *) warn "$at: required is true or false"; errs=$((errs + 1)) ;; esac
+    case "${L_WR[i]:-false}" in true | false) ;; *) warn "$at: writable is true or false"; errs=$((errs + 1)) ;; esac
+    [ "${L_NSRC[i]}" -gt 0 ] || { warn "$at has no sources"; errs=$((errs + 1)); }
+    for ((j = 1; j <= L_NSRC[i]; j++)); do
+      k="$i.$j"; at="$RF:${S_LINE[$k]}: layer ${L_ID[i]:-$i} source $j"
+      case "${S_REQ[$k]}" in true | false) ;; *) warn "$at: required is true or false"; errs=$((errs + 1)) ;; esac
+      [ "${L_REQ[i]}" = true ] && S_REQ[$k]=true
+      v="${S_KIND[$k]:-}"
+      if [ -z "$v" ]; then warn "$at has no kind"; errs=$((errs + 1)); continue; fi
+      [[ "$v" =~ ^[a-z0-9-]+$ ]] || { warn "$at: kind '$v' may hold only lower-case letters, digits and -"; errs=$((errs + 1)); continue; }
+      # The two kinds this release installs are checked here, so a mistake names its line.
+      case "$v" in
+        git)
+          grep -q '^url=' <<< "${S_ARGS[$k]}" || { warn "$at: a git source needs url"; errs=$((errs + 1)); }
+          [ "$(grep -c '^\(branch\|tag\|commit\)=' <<< "${S_ARGS[$k]}")" -eq 1 ] || { warn "$at: a git source needs exactly one of branch, tag, commit"; errs=$((errs + 1)); }
+          grep -q '^\(path\|remote\|auth\.header\)=' <<< "${S_ARGS[$k]}" && { warn "$at: a git source takes url, branch, tag or commit, and auth (type, user, secret)"; errs=$((errs + 1)); } ;;
+        path)
+          grep -q '^path=' <<< "${S_ARGS[$k]}" || { warn "$at: a path source needs path"; errs=$((errs + 1)); }
+          grep -q '^\(url\|branch\|tag\|commit\|remote\|auth\.[a-z]*\)=' <<< "${S_ARGS[$k]}" && { warn "$at: a path source takes path only (the folder's own permissions are its log-in)"; errs=$((errs + 1)); }
+          # A relative path is the repository's; the source gets it absolute.
+          v="$(sed -n 's/^path=//p' <<< "${S_ARGS[$k]}")"
+          case "$v" in /*) ;; *) S_ARGS[$k]="$(grep -v '^path=' <<< "${S_ARGS[$k]}")"$'\n'"path=$ROOT/$v"$'\n' ;; esac ;;
+      esac
+      # The pin: what the list says to read. A changed pin is another copy, never the old one.
+      S_PIN[$k]="kind=${S_KIND[$k]}"$'\x1f'"$(printf '%s' "${S_ARGS[$k]}" | LC_ALL=C sort | tr '\n' '\037')"
+    done
+  done
+  [ "$errs" -eq 0 ] || die 2 "$RF: $errs problem(s) above; nothing was resolved"
+}
+
+# -------------------------------------------------------------------- fetch ----
+meta_get() { sed -n "s/^$2=//p" "$1" 2>/dev/null | head -n 1; }
+
+# source_args <key>: the source's key=value lines as arguments, into SARGS
+source_args() { SARGS=(); local l; while IFS= read -r l; do [ -n "$l" ] && SARGS+=("$l"); done <<< "${S_ARGS[$1]}"; }
+
+# fetch_source <n> <m>: brings the layer copy up to date. Sets SRC_STATE (fetched, unchanged,
+# offline, missing), SRC_VER, SRC_AT (when the copy was fetched) and SRC_NOTE.
+fetch_source() {
+  local n="$1" m="$2" k="$1.$2" id="${L_ID[$1]}" kind cmd dir meta ver rc oldpin oldver new
+  kind="${S_KIND[$k]}" cmd="registry-source-${S_KIND[$k]}"
+  dir="$STATE_DIR/copies/$id/$m" meta="$STATE_DIR/copies/$id/$m.meta"
+  SRC_STATE='' SRC_VER='' SRC_AT='' SRC_NOTE=''
+  source_args "$k"
+  oldpin="$(meta_get "$meta" pin)" oldver="$(meta_get "$meta" version)"
+  if [ "$oldpin" != "$(printf '%s' "${S_PIN[$k]}" | tr '\037' ' ')" ]; then
+    # Another pin (or none yet): the old copy is something else and never a fallback.
+    rm -rf "$dir" "$meta"; oldver=''
+  fi
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    case "$kind" in
+      http | db) SRC_NOTE="kind $kind is not in this release of component-registry (no $cmd on PATH)" ;;
+      cloud-folder) SRC_NOTE="kind cloud-folder comes with the cloud-folder Feature in a later release (no $cmd on PATH)" ;;
+      *) SRC_NOTE="no $cmd on PATH (the Feature that owns the $kind transport installs it)" ;;
+    esac
+    offline_or_missing; return
+  fi
+  ver="$("$cmd" version "$id" "${SARGS[@]}" 2>"$TMP/err")"; rc=$?
+  ver="$(printf '%s' "$ver" | tail -n 1 | tr -d '\t\r')"
+  if [ "$rc" -eq 0 ] && [ -n "$ver" ] && [ "$ver" = "$oldver" ] && [ -d "$dir" ]; then
+    SRC_STATE=unchanged SRC_VER="$ver" SRC_AT="$(meta_get "$meta" fetched)"; return
+  fi
+  if [ "$rc" -ne 0 ] && [ "$rc" -ne 3 ]; then
+    SRC_NOTE="$cmd version failed (exit $rc): $(grep -m 1 . "$TMP/err")"; offline_or_missing; return
+  fi
+  new="$dir.new.$$"; rm -rf "$new"; mkdir -p "$new"
+  if ! "$cmd" fetch "$id" "$new" "${SARGS[@]}" 2>"$TMP/err" >/dev/null; then
+    rm -rf "$new"; SRC_NOTE="$cmd fetch failed: $(grep -m 1 . "$TMP/err")"; offline_or_missing; return
+  fi
+  # A source that cannot say its version (exit 3) is fetched every time; its version is the time.
+  [ "$rc" -eq 3 ] || [ -z "$ver" ] && ver="fetched-$(date -u +%Y%m%dT%H%M%SZ)"
+  rm -rf "$dir"; mv "$new" "$dir"
+  SRC_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  { printf 'pin=%s\n' "$(printf '%s' "${S_PIN[$k]}" | tr '\037' ' ')"; printf 'version=%s\nfetched=%s\n' "$ver" "$SRC_AT"; } > "$meta"
+  SRC_STATE=fetched SRC_VER="$ver"
+}
+
+offline_or_missing() {
+  if [ -d "$dir" ] && [ -f "$meta" ]; then
+    SRC_STATE=offline SRC_VER="$(meta_get "$meta" version)" SRC_AT="$(meta_get "$meta" fetched)"
+  else
+    SRC_STATE=missing
+  fi
+}
+
+# ------------------------------------------------------------------- merge ----
+# The resolver: reads the manifest (rank, layer, at, source, version, copy folder, .reg file per
+# line), parses every .reg file, applies the match rule for W and merges by type (proposal 3.3).
+# Writes meta/ in VIEW itself and prints to stdout:
+#   C <component> <folder>             copy the folder's files into the component (in order)
+#   N <component>                      a component resolved
+#   R <component> <layer> <loc> <key> <reason>   a line skipped (reported by resolve)
+#   Q <layer> <loc> <reason>           a line that could not be read
+read -r -d '' RESOLVER <<'AWK'
+function q(s) { gsub(/'/, "'\\''", s); return "'" s "'" }
+# tsv(s): one TSV field; an empty one is "-", since bash read collapses two tabs into one
+function tsv(s) { gsub(/[\t\r\n]/, " ", s); return s == "" ? "-" : s }
+function first(s,   i) { i = index(s, "/"); return i ? substr(s, 1, i - 1) : s }
+function rest(s,   i) { i = index(s, "/"); return i ? substr(s, i + 1) : "" }
+# segmatch(p, s): pattern p matches path s; both without a leading /, "" is the root.
+# * is one segment, ** any number (none included).
+function segmatch(p, s,   ph) {
+  if (p == "") return s == ""
+  ph = first(p)
+  if (ph == "**") {
+    if (segmatch(rest(p), s)) return 1
+    if (s == "") return 0
+    return segmatch(p, rest(s))
+  }
+  if (s == "") return 0
+  if (ph == "*" || ph == first(s)) return segmatch(rest(p), rest(s))
+  return 0
+}
+# deepest(scope): the depth of the deepest of W and its ancestors the scope matches, -1 for none
+function deepest(scope,   d, anc, k) {
+  for (d = NW; d >= 0; d--) {
+    anc = ""
+    for (k = 1; k <= d; k++) anc = anc (k > 1 ? "/" : "") WSEG[k]
+    if (segmatch(scope, anc)) return d
+  }
+  return -1
+}
+function wildcards(p,   a, n, k, c) { n = split(p, a, "/"); c = 0; for (k = 1; k <= n; k++) if (a[k] == "*" || a[k] == "**") c++; return c }
+function strength(rank, d, wild, ord) { return ((rank * 100 + d) * 100 + (99 - wild)) * 1000000 + ord }
+function problem(loc, why) { printf "Q\t%s\t%s\t%s\n", CURLAYER, loc, why; print CURLAYER "\t" loc "\t" why >> PROBLEMS }
+# section(path, loc): a section header's path, joined to the layer's at, split into scope and
+# component at the first kind segment. Sets SECOK.
+function section(raw, loc,   path, excl, a, n, k, scope, comp, found, seg) {
+  SECOK = 0
+  excl = 0
+  if (substr(raw, 1, 1) == "!") { excl = 1; raw = substr(raw, 2) }
+  if (raw == "") { problem(loc, "an empty section path"); return }
+  if (substr(raw, 1, 1) == "/") path = raw; else path = (AT == "/" ? "" : AT) "/" raw
+  sub(/\/+$/, "", path)
+  n = split(path, a, "/")
+  scope = ""; comp = ""; found = 0
+  for (k = 2; k <= n; k++) {
+    seg = a[k]
+    if (seg !~ /^[A-Za-z0-9._-]+$/ && seg != "*" && seg != "**") { problem(loc, "segment '" seg "' of [" raw "]: letters, digits, . _ - or a whole * or ** only"); return }
+    if (!found && (seg in KIND)) found = k
+    if (!found) scope = scope (scope == "" ? "" : "/") seg
+    else comp = comp (comp == "" ? "" : "/") seg
+  }
+  NS++
+  Sscope[NS] = scope; Scomp[NS] = comp; Sexcl[NS] = excl; Sfile[NS] = FILEID; Srank[NS] = RANK
+  Slayer[NS] = CURLAYER; Sloc[NS] = loc; Sord[NS] = ++ORD; Swild[NS] = wildcards(scope) + wildcards(comp)
+  Sraw[NS] = (excl ? "!" : "") raw
+  Sreplace[NS] = 0
+  SECOK = 1
+}
+function entry(t, loc,   k, ty, data, p) {
+  if (!SECOK) { problem(loc, CURSEC ? "under a section header that could not be read" : "outside a section; start one with [path]"); return }
+  if (Sexcl[NS]) { problem(loc, "an exclusion section [!...] holds no entries"); return }
+  if (Scomp[NS] == "") { problem(loc, "[" Sraw[NS] "] names no component (no " KINDLIST " segment)"); return }
+  NLN++
+  Lsec[NLN] = NS; Lrank[NLN] = RANK; Llayer[NLN] = CURLAYER; Lver[NLN] = VER; Lloc[NLN] = loc
+  Lord[NLN] = ++ORD; Lcopy[NLN] = COPY
+  if (t ~ /^lock[ \t]/) {
+    k = t; sub(/^lock[ \t]+/, "", k); sub(/[ \t]+$/, "", k)
+    Llock[NLN] = 1; Lkey[NLN] = k; Ltype[NLN] = "lock"; Ldata[NLN] = ""
+    return
+  }
+  p = index(t, "=")
+  k = substr(t, 1, p - 1); data = substr(t, p + 1)
+  sub(/[ \t]+$/, "", k); sub(/^[ \t]/, "", data); sub(/[ \t]+$/, "", data)
+  ty = k; sub(/^[^:]*:/, "", ty); sub(/:.*$/, "", k)
+  Llock[NLN] = 0; Lkey[NLN] = k; Ltype[NLN] = ty; Ldata[NLN] = data
+}
+function parse(file,   ln, nr, t, loc, p, hdr, dir) {
+  nr = 0; SECOK = 0; CURSEC = 0; FILEID++
+  while ((getline ln < file) > 0) {
+    nr++
+    sub(/\r$/, "", ln)
+    t = ln; sub(/^[ \t]+/, "", t); sub(/[ \t]+$/, "", t)
+    loc = SRC ":" REL ":" nr
+    if (t == "" || substr(t, 1, 1) == ";") continue
+    if (substr(t, 1, 1) == "[") {
+      CURSEC = 1; SECOK = 0
+      p = index(t, "]")
+      if (p == 0) { problem(loc, "a section header needs a closing ]"); continue }
+      hdr = substr(t, p + 1); sub(/^[ \t]+/, "", hdr)
+      if (hdr != "" && hdr != "@replace") { problem(loc, "after [path] only @replace may follow"); continue }
+      section(substr(t, 2, p - 2), loc)
+      if (SECOK && hdr == "@replace") {
+        if (Sexcl[NS]) { problem(loc, "an exclusion section cannot be @replace"); SECOK = 0; continue }
+        Sreplace[NS] = 1
+      }
+      continue
+    }
+    if (t ~ /^lock[ \t]+[A-Za-z0-9_-]+$/) { entry(t, loc); continue }
+    if (t ~ /^[A-Za-z0-9_-]+:[A-Za-z]+[ \t]*=/) {
+      p = t; sub(/[ \t]*=.*$/, "", p); sub(/^[^:]*:/, "", p)
+      if (p !~ /^(value|list|text|ref)$/) { problem(loc, "type '" p "' is none of value, list, text, ref"); continue }
+      entry(t, loc); continue
+    }
+    problem(loc, "not a section, an entry (key:type = data), a lock (lock key) or a comment (;)")
+  }
+  close(file)
+}
+function isperm(k) { return k == "allowed-tools" || k == "disallowed-tools" || k ~ /^permission/ }
+# safe relative name inside a layer copy: no leading /, no .. segment
+function inside(r) { return r != "" && substr(r, 1, 1) != "/" && r !~ /(^|\/)\.\.(\/|$)/ }
+function readfile(f,   ln, out, n) {
+  out = ""; n = 0
+  while ((getline ln < f) > 0) { out = out (n++ ? "\n" : "") ln }
+  close(f)
+  return out
+}
+function exists(f,   ln, r) { r = (getline ln < f); close(f); return r >= 0 }
+function isdir(f) { return system("test -d " q(f)) == 0 }
+function prov(state, i, reason) {
+  print state "\t" Lkey[i] "\t" Ltype[i] "\t" Llayer[i] "\t" Lrank[i] "\t" Lver[i] "\t" Lloc[i] "\t" tsv(Ldata[i]) "\t" tsv(reason) > PROV
+}
+function report(c, i, reason) { printf "R\t%s\t%s\t%s\t%s\t%s\n", c, Llayer[i], Lloc[i], Lkey[i], reason }
+# ref target: [scope/]kind/name[:key] -> RT_COMP, RT_KEY, RT_WHY ("" when well formed)
+function reftarget(s,   p, a, n, k, found, comp) {
+  RT_COMP = ""; RT_KEY = ""; RT_WHY = ""
+  p = index(s, ":")
+  if (p) { RT_KEY = substr(s, p + 1); s = substr(s, 1, p - 1) }
+  sub(/^\//, "", s)
+  n = split(s, a, "/"); found = 0; comp = ""
+  for (k = 1; k <= n; k++) {
+    if (!found && (a[k] in KIND)) found = 1
+    if (found) comp = comp (comp == "" ? "" : "/") a[k]
+  }
+  if (!found) { RT_WHY = "names no component"; return }
+  RT_COMP = comp
+}
+function resolve(c,   i, j, n, d, x, y, cand, cs, lowrank, rmax, rloc, rlay, k, ty, tmp, parts, kd, out, items, it, nit, a, na, b, w, blk, lastlay, fm, p, base, nkeys) {
+  base = META "/" c
+  system("mkdir -p " q(base "/values"))
+  PROV = base "/provenance.tsv"
+  printf "" > PROV
+  n = 0; split("", cand); split("", cs)
+  for (i = 1; i <= NLN; i++) {
+    j = Lsec[i]
+    if (!segmatch(Scomp[j], c)) continue
+    d = deepest(Sscope[j])
+    if (d < 0) { if (Scomp[j] == c) NA[++nna] = i; continue }
+    x = 0
+    for (y = j + 1; y <= NS; y++) {
+      if (!Sexcl[y] || Sfile[y] != Sfile[j]) continue
+      if ((Scomp[y] == "" || segmatch(Scomp[y], c)) && deepest(Sscope[y]) >= 0) { x = y; break }
+    }
+    if (x) { EX[++nex] = i; EXBY[nex] = x; continue }
+    cand[++n] = i; cs[n] = strength(Lrank[i], d, Swild[j], Lord[i])
+  }
+  # weakest first: insertion sort on strength
+  for (a = 2; a <= n; a++) {
+    tmp = cand[a]; w = cs[a]
+    for (b = a - 1; b >= 1 && cs[b] > w; b--) { cand[b + 1] = cand[b]; cs[b + 1] = cs[b] }
+    cand[b + 1] = tmp; cs[b + 1] = w
+  }
+  lowrank = -1
+  for (a = 1; a <= n; a++) if (lowrank < 0 || Lrank[cand[a]] < lowrank) lowrank = Lrank[cand[a]]
+  # locks: the lowest layer that locks a key keeps it
+  split("", LOCKR); split("", LOCKI)
+  for (a = 1; a <= n; a++) {
+    i = cand[a]; if (!Llock[i]) continue
+    k = Lkey[i]
+    if (!(k in LOCKR) || Lrank[i] < LOCKR[k]) { LOCKR[k] = Lrank[i]; LOCKI[k] = i }
+  }
+  # @replace: the strongest replacing section that applies drops every weaker line
+  rmax = -1
+  for (j = 1; j <= NS; j++) {
+    if (!Sreplace[j] || !segmatch(Scomp[j], c)) continue
+    d = deepest(Sscope[j]); if (d < 0) continue
+    x = 0
+    for (y = j + 1; y <= NS; y++) if (Sexcl[y] && Sfile[y] == Sfile[j] && (Scomp[y] == "" || segmatch(Scomp[y], c)) && deepest(Sscope[y]) >= 0) { x = y; break }
+    if (x) continue
+    w = strength(Srank[j], d, Swild[j], Sord[j])
+    if (w > rmax) { rmax = w; rloc = Sloc[j]; rlay = Slayer[j] }
+  }
+  split("", KT); split("", KTI); split("", ST); split("", WHY); split("", KORDER); nkeys = 0
+  for (a = 1; a <= n; a++) {
+    i = cand[a]; k = Lkey[i]
+    if (Llock[i]) {
+      if (LOCKI[k] == i) { ST[i] = "used"; WHY[i] = "locks " k " for every higher layer" }
+      else if (Lrank[i] == LOCKR[k]) { ST[i] = "used"; WHY[i] = "locks " k " (also locked at " Lloc[LOCKI[k]] ")" }
+      else { ST[i] = "overridden"; WHY[i] = "already locked by " Llayer[LOCKI[k]] " at " Lloc[LOCKI[k]] }
+      continue
+    }
+    if (rmax >= 0 && cs[a] < rmax && !((k in LOCKR) && Lrank[i] <= LOCKR[k])) { ST[i] = "dropped"; WHY[i] = "dropped by @replace in " rlay " at " rloc; continue }
+    if (isperm(k) && Lrank[i] > lowrank) { ST[i] = "skipped"; WHY[i] = "a permission key is taken from the component's lowest layer only (rank " lowrank ")"; continue }
+    if ((k in LOCKR) && Lrank[i] > LOCKR[k]) { ST[i] = "skipped"; WHY[i] = "locked by " Llayer[LOCKI[k]] " at " Lloc[LOCKI[k]]; continue }
+    if (!(k in KT)) { KT[k] = Ltype[i]; KTI[k] = i; KORDER[++nkeys] = k }
+    if (Ltype[i] != KT[k]) { ST[i] = "skipped"; WHY[i] = "type clash: " k " is " KT[k] ", fixed by " Llayer[KTI[k]] " at " Lloc[KTI[k]]; continue }
+    if (k == "files" && (Ltype[i] != "value" || Ldata[i] !~ /^@dir[ \t]/)) { ST[i] = "skipped"; WHY[i] = "files takes @dir <folder>: files:value = @dir <folder>"; continue }
+    if (k == "body" && Ltype[i] != "text") { ST[i] = "skipped"; WHY[i] = "body is the SKILL.md text: body:text = ..."; continue }
+    ST[i] = "alive"
+  }
+  # merge by type
+  split("", RES)
+  for (kd = 1; kd <= nkeys; kd++) {
+    k = KORDER[kd]; ty = KT[k]
+    if (ty == "value" || ty == "ref") {
+      w = 0
+      for (a = 1; a <= n; a++) { i = cand[a]; if (Lkey[i] == k && ST[i] == "alive") w = i }
+      if (k == "files") {
+        for (a = 1; a <= n; a++) {
+          i = cand[a]; if (Lkey[i] != k || ST[i] != "alive") continue
+          p = Ldata[i]; sub(/^@dir[ \t]+/, "", p); sub(/\/+$/, "", p)
+          if (!inside(p) || !isdir(Lcopy[i] "/" p)) { ST[i] = "skipped"; WHY[i] = "no folder " p " in the layer copy"; continue }
+          ST[i] = "used"; WHY[i] = (i == w ? "the strongest files line; its files replace weaker ones of the same name" : "files overlaid, a stronger line's file of the same name replaces it")
+          printf "C\t%s\t%s\n", c, Lcopy[i] "/" p
+          RES[k] = p
+        }
+        continue
+      }
+      for (a = 1; a <= n; a++) {
+        i = cand[a]; if (Lkey[i] != k || ST[i] != "alive") continue
+        if (i == w) { ST[i] = "used"; WHY[i] = "the strongest line" } else { ST[i] = "overridden"; WHY[i] = "a stronger line wins: " Lloc[w] }
+      }
+      RES[k] = Ldata[w]
+      if (ty == "ref") REFS[++nrefs] = c SUBSEP k SUBSEP Ldata[w]
+    } else if (ty == "list") {
+      nit = 0; split("", items)
+      for (a = 1; a <= n; a++) {
+        i = cand[a]; if (Lkey[i] != k || ST[i] != "alive") continue
+        ST[i] = "used"; WHY[i] = "items combined"
+        na = split(Ldata[i], parts, ",")
+        for (b = 1; b <= na; b++) {
+          it = parts[b]; sub(/^[ \t]+/, "", it); sub(/[ \t]+$/, "", it)
+          if (it == "") continue
+          if (substr(it, 1, 1) == "!") {
+            it = substr(it, 2)
+            for (x = 1; x <= nit; x++) if (items[x] == it) { for (y = x; y < nit; y++) items[y] = items[y + 1]; nit--; x-- }
+            continue
+          }
+          for (x = 1; x <= nit; x++) if (items[x] == it) break
+          if (x > nit) items[++nit] = it
+        }
+      }
+      out = ""
+      for (x = 1; x <= nit; x++) {
+        out = out (x > 1 ? "\n" : "") items[x]
+        if (items[x] ~ /^ref:/) REFS[++nrefs] = c SUBSEP k SUBSEP substr(items[x], 5)
+      }
+      RES[k] = out
+    } else {
+      # text: stacked from the lowest layer to the highest, one heading per layer
+      out = ""; lastlay = ""; fm = ""
+      for (a = 1; a <= n; a++) {
+        i = cand[a]; if (Lkey[i] != k || ST[i] != "alive") continue
+        blk = Ldata[i]
+        if (blk ~ /^@file[ \t]/) {
+          p = blk; sub(/^@file[ \t]+/, "", p)
+          if (!inside(p) || isdir(Lcopy[i] "/" p) || !exists(Lcopy[i] "/" p)) { ST[i] = "skipped"; WHY[i] = "no file " p " in the layer copy"; continue }
+          blk = readfile(Lcopy[i] "/" p)
+        }
+        # The first block's front matter (--- ... ---) stays at the top of SKILL.md.
+        if (out == "" && k == "body" && blk ~ /^---\n/) {
+          p = index(substr(blk, 5), "\n---")
+          if (p) { fm = substr(blk, 1, p + 7); blk = substr(blk, p + 8); sub(/^\n+/, "", blk) }
+        }
+        ST[i] = "used"; WHY[i] = "stacked"
+        if (Llayer[i] != lastlay) { out = out (out == "" ? "" : "\n\n") "## Layer " Llayer[i] "\n\n" blk; lastlay = Llayer[i] }
+        else out = out "\n\n" blk
+      }
+      RES[k] = out
+      if (k == "body") { printf "%s%s\n", (fm == "" ? "" : fm "\n"), out > (base "/body.md"); close(base "/body.md") }
+    }
+  }
+  # provenance: every candidate line, then lines that do not apply
+  for (a = 1; a <= n; a++) {
+    i = cand[a]
+    prov(ST[i] == "alive" ? "used" : ST[i], i, WHY[i])
+    if (ST[i] == "skipped") report(c, i, WHY[i])
+  }
+  for (x = 1; x <= nex; x++) prov("excluded", EX[x], "excluded by [" Sraw[EXBY[x]] "] at " Sloc[EXBY[x]])
+  for (x = 1; x <= nna; x++) prov("not-applying", NA[x], "scope /" Sscope[Lsec[NA[x]]] " is neither " WHO " nor an ancestor of it")
+  nex = 0; nna = 0
+  close(PROV)
+  printf "" > (base "/keys.tsv")
+  for (kd = 1; kd <= nkeys; kd++) {
+    k = KORDER[kd]
+    if (!(k in RES)) continue
+    RK[c, k] = 1
+    printf "%s", RES[k] (RES[k] == "" ? "" : "\n") > (base "/values/" k); close(base "/values/" k)
+    out = RES[k]; if (KT[k] == "text") { gsub(/\n/, " ", out); if (length(out) > 60) out = substr(out, 1, 57) "..." } else gsub(/\n/, ", ", out)
+    print k "\t" KT[k] "\t" out >> (base "/keys.tsv")
+  }
+  close(base "/keys.tsv")
+  printf "N\t%s\n", c
+}
+BEGIN {
+  FS = "\t"
+  NK = split(KINDLIST, tmp, " "); for (i = 1; i <= NK; i++) KIND[tmp[i]] = 1
+  NA_ = split(ACTIVE, tmp, " "); for (i = 1; i <= NA_; i++) ACT[tmp[i]] = 1
+  gsub(/ /, ", ", KINDLIST)
+  NW = (WHO == "/" ? 0 : split(substr(WHO, 2), WSEG, "/"))
+  PROBLEMS = META "/problems.tsv"
+  printf "" > PROBLEMS
+}
+{
+  RANK = $1; CURLAYER = $2; AT = $3; SRC = $4; VER = $5; COPY = $6; REL = $7
+  parse(COPY "/" REL)
+}
+END {
+  # The components: the literal component paths of the sections that apply to W.
+  nc = 0
+  for (j = 1; j <= NS; j++) {
+    c = Scomp[j]
+    if (Sexcl[j] || c == "" || wildcards(c) > 0 || (c in SEEN)) continue
+    if (deepest(Sscope[j]) < 0) continue
+    split(c, cp, "/")
+    if (!(cp[1] in ACT)) { CURLAYER = Slayer[j]; problem(Sloc[j], "kind " cp[1] " is not in this release; [" Sraw[j] "] is not resolved"); SEEN[c] = 1; continue }
+    if (c !~ /^[a-z]+\/[A-Za-z0-9_-][A-Za-z0-9._-]*$/) { CURLAYER = Slayer[j]; problem(Sloc[j], "a " cp[1] " component is " cp[1] "/<name>, one segment: [" Sraw[j] "]"); SEEN[c] = 1; continue }
+    SEEN[c] = 1; COMP[++nc] = c
+  }
+  for (a = 2; a <= nc; a++) { t = COMP[a]; for (b = a - 1; b >= 1 && COMP[b] > t; b--) COMP[b + 1] = COMP[b]; COMP[b + 1] = t }
+  for (x = 1; x <= nc; x++) resolve(COMP[x])
+  # refs: each with its target, ok or dangling
+  printf "" > (META "/refs.tsv")
+  for (x = 1; x <= nrefs; x++) {
+    split(REFS[x], rf, SUBSEP)
+    reftarget(rf[3])
+    st = "ok"; why = ""
+    if (RT_WHY != "") { st = "dangling"; why = RT_WHY }
+    else {
+      split(RT_COMP, cp, "/")
+      if (!(cp[1] in ACT)) { st = "dangling"; why = "kind " cp[1] " is not in this release" }
+    }
+    if (st == "ok") {
+      found = 0; for (y = 1; y <= nc; y++) if (COMP[y] == RT_COMP) found = 1
+      if (!found) { st = "dangling"; why = "no component " RT_COMP " for " WHO }
+      else if (RT_KEY != "" && !((RT_COMP, RT_KEY) in RK)) { st = "dangling"; why = RT_COMP " has no key " RT_KEY }
+    }
+    print rf[1] "\t" rf[2] "\t" tsv(rf[3]) "\t" tsv(RT_COMP) "\t" tsv(RT_KEY) "\t" st "\t" tsv(why) >> (META "/refs.tsv")
+  }
+  close(META "/refs.tsv")
+}
+AWK
+
+# --------------------------------------------------------------------- verbs ----
+cmd_resolve() {
+  local as='' n m k kind dir v rc failed=0 stamp stage keep id f line c layer loc key why st out
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --as) [ $# -ge 2 ] || die 2 "--as needs a path"; as="$2"; shift 2 ;;
+      --as=*) as="${1#--as=}"; shift ;;
+      *) die 2 "resolve: unknown argument '$1' (resolve [--as <path>])" ;;
+    esac
+  done
+  resolve_settings
+  resolve_whoami "$as"
+  load_list
+  mkdir -p "$STATE_DIR" 2>/dev/null || die 1 "cannot create the state folder $STATE_DIR (run component-registry-setup)"
+  chmod 700 "$STATE_DIR" 2>/dev/null || true
+  [ -w "$STATE_DIR" ] || die 1 "the state folder $STATE_DIR is not writable by $(id -un) (run component-registry-setup)"
+  command -v flock >/dev/null 2>&1 || die 1 "flock (util-linux) is needed to serialise resolve runs"
+  exec 9>"$STATE_DIR/resolve.lock"
+  flock -w "${COMPONENT_REGISTRY_LOCK_WAIT:-120}" 9 || die 1 "another resolve has held $STATE_DIR/resolve.lock for ${COMPONENT_REGISTRY_LOCK_WAIT:-120}s; try again"
+  TMP="$(mktemp -d "$STATE_DIR/tmp.XXXXXX")"
+  trap 'rm -rf "$TMP"' EXIT
+  mkdir -p "$STATE_DIR/copies" "$STATE_DIR/views"
+
+  say "resolving for $WHOAMI (from $WHOAMI_SOURCE), layers in $RF"
+  stamp="$(date -u +%Y%m%dT%H%M%SZ).$$"
+  stage="$STATE_DIR/views/$stamp"
+  mkdir -p "$stage/meta" "$stage/skills"
+  : > "$TMP/manifest"
+  printf 'rank\tlayer\tat\tsource\tkind\tversion\tstate\tfetched\tnote\n' > "$stage/layers.tsv"
+  for ((n = 1; n <= NL; n++)); do
+    id="${L_ID[n]}"
+    for ((m = 1; m <= L_NSRC[n]; m++)); do
+      k="$n.$m"; kind="${S_KIND[$k]}"
+      fetch_source "$n" "$m"
+      dir="$STATE_DIR/copies/$id/$m"
+      case "$SRC_STATE" in
+        fetched) say "layer $id source $m ($kind): fetched $SRC_VER" ;;
+        unchanged) say "layer $id source $m ($kind): unchanged at $SRC_VER" ;;
+        offline) warn "layer $id source $m ($kind): unreachable, using the last good copy ($SRC_VER, fetched $SRC_AT): $SRC_NOTE" ;;
+        missing)
+          if [ "${S_REQ[$k]}" = true ]; then
+            warn "layer $id source $m ($kind) is required and has never been fetched: $SRC_NOTE"; failed=1
+          else
+            warn "layer $id source $m ($kind): not read, no copy yet: $SRC_NOTE"
+          fi ;;
+      esac
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$n" "$id" "${L_AT[n]}" "$m" "$kind" "${SRC_VER:--}" "$SRC_STATE" "${SRC_AT:--}" "${SRC_NOTE:--}" | tr -d '\r' >> "$stage/layers.tsv"
+      [ "$SRC_STATE" = missing ] && continue
+      while IFS= read -r f; do
+        [ -n "$f" ] && printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$n" "$id" "${L_AT[n]}" "$m" "$SRC_VER" "$dir" "$f" >> "$TMP/manifest"
+      done < <(cd "$dir" && find . -maxdepth 1 -type f -name '*.reg' | sed 's|^\./||' | LC_ALL=C sort)
+    done
+  done
+  if [ "$failed" -ne 0 ]; then
+    rm -rf "$stage"
+    die 1 "a required layer was never fetched; the resolved view was left as it was"
+  fi
+
+  # Copies no layer still names go (a layer removed from the list, or a source dropped).
+  for dir in "$STATE_DIR"/copies/*; do
+    [ -d "$dir" ] || continue
+    id="$(basename "$dir")" keep=0
+    for ((n = 1; n <= NL; n++)); do [ "${L_ID[n]}" = "$id" ] && keep="$n"; done
+    if [ "$keep" -eq 0 ]; then rm -rf "$dir"; say "removed the copy of layer $id (no longer in the list)"; continue; fi
+    for f in "$dir"/*; do
+      v="$(basename "$f")"; v="${v%.meta}"; v="${v%%.new.*}"
+      [[ "$v" =~ ^[0-9]+$ ]] && [ "$v" -le "${L_NSRC[keep]}" ] && [[ "$f" != *.new.* ]] || rm -rf "$f"
+    done
+  done
+
+  printf '%s\n' "$WHOAMI" > "$stage/whoami"
+  date -u +%Y-%m-%dT%H:%M:%SZ > "$stage/resolved"
+  out="$(awk -v WHO="$WHOAMI" -v KINDLIST="$KINDS" -v ACTIVE="$ACTIVE_KINDS" -v META="$stage/meta" "$RESOLVER" "$TMP/manifest")"; rc=$?
+  [ "$rc" -eq 0 ] || { rm -rf "$stage"; die 1 "the merge failed (awk exit $rc); the resolved view was left as it was"; }
+  local nres=0 nskip=0 nprob=0
+  while IFS=$'\t' read -r line c layer loc key why; do
+    case "$line" in
+      C) mkdir -p "$stage/$c"; cp -R "$layer/." "$stage/$c/" ;;
+      N) nres=$((nres + 1)); mkdir -p "$stage/$c"
+         [ -f "$stage/meta/$c/body.md" ] && cp "$stage/meta/$c/body.md" "$stage/$c/SKILL.md" ;;
+      R) nskip=$((nskip + 1)); warn "skipped $layer $loc $c:$key: $why" ;;
+      Q) nprob=$((nprob + 1)); warn "skipped $c $layer: $loc" ;;
+    esac
+  done <<< "$out"
+  while IFS=$'\t' read -r c key v loc line st why; do
+    [ "$st" = dangling ] && warn "dangling ref: $c:$key -> $v ($why)"
+  done < "$stage/meta/refs.tsv"
+
+  # Swap in: `view` is a symlink replaced in one rename, so a reader sees the old or the new.
+  ln -s "views/$stamp" "$STATE_DIR/view.new.$$"
+  mv -Tf "$STATE_DIR/view.new.$$" "$STATE_DIR/view"
+  for dir in "$STATE_DIR"/views/*; do [ "$(basename "$dir")" = "$stamp" ] || rm -rf "$dir"; done
+  say "resolved $nres component(s) for $WHOAMI into $STATE_DIR/view ($nskip line(s) skipped, $nprob unreadable; dcf-registry explain <path> says why)"
+}
+
+# view_path: the current view or die
+view_path() {
+  VIEW="$STATE_DIR/view"
+  [ -f "$VIEW/whoami" ] || die 1 "no resolved view in $STATE_DIR yet; run dcf-registry resolve (task component-registry:resolve)"
+}
+
+# normalise <path>: [scope/]kind/name[:key] -> NP_COMP, NP_KEY
+normalise() {
+  local s="$1" k found='' seg comp=''
+  NP_KEY=''
+  case "$s" in *:*) NP_KEY="${s##*:}"; s="${s%:*}" ;; esac
+  s="${s#/}"
+  IFS=/ read -r -a segs <<< "$s"
+  for seg in "${segs[@]}"; do
+    if [ -z "$found" ]; then for k in $KINDS; do [ "$seg" = "$k" ] && found=1; done; fi
+    [ -n "$found" ] && comp="${comp:+$comp/}$seg"
+  done
+  NP_COMP="$comp"
+}
+
+cmd_explain() {
+  local path='' uses=0 as='' who st key type layer ver loc data why k t s
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --uses) uses=1; shift ;;
+      --as) [ $# -ge 2 ] || die 2 "--as needs a path"; as="$2"; shift 2 ;;
+      -*) die 2 "explain: unknown option '$1' (explain <path> [--uses])" ;;
+      *) [ -z "$path" ] || die 2 "explain takes one path"; path="$1"; shift ;;
+    esac
+  done
+  [ -n "$path" ] || die 2 "explain needs a path: dcf-registry explain skills/<name>[:key] [--uses]"
+  view_path
+  who="$(cat "$VIEW/whoami")"
+  if [ -n "$as" ] && [ "${as%/}" != "$who" ]; then
+    die 1 "the resolved view is for $who, not $as; run dcf-registry resolve --as $as first (explain never resolves)"
+  fi
+  normalise "$path"
+  [ -n "$NP_COMP" ] || die 2 "'$path' names no component (a path with a ${KINDS// /, } segment, like skills/diagrams)"
+  if [ "$uses" -eq 1 ]; then
+    printf 'What refers to %s%s (resolved for %s):\n' "$NP_COMP" "${NP_KEY:+:$NP_KEY}" "$who"
+    s="$(awk -F'\t' -v c="$NP_COMP" -v k="$NP_KEY" '$4 == c && (k == "" || $5 == k) { printf "  %s:%s -> %s (%s)\n", $1, $2, $3, $6 }' "$VIEW/meta/refs.tsv")"
+    if [ -n "$s" ]; then printf '%s\n' "$s"; else echo "  nothing"; fi
+    return 0
+  fi
+  [ -f "$VIEW/meta/$NP_COMP/provenance.tsv" ] || die 1 "no component $NP_COMP in the view resolved for $who (dcf-registry resolve, or check the path)"
+  printf '%s, resolved for %s at %s\n' "$NP_COMP" "$who" "$(cat "$VIEW/resolved")"
+  echo "Layers (lowest first):"
+  awk -F'\t' 'NR > 1 { printf "  %s %s at %s, source %s (%s): %s, %s%s\n", $1, $2, $3, $4, $5, $7, $6, ($7 == "offline" ? ", the last good copy from " $8 : "") }' "$VIEW/layers.tsv"
+  while IFS=$'\t' read -r k t s; do
+    [ -n "$NP_KEY" ] && [ "$k" != "$NP_KEY" ] && continue
+    printf '\n%s:%s = %s\n' "$k" "$t" "$s"
+    while IFS=$'\t' read -r st key type layer _ ver loc data why; do
+      [ "$key" = "$k" ] || continue
+      [ "$why" != - ] || why=''
+      if [ "$type" = lock ]; then s="lock $key"; else s="$key:$type = $data"; fi
+      printf '  %-12s %s@%s %s  %s%s\n' "$st" "$layer" "$ver" "$loc" "$s" "${why:+  ($why)}"
+    done < "$VIEW/meta/$NP_COMP/provenance.tsv"
+  done < "$VIEW/meta/$NP_COMP/keys.tsv"
+  # Lines that did not make a key: skipped, dropped, excluded, not applying, locks.
+  s="$(awk -F'\t' -v k="$NP_KEY" 'FILENAME == ARGV[1] { has[$1] = 1; next } (k == "" || $2 == k) && !($2 in has) { printf "  %-12s %s@%s %s  %s  (%s)\n", $1, $4, $6, $7, ($3 == "lock" ? "lock " $2 : $2 ":" $3 " = " $8), $9 }' "$VIEW/meta/$NP_COMP/keys.tsv" "$VIEW/meta/$NP_COMP/provenance.tsv")"
+  [ -z "$s" ] || printf '\nOther lines:\n%s\n' "$s"
+  s="$(awk -F'\t' -v c="$NP_COMP" -v k="$NP_KEY" '$1 == c && $6 == "dangling" && (k == "" || $2 == k) { printf "  %s:%s -> %s (%s)\n", $1, $2, $3, $7 }' "$VIEW/meta/refs.tsv")"
+  [ -z "$s" ] || printf '\nDangling refs:\n%s\n' "$s"
+  return 0
+}
+
+cmd_version() {
+  local s
+  echo "component-registry $(cat "$SHARE_DIR/version" 2>/dev/null || echo unknown)"
+  resolve_settings
+  echo "layer list: $RF_ABS (from $RF_SOURCE)$([ -f "$RF_ABS" ] || echo ', not there yet')"
+  s="$(setting COMPONENT_REGISTRY_WHOAMI)"
+  if [ -n "$s" ]; then echo "who you are: ${s%%$'\t'*} (from ${s#*$'\t'})"; else echo "who you are: not set (COMPONENT_REGISTRY_WHOAMI)"; fi
+  if [ -f "$STATE_DIR/view/whoami" ]; then echo "resolved view: for $(cat "$STATE_DIR/view/whoami") at $(cat "$STATE_DIR/view/resolved")"; else echo "resolved view: none yet"; fi
+}
+
+case "${1:-}" in
+  resolve) shift; cmd_resolve "$@" ;;
+  explain) shift; cmd_explain "$@" ;;
+  version) shift; cmd_version ;;
+  -h | --help | help | '') usage ;;
+  *) die 2 "unknown verb '$1' (resolve, explain, version)" ;;
+esac
