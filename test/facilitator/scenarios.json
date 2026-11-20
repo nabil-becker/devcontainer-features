@@ -3,8 +3,7 @@
     "image": "mcr.microsoft.com/devcontainers/base:debian",
     "features": {
       "facilitator": {
-        "dirVersion": "1.9.1",
-        "slimVersion": "3.4.6"
+        "bundleVersion": "0.3.0"
       }
     },
     "remoteUser": "vscode"
@@ -54,6 +53,25 @@
     "image": "mcr.microsoft.com/devcontainers/base:debian",
     "features": {
       "facilitator": {}
+    },
+    "remoteUser": "vscode"
+  },
+  "deprecated_versions": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "facilitator": {
+        "dirVersion": "1.9.1",
+        "slimVersion": "latest"
+      }
+    },
+    "remoteUser": "vscode"
+  },
+  "leaf": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "facilitator": {
+        "mode": "leaf"
+      }
     },
     "remoteUser": "vscode"
   }

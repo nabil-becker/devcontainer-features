@@ -6,7 +6,7 @@ set -e
 # shellcheck disable=SC1091  # provided by the devcontainer CLI at test time
 source dev-container-features-test-lib
 
-o=/usr/local/lib/facilitator/options.env
+o=/opt/facilitator/lib/options.env
 check "hopLimit" grep -q '^FACILITATOR_HOP_LIMIT=3$' "$o"
 check "messageBudget" grep -q '^FACILITATOR_MESSAGE_BUDGET=12$' "$o"
 check "rateLimit" grep -q '^FACILITATOR_RATE_LIMIT=5$' "$o"

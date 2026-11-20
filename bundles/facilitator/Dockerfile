@@ -1,7 +1,7 @@
 # The facilitator node image (proposal facilitator-node, section 6.2): a node with no developer, an intranet hub,
 # built from the same node bundle the devcontainer Feature installs. The build context holds the bundle tarball
 # and its SHA256SUMS (task bundle:image locally; the release-node-image workflow from the released asset, whose
-# digest it checks against src/facilitator/digests.txt and passes as BUNDLE_SHA256).
+# digest the workflow checks against src/facilitator/digests.txt before the build).
 #
 #   docker build --build-arg BUNDLE_VERSION=0.3.0 -f bundles/facilitator/Dockerfile <folder with the bundle>
 #

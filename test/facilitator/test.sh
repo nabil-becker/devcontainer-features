@@ -12,11 +12,11 @@ check "the command is installed" facilitator version
 check "the command is root-owned" bash -c "[ \"\$(stat -c %U /usr/local/bin/facilitator)\" = root ]"
 check "dirctl 1.9.1" bash -c 'dirctl version 2>&1 | grep -q "v1.9.1"'
 check "slimctl 3.4.6" bash -c 'slimctl version 2>&1 | grep -q "3.4.6"'
-check "slim-bindings in the Feature's venv" bash -c 'facilitator version | grep -q "^slim-bindings: 3.4.6"'
-check "the venv is root-owned" bash -c 'test "$(stat -c %u /usr/local/lib/facilitator/venv)" = 0'
-check "its own register-engine and sign-packet" test -f /usr/local/lib/facilitator/registerengine/core.py
-check "the conversation type" test -f /usr/local/lib/facilitator/types.d/facilitator.py
-check "the options as installed" grep -q '^FACILITATOR_BACKEND=agntcy$' /usr/local/lib/facilitator/options.env
+check "slim-bindings in the bundle" bash -c 'facilitator version | grep -q "^slim-bindings: 3.4.6"'
+check "the bundle is root-owned" bash -c 'test "$(stat -c %u /opt/facilitator)" = 0 && test "$(stat -c %u /opt/facilitator/python/bin/python3)" = 0'
+check "its own register-engine and sign-packet" test -f /opt/facilitator/lib/registerengine/core.py
+check "the conversation type" test -f /opt/facilitator/lib/types.d/facilitator.py
+check "the options as installed" grep -q '^FACILITATOR_BACKEND=agntcy$' /opt/facilitator/lib/options.env
 check "the Taskfile is in the go-task includes" test -f /usr/local/share/go-task/includes.d/facilitator.yml
 export FACILITATOR_HOME="${FACILITATOR_HOME:-/var/lib/devcontainer-features/facilitator}"
 check "infra up" facilitator infra up
