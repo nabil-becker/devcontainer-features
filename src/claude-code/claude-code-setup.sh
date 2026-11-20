@@ -15,6 +15,10 @@ set -u
 
 dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 dcf-persist --label claude-code "$dir"
+# The personal skills folder (1.11.0): created now, even empty, so a session started later watches
+# it and picks up skills the component registry hands over mid-session (agent-adapter-claude
+# skills); a skills folder that did not exist when a session started needs /reload-skills.
+[ -d "$dir" ] && { [ -d "$dir/skills" ] || (umask 077 && mkdir -p "$dir/skills") 2>/dev/null || echo "claude-code-setup: could not create $dir/skills"; }
 if [ -s "$dir/.credentials.json" ] || [ -s "$dir/.claude.json" ]; then echo "claude-code-setup: login present"; else echo "claude-code-setup: no login yet (run claude and sign in once; it persists in $dir)"; fi
 if [ -n "${HOST_SESSION:-}" ]; then echo "claude-code-setup: HOST_SESSION set (claude-host resumes it)"; fi
 exit 0

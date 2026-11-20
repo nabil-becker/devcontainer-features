@@ -32,6 +32,8 @@
 #       definition: host      # the CLI's agent profile; read and checked, not passed yet
 #       default: true         # at most one: what `agents` with no name starts
 #       session-name: "{machine} {handle}"   # the name the CLI shows (2.1); default: the option
+#       registry-path: /Corp/MyDepartment/team/review   # who this agent is in the component
+#                             # registry (participant 1.1.0); default COMPONENT_REGISTRY_WHOAMI
 #
 # The session name (2.1). The handle (the name above) stays the address: it keys the lease, the
 # record and every verb. The session name is the label the CLI shows, rendered from a template
@@ -67,6 +69,14 @@
 # fails (any exit but 0 and 3) is not "cannot list": the agent's state is error, a resident
 # is not started (the adapter's optional `hint <name> <folder>` says how to resume by hand),
 # and nothing turns into a fresh session in its place.
+#
+# The component registry (participant 1.1.0, ADR-0064). When dcf-registry (the component-registry
+# Feature) is on PATH and its layer list exists, starting an agent first runs
+# `dcf-registry resolve` (--as the entry's registry-path, else COMPONENT_REGISTRY_WHOAMI) and then
+# `dcf-registry handover <cli> <name> <folder>`, which calls the adapter's optional `skills` verb
+# when its `supports` lists it. Never blocking: a failed resolve, a CLI that cannot take resolved
+# skills (exit 3) or no layer list each say so in one line, and the agent starts with the skills
+# it has. Without dcf-registry nothing is said or run.
 #
 # Exit: 0 done, 1 failed, 2 bad use (unknown agent, bad list, refused), 3 the CLI cannot.
 set -uo pipefail
@@ -130,7 +140,7 @@ resolve_file() {
 
 # The parser: the YAML subset above, one record per line out:
 #   I <n> <line>             an entry starts
-#   K <n> <key> <value>      name, cli, kind, folder, lifecycle, identity, lease, definition, default, session-name
+#   K <n> <key> <value>      name, cli, kind, folder, lifecycle, identity, lease, definition, default, session-name, registry-path
 #   L <n> <line>             the line of the entry's session-name key
 #   A <n>                    the entry has args
 #   G <n> <value>            one arg
@@ -211,7 +221,7 @@ function keyline(t,   k, v) {
     if (substr(v, 1, 1) == "[") { flow(v); return }
     fail("args must be a list: args: [--model, opus], or one - value per line below it")
   }
-  if (k == "name" || k == "cli" || k == "kind" || k == "folder" || k == "lifecycle" || k == "identity" || k == "lease" || k == "definition" || k == "default" || k == "session-name") {
+  if (k == "name" || k == "cli" || k == "kind" || k == "folder" || k == "lifecycle" || k == "identity" || k == "lease" || k == "definition" || k == "default" || k == "session-name" || k == "registry-path") {
     if (v == "" || substr(v, 1, 1) == "#") fail("'" k "' has no value")
     if (k == "session-name" && substr(v, 1, 1) == "{") fail("a session-name that starts with { must be quoted: session-name: \"{machine} {handle}\"")
     if (k == "lease" && substr(v, 1, 1) == "{") fail("lease is one word, not a map: lease: container (or none)")
@@ -289,7 +299,7 @@ load_list() {
     die 2 "no agent list at $AF_ABS (from $AF_SOURCE); write one (see the agents Feature notes) or set AGENTS_FILE to its path relative to $ROOT."
   fi
   out="$(awk "$PARSER" "$AF_ABS")"; rc=$?
-  N=0 NAME=() CLI=() KIND=() FOLDER=() ARGS=() LINE=() HASARGS=() LIFE=() IDENT=() LEASE=() DEF=() DFLT=() SNKEY=() SNSET=() SNLINE=() SNAME=()
+  N=0 NAME=() CLI=() KIND=() FOLDER=() ARGS=() LINE=() HASARGS=() LIFE=() IDENT=() LEASE=() DEF=() DFLT=() SNKEY=() SNSET=() SNLINE=() SNAME=() REGPATH=()
   resolve_template
   while IFS=$'\t' read -r rec a b c; do
     case "$rec" in
@@ -298,6 +308,7 @@ load_list() {
            name) NAME[a]="$c" ;; cli) CLI[a]="$c" ;; kind) KIND[a]="$c" ;; folder) FOLDER[a]="$c" ;;
            lifecycle) LIFE[a]="$c" ;; identity) IDENT[a]="$c" ;; lease) LEASE[a]="$c" ;; definition) DEF[a]="$c" ;; default) DFLT[a]="$c" ;;
            session-name) SNKEY[a]="$c" SNSET[a]=1 ;;
+           registry-path) REGPATH[a]="$c" ;;
          esac ;;
       L) SNLINE[a]="$b" ;;
       A) HASARGS[a]=1 ;;
@@ -377,6 +388,14 @@ check_v2() {
           warn "$at: definition '${DEF[i]}' and --agent in args name the profile twice; keep one"; V2ERRS=$((V2ERRS + 1)); break ;;
       esac
     done
+  fi
+  # registry-path (participant 1.1.0): who this agent is in the component registry, an absolute
+  # path without wildcards, as dcf-registry --as takes it
+  if [ -n "${REGPATH[i]:-}" ]; then
+    REGPATH[i]="${REGPATH[i]%/}"; [ -n "${REGPATH[i]}" ] || REGPATH[i]=/
+    if ! [[ "${REGPATH[i]}" =~ ^(/[A-Za-z0-9._-]+)+$ ]] && [ "${REGPATH[i]}" != / ]; then
+      warn "$at: registry-path '${REGPATH[i]}' must be an absolute path like /Corp/MyDepartment/team/me (segments of letters, digits, . _ and -, no wildcards)"; V2ERRS=$((V2ERRS + 1))
+    fi
   fi
   case "${DFLT[i]:-}" in
     '' | false) DFLT[i]='' ;;
@@ -950,6 +969,45 @@ definition_note() {
   [ -z "${DEF[$1]:-}" ] || warn "${NAME[$1]}: definition '${DEF[$1]}' is read and checked, but agents 2.0 does not pass it to the CLI yet; the session starts without it."
 }
 
+# --------------------------------------------------------- component registry ----
+# registry_step <i> (participant 1.1.0, ADR-0064): before the agent's CLI starts, resolve the
+# component registry for the agent (its registry-path, else COMPONENT_REGISTRY_WHOAMI) and hand the
+# resolved skills to its CLI (dcf-registry handover, which asks the adapter's supports for the
+# optional skills verb). Only when dcf-registry is on PATH; never blocks the start: every failure
+# is one line and the agent starts with the skills it has (NFR-12). A path is resolved once per
+# run (agents up with several agents of one path).
+declare -A REG_DONE=()
+registry_step() {
+  local i="$1" nm="${NAME[$1]}" as="${REGPATH[$1]:-}" key out rc last
+  command -v dcf-registry >/dev/null 2>&1 || return 0
+  out="$(cd "$ROOT" && dcf-registry layer-list </dev/null 2>/dev/null)"; rc=$?
+  if [ "$rc" -eq 1 ]; then
+    echo "$nm: the component registry has no layer list (${out:-none}); starting with the plain skills."
+    return 0
+  fi
+  key="${as:-(who-you-are)}"
+  if [ -z "${REG_DONE[$key]:-}" ]; then
+    if [ -n "$as" ]; then out="$(cd "$ROOT" && dcf-registry resolve --as "$as" </dev/null 2>&1)"; rc=$?
+    else out="$(cd "$ROOT" && dcf-registry resolve </dev/null 2>&1)"; rc=$?; fi
+    if [ "$rc" -ne 0 ]; then
+      REG_DONE[$key]=failed
+      last="$(printf '%s\n' "$out" | awk 'NF { l = $0 } END { print l }' | sed 's/^dcf-registry: //' | cut -c1-300)"
+      warn "$nm: the component registry did not resolve${as:+ for $as} (${last:-exit $rc}); starting with the skills as they were."
+      return 0
+    fi
+    REG_DONE[$key]=ok
+  fi
+  [ "${REG_DONE[$key]}" = ok ] || return 0
+  out="$(cd "$ROOT" && dcf-registry handover "${CLI[i]}" "$nm" "$DIR" </dev/null 2>&1)"; rc=$?
+  case "$rc" in
+    0) echo "$nm: the registry's resolved skills handed to ${CLI[i]}${as:+ (as $as)}." ;;
+    3) echo "$nm: ${CLI[i]} takes no resolved skills (its adapter has no skills verb); starting with its plain skills." ;;
+    *) last="$(printf '%s\n' "$out" | awk 'NF { l = $0 } END { print l }' | sed 's/^dcf-registry: //' | cut -c1-300)"
+       warn "$nm: handing the registry's skills to ${CLI[i]} failed (${last:-exit $rc}); starting with the skills as they were." ;;
+  esac
+  return 0
+}
+
 # lease_run <i>: make_run (the resident runs in the background) under its lease. Returns as
 # make_run; on 3 (no background mode) the lease stays this process's (the caller opens the
 # session in the foreground, or releases it). JOINED=1 when another holder has it: nothing is
@@ -1065,6 +1123,7 @@ cmd_start() {
   adapter_of "$i" || exit 1
   definition_note "$i"
   if [ "${KIND[i]}" = resident ]; then
+    registry_step "$i"
     if [ "$mode" = new ]; then
       state_of "$i" || { list_failed "$i"; exit 1; }
       if [ "$STATE" = running ]; then
@@ -1125,6 +1184,7 @@ cmd_start() {
   if [ "$mode" = resume ] && [ "${LIFE[i]}" = ephemeral ]; then
     die 2 "$name is an ephemeral agent: nothing of it is kept, so there is no conversation to resume (--resume is for stateful agents)."
   fi
+  registry_step "$i"
   if [ "${LEASE[i]}" = container ]; then # a stateful on-demand agent: one copy, held by this process
     lease_take "$i"; rc=$?
     case "$rc" in
@@ -1182,6 +1242,7 @@ cmd_up_body() {
       settle "${CLI[i]}"; settled[${CLI[i]}]=1
     fi
     definition_note "$i"
+    registry_step "$i"
     lease_run "$i"; r=$?
     case "$r" in
       0) ;;
@@ -1434,6 +1495,7 @@ check_line() {
     "${DEF[i]:+definition ${DEF[i]}, }" "${KIND[i]}" "${LIFE[i]}" "${IDENT[i]}" "${LEASE[i]}" "${FOLDER[i]}"
   if [ "${#CLIARGS[@]}" -eq 0 ]; then printf ' none'; else printf ' [%s]' "${CLIARGS[@]}"; fi
   [ "${SNAME[i]}" = "${NAME[i]}" ] || printf ', session name "%s"' "${SNAME[i]}"
+  [ -z "${REGPATH[i]:-}" ] || printf ', registry path %s' "${REGPATH[i]}"
   printf '\n'
 }
 

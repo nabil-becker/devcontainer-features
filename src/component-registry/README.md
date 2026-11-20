@@ -1,7 +1,7 @@
 
 # Component registry (component-registry)
 
-A registry for agentic components, shaped like the Windows Registry (ADR-0063). Layers from any number of sources (a git branch, tag or commit; a folder or mounted file share) are fetched into local layer copies (version first, so an unchanged layer is skipped; offline, the last good copy is used and said) and merged by value type into one resolved view for who you are (COMPONENT_REGISTRY_WHOAMI, a path such as /Corp/MyDepartment/team/me): value replaces, list combines (!item takes out), text stacks in layer order, ref points at another path; the higher layer wins, the more specific scope inside a layer, a locked key beats both, and a permission key comes from a component's lowest layer only. dcf-registry resolve and dcf-registry explain <path> [--uses] (task component-registry:resolve, :explain); release 1 resolves skills. The layer list is .devcontainer/registry.yml (option registryFile, COMPONENT_REGISTRY_FILE). Layer copies and the resolved view live owner-only in a named volume at COMPONENT_REGISTRY_STATE_DIR=/var/lib/devcontainer-features/component-registry, made usable by component-registry-setup at start. Bash, awk and sed; nothing downloaded at build.
+A registry for agentic components, shaped like the Windows Registry (ADR-0063). Layers from any number of sources (a git branch, tag or commit; a folder or mounted file share) are fetched into local layer copies (version first, so an unchanged layer is skipped; offline, the last good copy is used and said) and merged by value type into one resolved view for who you are (COMPONENT_REGISTRY_WHOAMI, a path such as /Corp/MyDepartment/team/me): value replaces, list combines (!item takes out), text stacks in layer order, ref points at another path; the higher layer wins, the more specific scope inside a layer, a locked key beats both, and a permission key comes from a component's lowest layer only. dcf-registry resolve and dcf-registry explain <path> [--uses] (task component-registry:resolve, :explain); release 1 resolves skills, and dcf-registry handover gives them to a CLI's adapter (agent-adapter-<cli> skills; Claude Code: its personal skills folder, live in running sessions), which the participant component (claude-code participants: true) does at every agent's start. A built-in base layer ships the utility skills /registry-refresh, /registry-explain and /registry-remember (appends to the layer marked writable: true). The layer list is .devcontainer/registry.yml (option registryFile, COMPONENT_REGISTRY_FILE). Layer copies and the resolved view live owner-only in a named volume at COMPONENT_REGISTRY_STATE_DIR=/var/lib/devcontainer-features/component-registry, made usable by component-registry-setup at start. Bash, awk and sed; nothing downloaded at build.
 
 ## Example Usage
 
@@ -29,8 +29,11 @@ A registry for agentic components, shaped like the Windows Registry (ADR-0063). 
         | dcf-registry resolve, for COMPONENT_REGISTRY_WHOAMI
         v
     view -> views/<stamp>/   the resolved view: skills/<name>/, meta/
-        | (release 2: the CLI adapter's skills verb copies skills/ into the CLI)
+        | dcf-registry handover <cli>: agent-adapter-<cli> skills (at an agent's start,
+        |   by the participant component; or /registry-refresh)
         v
+  the CLI's own skills folder (Claude Code: $CLAUDE_CONFIG_DIR/skills, marked owned)
+
   dcf-registry explain <path> [--uses]   read-only
 ```
 
@@ -40,6 +43,9 @@ A registry for agentic components, shaped like the Windows Registry (ADR-0063). 
 | Who-you-are path (`COMPONENT_REGISTRY_WHOAMI`) | `.env` (git-ignored) or the launcher, per person | none (a setting, set again) |
 | A layer's `.reg` files and skill files | its source: a git repository, a folder, a file share | the owner's choice |
 | Layer copies, the resolved view, the lock file | named volume at `/var/lib/devcontainer-features/component-registry`, owner-only | 4 working set |
+| Resolved skills handed to a CLI | the CLI's skills folder (Claude Code: `$CLAUDE_CONFIG_DIR/skills`, the claude-code volume), owner-only | 4 working set |
+| Remembered lines (`/registry-remember`) | `remembered.reg` in the writable layer's folder | the person's choice (their own layer's source) |
+| The utility skills (built-in base layer) | `/usr/local/share/component-registry-feature/base`, in the image | none (the Feature) |
 | Source secrets | OpenBao, read with `dcf-secret` | OpenBao's |
 
 Tiers are the four of ADR 0045: 1 git, 2 shared folder, 3 personal folder, 4 working set (rebuildable only).
@@ -56,20 +62,23 @@ their own **registry layer**, kept wherever they keep things. Layers are like hi
 keys, typed `:key` values like registry values, locks like Group Policy; `resolve` builds the merged
 view (like `HKCR`) for who you are, `explain` reads it (like `regedit`).
 
-This release (1.0.0) is the core: the layer list, `COMPONENT_REGISTRY_WHOAMI`, the `.reg` grammar,
-the four value types, patterns, the match rule, locks, `resolve` and `explain` (`--uses`), and the
-`git` and `path` registry sources. It resolves **skills** only. Not yet: handing skills to a CLI
-(the CLI adapter's `skills` verb), `resolve` at an agent's start, the per-agent who-you-are
-override, the utility skills `/registry-refresh`, `/registry-explain`, `/registry-remember`, and
-the `http`, `cloud-folder` and `db` sources; a layer list naming one of those kinds is read, and
-`resolve` says that kind is not in this release.
+Release 1.0.0 is the core: the layer list, `COMPONENT_REGISTRY_WHOAMI`, the `.reg` grammar, the
+four value types, patterns, the match rule, locks, `resolve` and `explain` (`--uses`), and the
+`git` and `path` registry sources. Release 1.1.0 adds the adapter step (ADR-0064): `handover` gives
+the resolved skills to a CLI through its adapter's `skills` verb, the participant component
+resolves and hands over at every agent's start (with a per-agent who-you-are path), and a built-in
+base layer ships the utility skills `/registry-refresh`, `/registry-explain`, `/registry-remember`.
+It resolves **skills** only. Not yet: the `http`, `cloud-folder` and `db` sources; a layer list
+naming one of those kinds is read, and `resolve` says that kind is not in this release.
 
 ## What it installs
 
 Nothing is downloaded; there is nothing to verify. Bash, awk and sed only (mawk and gawk both
 work; no python3, no jq):
 
-- `dcf-registry` (`/usr/local/bin`): `resolve`, `explain`, `version`.
+- `dcf-registry` (`/usr/local/bin`): `resolve`, `explain`, `version`, and (1.1.0) `handover`,
+  `refresh`, `remember`, `layer-list`.
+- `/usr/local/share/component-registry-feature/base/`: the built-in base layer, the utility skills.
 - `registry-source-git` and `registry-source-path`: the two **registry sources** of this release.
 - `component-registry-setup`: the `postStartCommand`.
 - `dcf-persist`, the collection's helper behind every setup script.
@@ -119,7 +128,7 @@ layers:
     at: /Corp/MyDepartment/team/me
     sources:
       - { kind: path, path: .registry-mine }   # git-ignored in this repository
-    writable: true              # read by /registry-remember in a later release
+    writable: true              # /registry-remember appends here (one layer, a path source)
 ```
 
 Only this YAML subset is read: comments, plain and quoted values, block entries and one-line
@@ -162,6 +171,37 @@ lock key                  a higher layer cannot change this key
 
 A line that cannot be read (no section, an unknown type, a bad header, a kind not in this
 release) is reported with `source:file:line` and skipped; content never fails a `resolve`.
+
+## The built-in base layer and the utility skills (1.1.0)
+
+The Feature carries one layer of its own, read from `/usr/local/share/component-registry-feature/base`
+(never fetched): rank 0, the id `component-registry`, at `/`, below every layer of the list and
+present in every resolve. `explain` lists it first, as
+`0 component-registry at /, source 1 (builtin): builtin, <Feature version>`, and names it on each of
+its lines (`component-registry@1.1.0 1:component-registry.reg:<line>`). The id is reserved: a layer
+list using it is refused with its line. A listed layer adapts a utility skill like any other
+(`body:text` stacks on it, `@replace` replaces it).
+
+| Skill | Runs | Does |
+| --- | --- | --- |
+| `/registry-refresh` | `dcf-registry refresh` | resolve now, for the path the current view was resolved for (so an agent's own `registry-path` is kept; `--as` names another), then `handover` to every CLI adapter on PATH. Claude Code picks the change up in the running session; a CLI that does not watch its skills folder needs its session restarted; a skill already used in a conversation keeps its old text until a new conversation |
+| `/registry-explain <path>` | `dcf-registry explain <path> [--uses]` | read-only, shown to the person |
+| `/registry-remember [skills/<name>] <line>` | `dcf-registry remember [--skill <name>] -- <line>` | appends `body:text = <line>` under `[skills/<name>]` (or `[skills/*]`, every skill) to `remembered.reg` in the folder of the layer marked `writable: true`, then refreshes. Refused, nothing written: no writable layer, two, a writable layer without a `path` source (a git or http layer changes through its owner's release), a folder that is not there or not writable, an empty line, a line starting with `@`. Only when the person asks (`disable-model-invocation`) |
+
+## Handing skills to a CLI (1.1.0)
+
+`dcf-registry handover <cli> [<name> <folder>]` asks `agent-adapter-<cli> supports` for `skills` and,
+when it is listed, runs `agent-adapter-<cli> skills <name> <folder>` with the current view's
+`skills/` folder in `COMPONENT_REGISTRY_SKILLS`, holding `resolve.lock` shared so no resolve swaps the
+view out mid-copy. The adapter copies the skills into the CLI's own skills folder, marks its copies,
+removes those no longer resolved and never touches anything else (ADR-0064 amends the CLI contract
+of ADR-0037; Claude Code: `claude-code` 1.11.0). No adapter, or one without the verb: exit 3 and one
+line, the CLI keeps its plain skills (NFR-12).
+
+At an agent's start the participant component (`claude-code` with `participants: true`) runs
+`dcf-registry resolve` (`--as` the agent's `registry-path` from the agents list, else
+`COMPONENT_REGISTRY_WHOAMI`) and `dcf-registry handover <cli> <agent> <folder>`. It never blocks the
+start: no layer list, a failed resolve or a CLI that cannot take skills is one line.
 
 ## The match rule
 
@@ -242,18 +282,27 @@ every skipped line with its reason, and `resolved N component(s) for <W>`.
 - `component-registry:resolve`: fetch, merge and swap in the resolved view (`-- --as <path>`).
 - `component-registry:explain`: `-- <path>[:key] [--uses]`, read-only.
 - `component-registry:setup`: re-run the start hook.
+- `component-registry:refresh`: resolve and hand over now (`-- --as <path>`); `/registry-refresh`.
+- `component-registry:remember`: `-- [--skill <name>] -- <line>`; `/registry-remember`.
 
 ## Pairs with
 
 - `go-task` for the tasks; git in the image for `git` sources; `openbao` for `dcf-secret` (a
   source secret without it: the source says so and reads without one).
-- Later releases: `claude-code`'s adapter (`skills` verb) and the participant component (`resolve`
-  at an agent's start), `cloud-folder` (its source), the launcher (a file share mount,
+- `claude-code` 1.11.0: its adapter's `skills` verb, and with `participants: true` the participant
+  component, which resolves and hands over at every agent's start. Neither is required: without
+  them `handover` and `refresh` say no adapter takes skills.
+- Later releases: `cloud-folder` (its source), the launcher (a file share mount,
   `COMPONENT_REGISTRY_WHOAMI` from the workstation).
 
 ## Limits
 
-- Skills only; other kinds are reported and not resolved. Nothing hands the view to a CLI yet.
+- Skills only; other kinds are reported and not resolved.
+- One resolved view per container, and one skills folder per CLI configuration: agents with
+  different who-you-are paths do not each keep their own skills; the latest resolve is what every
+  session of that CLI reads.
+- `remember` writes to a `path` source only, appends, and never edits or removes a line; to take
+  one back, edit `remembered.reg` in your layer.
 - Sources `git` and `path` only. A `path` source's version is a fingerprint of names, sizes and
   modification times, so a change that keeps all three is not seen.
 - `*` and `**` are whole segments; there are no value filters.
@@ -266,7 +315,7 @@ every skipped line with its reason, and `resolved N component(s) for <W>`.
 Claude Code distributes skills through plugins and marketplaces, with a fixed scope order for one
 vendor (NFR-9). The registry adds what they do not: any number of owners and sources stacked in
 one order, merge by value type inside one skill, locks, a who-you-are path, and `explain`. It hands
-its result to the CLI's own skills folder (release 2), so the two do not compete.
+its result to the CLI's own skills folder (1.1.0), so the two do not compete.
 
 ## Version and upgrade
 
@@ -275,6 +324,31 @@ Pin the major in the Feature reference (`component-registry:1`); a rebuild picks
 else; the `.reg` grammar and the layer list keys only grow within 1.x.
 
 ## Changes
+
+### [1.1.0] - 2026-11-20
+
+#### Added
+
+- **The adapter step** (ADR-0064): `dcf-registry handover <cli> [<name> <folder>]` hands the resolved
+  view's skills to that CLI's adapter (`agent-adapter-<cli> skills`, when its `supports` lists it;
+  Claude Code: `claude-code` 1.11.0); a CLI that cannot take them is named and keeps its plain skills.
+  The participant component (`claude-code` with `participants: true`) runs resolve and the hand-over
+  at every agent's start, with an agent's own `registry-path` from the agents list.
+- **The three utility skills, in a built-in base layer**: `/registry-refresh` (resolve now for the
+  path the current view was resolved for, then hand over to every CLI adapter on PATH: live in Claude
+  Code, a restart for a CLI that does not watch its skills folder), `/registry-explain <path>`, and
+  `/registry-remember [skills/<name>] <line>` (appends the line to the layer marked `writable: true`,
+  which must have a `path` source, then refreshes; refused, nothing written, otherwise). The base
+  layer is rank 0, the id `component-registry` at `/`, below every listed layer; `explain` shows it as
+  `0 component-registry at /, source 1 (builtin)`. A listed layer adapts the utility skills like any
+  skill.
+- `dcf-registry layer-list`, `refresh`, `remember`; tasks `component-registry:refresh` and
+  `component-registry:remember`.
+
+#### Changed
+
+- The layer id `component-registry` is reserved for the base layer: a layer list using it is refused
+  with its line. Rename such a layer.
 
 ### [1.0.0] - 2026-11-20
 

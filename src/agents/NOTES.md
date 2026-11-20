@@ -101,6 +101,7 @@ agents:
     definition: tooling        # the CLI's agent profile; read, checked and shown, not passed to the CLI in 2.0
     default: true              # at most one agent: what `task agents` with no name starts
     session-name: "{machine} {handle}"   # 2.1: the name its CLI shows; default the option, else {handle}
+    registry-path: /Corp/MyDepartment/team/tooling   # participant 1.1.0: who it is in the component registry
 ```
 
 | Key | Values | Rule |
@@ -110,6 +111,7 @@ agents:
 | `lease` | `container`, `none` | A stateful agent's lease is `container` (`none` is refused: that is what `ephemeral` means); an ephemeral agent's is `none`. `machine` and `cluster` are reserved and refused (Limits). One word: `lease: { scope: container }` is refused with a line pointing at the flat form. |
 | `definition` | letters, digits, `.`, `:`, `-`, `_` | Refused together with `--agent` in `args` (two sources for one fact). In 2.0 it is stored and shown only; `agents start` says so in one line and the CLI starts without it. A later 2.x hands it to the adapter. |
 | `session-name` | a template: letters, digits, space, `. _ : @ / ( ) -`, and `{handle}`, `{repo}`, `{machine}` (2.1) | The name the CLI shows for the agent's session, rendered once per start; wins over the Feature option. A value that starts with `{` must be quoted. Refused with its line when it does not render or is over 60 characters. See Session names. |
+| `registry-path` | an absolute path: `/` and segments of letters, digits, `.`, `_`, `-`; no wildcards (participant 1.1.0, agents 2.3.0) | Who this agent is in the component registry, handed to `dcf-registry resolve --as` at its start; without it `COMPONENT_REGISTRY_WHOAMI` applies. A relative path, a pattern or the key twice is refused with its line; `agents check` shows it. Read only when the `component-registry` Feature is installed (see The component registry at an agent's start). |
 | `default` | `true`, `false` | At most one agent; `agents check` names it. `task agents` (no name), `agents` and `agents start` without a name start it exactly as `agents start <name>`; with none marked they print the usage (exit 2) as before. |
 
 - `name`, `cli`, `kind` are required; `folder` defaults to `.` and must stay inside the
@@ -343,6 +345,26 @@ sessions in order, from a container terminal:
   `session-stop` missing leaves the duplicate running (said, exit 1);
   `session-remove` missing skips `--purge` with a note; `record` missing is skipped.
 
+## The component registry at an agent's start (participant 1.1.0)
+
+When the `component-registry` Feature is installed (`dcf-registry` on PATH) and its layer list
+exists, `agents start` and `agents up` do two things for each agent before its CLI starts
+(ADR-0064):
+
+1. `dcf-registry resolve`, `--as` the entry's `registry-path`, else for
+   `COMPONENT_REGISTRY_WHOAMI`. Once per path in one run (`agents up` with several agents).
+2. `dcf-registry handover <cli> <name> <folder>`, which asks the adapter's `supports` for `skills`
+   and, when listed, calls `agent-adapter-<cli> skills <name> <folder>` with the resolved skills
+   folder in `COMPONENT_REGISTRY_SKILLS`.
+
+It never blocks a start (NFR-12). Each case is one line, and the agent starts with the skills it
+has: no layer list (`the component registry has no layer list`), a failed resolve (the reason, for
+example no who-you-are path), a CLI whose adapter has no `skills` verb (`takes no resolved
+skills`), a hand-over that fails. Without `dcf-registry` nothing is run or said. The resolved view
+and the CLI's skills folder are one per container: two agents of one CLI with different
+`registry-path`s each resolve at their start, and the later start's skills are what both see (see
+Limits).
+
 ## The adapter contract
 
 Each CLI Feature installs one executable on PATH, `agent-adapter-<cli>`; `agents` calls it,
@@ -367,6 +389,13 @@ agent-adapter-<cli> hint <name> <folder>
                                its list fails (exit 3 or missing: a general line instead)
 agent-adapter-<cli> <verb> <name> <folder>, optional (exit 3 or missing: skipped):
   record                       record the agent's running session as the agent's, or clear its record
+  skills                       (ADR-0064) copy the component registry's resolved skills, the folder
+                               in COMPONENT_REGISTRY_SKILLS, into the CLI's own skills folder, marked
+                               as owned by the registry; remove owned copies no longer resolved;
+                               never touch a skill it does not own, never the repository's skills
+                               folder; create the skills folder even when empty; idempotent. Called
+                               by dcf-registry handover only when supports lists it; exit 3 or not
+                               listed: the CLI keeps its plain skills, said in one line
 agent-adapter-<cli> session-busy <id>     exit 0 mid-turn now, 1 not (idle, waiting, ended), 3 cannot tell
 agent-adapter-<cli> session-stop <id>     stop that session (the id `list` printed); conversation kept
 agent-adapter-<cli> session-remove <id>   remove that ended session from the CLI's list
@@ -476,8 +505,14 @@ the background (...)`).
 - The lease guards starts through `agents` only; `claude --bg --name <agent>` by hand takes none.
 - `AGENTS_LEASE_WAIT` (default 20 s) bounds the wait for a start in progress; a container start
   with several residents waits at most that per agent held `starting`.
+- The component registry's resolved view and a CLI's skills folder are one per container (one
+  `CLAUDE_CONFIG_DIR`): agents of one CLI with different `registry-path`s do not each keep their
+  own skills; the latest start's resolve is what all of them read. A per-agent skills folder needs
+  a per-agent CLI configuration folder, which no adapter has yet.
+- The start hook waits for `dcf-registry resolve` (a git layer is fetched; a resolve already
+  running holds the lock for up to `COMPONENT_REGISTRY_LOCK_WAIT`, 120 s); it never fails the start.
 - Tested with fake adapters and a fake `claude` (`task test:agents-unit`, `task
-  test:claude-unit`); no live CLI in CI.
+  test:claude-unit`, `task test:agents-registry`); no live CLI in CI.
 
 ## Anti-patterns
 

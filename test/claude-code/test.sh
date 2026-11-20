@@ -49,6 +49,9 @@ check "claude-fleet on PATH" command -v claude-fleet
 check "agent-adapter-claude on PATH" command -v agent-adapter-claude
 check "agent-adapter-claude is root-owned" bash -c "[ \"\$(stat -c %U \"\$(command -v agent-adapter-claude)\")\" = root ]"
 check "agent-adapter-claude supports wake" bash -c "agent-adapter-claude supports | grep -qx wake"
+check "agent-adapter-claude supports skills (1.11.0)" bash -c "agent-adapter-claude supports | grep -qx skills"
+# shellcheck disable=SC2016  # expansion is meant to happen inside the inner bash
+check "agent-adapter-claude skills copies a resolved skill, marked owned" bash -c 'd=$(mktemp -d); mkdir -p "$d/view/s1" "$d/cfg"; echo hi > "$d/view/s1/SKILL.md"; CLAUDE_CONFIG_DIR="$d/cfg" COMPONENT_REGISTRY_SKILLS="$d/view" agent-adapter-claude skills x "$d" >/dev/null && grep -qx hi "$d/cfg/skills/s1/SKILL.md" && [ -f "$d/cfg/skills/s1/.component-registry" ]'
 # shellcheck disable=SC2016
 check "claude-host prints the deprecation line" bash -c 'HOST_SESSION= claude-host --version 2>&1 >/dev/null | grep -q "claude-host: deprecated"'
 # shellcheck disable=SC2016
@@ -78,6 +81,7 @@ check "CLAUDE_CONFIG_DIR points at the Feature's state dir" bash -c "[ \"\$CLAUD
 # any backing is accepted so the check is not engine-specific.
 check "setup makes the state dir usable and reports it" bash -c "claude-code-setup | grep -Eq '^claude-code: /var/lib/devcontainer-features/claude-code \((volume|bind|image), writable\)\$' && [ -w /var/lib/devcontainer-features/claude-code ]"
 check "setup is idempotent" bash -c "claude-code-setup | grep -Eq '^claude-code: /var/lib/devcontainer-features/claude-code \((volume|bind|image), writable\)\$'"
+check "setup creates the personal skills folder (1.11.0)" test -d /var/lib/devcontainer-features/claude-code/skills
 # shellcheck disable=SC2016
 check "setup honours an overriding CLAUDE_CONFIG_DIR" bash -c 'd=$(mktemp -d)/cfg; CLAUDE_CONFIG_DIR="$d" claude-code-setup | grep -q "^claude-code: $d (image, writable)" && [ -d "$d" ]'
 

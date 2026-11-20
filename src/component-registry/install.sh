@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Installs the component-registry Feature: the dcf-registry command (resolve, explain), the two
-# registry sources this release ships (registry-source-git, registry-source-path), the
-# postStartCommand component-registry-setup, the dcf-persist helper and the Feature Taskfile.
+# Installs the component-registry Feature: the dcf-registry command (resolve, explain, handover,
+# refresh, remember), the two registry sources this release ships (registry-source-git,
+# registry-source-path), the built-in base layer with the utility skills, the postStartCommand
+# component-registry-setup, the dcf-persist helper and the Feature Taskfile.
 # Feature options arrive as upper-cased environment variables (see devcontainer-feature.json):
 # REGISTRYFILE, INSTALLTASKFILE.
 #
@@ -41,6 +42,13 @@ install -m 0755 "$feature_dir/registry-source-git.sh" /usr/local/bin/registry-so
 install -m 0755 "$feature_dir/registry-source-path.sh" /usr/local/bin/registry-source-path
 install -m 0755 "$feature_dir/component-registry-setup.sh" /usr/local/bin/component-registry-setup
 install -m 0755 "$feature_dir/dcf-persist.sh" /usr/local/bin/dcf-persist
+
+# The built-in base layer (1.1.0): the utility skills /registry-refresh, /registry-explain and
+# /registry-remember, read by dcf-registry resolve as layer rank 0 (id component-registry, at /).
+rm -rf "$share/base"
+cp -R "$feature_dir/base" "$share/base"
+find "$share/base" -type d -exec chmod 0755 {} +
+find "$share/base" -type f -exec chmod 0644 {} +
 
 command -v flock >/dev/null 2>&1 || echo "component-registry: flock (util-linux) is not in the image; dcf-registry resolve needs it" >&2
 command -v git >/dev/null 2>&1 || echo "component-registry: no git in the image; a git layer source will fail until one is added (the git Feature)"

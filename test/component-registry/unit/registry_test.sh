@@ -10,7 +10,9 @@
 # local repository at a branch, an annotated tag and a commit, an unknown tag), resolve (unchanged
 # layers skipped, a required layer never fetched, copies no layer names removed, the view swapped
 # in, owner-only modes, idempotent, two concurrent runs), explain (provenance with layer and
-# version, skipped lines and why, dangling refs, --uses), the setup script and the Taskfile.
+# version, skipped lines and why, dangling refs, --uses), the setup script and the Taskfile; and
+# release 1.1.0: the built-in base layer of utility skills, layer-list, handover to a CLI adapter's
+# skills verb (fake adapters with and without it), refresh, and remember into the writable layer.
 # Part of `task lint` (`task test:component-registry-unit`).
 set -u
 
@@ -431,6 +433,120 @@ if command -v task >/dev/null 2>&1; then
 else
   echo "skip - task not installed: the Taskfile part"
 fi
+
+# ------------------------------------- release 1.1.0: base layer, handover, refresh, remember ----
+# The built-in base layer: the Feature's utility skills, from COMPONENT_REGISTRY_SHARE_DIR/base.
+base_share="$T/share-base"; mkdir -p "$base_share"; cp -R "$src/base" "$base_share/base"; echo 1.1.0 > "$base_share/version"
+new_case base
+l="$(layer mine)"; printf '[skills/demo]\nbody:text = mine\n' > "$l/a.reg"
+printf 'layers:\n  - id: mine\n    at: /Corp/me\n    writable: true\n    sources:\n      - { kind: path, path: "%s" }\n' "$l" > .devcontainer/registry.yml
+out="$(COMPONENT_REGISTRY_SHARE_DIR="$base_share" dcf-registry resolve --as /Corp/me 2>&1)"
+contains "base layer: the three utility skills and the layer's skill resolved" "$out" "resolved 4 component(s)"
+for s in registry-refresh registry-explain registry-remember; do
+  contains "base layer: $s has its SKILL.md with its front matter" "$(head -n 2 "$(V)/skills/$s/SKILL.md" 2>/dev/null)" "name: $s"
+done
+out="$(COMPONENT_REGISTRY_SHARE_DIR="$base_share" dcf-registry explain skills/registry-refresh 2>&1)"
+contains "base layer: explain lists it as rank 0, builtin" "$out" "0 component-registry at /, source 1 (builtin): builtin, 1.1.0"
+contains "base layer: explain names it for each line" "$out" "used         component-registry@1.1.0 1:component-registry.reg:"
+printf '[skills/registry-refresh]\nbody:text = also say hello\n' >> "$l/a.reg"
+COMPONENT_REGISTRY_SHARE_DIR="$base_share" dcf-registry resolve --as /Corp/me >/dev/null 2>&1
+contains "base layer: a listed layer stacks on a utility skill" "$(cat "$(V)/skills/registry-refresh/SKILL.md")" "also say hello"
+check "base layer: absent (no base folder) adds nothing (the two skills the layer names)" 1 "$(COMPONENT_REGISTRY_SHARE_DIR="$T/none" dcf-registry resolve --as /Corp/me 2>&1 | grep -c "resolved 2 component")"
+printf 'layers:\n  - id: component-registry\n    at: /Corp\n    sources:\n      - { kind: path, path: "%s" }\n' "$l" > .devcontainer/registry.yml
+out="$(dcf-registry resolve --as /Corp/me 2>&1)"; rc=$?
+check "base layer: its id is reserved (exit 2)" 2 "$rc"
+contains "base layer: the reserved id is named" "$out" "id 'component-registry' is reserved"
+
+# layer-list
+new_case layerlist
+out="$(dcf-registry layer-list)"; rc=$?
+check "layer-list: no list, exit 1" 1 "$rc"
+check "layer-list: prints the path it looked for" "$C/repo/.devcontainer/registry.yml" "$out"
+path_list "a:/Corp:$(layer a)"
+dcf-registry layer-list >/dev/null; check "layer-list: a list, exit 0" 0 $?
+
+# handover: fake adapters, one taking skills, one without the verb
+abin="$T/adapters"; mkdir -p "$abin"
+# shellcheck disable=SC2016  # the fakes expand their own variables
+printf '#!/usr/bin/env bash\n[ "$1" = supports ] && { echo skills; exit 0; }\n[ "$1" = skills ] && { echo "took $2 $3 from $COMPONENT_REGISTRY_SKILLS: $(ls "$COMPONENT_REGISTRY_SKILLS" | tr "\\n" " ")"; exit "${FAKE_SKILLS_RC:-0}"; }\nexit 3\n' > "$abin/agent-adapter-takes"
+# shellcheck disable=SC2016
+printf '#!/usr/bin/env bash\n[ "$1" = supports ] && { echo new; exit 0; }\necho "called $1" >> "%s/nosk-calls"\nexit 3\n' "$T" > "$abin/agent-adapter-noskills"
+chmod +x "$abin"/*
+new_case handover
+l="$(layer a)"; printf '[skills/one]\nbody:text = one\n[skills/two]\nbody:text = two\n' > "$l/a.reg"; path_list "a:/Corp:$l"
+out="$(PATH="$abin:$PATH" dcf-registry handover takes 2>&1)"; rc=$?
+check "handover with no resolved view: exit 1" 1 "$rc"
+dcf-registry resolve --as /Corp/me >/dev/null 2>&1
+out="$(PATH="$abin:$PATH" dcf-registry handover takes host /some/folder 2>&1)"; rc=$?
+check "handover: exit 0" 0 "$rc"
+contains "handover: the adapter gets the agent, the folder and the view's skills" "$out" "took host /some/folder from $COMPONENT_REGISTRY_STATE_DIR/views/"
+contains "handover: the resolved skills are in that folder" "$out" "one two"
+out="$(PATH="$abin:$PATH" dcf-registry handover takes 2>&1)"
+contains "handover: default name and folder (component-registry, the repository root)" "$out" "took component-registry $C/repo from"
+out="$(PATH="$abin:$PATH" dcf-registry handover noskills 2>&1)"; rc=$?
+check "handover: an adapter without skills in supports, exit 3" 3 "$rc"
+contains "handover: says its sessions keep their plain skills" "$out" "noskills: its adapter takes no resolved skills"
+check "handover: the verb is never called when supports omits it" "" "$(cat "$T/nosk-calls" 2>/dev/null)"
+out="$(PATH="$abin:$PATH" dcf-registry handover nosuchcli 2>&1)"; rc=$?
+check "handover: no adapter on PATH, exit 3" 3 "$rc"
+out="$(PATH="$abin:$PATH" FAKE_SKILLS_RC=1 dcf-registry handover takes 2>&1)"; rc=$?
+check "handover: the adapter's failure is passed on (exit 1)" 1 "$rc"
+dcf-registry handover >/dev/null 2>&1; check "handover without a CLI: exit 2" 2 $?
+
+# refresh: resolve for the view's path, then every adapter on PATH
+out="$(PATH="$abin:$PATH" dcf-registry refresh 2>&1)"; rc=$?
+check "refresh: exit 0" 0 "$rc"
+contains "refresh: for the path the current view was resolved for" "$out" "refreshing for /Corp/me, the path the current view was resolved for"
+contains "refresh: hands over to an adapter that takes skills" "$out" "took component-registry"
+contains "refresh: names the adapter that cannot" "$out" "noskills: its adapter takes no resolved skills"
+contains "refresh: says a CLI without live reload needs a restart" "$out" "when its session is restarted"
+out="$(PATH="$abin:$PATH" dcf-registry refresh --as /Corp/other 2>&1)"
+check "refresh --as: resolves for that path" /Corp/other "$(cat "$(V)/whoami")"
+new_case refreshfail
+l="$(layer a)"; printf '[skills/one]\nbody:text = one\n' > "$l/a.reg"; path_list "a:/Corp:$l"
+out="$(PATH="$abin:$PATH" dcf-registry refresh 2>&1)"; rc=$?
+check "refresh with no view and no who-you-are path: exit 2" 2 "$rc"
+contains "refresh failing: nothing handed over" "$out" "nothing was handed over"
+
+# remember
+new_case remember
+lm="$(layer mine)"; lb="$(layer base)"
+printf '[skills/demo]\nbody:text = base text\n' > "$lb/a.reg"
+printf 'layers:\n  - id: base\n    at: /Corp\n    sources:\n      - { kind: path, path: "%s" }\n  - id: mine\n    at: /Corp/me\n    writable: true\n    sources:\n      - { kind: path, path: "%s" }\n' "$lb" "$lm" > .devcontainer/registry.yml
+dcf-registry resolve --as /Corp/me >/dev/null 2>&1
+out="$(PATH="$abin:$PATH" dcf-registry remember -- "I am colour-blind; use safe colours" 2>&1)"; rc=$?
+check "remember: exit 0" 0 "$rc"
+check "remember: appended to the writable layer's folder" "[skills/*]" "$(sed -n 2p "$lm/remembered.reg")"
+check "remember: the line as body:text" "body:text = I am colour-blind; use safe colours" "$(sed -n 3p "$lm/remembered.reg")"
+contains "remember: refreshed, the line is in the resolved skill" "$(cat "$(V)/skills/demo/SKILL.md")" "I am colour-blind; use safe colours"
+contains "remember: and handed over" "$out" "took component-registry"
+PATH="$abin:$PATH" dcf-registry remember --skill skills/demo -- "Only for demo" >/dev/null 2>&1
+check "remember --skill: that skill's section" "[skills/demo]" "$(grep -F '[skills/demo]' "$lm/remembered.reg")"
+check "remember: appends, never rewrites (two entries)" 2 "$(grep -c '^; remembered ' "$lm/remembered.reg")"
+contains "remember --skill: in the resolved skill" "$(cat "$(V)/skills/demo/SKILL.md")" "Only for demo"
+check "remember: the base layer is never written" "a.reg" "$(find "$lb" -mindepth 1 -printf '%f\n')"
+before="$(cat "$lm/remembered.reg")"
+dcf-registry remember -- "" >/dev/null 2>&1; check "remember an empty line: exit 2" 2 $?
+dcf-registry remember -- "@file /etc/passwd" >/dev/null 2>&1; check "remember a line starting with @: exit 2" 2 $?
+dcf-registry remember --skill "../x" -- "y" >/dev/null 2>&1; check "remember with a bad skill name: exit 2" 2 $?
+check "refused lines: nothing written" "$before" "$(cat "$lm/remembered.reg")"
+sed -i 's/    writable: true//' .devcontainer/registry.yml
+out="$(dcf-registry remember -- "x" 2>&1)"; rc=$?
+check "remember with no writable layer: exit 1" 1 "$rc"
+contains "remember with no writable layer: says how to mark one" "$out" "mark your own layer (one with a path source) writable: true"
+printf 'layers:\n  - id: base\n    at: /Corp\n    writable: true\n    sources:\n      - { kind: path, path: "%s" }\n  - id: mine\n    at: /Corp/me\n    writable: true\n    sources:\n      - { kind: path, path: "%s" }\n' "$lb" "$lm" > .devcontainer/registry.yml
+out="$(dcf-registry remember -- "x" 2>&1)"; rc=$?
+check "remember with two writable layers: exit 2" 2 "$rc"
+contains "remember with two writable layers: names them" "$out" "(base mine )"
+repo_g="$(layer gitrepo)"; git -C "$repo_g" init -q; printf '[skills/g]\nbody:text = g\n' > "$repo_g/g.reg"; git -C "$repo_g" add . && git -C "$repo_g" commit -qm g
+printf 'layers:\n  - id: g\n    at: /Corp\n    writable: true\n    sources:\n      - { kind: git, url: "%s", branch: main }\n' "$repo_g" > .devcontainer/registry.yml
+out="$(dcf-registry remember -- "x" 2>&1)"; rc=$?
+check "remember on a git layer: refused (exit 1)" 1 "$rc"
+contains "remember on a git layer: not a writable kind" "$out" "has no path source"
+printf 'layers:\n  - id: mine\n    at: /Corp\n    writable: true\n    sources:\n      - { kind: path, path: "%s/nosuch" }\n' "$C" > .devcontainer/registry.yml
+out="$(dcf-registry remember -- "x" 2>&1)"; rc=$?
+check "remember into a folder that is not there: exit 1" 1 "$rc"
+contains "remember into a folder that is not there: says create it" "$out" "is not there; create it"
 
 echo "component-registry unit: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

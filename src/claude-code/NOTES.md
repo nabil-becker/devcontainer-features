@@ -82,6 +82,7 @@ else should. The contract (verbs, exit codes) is in the `agents` Feature's notes
 | `hint` | how to find and resume the agent by hand (`claude agents`; `cd <folder> && claude --resume`, pick it), for when the list cannot be read (1.8.0) |
 | `stop` | `claude stop <id>` of its newest running session; `--extras` stops every other running one instead. Never `claude rm`. |
 | `logs` | `claude logs <id>` |
+| `skills` | (1.11.0, optional in the contract, ADR-0064) copies the component registry's resolved skills (the folder in `COMPONENT_REGISTRY_SKILLS`, handed over by `dcf-registry handover`) into Claude Code's personal skills folder, `$CLAUDE_CONFIG_DIR/skills`; never `claude`, never the repository's `.claude/skills`. See "Resolved skills" below |
 
 **Identity by name and folder, action by id.** A session is the agent's when its `cwd` is the
 agent's folder and its `name` is the agent's name, or that name with Claude Code's collision
@@ -152,6 +153,28 @@ Not verified against a live `claude --bg` in CI: the unit tests (`task test:clau
 fake `claude`; the calls rest on the facts checked live on Claude Code 2.1.308 (the agents
 proposal, section 7). A background session in a folder Claude Code has never trusted fails to
 start (`Workspace not trusted`): run `claude` there once and accept.
+
+### Resolved skills (`skills`, 1.11.0)
+
+The `component-registry` Feature resolves skills from layers for who you are; this verb is how they
+reach Claude Code. `dcf-registry handover claude` (the participant component at every agent's start,
+or `/registry-refresh`) calls it with the resolved view's `skills/` folder in
+`COMPONENT_REGISTRY_SKILLS`:
+
+- Each resolved skill is copied into `$CLAUDE_CONFIG_DIR/skills/<name>/` (this Feature's volume,
+  tier 4, owner-only) with a `.component-registry` file marking it owned by the registry. An
+  unchanged skill is not rewritten; a changed one is replaced in one rename; an owned copy the
+  registry no longer resolves is removed.
+- A skill folder without the mark is yours (or another tool's): never changed or removed. The
+  registry's skill of that name is not installed, and one line says so.
+- Never the repository's `.claude/skills`: a resolved skill can carry personal facts.
+- Claude Code facts (the skills documentation, https://code.claude.com/docs/en/skills, checked
+  2026-11-19): a skills folder is watched and a change is picked up in the running session; a skills
+  folder that did not exist when the session started needs `/reload-skills`, so `claude-code-setup`
+  creates `$CLAUDE_CONFIG_DIR/skills` at every create and the verb creates it even when there is
+  nothing to copy (and says when it was new); a personal skill wins over a project skill of the
+  same name, so a resolved copy wins a clash with the repository's `.claude/skills`. A skill already
+  used in a conversation keeps its old text until it is used in a new conversation.
 
 ## Additional working directories (`additionalDirectories`, 1.8.0)
 
