@@ -23,7 +23,9 @@ Entries from 1.0.0 to 1.9.7 were generated from the commit history (`.github/scr
 - **`claude-code-setup` creates `$CLAUDE_CONFIG_DIR/skills`** at every create, even empty: Claude Code
   watches a skills folder only if it existed when the session started (otherwise `/reload-skills`).
 - With `participants: true`, the participant component 1.2.0: the component registry's resolve and
-  skills hand-over at an agent's start, and the agents list key `registry-path` (see the notes).
+  skills hand-over at an agent's start, bounded by `COMPONENT_REGISTRY_START_WAIT` (default 15 s; past
+  it the agent starts with the skills already in its folder), and the agents list key
+  `registry-path` (see the notes).
 
 Nothing to do: without the `component-registry` Feature nothing calls the new verb.
 

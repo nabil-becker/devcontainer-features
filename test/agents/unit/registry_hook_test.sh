@@ -10,7 +10,9 @@
 # reaches the adapter), a CLI without the verb (one line, plain skills), the adapter's skills verb
 # failing (one line, the agent still starts), the per-agent registry-path (parsed, shown by check,
 # refused when not an absolute path, with file:line; resolved --as it), one resolve per path in
-# agents up, and on-demand agents too. Part of `task lint` (`task test:agents-registry`).
+# agents up, and on-demand agents too; the start limit (participant 1.2.0,
+# COMPONENT_REGISTRY_START_WAIT): the fast path, a hanging layer source stopped at the limit, a lock
+# held by another resolve, a bad value. Part of `task lint` (`task test:agents-registry`).
 set -u
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -195,6 +197,43 @@ check 'up: exit 0' 0 "$RC"
 check 'up: one resolve per path (host for the setting, rev for its own)' 2 "$(grep -c '^resolve' "$T/reg-calls")"
 check 'up: each resident handed over' 2 "$(skills_calls)"
 lacks 'up: an on-demand agent is not resolved for' "$OUT" 'od: the registry'
+
+# ------------------------------------------------ the start limit (participant 1.2.0) ----
+# COMPONENT_REGISTRY_START_WAIT bounds resolve and the hand-over; past it the agent starts with the
+# skills already in its folder, and one line says so.
+reset
+SECONDS=0; run 1 start host; took=$SECONDS
+check 'start limit, fast path: handed over within the default limit' 1 "$(skills_calls)"
+check 'start limit, fast path: well under 15 s' yes "$([ "$took" -lt 15 ] && echo yes || echo no)"
+lacks 'start limit, fast path: no limit line' "$OUT" 'within 15s'
+# a layer source that hangs (as a git fetch can): the whole fetch is stopped at the limit
+# shellcheck disable=SC2016  # the fake expands its own variables
+printf '#!/usr/bin/env bash\n[ "$1" = supports ] && { echo fetch; exit 0; }\nsleep 60 &\nwait\n' > "$regbin/registry-source-slow"; chmod +x "$regbin/registry-source-slow"
+cp "$repo/.devcontainer/registry.yml" "$T/registry.keep"
+printf '%s  - id: slow\n    at: /Corp\n    sources:\n      - { kind: slow, url: x }\n' "$REGLIST" > "$repo/.devcontainer/registry.yml"
+reset
+SECONDS=0; COMPONENT_REGISTRY_START_WAIT=2 run 1 start host; took=$SECONDS
+check 'start limit, a hanging source: the agent still starts (exit 0)' 0 "$RC"
+contains 'start limit, a hanging source: started' "$(cat "$CALLS_A")" 'start-bg|host'
+contains 'start limit, a hanging source: one line, the limit and the last good skills' "$OUT" 'did not resolve within 2s'
+contains 'start limit, a hanging source: says the skills already there are used' "$OUT" "starting with the last good skills already in fakea's skills folder"
+check 'start limit, a hanging source: nothing handed over' 0 "$(skills_calls)"
+check 'start limit, a hanging source: stopped near the limit (under 10 s)' yes "$([ "$took" -lt 10 ] && echo yes || echo no)"
+check 'start limit, a hanging source: no fetch left running' '' "$(pgrep -f "$regbin/registry-source-slow" || true)"
+cp "$T/registry.keep" "$repo/.devcontainer/registry.yml"
+# another resolve holds the lock: waited for at most the limit, not COMPONENT_REGISTRY_LOCK_WAIT
+reset; mkdir -p "$T/regstate"
+flock "$T/regstate/resolve.lock" sleep 30 & holder=$!
+sleep 1
+SECONDS=0; COMPONENT_REGISTRY_START_WAIT=2 COMPONENT_REGISTRY_LOCK_WAIT=120 run 1 start host; took=$SECONDS
+kill "$holder" 2>/dev/null; wait "$holder" 2>/dev/null
+check 'start limit, the lock held: the agent still starts (exit 0)' 0 "$RC"
+contains 'start limit, the lock held: one line' "$OUT" 'did not resolve within 2s'
+check 'start limit, the lock held: not the 120 s lock wait (under 10 s)' yes "$([ "$took" -lt 10 ] && echo yes || echo no)"
+check 'start limit, the lock held: nothing handed over' 0 "$(skills_calls)"
+reset
+COMPONENT_REGISTRY_START_WAIT=abc run 1 start host
+check 'start limit, a bad value: the default applies, handed over' 1 "$(skills_calls)"
 
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

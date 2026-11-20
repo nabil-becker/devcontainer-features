@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | proposed |
+| **Status** | accepted |
 | **Date** | 2026-11-20 |
 | **Deciders** | the Operator; proposed by the host |
 
@@ -49,6 +49,9 @@ over a project skill of the same name. No other CLI in the capability matrix
    (`--as` the agents list entry's new optional key `registry-path`, else
    `COMPONENT_REGISTRY_WHOAMI`) and then `handover` before the CLI starts. A failure never blocks the
    start: no layer list, a failed resolve, a CLI without the verb or a failed hand-over is one line.
+   Resolve and the hand-over together wait at most `COMPONENT_REGISTRY_START_WAIT` seconds per
+   agent (default 15), a hanging fetch and a held lock included; past it the CLI starts with the
+   last good skills already in its folder, said in one line.
    Without `dcf-registry` nothing is run or said.
 5. **The utility skills ship in a built-in base layer** of `component-registry` (rank 0, id
    `component-registry`, at `/`, read from the Feature's install folder, reserved id), so they
@@ -86,7 +89,8 @@ repository is tier 1, shared and committed.
 - The resolved view and a CLI's skills folder are one per container: agents of one CLI with
   different `registry-path`s see the latest start's skills. A per-agent configuration folder would
   be needed to keep them apart; not decided here.
-- An agent's start now waits for `resolve` (a git layer fetch) when the registry is configured.
+- An agent's start now waits for `resolve` (a git layer fetch) when the registry is configured, at
+  most `COMPONENT_REGISTRY_START_WAIT` seconds (default 15).
 - `src/agents/NOTES.md` (the adapter contract), `src/claude-code/NOTES.md`, the component registry
   notes and the six standing architecture documents carry the change.
 
@@ -95,3 +99,4 @@ repository is tier 1, shared and committed.
 | Date | Change |
 |---|---|
 | 2026-11-20 | First draft, with slice 2 of the component registry (`component-registry` 1.1.0, `claude-code` 1.12.0, participant 1.2.0). |
+| 2026-11-20 | Accepted by the Operator on 2026-11-20. |

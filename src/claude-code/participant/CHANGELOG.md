@@ -26,6 +26,11 @@ copy. Backward compatible within a major (NFR-5): `agents.yml` and `AGENTS_FILE`
   `--as`; without it `COMPONENT_REGISTRY_WHOAMI` applies. Checked like the other keys (a relative
   path, a pattern or the key twice is refused with its file and line) and shown by `agents check`.
 
+- **A start limit for the registry** (`COMPONENT_REGISTRY_START_WAIT`, default 15 seconds per agent):
+  resolve and the hand-over together wait at most that long, a layer fetch that hangs and another
+  resolve holding the lock included. Past it the agent starts with the last good skills already in
+  its CLI's skills folder, and one line says so; `/registry-refresh` hands the new ones over later.
+
 Nothing to do: lists without `registry-path` work as before.
 
 ## [1.1.0] - 2026-11-20

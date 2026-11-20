@@ -181,7 +181,10 @@ line, the CLI keeps its plain skills (NFR-12).
 At an agent's start the participant component (`claude-code` with `participants: true`) runs
 `dcf-registry resolve` (`--as` the agent's `registry-path` from the agents list, else
 `COMPONENT_REGISTRY_WHOAMI`) and `dcf-registry handover <cli> <agent> <folder>`. It never blocks the
-start: no layer list, a failed resolve or a CLI that cannot take skills is one line.
+start: no layer list, a failed resolve or a CLI that cannot take skills is one line. Resolve and
+the hand-over together get at most `COMPONENT_REGISTRY_START_WAIT` seconds there (default 15, a
+hanging fetch and a held lock included); past it the CLI starts with the last good skills already
+in its folder, said in one line. `/registry-refresh` keeps `COMPONENT_REGISTRY_LOCK_WAIT`.
 
 ## The match rule
 

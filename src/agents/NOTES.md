@@ -363,6 +363,13 @@ exists, `agents start` and `agents up` do two things for each agent before its C
    and, when listed, calls `agent-adapter-<cli> skills <name> <folder>` with the resolved skills
    folder in `COMPONENT_REGISTRY_SKILLS`.
 
+Both steps together wait at most `COMPONENT_REGISTRY_START_WAIT` seconds per agent (default 15; a
+whole number, a bad value means 15), a layer fetch that hangs and the wait for another resolve's
+lock included: each runs under `timeout`, which stops the whole process group (a git fetch too),
+and the lock wait is capped to what is left. Past the limit the CLI starts with the last good
+skills already in its skills folder, and one line says so (`did not resolve within 15s`);
+`/registry-refresh` keeps `COMPONENT_REGISTRY_LOCK_WAIT` and hands the new skills over later.
+
 It never blocks a start (NFR-12). Each case is one line, and the agent starts with the skills it
 has: no layer list (`the component registry has no layer list`), a failed resolve (the reason, for
 example no who-you-are path), a CLI whose adapter has no `skills` verb (`takes no resolved
@@ -515,8 +522,8 @@ the background (...)`).
   `CLAUDE_CONFIG_DIR`): agents of one CLI with different `registry-path`s do not each keep their
   own skills; the latest start's resolve is what all of them read. A per-agent skills folder needs
   a per-agent CLI configuration folder, which no adapter has yet.
-- The start hook waits for `dcf-registry resolve` (a git layer is fetched; a resolve already
-  running holds the lock for up to `COMPONENT_REGISTRY_LOCK_WAIT`, 120 s); it never fails the start.
+- The start hook waits for `dcf-registry resolve` and the hand-over for at most
+  `COMPONENT_REGISTRY_START_WAIT` seconds (default 15) per agent; it never fails the start.
 - Tested with fake adapters and a fake `claude` (`task test:agents-unit`, `task
   test:claude-unit`, `task test:agents-registry`); no live CLI in CI.
 

@@ -82,7 +82,9 @@
 # `dcf-registry handover <cli> <name> <folder>`, which calls the adapter's optional `skills` verb
 # when its `supports` lists it. Never blocking: a failed resolve, a CLI that cannot take resolved
 # skills (exit 3) or no layer list each say so in one line, and the agent starts with the skills
-# it has. Without dcf-registry nothing is said or run.
+# it has. Without dcf-registry nothing is said or run. Resolve and the hand-over get at most
+# COMPONENT_REGISTRY_START_WAIT seconds (default 15); past it the CLI starts with the last good
+# skills already in its folder, said in one line.
 #
 # Exit: 0 done, 1 failed, 2 bad use (unknown agent, bad list, refused), 3 the CLI cannot.
 set -uo pipefail
@@ -1024,34 +1026,69 @@ definition_note() {
 # optional skills verb). Only when dcf-registry is on PATH; never blocks the start: every failure
 # is one line and the agent starts with the skills it has (NFR-12). A path is resolved once per
 # run (agents up with several agents of one path).
+#
+# The start limit: resolve and the hand-over together get at most COMPONENT_REGISTRY_START_WAIT
+# seconds (default 15) per agent, the wait for another resolve's lock and a layer fetch that hangs
+# included (each run under timeout, which stops the whole process group, a git fetch too; the lock
+# wait is capped to what is left). Past it the CLI starts with the last good skills already in its
+# skills folder, and one line says so. /registry-refresh keeps COMPONENT_REGISTRY_LOCK_WAIT.
 declare -A REG_DONE=()
+registry_wait() { # the start limit in whole seconds (a bad value: the default, 15)
+  local w="${COMPONENT_REGISTRY_START_WAIT:-15}"
+  case "$w" in '' | *[!0-9]*) w=15 ;; esac
+  [ "$w" -ge 1 ] || w=1
+  printf '%s' "$w"
+}
+# registry_run <seconds> <args...>: dcf-registry under the limit, from the repository root; OUT
+# its output, the exit code returned (124 when the limit was reached)
+registry_run() {
+  local left="$1"; shift
+  OUT="$(cd "$ROOT" && COMPONENT_REGISTRY_LOCK_WAIT="$left" timeout -k 2 "$left" dcf-registry "$@" </dev/null 2>&1)"
+}
+registry_timed_out() { # <exit code>: the limit was reached (timeout, or the lock not had in time)
+  [ "$1" -eq 124 ] || [ "$1" -eq 137 ] || { [ "$1" -eq 1 ] && case "$OUT" in *"resolve.lock for"*) true ;; *) false ;; esac; }
+}
 registry_step() {
-  local i="$1" nm="${NAME[$1]}" as="${REGPATH[$1]:-}" key out rc last
+  local i="$1" nm="${NAME[$1]}" as="${REGPATH[$1]:-}" key out rc last limit start left
   command -v dcf-registry >/dev/null 2>&1 || return 0
   out="$(cd "$ROOT" && dcf-registry layer-list </dev/null 2>/dev/null)"; rc=$?
   if [ "$rc" -eq 1 ]; then
     echo "$nm: the component registry has no layer list (${out:-none}); starting with the plain skills."
     return 0
   fi
+  limit="$(registry_wait)" start="$SECONDS"
   key="${as:-(who-you-are)}"
   if [ -z "${REG_DONE[$key]:-}" ]; then
-    if [ -n "$as" ]; then out="$(cd "$ROOT" && dcf-registry resolve --as "$as" </dev/null 2>&1)"; rc=$?
-    else out="$(cd "$ROOT" && dcf-registry resolve </dev/null 2>&1)"; rc=$?; fi
+    if [ -n "$as" ]; then registry_run "$limit" resolve --as "$as"; else registry_run "$limit" resolve; fi
+    rc=$?
     if [ "$rc" -ne 0 ]; then
       REG_DONE[$key]=failed
-      last="$(printf '%s\n' "$out" | awk 'NF { l = $0 } END { print l }' | sed 's/^dcf-registry: //' | cut -c1-300)"
+      if registry_timed_out "$rc"; then
+        warn "$nm: the component registry did not resolve${as:+ for $as} within ${limit}s (a slow layer source, or another resolve holding the lock); starting with the last good skills already in ${CLI[i]}'s skills folder."
+        return 0
+      fi
+      last="$(printf '%s\n' "$OUT" | awk 'NF { l = $0 } END { print l }' | sed 's/^dcf-registry: //' | cut -c1-300)"
       warn "$nm: the component registry did not resolve${as:+ for $as} (${last:-exit $rc}); starting with the skills as they were."
       return 0
     fi
     REG_DONE[$key]=ok
   fi
   [ "${REG_DONE[$key]}" = ok ] || return 0
-  out="$(cd "$ROOT" && dcf-registry handover "${CLI[i]}" "$nm" "$DIR" </dev/null 2>&1)"; rc=$?
+  left=$((limit - (SECONDS - start)))
+  if [ "$left" -lt 1 ]; then
+    warn "$nm: the ${limit}s for the component registry were used by resolve; starting with the last good skills already in ${CLI[i]}'s skills folder (/registry-refresh hands the new ones over)."
+    return 0
+  fi
+  registry_run "$left" handover "${CLI[i]}" "$nm" "$DIR"; rc=$?
   case "$rc" in
     0) echo "$nm: the registry's resolved skills handed to ${CLI[i]}${as:+ (as $as)}." ;;
     3) echo "$nm: ${CLI[i]} takes no resolved skills (its adapter has no skills verb); starting with its plain skills." ;;
-    *) last="$(printf '%s\n' "$out" | awk 'NF { l = $0 } END { print l }' | sed 's/^dcf-registry: //' | cut -c1-300)"
-       warn "$nm: handing the registry's skills to ${CLI[i]} failed (${last:-exit $rc}); starting with the skills as they were." ;;
+    *) if registry_timed_out "$rc"; then
+         warn "$nm: handing the registry's skills to ${CLI[i]} did not finish within ${limit}s; starting with the last good skills already in its skills folder."
+       else
+         last="$(printf '%s\n' "$OUT" | awk 'NF { l = $0 } END { print l }' | sed 's/^dcf-registry: //' | cut -c1-300)"
+         warn "$nm: handing the registry's skills to ${CLI[i]} failed (${last:-exit $rc}); starting with the skills as they were."
+       fi ;;
   esac
   return 0
 }
