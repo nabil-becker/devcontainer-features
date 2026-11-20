@@ -806,3 +806,186 @@ the network edge. Add the HTTP path: cloud AI to `http` to guard to signer to re
 ## 18. Architecture review
 
 Not yet run. The host runs the `architecture-review` skill before this proposal is built from.
+
+## Architecture review (2026-11-20)
+
+**Verdict:** fit with changes
+
+Read cold against the NFRs, the ADRs to 0067, the capability matrix (agents-v2 section 14), the
+lexicon, the standing set in `docs/architecture/` and `docs/model/`, and checked against `src/facilitator`
+0.2.0, `.github/workflows/` and the first spike. The second spike (SLIM with SPIFFE, linked nodes) is
+running and its note is not on this branch: every item marked **(spike N1)** below depends on it and is
+not settled by this review. The design holds together; the changes are about where its pieces sit, a
+release pipeline the workflows do not have yet, one contradiction with ADR-0067, and three ADRs that
+section 16 does not list.
+
+### Requirements checked
+
+- **NFR-1 owns-its-state:** met. The image mounts the Feature's path (6.2); but the bundle cache "in the
+  state volume" cannot work at install time (finding 6).
+- **NFR-2 registered-taskfile:** met for the Feature (6.1, 6.2); the new `node` subcommands and `check`
+  need tasks with a `desc` when built (finding 11).
+- **NFR-3 verified-and-pinned:** met for the bundle by `digests.txt` (6.1); not met as written for the
+  image's base layer and for the Feature's `dirVersion` and `slimVersion` options, which the bundle makes
+  meaningless (finding 7).
+- **NFR-4 augments-not-replaces:** does not apply; no official Feature (D7). Agreed.
+- **NFR-5 idempotent-and-user-neutral:** met as planned; N2's exit test runs the install twice (13).
+- **NFR-6 one-way-to-configure:** not met. Limits are in both the Feature options (`hopLimit`,
+  `messageBudget`, `rateLimit`) and `mesh.yml` `limits`, with no stated order, and `MESH_FILE` breaks
+  the `FACILITATOR_*` naming (finding 8).
+- **NFR-7 agent-ready:** needs a line. `node invite` prints a join secret and `node approve` is a
+  person's act: they must refuse inside an agent's job (finding 11).
+- **NFR-8 documented-to-the-standard:** met as planned; every slice brings NOTES to the standard (13).
+- **NFR-9 says-why-it-exists:** does not apply to the Feature; the server image should say in one
+  paragraph why not AGNTCY's own SLIM and Directory images or Helm charts.
+- **NFR-10 tested-on-base-images:** not met as planned. N2's exit test needs arm64, and every CI job
+  runs on `ubuntu-latest` (amd64) (finding 5).
+- **NFR-11 linter-cli-contract:** partly. `check` takes the exit codes (7) but not paths, `-`,
+  `path:line: rule` or `--format json` (finding 11).
+- **NFR-12 vendor-neutral-contracts:** met for the stdio route, which Claude Code and Copilot both use
+  (facilitator NOTES); not shown for the HTTP route, and the matrix has no MCP rows (finding 9).
+- **NFR-13 manages-the-environment-not-the-cli:** met (D8, 11). No vendor CLI is configured or
+  re-implemented; placement is in the table below.
+
+### Placement
+
+| Element | Layer | Why |
+|---|---|---|
+| `install.sh` freed of devcontainer parts, the venv, bundled interpreter | the bundle | built once per architecture, used by both the Feature and the image (Z1) |
+| `mesh`, `identity`, `peers`, `http` modules; `approve` tool; `node` subcommands | the bundle (the facilitator application) | the application's own logic; the Feature and the image only install it |
+| Download, verify, hooks, Taskfile, volume | the facilitator Feature | as today |
+| A machine that runs only a leaf client | a facilitator Feature option (missing; finding 4) | the stdio server is ADR-0061's heavy side and comes from the Feature, but `infra up` would start a node |
+| `node:` settings, `mesh.yml`, TLS certificate, OAuth issuers | a consumer's own config | per repository and per node; committed in tier 1, secrets excluded |
+| ENTRYPOINT, `tini`, non-root user, HEALTHCHECK | the server image | only the image needs a supervisor |
+| PKI mount, roles per trust domain, issuing policy | the `openbao` Feature (`openbao:pki:*`, like ADR-0059's `openbao:ssh:*`) | OpenBao's configuration belongs to its Feature; finding 3 |
+| Shared docker network or published ports between two devcontainers | a consumer's own config (`runArgs`, `forwardPorts`), a launcher opt-in later | a Feature cannot publish a port (12.1); the launcher owns how a container starts |
+| MCP entry for a leaf client's CLI | the participant component and the CLI Features | ADR-0061's thin side, unchanged; `--node` is one more argument in the entry |
+| CLI adapters | none | nothing here touches a CLI; correct |
+
+### Findings
+
+1. **Contradiction with ADR-0067 decision 2.** ADR-0067 (accepted) says local CLIs use the thin client
+   plus SLIM "so the key stays with the agent"; 11.2 keeps node signing for same-container participants
+   (D3). The lexicon's "Facilitator node" copies the ADR. An accepted ADR is not read against itself.
+   Recommended change: a new ADR (or the MCP-over-HTTP ADR of section 16) amends decision 2 to the three
+   arrangements of 11.2, and the lexicon entry follows.
+2. **ADR-0061 does not say networking is out of scope.** D4 and section 16 say an ADR must amend
+   ADR-0061 on ports. ADR-0061's text does not mention networking or loopback; the rule is in
+   facilitator-agent sections 2 and 6 (lines "networking out of scope" and "open a network port beyond
+   the loopback ports"). Recommended change: the ports ADR names facilitator-agent sections 2 and 6 and
+   ADR-0067; ADR-0061 needs no amendment.
+3. **The issuer collides with ADR-0048 and ADR-0050, and has no ADR.** Option A (OpenBao PKI) puts a CA
+   on a hub that must renew SVIDs unattended (public every 30 min). ADR-0048 decision 4: a server-mode
+   OpenBao is sealed until the Operator unseals it at every start, the login lasts 4 to 8 hours, and
+   back AppRoles are loopback only; the 6.2 compose puts the facilitator in a second container.
+   ADR-0050: creating a role or policy (the facilitator's AppRole, a PKI role per domain) needs a root
+   token from the shares. ADR-0059's SSH CA "signs for the Operator only". The local-domain CA key in
+   the volume when no vault exists widens the 0.1.0 ADR-0048 exception. Recommended change: a fourth ADR
+   in section 16, "SVIDs are issued by an OpenBao PKI CA per trust domain", that states the hub's unseal
+   (who, after a restart), the facilitator's AppRole over the compose network, the root-token step for
+   the PKI roles, and the local CA fallback as a written exception. **(spike N1: may be replaced by
+   SPIRE, R1.)**
+4. **A leaf client has no install.** 3 and 11.2 say a leaf client runs "on a machine that runs no node",
+   but `facilitator mcp` comes from the Feature, whose `autostart` starts the Directory and SLIM. `role`
+   has no value for it. Recommended change: a Feature option (`role: leaf`, or `infra: false`) that
+   installs the bundle and the stdio server and starts no daemon.
+5. **The pipeline the bundle and the image need does not exist.** `release.yaml` only publishes
+   Features (`devcontainers/action`, `contents: read`, `packages: write`); there is no release asset,
+   no image build, no attestation (`id-token` and `attestations` permissions) and no arm64 runner. R5's
+   order also fails: the bundle a PR's CI builds is not byte-identical to the one a later release builds
+   unless the build is reproducible, so the pinned digest would not match. Recommended change: a
+   separate manual workflow `release-bundle` that the Operator starts first and that uploads the asset
+   with its attestation; then a PR pins its digest in `digests.txt`; then the Feature release; the image
+   built from the released asset by digest. Add an arm64 runner (`ubuntu-24.04-arm`) or QEMU to the
+   bundle job, and name the change in Workflows section 3 (finding 12).
+6. **The bundle cache in the state volume cannot work.** 6.1 and R6 cache the tarball "in its state
+   volume by checksum", but a Feature's `install.sh` runs during the image build, when no volume is
+   mounted. Recommended change: rely on the Docker layer cache of the Feature's build step (and
+   `FACILITATOR_ASSETS` for offline builds, which 0.2.0 already has), and drop the volume cache.
+7. **Options the bundle makes meaningless, and the image's base.** `dirVersion` and `slimVersion`
+   choose what `install.sh` downloads; with the bundle they are fixed by the bundle. NFR-3 also asks for
+   a `version` option and what `latest` resolves to. `FROM debian-slim` is not pinned. Recommended
+   change: deprecate `dirVersion` and `slimVersion` in 0.3.0 (the lexicon's deprecation rule), add
+   `bundleVersion` (default: the version pinned for this Feature version, `latest` resolving to it), and
+   pin the image's base by digest.
+8. **Limits in two places, and a variable outside the naming (NFR-6).** `hopLimit`, `messageBudget`,
+   `rateLimit` and `receiveWaitSeconds` stay Feature options while `mesh.yml` `limits` sets the same
+   values per level; nothing says which wins. Recommended change: the options are the local and private
+   defaults, `mesh.yml` overrides per level, `check` prints the effective value; rename `MESH_FILE` to
+   `FACILITATOR_MESH_FILE`.
+9. **No matrix rows for MCP (NFR-12).** The stdio route works on Claude Code and Copilot (facilitator
+   NOTES), but section 14 of agents-v2 has no row for it, and the HTTP route names no client at all:
+   "cloud AIs" are not CLIs, and which remote-MCP clients do OAuth with the RFC 9728 discovery is
+   **not checked** (R11). Recommended change: add two matrix rows, "MCP client, stdio" and "MCP client,
+   Streamable HTTP with OAuth", and make N4's exit test two named remote clients of different vendors,
+   or name the fallback (a leaf client) for the one that fails.
+10. **SPIFFE and AGNTCY Identity both say "identity".** The Feature already has `identity` (AGNTCY
+    Identity, refused until slice 7 of facilitator-agent). The proposal adds an `identity` module and
+    SPIFFE identities and does not say what becomes of slice 7. Recommended change: one line in section 5
+    and in the SPIFFE-issuer ADR: AGNTCY Identity is dropped, or kept only for OASF badges; the option is
+    deprecated or renamed accordingly.
+11. **The new commands need their contracts.** `check` is a check tool (NFR-11): it needs paths, `-`,
+    `path:line: rule` and `--format json`, not only the exit codes. `node invite` (prints a secret),
+    `node approve` and `node revoke` need tasks with a `desc` (NFR-2), and the first two must refuse
+    inside an agent's job, as every OpenBao share and token task does (ADR-0048 decision 4).
+    Recommended change: one table in section 7 or 13 listing each new command, its task, `interactive`,
+    and whether it refuses in an agent's job.
+12. **Deltas missing or not in the ADR-0060 form.** A change without its delta, per document:
+    - **C4:** the delta's Mermaid ids (`node1`, `app1`, `ext`, `cloud`) are not ontology ids, which the
+      architecture README requires; `c4-context.md` gains two external systems (the cloud AI, the OAuth
+      issuer) and is not named. The standing `c4-container.md` does not show the facilitator 0.2.0 at
+      all: stale.
+    - **Workflows:** first-contact approval and HTTP enrolment are named but not drawn; section 3 ("A
+      Feature change to a release") changes with the bundle and image (finding 5) and has no delta.
+    - **Lifecycles:** the held first-contact message is text only, with no state diagram.
+    - **Data Flows:** "3b" and the HTTP path are text only, no Mermaid; the "Trust boundaries" section
+      gains the network edge and section 6 (release) gains the asset and the image; neither has a delta.
+    - **Data Inventory:** the delta table has five columns; the standing table has seven ("Survives
+      rebuild", "Source" are missing). Missing rows: held messages and pending enrolments, the HTTP TLS
+      certificate and key, the per-client signing keys for HTTP clients.
+    - **State of the Architecture:** present and in form.
+    Recommended change: complete each delta in section 17 before the N2 pull request, and file the
+    stale `c4-container.md` as a backlog item.
+13. **Lexicon collisions.** "Claim token" is defined as the OpenBao onboarding root token (ADR-0052);
+    5.3 uses it for a single-use join token. "Bundle" is used for the release package and for SPIFFE
+    trust bundles (`bundles/facilitator/` beside `bundles/<domain>.pem`). "Mesh" says "configured by one
+    `mesh.yml`", but each node has its own. "Role" collides with agent roles and OpenBao roles.
+    Recommended change: call the token a **join token**, the package the **node bundle** (always
+    "trust bundle" for SPIFFE), "Mesh" to read "each node configured by its own `mesh.yml`", and "node
+    role"; add "thin client" (stdio `facilitator mcp`), used in Z2 and 11.2 and defined nowhere.
+14. **Feature dependencies stated wrongly.** 6.1 says the Feature keeps "`dependsOn`/`installsAfter` on
+    `sign-packet`, `register-engine` and `ssh-agent` as today". 0.2.0 has no `dependsOn`; it installs
+    after `go-task`, `python`, `common-utils`, `register-engine` and `openbao`, and carries its own
+    copies of sign-packet's and register-engine's libraries (ADR-0062). The bundle's `lib/signpacket/`
+    and `lib/registerengine/` are further copies outside `src/`, which `task signpacket:check` does not
+    see. Recommended change: correct the sentence, and have the bundle script take its copies from
+    `src/facilitator/` so the existing check covers them.
+15. **Stale and dangling references.** Section 16 says ADR-0067 is "an uncommitted file"; it is
+    committed and accepted. The link to `docs/spikes/2026-11-2x-slim-spiffe.md` points at a file that
+    does not exist yet. "SLIM already supports SPIFFE" (Z5) is the Operator's premise, not in the first
+    spike. Recommended change: update section 16, and keep the link with "(in progress, not yet
+    written)" until N1 lands. **(spike N1)**
+16. **A hub's roster is not rebuildable (ADR-0045).** The data inventory puts the roster, approvals and
+    enrolments in tier 4, whose rule is "rebuildable only"; losing a hub loses every membership and
+    approval, which R8 ("the hub can be rebuilt from OpenBao") does not cover. Recommended change: the
+    roster register is backed up with the hub's OpenBao snapshot or mirrored to tier 2, stated in the
+    inventory row.
+
+### Open questions for the Operator
+
+- **Same-container signing (finding 1, D3).** Keep 0.2.0's node signing for participants in the node's
+  own container, against ADR-0067's "key stays with the agent"? Recommended: yes, while every token is
+  readable by every process of one user (R10), recorded by an ADR that amends ADR-0067 decision 2.
+- **A hub's issuer running unattended (finding 3).** ADR-0048 makes every server-mode OpenBao wait for
+  the Operator's unseal at each start, which stops SVID renewal after a hub restart. Recommended: accept
+  that for N3 (private SVIDs last 24 h) with the root CA offline and an intermediate in the hub's
+  OpenBao, and decide auto-unseal for a public hub before N5, in the issuer ADR.
+- **The bundle's release order (finding 5).** A separate `release-bundle` workflow the Operator starts
+  before the Feature release, or a reproducible build so R5 works as written? Recommended: the separate
+  workflow; reproducibility is not proven for a tree with a 198 MB third-party binary.
+- **Limits in options and in `mesh.yml` (finding 8).** Recommended: options stay as the defaults and
+  `mesh.yml` overrides per level; deprecate them only if the two prove confusing.
+- **AGNTCY Identity (finding 10).** Drop slice 7 of facilitator-agent in favour of SPIFFE, or keep it for
+  OASF badges? Recommended: drop it, and deprecate the `identity` option in 0.3.0.
+- **D1 to D10.** The review agrees with each reading taken in section 15, except D4's attribution
+  (finding 2).
