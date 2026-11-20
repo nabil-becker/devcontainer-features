@@ -9,7 +9,7 @@ source dev-container-features-test-lib
 check "the mode as installed" grep -q '^FACILITATOR_MODE=leaf$' /opt/facilitator/lib/options.env
 check "the command and its own Python" facilitator version
 check "no SLIM node in a leaf" bash -c '! command -v slimctl && ! test -e /opt/facilitator/bin/slimctl'
-check "no daemon was started" bash -c '! pgrep -f "daemon start" && ! pgrep -f "slim start"'
+check "no daemon was started" bash -c '! pgrep -f "[d]aemon start" && ! pgrep -f "[s]lim start"'
 check "infra up is refused" bash -c '! facilitator infra up && facilitator infra up 2>&1 | grep -q "mode leaf"'
 check "node run is refused" bash -c '! facilitator node run && facilitator node run 2>&1 | grep -q "mode leaf runs no node"'
 check "check is ready, as a leaf" bash -c 'facilitator check && facilitator check | grep -q "mode .*leaf"'
