@@ -2,7 +2,7 @@
 
 Status: accepted by the Operator 2026-11-19, with the architecture review's changes applied (the
 last section) and the rule that no layer widens a permission; ADR-0063. Supersedes the
-[personalization](personalization.md) proposal. Slice 1 (section 12) is built: `component-registry` 1.0.0 (2026-11-20); slice 2 is built: `component-registry` 1.1.0, `claude-code` 1.12.0, participant 1.2.0, ADR-0064 (2026-11-20); slice 3 is built: `component-registry` 1.2.0 (`http`, one `.reg` file, auth settings only; archives not read) and `cloud-folder` 1.4.0 (`cloud-folder` source) (2026-11-20); slice 4 is built: `architecture-review` in two layers, `devhost` 1.16.0 and this repository's layer, byte-equal to the committed skill with `component-registry` 1.3.0 (`heading: false`, front matter values), the switch-over waiting for the Operator (section 12) (2026-11-20); slice 5 is not.
+[personalization](personalization.md) proposal. Slice 1 (section 12) is built: `component-registry` 1.0.0 (2026-11-20); slice 2 is built: `component-registry` 1.1.0, `claude-code` 1.12.0, participant 1.2.0, ADR-0064 (2026-11-20); slice 3 is built: `component-registry` 1.2.0 (`http`, one `.reg` file, auth settings only; archives not read) and `cloud-folder` 1.4.0 (`cloud-folder` source) (2026-11-20); slice 4 is built: `architecture-review` in two layers, `devhost` 1.16.0 and this repository's layer, byte-equal to the committed skill with `component-registry` 1.3.0 (`heading: false`, front matter values), the switch-over waiting for the Operator (section 12) (2026-11-20); release 2, agent definitions (section 6.1), is built: `component-registry` 1.6.0, participant 1.3.0, `claude-code` 1.13.0 (2026-11-20); slice 5 is not.
 
 Who this serves: the Operator, who rules on it and is its first user (their own layer: "I'm
 colour-blind, adapt diagram colours"); a consumer's maintainer, who points devhosts at an
@@ -553,7 +553,8 @@ classDiagram
    decides what consumers of the devhost Feature get: the template `devhost-init` copies made the
    base layer only, or consumers adding the component-registry Feature and a layer list naming the
    devhost layer.
-5. **Later releases**: the `db` source; agent definitions, prompts and settings as component kinds.
+5. **Later releases**: the `db` source; prompts and settings as component kinds. Agent definitions
+   are built (section 6.1: `model` and `skills`, the agents list winning).
 
 ## 13. Relation to other work
 
@@ -568,9 +569,10 @@ classDiagram
 
 ## 14. Open questions
 
-None. The review's questions were ruled on 2026-11-19 (section 2: decisions 3, 10, 14; ADR-0063
+None for release 1. The review's questions were ruled on 2026-11-19 (section 2: decisions 3, 10, 14; ADR-0063
 back to proposed), and the per-agent who-you-are override sits in the agents list entry
-(section 3.1).
+(section 3.1). Release 2 (section 6.1) leaves one for the Operator: whether a locked registry value
+should beat the agents list.
 
 ## Architecture review (2026-11-19)
 

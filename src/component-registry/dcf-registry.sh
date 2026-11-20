@@ -56,8 +56,16 @@
 #   views/<stamp>/ and view    the resolved views; `view` is a symlink swapped in one rename
 #   resolve.lock               flock, so two resolves never interleave
 # The resolved view: skills/<name>/ (SKILL.md and its files, what a consumer copies),
-# meta/skills/<name>/ (provenance.tsv, keys.tsv, values/<key>), meta/refs.tsv,
-# meta/problems.tsv, layers.tsv and whoami.
+# agents/<name>/ (1.6.0, an agent definition: model, skills and from.tsv, what the participant
+# reads at the agent's start), meta/<kind>/<name>/ (provenance.tsv, keys.tsv, values/<key>),
+# meta/refs.tsv, meta/problems.tsv, layers.tsv, whoami and agent-names.
+#
+# Agent definitions (1.6.0): an agents/<name> component holds two fields, model:value and
+# skills:list; a line for any other key is skipped and reported (the agents list owns the rest,
+# and an agent definition carries no permission). resolve also resolves agents/<name> for every
+# name in COMPONENT_REGISTRY_AGENTS (comma-separated; the participant sets it to the listed
+# agents), so a pattern such as [agents/*] reaches them; without it the current view's names are
+# kept.
 #
 # The built-in base layer (1.1.0): the Feature's own utility skills (registry-refresh,
 # registry-explain, registry-remember), read from $SHARE_DIR/base, are layer rank 0 with the id
@@ -73,7 +81,7 @@ SHARE_DIR="${COMPONENT_REGISTRY_SHARE_DIR:-/usr/local/share/component-registry-f
 # Component kinds: a path is split at the first of these segments. Only ACTIVE_KINDS are
 # resolved in this release; lines of the others are reported, not merged.
 KINDS="skills agents prompts settings lexicon"
-ACTIVE_KINDS="skills"
+ACTIVE_KINDS="skills agents"
 declare -A S_KIND S_REQ S_LINE S_ARGS S_PIN
 # The built-in base layer: the Feature's utility skills, rank 0, below every listed layer.
 BASE_ID=component-registry
@@ -603,6 +611,45 @@ function setfm(fm, key, val,   ln, nl, x, o, done, skip) {
   return o
 }
 function isperm(k) { return k == "allowed-tools" || k == "disallowed-tools" || k ~ /^permission/ }
+# agentwhy(key, type, data) (1.6.0): why a line of an agent definition is skipped, "" when it is a
+# field. Only model (one value) and skills (a list); the agents list owns every other field, and an
+# agent definition never carries a permission (rule 3 alone would keep the lowest layer's, which is
+# not the repository).
+function agentwhy(k, t, d) {
+  if (index(" name cli kind folder lifecycle identity lease default session-name registry-path attachment args definition ", " " k " "))
+    return "the agents list owns " k "; the registry never sets it for an agent" (k == "args" || k == "definition" ? "; it could widen a permission" : "")
+  if (isperm(k)) return "an agent definition carries no permission key"
+  if (k != "model" && k != "skills") return "not an agent definition field (model, skills)"
+  if (k == "model" && t != "value") return "model is one value: model:value = <model>"
+  if (k == "skills" && t != "list") return "skills is a list: skills:list = <name>, ref:skills/<name>"
+  if (k == "model" && (length(d) > 100 || d !~ /^[][A-Za-z0-9._:\/@-]+$/)) return "a model is one word of letters, digits and . _ : / @ [ ] - (at most 100)"
+  return ""
+}
+# agentout(c, n) (1.6.0): the agent definition's machine-readable view, VIEW/agents/<name>/: model
+# (one line), skills (one name per line; a ref:[scope/]skills/<name>[:key] item gives its name) and
+# from.tsv (field, layer, source:file:line of each line used)
+function agentout(c, n, cand,   dir, a, i, x, nit, it, items, out, seen) {
+  dir = VIEW "/" c
+  system("mkdir -p " q(dir))
+  if (("model" in RES) && KT["model"] == "value" && RES["model"] != "") { print RES["model"] > (dir "/model"); close(dir "/model") }
+  if (("skills" in RES) && KT["skills"] == "list" && RES["skills"] != "") {
+    nit = split(RES["skills"], items, "\n"); out = ""; split("", seen)
+    for (x = 1; x <= nit; x++) {
+      it = items[x]; sub(/^ref:/, "", it); sub(/:.*$/, "", it)
+      if (it ~ /(^|\/)skills\//) sub(/^.*skills\//, "", it)
+      if (it !~ /^[A-Za-z0-9._-]+$/) { printf "R\t%s\t-\t-\tskills\titem '%s' names no skill (a name or ref:skills/<name>)\n", c, items[x]; continue }
+      if (it in seen) continue
+      seen[it] = 1; out = out it "\n"
+    }
+    if (out != "") { printf "%s", out > (dir "/skills"); close(dir "/skills") }
+  }
+  printf "" > (dir "/from.tsv")
+  for (a = 1; a <= n; a++) {
+    i = cand[a]
+    if ((Lkey[i] == "model" || Lkey[i] == "skills") && !Llock[i] && ST[i] == "used") print Lkey[i] "\t" Llayer[i] "\t" Lloc[i] >> (dir "/from.tsv")
+  }
+  close(dir "/from.tsv")
+}
 # safe relative name inside a layer copy: no leading /, no .. segment
 function inside(r) { return r != "" && substr(r, 1, 1) != "/" && r !~ /(^|\/)\.\.(\/|$)/ }
 function readfile(f,   ln, out, n) {
@@ -686,6 +733,7 @@ function resolve(c,   i, j, n, d, x, y, cand, cs, lowrank, rmax, rloc, rlay, k, 
       continue
     }
     if (rmax >= 0 && cs[a] < rmax && !((k in LOCKR) && Lrank[i] <= LOCKR[k])) { ST[i] = "dropped"; WHY[i] = "dropped by @replace in " rlay " at " rloc; continue }
+    if (c ~ /^agents\// && (AWHY = agentwhy(k, Ltype[i], Ldata[i])) != "") { ST[i] = "skipped"; WHY[i] = AWHY; continue }
     if (isperm(k) && Lrank[i] > lowrank) { ST[i] = "skipped"; WHY[i] = "a permission key is taken from the component's lowest layer only (rank " lowrank ")"; continue }
     if ((k in LOCKR) && Lrank[i] > LOCKR[k]) { ST[i] = "skipped"; WHY[i] = "locked by " Llayer[LOCKI[k]] " at " Lloc[LOCKI[k]]; continue }
     if (!(k in KT)) { KT[k] = Ltype[i]; KTI[k] = i; KORDER[++nkeys] = k }
@@ -804,6 +852,7 @@ function resolve(c,   i, j, n, d, x, y, cand, cs, lowrank, rmax, rloc, rlay, k, 
     print k "\t" KT[k] "\t" out >> (base "/keys.tsv")
   }
   close(base "/keys.tsv")
+  if (c ~ /^agents\//) agentout(c, n, cand)
   printf "N\t%s\n", c
 }
 BEGIN {
@@ -831,6 +880,9 @@ END {
     if (c !~ /^[a-z]+\/[A-Za-z0-9_-][A-Za-z0-9._-]*$/) { CURLAYER = Slayer[j]; problem(Sloc[j], "a " cp[1] " component is " cp[1] "/<name>, one segment: [" Sraw[j] "]"); SEEN[c] = 1; continue }
     SEEN[c] = 1; COMP[++nc] = c
   }
+  # agents the participant asked for (1.6.0): resolved even when only a pattern names them
+  na = split(AGENTNAMES, an, " ")
+  for (x = 1; x <= na; x++) { c = "agents/" an[x]; if (!(c in SEEN)) { SEEN[c] = 1; COMP[++nc] = c } }
   for (a = 2; a <= nc; a++) { t = COMP[a]; for (b = a - 1; b >= 1 && COMP[b] > t; b--) COMP[b + 1] = COMP[b]; COMP[b + 1] = t }
   for (x = 1; x <= nc; x++) resolve(COMP[x])
   # refs: each with its target, ok or dangling
@@ -935,10 +987,23 @@ cmd_resolve() {
   done
 
   printf '%s\n' "$WHOAMI" > "$stage/whoami"
+  # The agents whose definitions are resolved even when only a pattern names them (1.6.0):
+  # COMPONENT_REGISTRY_AGENTS (the participant's listed agents), else the current view's names, so
+  # a refresh keeps them. A name that is not a handle is left out, said once.
+  local names='' nm
+  if [ -n "${COMPONENT_REGISTRY_AGENTS+x}" ]; then names="${COMPONENT_REGISTRY_AGENTS//,/ }"
+  elif [ -f "$STATE_DIR/view/agent-names" ]; then names="$(tr '\n' ' ' < "$STATE_DIR/view/agent-names")"
+  fi
+  : > "$stage/agent-names"
+  for nm in $names; do
+    if [[ "$nm" =~ ^[A-Za-z0-9_-]+$ ]]; then grep -qx -- "$nm" "$stage/agent-names" || printf '%s\n' "$nm" >> "$stage/agent-names"
+    else warn "COMPONENT_REGISTRY_AGENTS: '$nm' is not an agent name (letters, digits, - and _); left out"; fi
+  done
   date -u +%Y-%m-%dT%H:%M:%SZ > "$stage/resolved"
   # The layers that stack their text without a heading (heading: false), space-separated.
   nohead=' '; for ((n = 1; n <= NL; n++)); do [ "${L_HD[n]:-true}" = false ] && nohead+="${L_ID[n]} "; done
-  out="$(awk -v WHO="$WHOAMI" -v KINDLIST="$KINDS" -v ACTIVE="$ACTIVE_KINDS" -v META="$stage/meta" -v NOHEAD="$nohead" "$RESOLVER" "$TMP/manifest")"; rc=$?
+  out="$(awk -v WHO="$WHOAMI" -v KINDLIST="$KINDS" -v ACTIVE="$ACTIVE_KINDS" -v META="$stage/meta" -v VIEW="$stage" -v NOHEAD="$nohead" \
+    -v AGENTNAMES="$(tr '\n' ' ' < "$stage/agent-names")" "$RESOLVER" "$TMP/manifest")"; rc=$?
   [ "$rc" -eq 0 ] || { rm -rf "$stage"; die 1 "the merge failed (awk exit $rc); the resolved view was left as it was"; }
   local nres=0 nskip=0 nprob=0
   while IFS=$'\t' read -r line c layer loc key why; do
@@ -1024,6 +1089,10 @@ cmd_explain() {
   [ -z "$s" ] || printf '\nOther lines:\n%s\n' "$s"
   s="$(awk -F'\t' -v c="$NP_COMP" -v k="$NP_KEY" '$1 == c && $6 == "dangling" && (k == "" || $2 == k) { printf "  %s:%s -> %s (%s)\n", $1, $2, $3, $7 }' "$VIEW/meta/refs.tsv")"
   [ -z "$s" ] || printf '\nDangling refs:\n%s\n' "$s"
+  case "$NP_COMP" in agents/*)
+    printf '\nAgent definition (1.6.0): the participant reads model and skills from %s/%s/ at the agent'"'"'s start.\n' "$VIEW" "$NP_COMP"
+    echo "The agents list wins: its own skills, and a model chosen in the agent's CLI arguments, are kept." ;;
+  esac
   return 0
 }
 

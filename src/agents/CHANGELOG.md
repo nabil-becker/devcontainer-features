@@ -8,6 +8,16 @@ here; `task lint` fails when the entry is missing.
 
 Entries from 1.0.0 to 2.1.1 were generated from the commit history (`.github/scripts/changelog.py backfill`) and the "Changes in x.y.z" sections that NOTES.md used to hold; most list commit subjects as written then; the newest of them is in wording for users.
 
+## [2.5.0] - 2026-11-20
+
+### Added
+
+- The participant component 1.3.0 (shared with `claude-code` `participants: true`): with the
+  `component-registry` Feature (1.6.0) installed, an agent's start reads the agent's definition from
+  the registry: its model is handed to the CLI adapter in `AGENT_MODEL`, and its skills are the
+  agent's when the list entry has none; the agents list wins for every field it states. This Feature
+  stays deprecated; nothing to do.
+
 ## [2.4.0] - 2026-11-20
 
 ### Added

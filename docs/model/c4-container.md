@@ -50,6 +50,9 @@ launcher's share mount and who-you-are path, and the `http` and cloud-folder sou
 OpenBao gives a `git` source its secret today, through `dcf-secret`.
 Slice 4 (the first real use) adds the devhost Feature as a layer's owner: its image folder holds
 the generic `architecture-review`, which this repository's own layer stacks on.
+Release 2 (agent definitions, proposal section 6.1) adds one relation: the participant component
+reads an agent's definition from the resolved view and hands its model to the CLI adapter in
+`AGENT_MODEL` (the adapter's own contract, no new verb).
 
 ```mermaid
 flowchart LR
@@ -64,5 +67,7 @@ flowchart LR
   launcher -.->|later: mounts shares, sets whoami for| component-registry
   participant-component -->|runs resolve at start| component-registry
   component-registry -->|hands skills to| cli-adapter
+  participant-component -->|reads agent definitions from the view of| component-registry
+  participant-component -->|AGENT_MODEL to| cli-adapter
   devhost["devhost Feature: the generic layer"] -->|a path layer for| component-registry
 ```

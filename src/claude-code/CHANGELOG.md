@@ -8,6 +8,23 @@ here; `task lint` fails when the entry is missing.
 
 Entries from 1.0.0 to 1.9.7 were generated from the commit history (`.github/scripts/changelog.py backfill`) and the "Changes in x.y.z" sections that NOTES.md used to hold; most list commit subjects as written then; the newest of them is in wording for users.
 
+## [1.13.0] - 2026-11-20
+
+### Added
+
+- **The model of an agent definition.** `agent-adapter-claude` reads `AGENT_MODEL` (set by the
+  participant component 1.3.0 from the component registry's agent definition, component-registry
+  1.6.0) and passes it as `--model` on `start-bg`, `new` and `resume`, unless the agent's arguments
+  already hold `--model` (the agents list, or the extra arguments of one start, win). A wake stays
+  bare and keeps the options its session was saved with; a value that is not one word is left out
+  with a note.
+- With `participants: true`, the participant component 1.3.0: agent definitions from the component
+  registry at an agent's start (the model, and the skills when the list entry has none; see the
+  notes).
+
+Nothing to do: without the `component-registry` Feature, or with no agent definition, sessions start
+as before.
+
 ## [1.12.0] - 2026-11-20
 
 ### Added
