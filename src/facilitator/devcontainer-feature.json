@@ -1,0 +1,97 @@
+{
+  "id": "facilitator",
+  "version": "0.1.0",
+  "name": "facilitator (conversations between agents of any vendor, on AGNTCY)",
+  "description": "The communication layer between agents of any vendor running in the devcontainer: an MCP server each participant's CLI starts (receive, reply, say, who), deterministic routing by @handle with hop, budget and rate limits, every message a sign-packet packet in a register-engine conversation register, verified back to the human who began it. Runs on the AGNTCY Agent Directory (dirctl) and a SLIM node, on loopback, started as infrastructure; never starts, stops or configures a participant. Includes a local-model wrapper for any OpenAI-compatible endpoint and a terminal chat.",
+  "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/facilitator",
+  "licenseURL": "https://github.com/nabil-becker/devcontainer-features/blob/main/LICENSE",
+  "options": {
+    "installTaskfile": {
+      "type": "boolean",
+      "default": true,
+      "description": "Install this Feature's Taskfile into /usr/local/share/go-task/includes.d so its tasks appear under facilitator: in a root Taskfile that includes /usr/local/share/go-task/features.yml (the go-task Feature)."
+    },
+    "backend": {
+      "type": "string",
+      "enum": ["agntcy", "lean"],
+      "default": "agntcy",
+      "description": "What carries the directory and delivery: agntcy (the AGNTCY Agent Directory and SLIM). lean (packet-relay) is refused in this version: not yet, slice 5. FACILITATOR_BACKEND overrides."
+    },
+    "dirVersion": {
+      "type": "string",
+      "proposals": ["1.9.1", "latest"],
+      "default": "1.9.1",
+      "description": "The AGNTCY Directory release (dirctl) to install, verified against the SHA-256 pinned in install.sh. latest means the version pinned here (1.9.1); another version needs its checksums added."
+    },
+    "slimVersion": {
+      "type": "string",
+      "proposals": ["3.4.6", "latest"],
+      "default": "3.4.6",
+      "description": "The slimctl release (which carries the SLIM node: slimctl slim start) to install, verified against the SHA-256 pinned in install.sh. latest means the version pinned here (3.4.6)."
+    },
+    "hopLimit": {
+      "type": "string",
+      "default": "6",
+      "description": "Participant-to-participant deliveries since the human's message before the conversation pauses (/continue resumes). FACILITATOR_HOP_LIMIT."
+    },
+    "messageBudget": {
+      "type": "string",
+      "default": "40",
+      "description": "Messages a conversation may hold between two /continue before participants' messages are held. FACILITATOR_MESSAGE_BUDGET."
+    },
+    "rateLimit": {
+      "type": "string",
+      "default": "10",
+      "description": "Messages a participant may write in a minute; one more is refused. FACILITATOR_RATE_LIMIT."
+    },
+    "receiveWaitSeconds": {
+      "type": "string",
+      "default": "300",
+      "description": "How long the MCP tool receive blocks when no wait_seconds is given. FACILITATOR_RECEIVE_WAIT_SECONDS."
+    },
+    "staleSeconds": {
+      "type": "string",
+      "default": "900",
+      "description": "After this long without a receive a participant counts as not attached: its messages wait, and the sender is told. FACILITATOR_STALE_SECONDS."
+    },
+    "facilitatorBudget": {
+      "type": "string",
+      "default": "20",
+      "description": "Model calls the facilitator application may make per conversation. Read and shown; no model is called before slice 6. FACILITATOR_BUDGET."
+    },
+    "identity": {
+      "type": "boolean",
+      "default": false,
+      "description": "Also run AGNTCY Identity (needs Docker). Refused in this version when true: not yet, slice 7."
+    },
+    "autostart": {
+      "type": "boolean",
+      "default": true,
+      "description": "postStartCommand starts the infrastructure (facilitator infra up: the Directory, the SLIM node, the facilitator's ssh-agent), never fatally. Participants are never started. FACILITATOR_AUTOSTART."
+    },
+    "dirOnlineCheck": {
+      "type": "boolean",
+      "default": false,
+      "description": "Check each pushed agent record against the online OASF schema server (schema.oasf.outshift.com); off, records are checked offline (the Directory's policy.operations: []). FACILITATOR_DIR_ONLINE_CHECK."
+    }
+  },
+  "installsAfter": [
+    "ghcr.io/nabil-becker/devcontainer-features/go-task",
+    "ghcr.io/devcontainers/features/python",
+    "ghcr.io/devcontainers/features/common-utils",
+    "ghcr.io/nabil-becker/devcontainer-features/register-engine",
+    "ghcr.io/nabil-becker/devcontainer-features/openbao"
+  ],
+  "containerEnv": {
+    "FACILITATOR_HOME": "/var/lib/devcontainer-features/facilitator"
+  },
+  "mounts": [
+    {
+      "source": "facilitator-state-${devcontainerId}",
+      "target": "/var/lib/devcontainer-features/facilitator",
+      "type": "volume"
+    }
+  ],
+  "postCreateCommand": "facilitator-setup",
+  "postStartCommand": "facilitator-start"
+}

@@ -1,0 +1,60 @@
+{
+  "pinned_version": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "facilitator": {
+        "dirVersion": "1.9.1",
+        "slimVersion": "3.4.6"
+      }
+    },
+    "remoteUser": "vscode"
+  },
+  "with_tasks": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "go-task": {},
+      "facilitator": {}
+    },
+    "remoteUser": "vscode"
+  },
+  "no_taskfile": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "facilitator": {
+        "installTaskfile": false
+      }
+    },
+    "remoteUser": "vscode"
+  },
+  "autostart_off": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "facilitator": {
+        "autostart": false
+      }
+    },
+    "remoteUser": "vscode"
+  },
+  "limits": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "facilitator": {
+        "hopLimit": "3",
+        "messageBudget": "12",
+        "rateLimit": "5",
+        "receiveWaitSeconds": "60",
+        "staleSeconds": "120",
+        "facilitatorBudget": "4",
+        "dirOnlineCheck": true
+      }
+    },
+    "remoteUser": "vscode"
+  },
+  "jester_flow": {
+    "image": "mcr.microsoft.com/devcontainers/base:debian",
+    "features": {
+      "facilitator": {}
+    },
+    "remoteUser": "vscode"
+  }
+}

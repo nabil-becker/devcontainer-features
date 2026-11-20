@@ -163,6 +163,47 @@ flowchart TB
 - Backlog outside the repository has no `backlog_ids` check in `devhost-verify`.
 - Sources: `local-features/devhost/NOTES.md` ("Records outside git"), `docs/ledger/README.md`, `docs/adr/0054-*.md`, `docs/adr/0043-*.md`.
 
+### 3a. A facilitator conversation
+
+The facilitator Feature (0.1.0): a message from a person or a participant becomes a signed entry in the
+conversation's register, a route entry by the facilitator, and a delivery over SLIM; everything on
+loopback, in one container.
+
+```mermaid
+flowchart LR
+  subgraph external-zone-ct["Container (loopback only)"]
+    human["you: facilitator chat / send"]
+    claude["Claude Code participant"]
+    mcp["facilitator mcp (per participant)"]
+    wrapper["facilitator model (local model)"]
+    endpoint["OpenAI-compatible endpoint"]
+    reg["Register store: volume facilitator-state/conversations/<id>"]
+    slim["SLIM node 127.0.0.1:46357"]
+    dir["AGNTCY Directory 127.0.0.1:8888"]
+    agent["facilitator ssh-agent"]
+  end
+  subgraph external-zone-bao["OpenBao"]
+    keys["facilitator/keys/<handle>, facilitator/slim"]
+  end
+  claude -->|stdio MCP: receive, reply, say, who| mcp
+  human -->|signed message| reg
+  mcp -->|signed message, status| reg
+  wrapper -->|signed message, status| reg
+  wrapper -->|chat/completions| endpoint
+  reg -->|route entry by facilitator| reg
+  mcp -->|packets of a delivery| slim
+  human -->|packets of a delivery| slim
+  slim -->|wakes receive| wrapper
+  slim -->|wakes receive| mcp
+  keys -->|private key through a pipe| agent
+  agent -->|signs| reg
+  human -.->|register: OASF record| dir
+```
+
+- The record is the truth: a delivery that SLIM cannot make (the participant is not attached) waits in the record and is found by `receive`.
+- Keys fall back to mode-600 files in the volume when OpenBao is not ready (0.1.0 exception).
+- Sources: `src/facilitator/NOTES.md`, `docs/proposals/facilitator-agent.md` sections 4 and 5.
+
 ## 4. Secrets
 
 OpenBao keeps every secret the collection creates. `ssh-agent` only uses keys. The design is

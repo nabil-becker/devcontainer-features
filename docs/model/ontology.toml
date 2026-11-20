@@ -1247,6 +1247,11 @@ type = "product"
 term = "Participant component"
 summary = "The component holding the former agents Feature's code; claude-code installs it with participants: true."
 
+[facilitator]
+type = "product"
+term = "Facilitator"
+summary = "The Feature that runs the Directory and SLIM node on loopback and routes @handle messages between named agents, keeping the conversation as a signed record."
+
 [deprecation]
 type = "mechanism"
 term = "Deprecation"

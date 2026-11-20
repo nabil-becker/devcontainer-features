@@ -122,6 +122,25 @@ The lease lives at `/var/lib/devcontainer-features/agents/leases/<name>/holder`,
 volume, so a rebuild frees every lease. When liveness cannot be told, the lease is never taken
 over by guess. A forced release is `task agents:release` with `--force`. Per-agent Linux users and a broader boundary are (proposed): [agent-linux-user](../proposals/agent-linux-user.md).
 
+## A facilitator delivery (an A2A task)
+
+From `src/facilitator/NOTES.md` (facilitator 0.1.0). One task per participant a message is routed to,
+in the message's `route` entry; the states are A2A's, written as `status` entries by the assignee.
+
+```mermaid
+stateDiagram-v2
+  [*] --> held_by_guard: hop limit, budget or pause (no task; a notice)
+  held_by_guard --> submitted: a human's /continue routes it again
+  [*] --> submitted: route entry (the assignee attached, or a notice that it waits)
+  submitted --> working: the assignee's receive takes it
+  working --> completed: the assignee replies, or takes its next turn
+  completed --> [*]
+```
+
+The infrastructure (the Directory, the SLIM node, the ssh-agent) is started by `facilitator infra up`
+(post-start when `autostart`), idempotently, and never restarted on a crash; participants are never
+started by the Feature.
+
 ## A ledger review cycle
 
 ```mermaid

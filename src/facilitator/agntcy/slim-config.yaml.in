@@ -1,0 +1,22 @@
+# The SLIM node the facilitator Feature starts (facilitator infra up): one dataplane server on loopback,
+# basic auth with a generated secret (SLIM_PASSWORD, from OpenBao or the volume), no TLS (loopback only;
+# the node logs a warning about it). Rendered into $FACILITATOR_HOME/slim/config.yaml at every up.
+tracing:
+  log_level: info
+runtime:
+  n_cores: 2
+  thread_name: "slim-data-plane"
+  drain_timeout: 10s
+services:
+  slim/0:
+    node_id: facilitator
+    dataplane:
+      servers:
+        - endpoint: "127.0.0.1:@SLIM_PORT@"
+          tls:
+            insecure: true
+          auth:
+            type: basic
+            username: facilitator
+            password: ${env:SLIM_PASSWORD}
+      clients: []

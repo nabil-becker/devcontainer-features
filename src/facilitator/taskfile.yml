@@ -1,0 +1,66 @@
+# Tasks contributed by the facilitator Feature (namespace: facilitator). Each runs the facilitator
+# command; extra arguments after --, for example:
+#   task facilitator:send -- --text '@jester tell @domain-expert-one a joke'
+version: '3'
+
+tasks:
+  version:
+    desc: 'Show what is installed: the facilitator, dirctl, slimctl, slim-bindings, register-engine and sign-packet versions, Python and the backend.'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['facilitator version {{.CLI_ARGS}}']
+
+  check:
+    desc: 'One line per part (Python, OpenSSH, the state folder, the record, the binaries, OpenBao, the Directory, SLIM and the ssh-agent with any port''s owner, each participant registered and last seen); exit non-zero when not ready. No secret is printed. -- --json for machines.'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['facilitator check {{.CLI_ARGS}}']
+
+  setup:
+    desc: 'Re-run the post-create setup: the state folder in the volume and the facilitator''s own key (idempotent, never fatal).'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['facilitator-setup']
+
+  infra:
+    desc: 'The infrastructure the Feature owns, on loopback: -- up | down | status | logs [agent|dir|slim]. up is idempotent; nothing is restarted on a crash (status says so). Participants are never started.'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['facilitator infra {{.CLI_ARGS | default "status"}}']
+
+  participants:
+    desc: 'The participant list (.devcontainer/participants.yml, alias agents.yml) and the humans of facilitator.yml, and who is registered.'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['facilitator participants {{.CLI_ARGS}}']
+
+  register:
+    desc: 'Register participants: -- <handle>... | --all. Makes each one''s key (OpenBao, or the 0.1.0 fallback file), token and OASF record in the Directory.'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['facilitator register {{.CLI_ARGS}}']
+
+  status:
+    desc: 'Who is attached (last receive) and each conversation''s messages, hops, budget and pause.'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['facilitator status {{.CLI_ARGS}}']
+
+  chat:
+    desc: 'Talk to the agents: one line in, the transcript followed live; @handle routes, /new group a b, /new direct a, /continue, /who, /quit. -- <conversation> to resume one.'
+    dir: '{{.USER_WORKING_DIR}}'
+    interactive: true
+    cmds: ['facilitator chat {{.CLI_ARGS}}']
+
+  send:
+    desc: 'A message, for scripts: -- --text ''...'' [--conv <id>] [--to <handle>]. With no --conv, a conversation is made with the handles it names. -- --json for machines.'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['facilitator send {{.CLI_ARGS}}']
+
+  transcript:
+    desc: 'A conversation: -- --conv <id> [--json] (every message with its routes, task states and notices).'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['facilitator transcript {{.CLI_ARGS}}']
+
+  verify:
+    desc: 'Walk a conversation''s messages back to the human who began each chain, checking every signature and link: -- --conv <id> [--message <id>] [--format json]. Exit 0 a good chain, 1 a break, 2 bad usage.'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['facilitator verify {{.CLI_ARGS}}']
+
+  snippet:
+    desc: 'How to attach a participant''s CLI: -- <handle>. Prints the MCP entry (for Claude Code, its claude mcp add command), the token line for its harness and the persona sentence. The Feature never edits a CLI''s config.'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['facilitator snippet {{.CLI_ARGS}}']
