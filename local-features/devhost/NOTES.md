@@ -170,6 +170,37 @@ Every script reads the same variables; a repository overrides them in `container
 
 `devhost-redact [file ...]` applies both lists to files in place (stdin to stdout without files); `devhost-condense <transcript.jsonl> <offset> [session|sub]` prints a stretch, for reading what a back read.
 
+## The registry layer (1.16.0)
+
+The Feature also installs a layer for the component registry (ADR-0063; the component-registry
+Feature): `share/registry/` goes to `/usr/local/share/devhost/registry/` with the rest of
+`share/`. It holds `devhost.reg` and the generic half of the `architecture-review` skill (the
+review method, front matter included), so a repository can adapt the skill in a layer of its own
+instead of editing the copy `devhost-init` made. A repository with the component-registry
+Feature names it first in `.devcontainer/registry.yml`:
+
+```yaml
+layers:
+  - id: devhost
+    at: /
+    required: true
+    heading: false    # component-registry 1.3.0: the method reads as one skill
+    sources:
+      - { kind: path, path: /usr/local/share/devhost/registry }
+  - id: mine          # the repository's own layer: "## In this repository" and its checks
+    at: /
+    required: true
+    heading: false
+    sources:
+      - { kind: path, path: .devcontainer/registry/repo }
+```
+
+The skill `devhost-init` copies (`templates/claude/skills/architecture-review/SKILL.md`) is
+unchanged in role: it is the generic method followed by this collection's own "In this
+repository" section, byte for byte what the two layers resolve to here (both `heading: false`,
+component-registry 1.3.0; `task test:registry-first-use`). Switching consumers over from the
+copy to the layer is proposed, not done (`src/component-registry/NOTES.md`, "Switch-over").
+
 ## The iteration package
 
 `devhost-package` (`share/python/package.py`, `task devhost:package -- --iteration N --paper <file>`) assembles the seed an iteration exports (ADR 0008, `docs/proposals/iteration-package.md`): into a fresh folder (default `docs/iterations/export/`) it puts `papers/` (every paper of the package received, byte for byte and checked against that package's `PACKAGE.md`; the papers kept in `docs/iterations/papers/`; the new paper), `foundation/<repository path>` (the files named in the manifest `docs/iterations/foundation.txt`: one repository-relative path per line, `#` comments, `!path` for a file copied untouched) and a `PACKAGE.md` listing the iteration, the date, every file with its sha256 and kind (paper, original, derived, foundation) and the instruction that the folder is the source of the next export and must not be deleted. Front matter (iteration, date, sources) is added only to a Markdown file that has none and is not a received paper or an original; the script never touches a non-Markdown file. It refuses with exit 2, writing nothing, a missing manifest or entry, an output folder that is not empty, a received package with no `PACKAGE.md` and a received paper that is gone or whose hash changed. The package is a seed: it also carries, untouched (kind `original`), the seed's `README.md` at the root (`--readme`, default `docs/iterations/seed/README.md`), `starter/` (`--starter`, default `docs/iterations/starter`) and `skills/<name>/` for each skill of `--skills` (default `plant-a-seed,drop-a-seed,ledger-review,shutdown-devhost,restart-devhost`, copied from `.claude/skills/`); a missing one is refused. Options `--received`, `--papers`, `--foundation`, `--readme`, `--starter`, `--skills`, `--out`, `--date`. The judgement work (the closing interview, the paper, what is foundational) is the `drop-a-seed` skill, which hands its `journalist.md` brief to a writing subagent; both ship like the other skills by `devhost-init` (`.claude/skills/drop-a-seed/`).

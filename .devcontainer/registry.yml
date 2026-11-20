@@ -1,0 +1,23 @@
+# The component registry's layer list for this repository's devhost (ADR-0063; the
+# component-registry Feature, src/component-registry/NOTES.md). Layers only, lowest first; who you
+# are (COMPONENT_REGISTRY_WHOAMI) is never in this file: containerEnv in devcontainer.json takes it
+# from the workstation's .devcontainer/.env, with a role default.
+layers:
+  # The devhost Feature's generic layer: the review method of architecture-review, the same in
+  # every repository that installs the devhost Feature (local-features/devhost/share/registry).
+  - id: devhost
+    at: /
+    required: true
+    heading: false          # the method reads as one skill, no "## Layer devhost" line
+    sources:
+      - kind: path
+        path: /usr/local/share/devhost/registry
+  # This repository's layer: its NFR file, the CLI capability matrix, NFR-13 and its placement
+  # layers, stacked on the method (.devcontainer/registry/repo, committed).
+  - id: devcontainer-features
+    at: /
+    required: true
+    heading: false          # "## In this repository" is its own heading
+    sources:
+      - kind: path
+        path: .devcontainer/registry/repo

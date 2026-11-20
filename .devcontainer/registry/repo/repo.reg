@@ -1,0 +1,5 @@
+; This repository's registry layer (the component registry, ADR-0063; the layer list is
+; .devcontainer/registry.yml): what is specific to devcontainer-features, stacked on the devhost
+; Feature's generic layer. Relative sections with `at: /`: they apply to everyone working here.
+[skills/architecture-review]
+body:text = @file architecture-review.md
