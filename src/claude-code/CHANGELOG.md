@@ -8,6 +8,21 @@ here; `task lint` fails when the entry is missing.
 
 Entries from 1.0.0 to 1.9.7 were generated from the commit history (`.github/scripts/changelog.py backfill`) and the "Changes in x.y.z" sections that NOTES.md used to hold; most list commit subjects as written then; the newest of them is in wording for users.
 
+## [1.11.0] - 2026-11-20
+
+### Added
+
+- **With `participants: true`, the agent list can be `.devcontainer/participants.yml`** (top-level key
+  `participants:` or `agents:`), or the path in `PARTICIPANTS_FILE`; `agents.yml` and `AGENTS_FILE` keep
+  working as aliases. `PARTICIPANTS_FILE` beats `AGENTS_FILE`, and `participants.yml` beats `agents.yml`
+  when neither variable is set; when both are present you get one warning naming both and
+  `participants.yml` is read. An entry may carry `attachment` (`mcp`, `pump` or `model`), `description`
+  and `skills` without an unknown-key warning; `agents list --json` passes them through. This is the
+  participant component 1.1.0 (see its changelog). See "Participants" in the notes.
+
+Nothing to do: an existing `agents.yml` behaves exactly as before. To adopt the new name, rename the
+file to `participants.yml` (and `agents:` to `participants:`) and delete `agents.yml`.
+
 ## [1.10.0] - 2026-11-19
 
 ### Added

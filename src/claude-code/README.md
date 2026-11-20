@@ -84,6 +84,31 @@ page exists.
 
 Off (the default), nothing of the component is installed and the post-start hook prints nothing.
 
+### The list file and the keys (component 1.1.0, claude-code 1.11.0)
+
+The list is `.devcontainer/participants.yml`, the name to use, with `participants:` as the top-level
+key. `.devcontainer/agents.yml` and the key `agents:` are aliases and keep working. One key per file.
+
+| Where | Which file |
+| --- | --- |
+| `PARTICIPANTS_FILE` set (task variable, root `.env`, `.devcontainer/.env`, environment, in that order) | that path |
+| else `AGENTS_FILE` set | that path |
+| neither set, `participants.yml` exists | `.devcontainer/participants.yml` |
+| otherwise | `.devcontainer/agents.yml` |
+
+When both variables are set, or both default files exist, the first is read and the second ignored,
+with one warning on stderr that names both. A repository that only has `agents.yml` or `AGENTS_FILE`
+gets no warning and no change. An entry may also carry:
+
+- `attachment: mcp | pump | model`, how another Feature (the facilitator) attaches the participant;
+  any other value is refused with the file and line;
+- `description: "..."`, a line of text;
+- `skills: [a, b]` (or one `- value` per line), a list of names.
+
+The `agents` command reads and checks them and does nothing else with them. `agents list --json`
+prints them after `sessionName` (`"attachment"`, `"description"`, `"skills"` as an array), only for
+entries that set them, so the output of an older list is unchanged.
+
 ## Deprecated in 1.7.0: claude-host, claude-fleet, claude-host-pin
 
 The [`agents`](../agents) Feature replaces them: a repository lists its agents in
@@ -447,6 +472,21 @@ the CLI) contend for `.claude.json.lock`; run one.
 
 ## Changes
 
+### [1.11.0] - 2026-11-20
+
+#### Added
+
+- **With `participants: true`, the agent list can be `.devcontainer/participants.yml`** (top-level key
+  `participants:` or `agents:`), or the path in `PARTICIPANTS_FILE`; `agents.yml` and `AGENTS_FILE` keep
+  working as aliases. `PARTICIPANTS_FILE` beats `AGENTS_FILE`, and `participants.yml` beats `agents.yml`
+  when neither variable is set; when both are present you get one warning naming both and
+  `participants.yml` is read. An entry may carry `attachment` (`mcp`, `pump` or `model`), `description`
+  and `skills` without an unknown-key warning; `agents list --json` passes them through. This is the
+  participant component 1.1.0 (see its changelog). See "Participants" in the notes.
+
+Nothing to do: an existing `agents.yml` behaves exactly as before. To adopt the new name, rename the
+file to `participants.yml` (and `agents:` to `participants:`) and delete `agents.yml`.
+
 ### [1.10.0] - 2026-11-19
 
 #### Added
@@ -461,12 +501,6 @@ Nothing to do: with `participants` left at `false` the Feature installs what it 
 #### Changed
 
 - The README now has a "How it fits" section with a small diagram of how the Feature sits in a devcontainer, a table of the data it keeps and the storage tier of each, and "Used in" links to the reference architectures that use it. Where the Feature has them, its best practices and anti-patterns are in the README too. Documentation only: the Feature itself is unchanged. Nothing to do.
-
-### [1.9.8] - 2026-11-03
-
-#### Added
-
-- This changelog: every release of this Feature now has an entry here, written for its users, and the Feature's README shows the latest three under "Changes". Nothing to do.
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/claude-code/CHANGELOG.md).
 

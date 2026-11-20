@@ -10,13 +10,13 @@ source dev-container-features-test-lib
 
 check "agents on PATH" command -v agents
 check "agents is root-owned" bash -c "[ \"\$(stat -c %U \"\$(command -v agents)\")\" = root ]"
-check "the Feature version is baked" grep -qx '2.2.0' /usr/local/share/agents-feature/version
+check "the Feature version is baked" grep -qx '2.3.0' /usr/local/share/agents-feature/version
 check "the sessionName option is baked (default {handle})" grep -qx '{handle}' /usr/local/share/agents-feature/session-name
 check "the state folder is there and sticky" bash -c "[ \"\$(stat -c %a /var/lib/devcontainer-features/agents)\" = 1777 ]"
 check "the lease folder is there, open to every user, not sticky" bash -c "[ \"\$(stat -c %a /var/lib/devcontainer-features/agents/leases)\" = 777 ]"
 check "taskfile registered" test -f /usr/local/share/go-task/includes.d/agents.yml
 check "no adapter of its own" bash -c "! ls /usr/local/bin/agent-adapter-* 2>/dev/null"
-check "the command is the participant component's (2.2.0)" bash -c "[ \"\$(readlink -f \"\$(command -v agents)\")\" = /usr/local/lib/dcf-participant/agents.sh ]"
+check "the command is the participant component's (2.3.0)" bash -c "[ \"\$(readlink -f \"\$(command -v agents)\")\" = /usr/local/lib/dcf-participant/agents.sh ]"
 check "installed by the agents Feature" grep -qx agents /usr/local/lib/dcf-participant/installed-by
 
 # shellcheck disable=SC2016  # expansion is meant to happen inside the inner bash
