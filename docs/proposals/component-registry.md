@@ -280,6 +280,94 @@ Utility skills, shipped by the Feature in its own base layer:
 A skill already used in a conversation keeps its old text until it is used in a new conversation;
 `/registry-refresh` says so.
 
+### 6.1 Agent definitions (release 2)
+
+*Built (2026-11-20): `component-registry` 1.6.0, participant 1.3.0, `claude-code` 1.13.0.* Decision
+14 left agent definitions for later; this is the smallest form that makes the layering useful: an
+organization, a department or a person choosing the model an agent runs on and the skills it is
+said to use, without editing any repository's agents list.
+
+**What it is in the tree.** A component `agents/<name>`, where `<name>` is the agent's handle in
+the agents list (one segment). Its keys are fields, each merged by its type (section 3.3), and
+only two are read:
+
+| Key | Type | Merge | What it does |
+|---|---|---|---|
+| `model` | `value` | the strongest line | the model the agent's CLI runs on: one word of letters, digits and `. _ : / @ [ ] -`, at most 100 characters |
+| `skills` | `list` | combined, `!item` removes | the skills the agent is said to use (what `agents list --json` shows the facilitator): a skill name or `ref:skills/<name>` (a ref is checked like any ref, so `explain skills/<name> --uses` lists the agents that name it) |
+
+```
+; layer corp (at /Corp): every agent a layer or the list names
+[/Corp/agents/*]
+model:value = sonnet
+; layer dept (at /Corp/MyDepartment)
+[agents/reviewer]
+model:value = opus
+skills:list = ref:skills/architecture-review, ref:skills/diagrams
+; layer mine (at /Corp/MyDepartment/team/me)
+[/**/agents/reviewer]
+skills:list = !ref:skills/diagrams
+```
+
+For `W = /Corp/MyDepartment/team/me`, `agents/reviewer` resolves to `model` `opus` and `skills`
+`architecture-review`; every other agent to `model` `sonnet`.
+
+**Which agents.** A component exists when a section names it literally, as for skills; a pattern
+(`[agents/*]`) applies to those. So that a department's `[agents/*]` reaches the agents of a
+repository that no layer names, the participant hands `resolve` the names of the listed agents
+(the variable `COMPONENT_REGISTRY_AGENTS`, comma-separated); `resolve` resolves `agents/<name>`
+for each of them too, and keeps the names in the view, so `/registry-refresh` keeps them. An
+older `dcf-registry` ignores the variable.
+
+**What the registry never sets.** Everything else of an agent stays the agents list's, and a line
+for it is skipped and reported (`explain` shows why): the identity and address (`name`,
+`identity`, `session-name`, `registry-path`), where and how it runs (`cli`, `kind`, `folder`,
+`lifecycle`, `lease`, `default`, `attachment`), and anything that can widen a permission: `args`
+(a flag such as a permission mode), `definition` (a CLI profile carries its own tools) and every
+permission key (`allowed-tools`, `disallowed-tools`, `permission*`). Rule 3 (permissions from the
+lowest layer only) is not enough for an agent, since the lowest layer is not the repository; an
+agent definition carries no permission key at all.
+
+**Precedence: the agents list wins.** The committed agents list stays the source of which agents
+exist and of every field it states; the registry fills only what the list leaves open:
+
+- `skills`: the list entry's `skills:` wins; the registry's are used only when the entry has none.
+- `model`: the list has no model key; a model chosen in the agent's CLI arguments (the list's
+  `args`, or the extra arguments of one start) wins over the registry's. Which flag chooses the
+  model is a CLI fact, so the adapter decides (NFR-13): the participant hands the registry's
+  model to the adapter, and the adapter passes it only when the arguments choose none.
+
+The reverse (the registry over the list) was weighed and not chosen: a layer outside the
+repository would change a reviewed, committed decision without a trace in the repository, and an
+organization's broad `[agents/*]` would override a repository's choice for one agent, since a
+higher layer beats specificity (rule 2). With the list winning, a resolve that fails or a
+registry that is absent never changes what a repository already runs. What it costs: an
+organization cannot force a model on a repository that names one (a lock does not beat the
+list); the open question below.
+
+**How the participant reads it.** At an agent's start (section 6), after `resolve` for the agent's
+`registry-path` (else `COMPONENT_REGISTRY_WHOAMI`), the participant reads the resolved view's
+`agents/<name>/`, and only when the view's `whoami` is the agent's path (else one line says the
+view is another path's and the agent starts without registry fields). The view is
+machine-readable: `model` (one line), `skills` (one name per line) and `from.tsv` (field, layer,
+`source:file:line` of each line used). The model reaches the adapter in the environment variable
+`AGENT_MODEL` on every call about that agent, as `AGENT_SESSION_NAME` does (ADR-0041), empty on
+every other call; an adapter that does not read it starts its CLI on the CLI's own default model
+(NFR-12; no `supports` capability, a variable cannot answer exit 3). Claude Code's adapter
+(`claude-code` 1.13.0) passes `--model` on `start-bg`, `new` and `resume` unless the arguments
+hold `--model`; a woken session keeps the options it was saved with (a wake is always bare). A
+failed or slow resolve, or no layer list, leaves the agent as the list says.
+
+**How it shows.** `dcf-registry explain agents/<name>` shows an agent definition like any
+component: each field with every line, its layer and version, the skipped lines and why (a field
+the registry never sets, a model that is not one word). `agents check` shows the fields that came
+from the registry and from which layers (`model opus (registry: dept)`), and says when the list's
+own value wins.
+
+**Open question for the Operator.** Should a locked registry value beat the agents list (an
+organization forcing an approved model)? This release says no: the list wins for every field it
+states, and a lock orders layers only.
+
 ## 7. Why not the CLI's own distribution (NFR-9)
 
 Claude Code already distributes skills through plugins and marketplaces and orders managed, user
