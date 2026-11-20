@@ -187,11 +187,11 @@ over the committed project copy:
 flowchart LR
   devhost["devhost layer (rank 1)<br/>/usr/local/share/devhost/registry<br/>the review method"]
   repo["devcontainer-features layer (rank 2)<br/>.devcontainer/registry/repo<br/>In this repository"]
-  component-registry["dcf-registry resolve<br/>body:text stacked, ## Layer id per layer"]
+  component-registry["dcf-registry resolve<br/>body:text stacked, heading: false (no ## Layer line)<br/>name, description into the front matter"]
   personal["Claude Code personal skills<br/>architecture-review (wins the name)"]
   project["committed .claude/skills/architecture-review<br/>(project; kept until the switch-over)"]
   devhost --> component-registry
   repo --> component-registry
   component-registry -->|handover, skills verb| personal
-  personal -.->|equal but for the headings, task test:registry-first-use| project
+  personal -.->|byte-equal, task test:registry-first-use| project
 ```

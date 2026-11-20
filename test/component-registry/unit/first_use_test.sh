@@ -7,11 +7,9 @@
 # folder) into a temp state folder and compares the resolved skills/architecture-review/SKILL.md
 # with the committed .claude/skills/architecture-review/SKILL.md.
 #
-# The comparison: byte for byte after removing only the per-layer headings `## Layer <id>` that
-# text stacking adds (proposal 3.3 rule 5), each with the blank line before it when there is one.
-# Byte equality without that step is impossible by design (the resolver writes a heading for every
-# layer, the first one included); the test asserts the headings are the only difference, so a
-# change to either layer or to the committed skill that is not made in both fails here.
+# The comparison is byte for byte: both layers say heading: false (component-registry 1.3.0), so
+# text stacking adds no "## Layer <id>" line, and a change to either layer or to the committed skill
+# that is not made in both fails here.
 # Also: the devhost template copy equals the committed skill (no guard kept them identical), and the
 # generic layer alone resolves to a usable skill that names nothing of this repository.
 # Part of `task lint` (`task test:registry-first-use`).
@@ -40,17 +38,6 @@ mkdir -p "$T/share"; cp -R "$src/base" "$T/share/base"
 export PATH="$bin:$PATH" COMPONENT_REGISTRY_SHARE_DIR="$T/share"
 unset COMPONENT_REGISTRY_WHOAMI COMPONENT_REGISTRY_FILE COMPONENT_REGISTRY_WHOAMI_TASK_VAR COMPONENT_REGISTRY_FILE_TASK_VAR
 
-# strip_headings <file> <id>...: the file without the `## Layer <id>` lines, each with the blank
-# line before it when there is one
-strip_headings() {
-  local f="$1"; shift
-  awk -v ids="$*" '
-    BEGIN { n = split(ids, a, " "); for (i = 1; i <= n; i++) H["## Layer " a[i]] = 1 }
-    ($0 in H) { if (held) held = 0; next }
-    { if (held) print ""; held = 0; if ($0 == "") { held = 1; next } print }
-    END { if (held) print "" }' "$f"
-}
-
 # A repository in the temp folder with the real layer list and this repository's real layer; only
 # the devhost layer's installed path is pointed at its source folder (the container is not rebuilt).
 repo="$T/repo"; mkdir -p "$repo/.devcontainer/registry"
@@ -66,13 +53,9 @@ contains "resolve reports no skipped or unreadable line" "$out" "(0 line(s) skip
 resolved="$T/state/view/skills/architecture-review/SKILL.md"
 check "the resolved skill is there" yes "$([ -f "$resolved" ] && echo yes || echo no)"
 
-check "the headings are the layers' (devhost, devcontainer-features), in that order" \
-  "## Layer devhost|## Layer devcontainer-features" "$(grep '^## Layer ' "$resolved" | paste -sd'|' -)"
-if cmp -s "$resolved" "$skill"; then exact=yes; else exact=no; fi
-check "byte for byte it differs only by design (the per-layer headings)" no "$exact"
-strip_headings "$resolved" devhost devcontainer-features > "$T/stripped.md"
-if cmp -s "$T/stripped.md" "$skill"; then same=yes; else same=no; diff -u "$skill" "$T/stripped.md" | head -40; fi
-check "the resolved skill equals the committed skill after removing only the layer headings" yes "$same"
+check "no layer heading is written (heading: false on both layers)" 0 "$(grep -c '^## Layer ' "$resolved")"
+if cmp -s "$resolved" "$skill"; then same=yes; else same=no; diff -u "$skill" "$resolved" | head -40; fi
+check "the resolved skill equals the committed skill byte for byte" yes "$same"
 if cmp -s "$template" "$skill"; then tsame=yes; else tsame=no; fi
 check "the devhost template copy equals the committed skill" yes "$tsame"
 

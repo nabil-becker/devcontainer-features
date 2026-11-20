@@ -8,6 +8,7 @@ layers:
   - id: devhost
     at: /
     required: true
+    heading: false          # the method reads as one skill, no "## Layer devhost" line
     sources:
       - kind: path
         path: /usr/local/share/devhost/registry
@@ -16,6 +17,7 @@ layers:
   - id: devcontainer-features
     at: /
     required: true
+    heading: false          # "## In this repository" is its own heading
     sources:
       - kind: path
         path: .devcontainer/registry/repo

@@ -548,5 +548,38 @@ out="$(dcf-registry remember -- "x" 2>&1)"; rc=$?
 check "remember into a folder that is not there: exit 1" 1 "$rc"
 contains "remember into a folder that is not there: says create it" "$out" "is not there; create it"
 
+# ---------------------------- release 1.3.0: heading: false and front matter values ----
+new_case heading
+ha="$(layer ha)"; hb="$(layer hb)"; hc="$(layer hc)"
+mkdir -p "$ha/s"
+printf '%s\n' '---' 'name: s' 'description: the base says' 'allowed-tools: Read' '---' '' '# S' '' 'Base text.' > "$ha/s/SKILL.md"
+printf '[skills/s]\nbody:text = @file s/SKILL.md\n' > "$ha/a.reg"
+printf '[skills/s]\nbody:text = Middle one.\nbody:text = Middle two.\ndescription:value = the middle says\n' > "$hb/b.reg"
+printf '[skills/s]\nbody:text = Top text.\ndescription:value = the top says\n' > "$hc/c.reg"
+printf 'layers:\n  - id: ha\n    at: /\n    heading: false\n    sources:\n      - { kind: path, path: "%s" }\n  - id: hb\n    at: /\n    heading: false\n    sources:\n      - { kind: path, path: "%s" }\n  - id: hc\n    at: /\n    sources:\n      - { kind: path, path: "%s" }\n' "$ha" "$hb" "$hc" > .devcontainer/registry.yml
+dcf-registry resolve --as /x >/dev/null 2>&1; check "heading: resolve succeeds" 0 $?
+expected="$(printf '%s\n' '---' 'name: s' 'description: the top says' 'allowed-tools: Read' '---' '' '# S' '' 'Base text.' '' 'Middle one.' '' 'Middle two.' '' '## Layer hc' '' 'Top text.')"
+check "heading: false stacks without a heading, keeps the blank line after the front matter; a layer without it keeps its heading; description is the strongest value" "$expected" "$(cat "$(V)/skills/s/SKILL.md")"
+out="$(dcf-registry explain skills/s:body --as /x 2>&1)"
+contains "heading: false: explain still names each line's layer (ha)" "$out" "used         ha@"
+contains "heading: false: explain still names each line's layer (hb)" "$out" "used         hb@"
+contains "front matter: explain says the value is written into the front matter" "$(dcf-registry explain skills/s:description --as /x 2>&1)" "written into SKILL.md's front matter"
+sed -i 's/    heading: false/    heading: maybe/' .devcontainer/registry.yml
+out="$(dcf-registry resolve --as /x 2>&1)"; rc=$?
+check "heading: a value other than true or false is refused (exit 2)" 2 "$rc"
+contains "heading: the refusal names the line" "$out" "heading is true or false"
+# Front matter values: added when the body has none, name too; a permission key stays the lowest's.
+nc_="$(layer nofm)"
+printf '[skills/t]\nbody:text = Just text.\nname:value = t\n' > "$nc_/a.reg"
+mkdir -p "$nc_/u"; printf '%s\n' '---' 'name: u' 'description: >' '  folded over' '  two lines' 'model: x' '---' '' 'U.' > "$nc_/u/SKILL.md"
+printf '[skills/u]\nbody:text = @file u/SKILL.md\ndescription:value = one line now\n' >> "$nc_/a.reg"
+printf '[skills/t]\ndescription:value = added on top\nname:value = t2\n[skills/s]\nallowed-tools:value = Bash\n' > "$hc/d.reg"
+printf 'layers:\n  - id: ha\n    at: /\n    heading: false\n    sources:\n      - { kind: path, path: "%s" }\n  - id: nofm\n    at: /\n    heading: false\n    sources:\n      - { kind: path, path: "%s" }\n  - id: hc\n    at: /\n    heading: false\n    sources:\n      - { kind: path, path: "%s" }\n' "$ha" "$nc_" "$hc" > .devcontainer/registry.yml
+dcf-registry resolve --as /x >/dev/null 2>&1; check "front matter: resolve succeeds" 0 $?
+check "front matter: made for a body without one, name and description from the strongest values" "$(printf '%s\n' '---' 'name: t2' 'description: added on top' '---' '' 'Just text.')" "$(cat "$(V)/skills/t/SKILL.md")"
+contains "front matter: a permission key in a higher layer is not written (the lowest's stays)" "$(sed -n 4p "$(V)/skills/s/SKILL.md")" "allowed-tools: Read"
+lacks "front matter: allowed-tools is never set from a value" "$(cat "$(V)/skills/s/SKILL.md")" "Bash"
+check "front matter: a multi-line description is replaced whole, the keys after it kept" "$(printf '%s\n' '---' 'name: u' 'description: one line now' 'model: x' '---' '' 'U.')" "$(cat "$(V)/skills/u/SKILL.md")"
+
 echo "component-registry unit: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

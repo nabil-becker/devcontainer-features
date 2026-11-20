@@ -6,6 +6,25 @@ of the Feature and whether they must act (an option renamed, a task removed, a r
 The version in `devcontainer-feature.json` is bumped in the same change that adds its entry
 here; `task lint` fails when the entry is missing.
 
+## [1.3.0] - 2026-11-20
+
+### Added
+
+- **`heading: false` on a layer.** A layer in the layer list can say `heading: false`: its `text`
+  lines (a skill's `body`) are stacked with no `## Layer <id>` heading, after one blank line, so
+  layers written to read as one document resolve to exactly that document. `explain` still names
+  each line's layer. The default, `true`, is the 1.2.0 rendering, unchanged. A value other than
+  `true` or `false` is refused with its line.
+- **Front matter values.** A skill's `name:value` and `description:value` are written into the
+  front matter of its `SKILL.md` (the strongest line wins, as for any value): the key's line is
+  replaced, or added, or a front matter is made for a body that has none. Only these two keys; a
+  permission key such as `allowed-tools` still comes from the lowest layer. `explain` says the
+  value was written into the front matter.
+
+Nothing to do: a layer list and `.reg` files of 1.2.0 resolve as before, except that a skill whose
+higher layer already set `name` or `description` values now has them in its front matter. Rebuild
+to get it.
+
 ## [1.2.0] - 2026-11-20
 
 ### Added

@@ -2,7 +2,7 @@
 
 Status: accepted by the Operator 2026-11-19, with the architecture review's changes applied (the
 last section) and the rule that no layer widens a permission; ADR-0063. Supersedes the
-[personalization](personalization.md) proposal. Slice 1 (section 12) is built: `component-registry` 1.0.0 (2026-11-20); slice 2 is built: `component-registry` 1.1.0, `claude-code` 1.12.0, participant 1.2.0, ADR-0064 (2026-11-20); slice 3 is built: `component-registry` 1.2.0 (`http`, one `.reg` file, auth settings only; archives not read) and `cloud-folder` 1.4.0 (`cloud-folder` source) (2026-11-20); slice 4 is built: `architecture-review` in two layers, `devhost` 1.16.0 and this repository's layer, equal to the committed skill after removing the `## Layer <id>` headings only, the switch-over proposed (section 12) (2026-11-20); slice 5 is not.
+[personalization](personalization.md) proposal. Slice 1 (section 12) is built: `component-registry` 1.0.0 (2026-11-20); slice 2 is built: `component-registry` 1.1.0, `claude-code` 1.12.0, participant 1.2.0, ADR-0064 (2026-11-20); slice 3 is built: `component-registry` 1.2.0 (`http`, one `.reg` file, auth settings only; archives not read) and `cloud-folder` 1.4.0 (`cloud-folder` source) (2026-11-20); slice 4 is built: `architecture-review` in two layers, `devhost` 1.16.0 and this repository's layer, byte-equal to the committed skill with `component-registry` 1.3.0 (`heading: false`, front matter values), the switch-over waiting for the Operator (section 12) (2026-11-20); slice 5 is not.
 
 Who this serves: the Operator, who rules on it and is its first user (their own layer: "I'm
 colour-blind, adapt diagram colours"); a consumer's maintainer, who points devhosts at an
@@ -119,9 +119,12 @@ layers:
     sources:
       - { kind: path, path: .registry-mine }    # git-ignored in this repository, the person's choice
     writable: true                               # /registry-remember appends here
+    heading: false                               # (1.3.0) its text stacks without "## Layer mine"
 ```
 
-Several sources in one layer merge in their listed order. A `required` layer that has never been
+Several sources in one layer merge in their listed order. `heading` (component-registry 1.3.0,
+`true` by default) says whether the layer's `text` lines are stacked under a `## Layer <id>`
+heading (rule 5 of 3.3). A `required` layer that has never been
 fetched stops `resolve`; any other unreachable source falls back to its last good layer copy, and
 `resolve` and `explain` say so.
 
@@ -155,6 +158,12 @@ component `skills/diagrams`. A skill's files sit beside the `.reg` file and are 
 or by a `files:value = @dir <folder>` entry; a higher layer's file of the same name replaces the
 lower one, and `body:text` stacks on the skill's `SKILL.md` text.
 
+**Front matter values** (component-registry 1.3.0). A skill's `name:value` and
+`description:value` are written into the front matter of its `SKILL.md` (the first `body` block's
+`---` block): the key's line is replaced, or added, or a front matter is made. Only these two
+keys; every other front matter line stays the lowest block's, so a permission key keeps the lowest
+layer's.
+
 ### 3.3 Resolve: the match rule and precedence
 
 For a person (or agent) at path `W`:
@@ -171,7 +180,10 @@ For a person (or agent) at path `W`:
    is skipped and reported.
 5. **Merge by type.** `value` and `ref`: the strongest line wins. `list`: items are combined from
    the weakest line to the strongest, each `!item` removing what came before. `text`: all lines
-   stacked from the lowest layer to the highest, each under a heading naming its layer.
+   stacked from the lowest layer to the highest, each layer's under a heading naming it, unless
+   the layer list says `heading: false` for that layer (component-registry 1.3.0: then one blank
+   line only; `explain` still names each line's layer). A skill's `name` and `description` values
+   go into its `SKILL.md` front matter (3.2).
    `@replace` on a section drops every weaker line for that component.
 6. **Never fails on content.** A skipped line is reported by `resolve` and shown by `explain`;
    `resolve` fails only for a missing `required` layer or a missing `COMPONENT_REGISTRY_WHOAMI`.
@@ -440,19 +452,19 @@ classDiagram
    *Built (2026-11-20).* The devhost Feature's layer (`/usr/local/share/devhost/registry`, the
    review method) and this repository's (`.devcontainer/registry/repo`, "In this repository": the
    NFR file, the capability matrix, NFR-13, the placement layers), listed in
-   `.devcontainer/registry.yml`; `task test:registry-first-use` checks the resolved skill equals
-   the committed one after removing only the two `## Layer <id>` headings. Three gaps found
-   (`src/component-registry/NOTES.md`, "First real use"): `text` only appends, layer by layer, so
-   the committed skill was restated once as the method followed by "In this repository"; front
-   matter comes from the lowest block only (a `description:value` is never written into
-   `SKILL.md`); a heading is written for every layer, the first included.
-   *Switch-over, for the Operator to decide:* the resolved copy already wins the name (personal
-   over project), so after the next rebuild this repository runs it. Switching over removes
+   `.devcontainer/registry.yml`, both `heading: false`; `task test:registry-first-use` checks the
+   resolved skill equals the committed one **byte for byte**. Gaps found and ruled on by the
+   Operator (2026-11-20; `src/component-registry/NOTES.md`, "First real use"): a heading for every
+   layer, and front matter from the lowest block only, are fixed in component-registry 1.3.0
+   (`heading: false`; `name` and `description` values in the front matter); `text` only appends,
+   layer by layer, so the committed skill was restated once as the method followed by "In this
+   repository", and the restated skill is the reference (no anchors or slots).
+   *Switch-over: waits for the Operator.* The resolved copy already wins the name (personal over
+   project), so after the next rebuild this repository runs it. Switching over removes
    `.claude/skills/architecture-review/` (a session without the registry then has no review) and
    decides what consumers of the devhost Feature get: the template `devhost-init` copies made the
    base layer only, or consumers adding the component-registry Feature and a layer list naming the
-   devhost layer. A heading option (a layer that stacks without `## Layer <id>`) would make the
-   two byte-equal; it is not built.
+   devhost layer.
 5. **Later releases**: the `db` source; agent definitions, prompts and settings as component kinds.
 
 ## 13. Relation to other work

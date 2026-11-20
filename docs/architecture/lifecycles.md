@@ -202,7 +202,7 @@ devhost 1.16.0). A committed skill passes through these states; this repository'
 ```mermaid
 stateDiagram-v2
   [*] --> committed: .claude/skills/<name> only
-  committed --> both: layers written, checked equal (but for the headings)
+  committed --> both: layers written, checked byte-equal
   both --> resolved_only: switch-over (proposed): the committed copies removed
   both --> committed: the layers removed from the list
 ```

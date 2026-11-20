@@ -184,19 +184,21 @@ layers:
   - id: devhost
     at: /
     required: true
+    heading: false    # component-registry 1.3.0: the method reads as one skill
     sources:
       - { kind: path, path: /usr/local/share/devhost/registry }
   - id: mine          # the repository's own layer: "## In this repository" and its checks
     at: /
     required: true
+    heading: false
     sources:
       - { kind: path, path: .devcontainer/registry/repo }
 ```
 
 The skill `devhost-init` copies (`templates/claude/skills/architecture-review/SKILL.md`) is
 unchanged in role: it is the generic method followed by this collection's own "In this
-repository" section, word for word what the two layers resolve to here (without the
-`## Layer <id>` headings; `task test:registry-first-use`). Switching consumers over from the
+repository" section, byte for byte what the two layers resolve to here (both `heading: false`,
+component-registry 1.3.0; `task test:registry-first-use`). Switching consumers over from the
 copy to the layer is proposed, not done (`src/component-registry/NOTES.md`, "Switch-over").
 
 ## The iteration package
