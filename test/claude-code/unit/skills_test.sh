@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Docker-free tests of agent-adapter-claude's `skills` verb (claude-code 1.11.0, ADR-0064): the
+# Docker-free tests of agent-adapter-claude's `skills` verb (claude-code 1.12.0, ADR-0064): the
 # component registry's resolved skills (COMPONENT_REGISTRY_SKILLS) copied into Claude Code's
 # personal skills folder ($CLAUDE_CONFIG_DIR/skills), each copy marked owned by the registry
 # (.component-registry); supports lists it; the folder created even when there is nothing to copy

@@ -12,7 +12,7 @@ here; `task lint` fails when the entry is missing.
 
 - **The adapter step** (ADR-0064): `dcf-registry handover <cli> [<name> <folder>]` hands the resolved
   view's skills to that CLI's adapter (`agent-adapter-<cli> skills`, when its `supports` lists it;
-  Claude Code: `claude-code` 1.11.0); a CLI that cannot take them is named and keeps its plain skills.
+  Claude Code: `claude-code` 1.12.0); a CLI that cannot take them is named and keeps its plain skills.
   The participant component (`claude-code` with `participants: true`) runs resolve and the hand-over
   at every agent's start, with an agent's own `registry-path` from the agents list.
 - **The three utility skills, in a built-in base layer**: `/registry-refresh` (resolve now for the

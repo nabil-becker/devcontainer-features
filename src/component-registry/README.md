@@ -195,7 +195,7 @@ when it is listed, runs `agent-adapter-<cli> skills <name> <folder>` with the cu
 `skills/` folder in `COMPONENT_REGISTRY_SKILLS`, holding `resolve.lock` shared so no resolve swaps the
 view out mid-copy. The adapter copies the skills into the CLI's own skills folder, marks its copies,
 removes those no longer resolved and never touches anything else (ADR-0064 amends the CLI contract
-of ADR-0037; Claude Code: `claude-code` 1.11.0). No adapter, or one without the verb: exit 3 and one
+of ADR-0037; Claude Code: `claude-code` 1.12.0). No adapter, or one without the verb: exit 3 and one
 line, the CLI keeps its plain skills (NFR-12).
 
 At an agent's start the participant component (`claude-code` with `participants: true`) runs
@@ -289,7 +289,7 @@ every skipped line with its reason, and `resolved N component(s) for <W>`.
 
 - `go-task` for the tasks; git in the image for `git` sources; `openbao` for `dcf-secret` (a
   source secret without it: the source says so and reads without one).
-- `claude-code` 1.11.0: its adapter's `skills` verb, and with `participants: true` the participant
+- `claude-code` 1.12.0: its adapter's `skills` verb, and with `participants: true` the participant
   component, which resolves and hands over at every agent's start. Neither is required: without
   them `handover` and `refresh` say no adapter takes skills.
 - Later releases: `cloud-folder` (its source), the launcher (a file share mount,
@@ -331,7 +331,7 @@ else; the `.reg` grammar and the layer list keys only grow within 1.x.
 
 - **The adapter step** (ADR-0064): `dcf-registry handover <cli> [<name> <folder>]` hands the resolved
   view's skills to that CLI's adapter (`agent-adapter-<cli> skills`, when its `supports` lists it;
-  Claude Code: `claude-code` 1.11.0); a CLI that cannot take them is named and keeps its plain skills.
+  Claude Code: `claude-code` 1.12.0); a CLI that cannot take them is named and keeps its plain skills.
   The participant component (`claude-code` with `participants: true`) runs resolve and the hand-over
   at every agent's start, with an agent's own `registry-path` from the agents list.
 - **The three utility skills, in a built-in base layer**: `/registry-refresh` (resolve now for the

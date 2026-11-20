@@ -37,14 +37,14 @@ over a project skill of the same name. No other CLI in the capability matrix
    skill it does not own, never writes the repository's skills folder (a resolved skill can carry
    personal facts), creates the skills folder even when there is nothing to copy, and is idempotent.
    Exit 3 or not listed: the CLI keeps its plain skills, and the caller says so in one line.
-2. **Claude Code implements it first** (`agent-adapter-claude`, claude-code 1.11.0): the folder is
+2. **Claude Code implements it first** (`agent-adapter-claude`, claude-code 1.12.0): the folder is
    `$CLAUDE_CONFIG_DIR/skills` (the Feature's volume, tier 4, owner-only), the marker
    `.component-registry`; `claude-code-setup` creates the folder at every create.
 3. **The registry calls the adapter, not the other way round**: `dcf-registry handover <cli>
    [<name> <folder>]` checks `supports`, holds the resolve lock shared so the view is not swapped
    mid-copy, and calls the verb. `dcf-registry refresh` resolves and hands over to every adapter on
    PATH.
-4. **The participant component resolves at an agent's start** (participant 1.1.0): when
+4. **The participant component resolves at an agent's start** (participant 1.2.0): when
    `dcf-registry` is on PATH and the layer list exists, `agents start` and `agents up` run `resolve`
    (`--as` the agents list entry's new optional key `registry-path`, else
    `COMPONENT_REGISTRY_WHOAMI`) and then `handover` before the CLI starts. A failure never blocks the
@@ -94,4 +94,4 @@ repository is tier 1, shared and committed.
 
 | Date | Change |
 |---|---|
-| 2026-11-20 | First draft, with slice 2 of the component registry (`component-registry` 1.1.0, `claude-code` 1.11.0, participant 1.1.0). |
+| 2026-11-20 | First draft, with slice 2 of the component registry (`component-registry` 1.1.0, `claude-code` 1.12.0, participant 1.2.0). |

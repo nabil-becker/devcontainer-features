@@ -15,7 +15,7 @@ set -u
 
 dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 dcf-persist --label claude-code "$dir"
-# The personal skills folder (1.11.0): created now, even empty, so a session started later watches
+# The personal skills folder (1.12.0): created now, even empty, so a session started later watches
 # it and picks up skills the component registry hands over mid-session (agent-adapter-claude
 # skills); a skills folder that did not exist when a session started needs /reload-skills.
 [ -d "$dir" ] && { [ -d "$dir/skills" ] || (umask 077 && mkdir -p "$dir/skills") 2>/dev/null || echo "claude-code-setup: could not create $dir/skills"; }

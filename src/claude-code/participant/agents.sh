@@ -14,10 +14,13 @@
 #   agents leases [--json]
 #   agents release <name> [--force]
 #
-# The list (the agent list) is a small YAML file, .devcontainer/agents.yml unless
-# AGENTS_FILE names another path, relative to the repository root (the nearest folder at
-# or above the current one holding .devcontainer). AGENTS_FILE is resolved like every
-# setting (NFR-6): the task variable (passed here as AGENTS_FILE_TASK_VAR), then the root
+# The list (the agent list) is a small YAML file, .devcontainer/participants.yml (1.1, the name to
+# use) or the older .devcontainer/agents.yml; PARTICIPANTS_FILE or AGENTS_FILE names another path
+# (PARTICIPANTS_FILE wins; with neither set participants.yml wins when both files exist, with a
+# warning naming both). The top-level key is participants: or agents: (not both). A path is
+# relative to the repository root (the nearest folder at or above the current one holding
+# .devcontainer). Each of the two settings is resolved like every setting (NFR-6): the task
+# variable (passed here as AGENTS_FILE_TASK_VAR, PARTICIPANTS_FILE_TASK_VAR), then the root
 # .env, then .devcontainer/.env, then the environment, then the default.
 #
 #   agents:
@@ -32,8 +35,11 @@
 #       definition: host      # the CLI's agent profile; read and checked, not passed yet
 #       default: true         # at most one: what `agents` with no name starts
 #       session-name: "{machine} {handle}"   # the name the CLI shows (2.1); default: the option
+#       attachment: mcp       # mcp | pump | model: how the facilitator attaches it (1.1); validated,
+#       description: "..."    #   passed through in list --json with description and skills
+#       skills: [review]      #   (a flow or block list), never acted on by agents itself
 #       registry-path: /Corp/MyDepartment/team/review   # who this agent is in the component
-#                             # registry (participant 1.1.0); default COMPONENT_REGISTRY_WHOAMI
+#                             # registry (participant 1.2.0); default COMPONENT_REGISTRY_WHOAMI
 #
 # The session name (2.1). The handle (the name above) stays the address: it keys the lease, the
 # record and every verb. The session name is the label the CLI shows, rendered from a template
@@ -70,7 +76,7 @@
 # is not started (the adapter's optional `hint <name> <folder>` says how to resume by hand),
 # and nothing turns into a fresh session in its place.
 #
-# The component registry (participant 1.1.0, ADR-0064). When dcf-registry (the component-registry
+# The component registry (participant 1.2.0, ADR-0064). When dcf-registry (the component-registry
 # Feature) is on PATH and its layer list exists, starting an agent first runs
 # `dcf-registry resolve` (--as the entry's registry-path, else COMPONENT_REGISTRY_WHOAMI) and then
 # `dcf-registry handover <cli> <name> <folder>`, which calls the adapter's optional `skills` verb
@@ -113,37 +119,63 @@ dotenv_value() {
     sed "s/[[:space:]]\{1,\}#.*\$//; s/[[:space:]]*\$//; s/^\"\(.*\)\"\$/\1/; s/^'\(.*\)'\$/\1/"
 }
 
-# resolve_file: ROOT, AF (as given), AF_SOURCE (where it came from), AF_ABS.
-# Task hands its variable over as AGENTS_FILE_TASK_VAR; Task fills that variable from
-# .env and the environment too, so it counts as a task variable only when it differs
-# from both.
-resolve_file() {
-  local tv="${AGENTS_FILE_TASK_VAR:-}" ev="${AGENTS_FILE:-}" dv='' dsrc='' f v
-  ROOT="$(find_root)"
+# setting_value <name>: SV and SV_SRC, the value of a file setting and where it came from, resolved
+# like every setting (NFR-6): the task variable (<name>_TASK_VAR; it counts only when it differs
+# from the .env and the environment, which Task fills it from too), the root .env, then
+# .devcontainer/.env, then the environment. SV is empty when none sets it.
+setting_value() {
+  local name="$1" tv ev dv='' dsrc='' f v
+  eval "tv=\"\${${name}_TASK_VAR:-}\" ev=\"\${${name}:-}\""
   for f in "$ROOT/.env" "$ROOT/.devcontainer/.env"; do
-    if [ -f "$f" ] && v="$(dotenv_value "$f" AGENTS_FILE)"; then
+    if [ -f "$f" ] && v="$(dotenv_value "$f" "$name")"; then
       dv="$v" dsrc="${f#"$ROOT"/}"
       break
     fi
   done
+  SV='' SV_SRC=''
   if [ -n "$tv" ] && [ "$tv" != "$dv" ] && [ "$tv" != "$ev" ]; then
-    AF="$tv" AF_SOURCE='the task variable AGENTS_FILE'
+    SV="$tv" SV_SRC="the task variable $name"
   elif [ -n "$dv" ]; then
-    AF="$dv" AF_SOURCE="AGENTS_FILE in $dsrc"
+    SV="$dv" SV_SRC="$name in $dsrc"
   elif [ -n "$ev" ]; then
-    AF="$ev" AF_SOURCE='AGENTS_FILE in the environment'
+    SV="$ev" SV_SRC="$name in the environment"
+  fi
+}
+
+# resolve_file: ROOT, AF (as given), AF_SOURCE (where it came from), AF_ABS. Which file (1.1):
+#   1. PARTICIPANTS_FILE, when set (it wins over AGENTS_FILE; both set is a warning naming both);
+#   2. AGENTS_FILE, when set (the old name, kept as an alias);
+#   3. neither set: .devcontainer/participants.yml when it exists, else .devcontainer/agents.yml
+#      (both files existing is a warning naming both; participants.yml wins).
+# A repository with only agents.yml (or only AGENTS_FILE) resolves, and says, exactly as before.
+resolve_file() {
+  local pv pf pdef=.devcontainer/participants.yml
+  ROOT="$(find_root)"
+  setting_value PARTICIPANTS_FILE; pv="$SV" pf="$SV_SRC"
+  setting_value AGENTS_FILE
+  if [ -n "$pv" ]; then
+    AF="$pv" AF_SOURCE="$pf"
+    [ -z "$SV" ] || [ -n "${FILE_WARNED:-}" ] || warn "both PARTICIPANTS_FILE ($pv, from $pf) and AGENTS_FILE ($SV, from $SV_SRC) are set; PARTICIPANTS_FILE wins and AGENTS_FILE is ignored; remove AGENTS_FILE."
+  elif [ -n "$SV" ]; then
+    AF="$SV" AF_SOURCE="$SV_SRC"
+  elif [ -f "$ROOT/$pdef" ]; then
+    AF="$pdef" AF_SOURCE='the default (PARTICIPANTS_FILE is not set)'
+    [ ! -f "$ROOT/$DEFAULT_FILE" ] || [ -n "${FILE_WARNED:-}" ] || warn "both $pdef and $DEFAULT_FILE exist; $pdef is read and $DEFAULT_FILE is ignored (merge them into $pdef and remove $DEFAULT_FILE)."
   else
     AF="$DEFAULT_FILE" AF_SOURCE='the default (AGENTS_FILE is not set)'
   fi
+  FILE_WARNED=1
   case "$AF" in /*) AF_ABS="$AF" ;; *) AF_ABS="$ROOT/$AF" ;; esac
 }
 
 # The parser: the YAML subset above, one record per line out:
 #   I <n> <line>             an entry starts
-#   K <n> <key> <value>      name, cli, kind, folder, lifecycle, identity, lease, definition, default, session-name, registry-path
+#   K <n> <key> <value>      name, cli, kind, folder, lifecycle, identity, lease, definition, default, session-name, attachment, description, registry-path
 #   L <n> <line>             the line of the entry's session-name key
 #   A <n>                    the entry has args
 #   G <n> <value>            one arg
+#   T <n>                    the entry has skills
+#   S <n> <value>            one skill
 #   W <line> <message>       a warning
 #   E <line> <message>       an error (the last line)
 # Written for mawk as well as gawk: no gensub, no regex intervals.
@@ -180,7 +212,7 @@ function scalar(s, what) {
 function emit_arg(v) {
   if (v == "") fail("an empty argument")
   if (v ~ /\t/) fail("a tab in an argument")
-  printf "G\t%d\t%s\n", n, v
+  printf "%s\t%d\t%s\n", listrec, n, v
 }
 # flow(s): a [a, "b c", 'd'] list on one line
 function flow(s,   v, ch) {
@@ -192,19 +224,19 @@ function flow(s,   v, ch) {
     if (ch == "]") { s = substr(s, 2); break }
     if (ch == "\"" || ch == "'") { quoted(s); v = QV; s = QR }
     else {
-      if (ch == "[" || ch == "{") fail("nested lists are not supported in args")
+      if (ch == "[" || ch == "{") fail("nested lists are not supported in " listkey)
       v = s; sub(/[,\]].*$/, "", v); s = substr(s, length(v) + 1); sub(/[ \t]+$/, "", v)
-      if (v == "") fail("an empty item in the args list")
+      if (v == "") fail("an empty item in the " listkey " list")
     }
     emit_arg(v)
     sub(/^[ \t]+/, "", s)
     ch = substr(s, 1, 1)
     if (ch == ",") { s = substr(s, 2); continue }
     if (ch == "]") { s = substr(s, 2); break }
-    fail("expected , or ] in the args list")
+    fail("expected , or ] in the " listkey " list")
   }
   sub(/^[ \t]+/, "", s)
-  if (s != "" && substr(s, 1, 1) != "#") fail("text after the args list")
+  if (s != "" && substr(s, 1, 1) != "#") fail("text after the " listkey " list")
 }
 function keyline(t,   k, v) {
   if (t !~ /^[A-Za-z0-9_-]+:/) fail("expected key: value")
@@ -216,12 +248,20 @@ function keyline(t,   k, v) {
   seen[n, k] = 1
   inargs = 0; skipping = 0
   if (k == "args") {
+    listrec = "G"; listkey = "args"
     printf "A\t%d\n", n
     if (v == "" || substr(v, 1, 1) == "#") { inargs = 1; return }
     if (substr(v, 1, 1) == "[") { flow(v); return }
     fail("args must be a list: args: [--model, opus], or one - value per line below it")
   }
-  if (k == "name" || k == "cli" || k == "kind" || k == "folder" || k == "lifecycle" || k == "identity" || k == "lease" || k == "definition" || k == "default" || k == "session-name" || k == "registry-path") {
+  if (k == "skills") {
+    listrec = "S"; listkey = "skills"
+    printf "T\t%d\n", n
+    if (v == "" || substr(v, 1, 1) == "#") { inargs = 1; return }
+    if (substr(v, 1, 1) == "[") { flow(v); return }
+    fail("skills must be a list: skills: [review, plan], or one - value per line below it")
+  }
+  if (k == "name" || k == "cli" || k == "kind" || k == "folder" || k == "lifecycle" || k == "identity" || k == "lease" || k == "definition" || k == "default" || k == "session-name" || k == "attachment" || k == "description" || k == "registry-path") {
     if (v == "" || substr(v, 1, 1) == "#") fail("'" k "' has no value")
     if (k == "session-name" && substr(v, 1, 1) == "{") fail("a session-name that starts with { must be quoted: session-name: \"{machine} {handle}\"")
     if (k == "lease" && substr(v, 1, 1) == "{") fail("lease is one word, not a map: lease: container (or none)")
@@ -234,7 +274,7 @@ function keyline(t,   k, v) {
   printf "W\t%d\tunknown key '%s' (ignored)\n", NR, k
   skipping = 1
 }
-BEGIN { n = 0; itemind = -1; keyind = -1; inagents = 0; sawagents = 0; skiptop = 0 }
+BEGIN { listrec = "G"; listkey = "args"; n = 0; itemind = -1; keyind = -1; inagents = 0; sawagents = 0; skiptop = 0 }
 {
   line = $0; sub(/\r$/, "", line)
   t = line; sub(/^ +/, "", t)
@@ -244,16 +284,17 @@ BEGIN { n = 0; itemind = -1; keyind = -1; inagents = 0; sawagents = 0; skiptop =
   if (i == 0) {
     if (t == "---") next
     inagents = 0; skiptop = 0; inargs = 0; skipping = 0
-    if (t ~ /^agents:/) {
-      if (sawagents) fail("'agents' appears twice")
-      sawagents = 1
-      v = plain(substr(t, 8)); sub(/^[ \t]+/, "", v)
+    if (t ~ /^agents:/ || t ~ /^participants:/) {
+      tk = t; sub(/:.*/, "", tk)
+      if (sawagents) fail(tk == topkey ? "'" tk "' appears twice" : "'agents' and 'participants' both appear; keep one list, under participants")
+      sawagents = 1; topkey = tk
+      v = plain(substr(t, length(tk) + 2)); sub(/^[ \t]+/, "", v)
       if (v == "") { inagents = 1; next }
       if (v ~ /^\[[ ]*\]$/) next
-      fail("agents must be a list of entries, one '- name: ...' each")
+      fail(tk " must be a list of entries, one '- name: ...' each")
     }
     if (t ~ /^[A-Za-z0-9_-]+:/) { k = t; sub(/:.*/, "", k); printf "W\t%d\tunknown top-level key '%s' (ignored)\n", NR, k; skiptop = 1; next }
-    fail("expected agents: at the top level")
+    fail("expected agents: (or participants:) at the top level")
   }
   if (skiptop) next
   if (!inagents) fail("unexpected indentation")
@@ -286,7 +327,7 @@ BEGIN { n = 0; itemind = -1; keyind = -1; inagents = 0; sawagents = 0; skiptop =
 }
 END {
   if (failed) exit 2
-  if (!sawagents) { printf "E\t0\tno agents: list in the file\n"; exit 2 }
+  if (!sawagents) { printf "E\t0\tno agents: list in the file (or a participants: list)\n"; exit 2 }
 }
 AWK
 
@@ -296,10 +337,10 @@ load_list() {
   local out rc rec a b c errs=0 i j
   resolve_file
   if [ ! -f "$AF_ABS" ]; then
-    die 2 "no agent list at $AF_ABS (from $AF_SOURCE); write one (see the agents Feature notes) or set AGENTS_FILE to its path relative to $ROOT."
+    die 2 "no agent list at $AF_ABS (from $AF_SOURCE); write one (see the agents Feature notes) (.devcontainer/participants.yml is the name to use) or set PARTICIPANTS_FILE (or AGENTS_FILE) to its path relative to $ROOT."
   fi
   out="$(awk "$PARSER" "$AF_ABS")"; rc=$?
-  N=0 NAME=() CLI=() KIND=() FOLDER=() ARGS=() LINE=() HASARGS=() LIFE=() IDENT=() LEASE=() DEF=() DFLT=() SNKEY=() SNSET=() SNLINE=() SNAME=() REGPATH=()
+  N=0 ATTACH=() DESCR=() SKILLS=() NAME=() CLI=() KIND=() FOLDER=() ARGS=() LINE=() HASARGS=() LIFE=() IDENT=() LEASE=() DEF=() DFLT=() SNKEY=() SNSET=() SNLINE=() SNAME=() REGPATH=()
   resolve_template
   while IFS=$'\t' read -r rec a b c; do
     case "$rec" in
@@ -308,10 +349,13 @@ load_list() {
            name) NAME[a]="$c" ;; cli) CLI[a]="$c" ;; kind) KIND[a]="$c" ;; folder) FOLDER[a]="$c" ;;
            lifecycle) LIFE[a]="$c" ;; identity) IDENT[a]="$c" ;; lease) LEASE[a]="$c" ;; definition) DEF[a]="$c" ;; default) DFLT[a]="$c" ;;
            session-name) SNKEY[a]="$c" SNSET[a]=1 ;;
+           attachment) ATTACH[a]="$c" ;; description) DESCR[a]="$c" ;;
            registry-path) REGPATH[a]="$c" ;;
          esac ;;
       L) SNLINE[a]="$b" ;;
       A) HASARGS[a]=1 ;;
+      T) ;;
+      S) if [ -n "${SKILLS[a]:-}" ]; then SKILLS[a]="${SKILLS[a]}"$'\x1f'"$b"; else SKILLS[a]="$b"; fi ;;
       G) if [ -n "${ARGS[a]:-}" ]; then ARGS[a]="${ARGS[a]}"$'\x1f'"$b"; else ARGS[a]="$b"; fi ;;
       W) warn "$AF:$a: $b" ;;
       E) die 2 "$AF:$a: $b" ;;
@@ -340,6 +384,10 @@ load_list() {
         warn "$at: name '${NAME[i]}' is already used by entry $j"; errs=$((errs + 1))
       fi
     done
+    case "${ATTACH[i]:-}" in
+      mcp | pump | model | '') ;;
+      *) warn "$at: attachment '${ATTACH[i]}' is none of mcp, pump or model"; errs=$((errs + 1)) ;;
+    esac
     check_v2 "$i" "$at"; errs=$((errs + V2ERRS))
     check_session_name "$i" "$at"; errs=$((errs + V2ERRS))
   done
@@ -389,7 +437,7 @@ check_v2() {
       esac
     done
   fi
-  # registry-path (participant 1.1.0): who this agent is in the component registry, an absolute
+  # registry-path (participant 1.2.0): who this agent is in the component registry, an absolute
   # path without wildcards, as dcf-registry --as takes it
   if [ -n "${REGPATH[i]:-}" ]; then
     REGPATH[i]="${REGPATH[i]%/}"; [ -n "${REGPATH[i]}" ] || REGPATH[i]=/
@@ -970,7 +1018,7 @@ definition_note() {
 }
 
 # --------------------------------------------------------- component registry ----
-# registry_step <i> (participant 1.1.0, ADR-0064): before the agent's CLI starts, resolve the
+# registry_step <i> (participant 1.2.0, ADR-0064): before the agent's CLI starts, resolve the
 # component registry for the agent (its registry-path, else COMPONENT_REGISTRY_WHOAMI) and hand the
 # resolved skills to its CLI (dcf-registry handover, which asks the adapter's supports for the
 # optional skills verb). Only when dcf-registry is on PATH; never blocks the start: every failure
@@ -1279,6 +1327,25 @@ settle() {
 
 json_str() { local s="$1"; s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; printf '"%s"' "$s"; }
 
+# json_extras <i>: closes the object of agent i; adds attachment, description and skills (the
+# participants keys) after sessionName only when the list sets them, so a list without them
+# prints exactly what it printed before.
+json_extras() {
+  local i="$1" sk x first=1
+  [ -z "${ATTACH[i]:-}" ] || printf ',"attachment":%s' "$(json_str "${ATTACH[i]}")"
+  [ -z "${DESCR[i]:-}" ] || printf ',"description":%s' "$(json_str "${DESCR[i]}")"
+  if [ -n "${SKILLS[i]:-}" ]; then
+    printf ',"skills":['
+    IFS=$'\x1f' read -r -a sk <<< "${SKILLS[i]}"
+    for x in "${sk[@]}"; do
+      [ -n "$first" ] || printf ','
+      first=''; printf '%s' "$(json_str "$x")"
+    done
+    printf ']'
+  fi
+  printf '}'
+}
+
 cmd_list() {
   local json='' i first=1 st a c named='' nw=4
   declare -A failed=()
@@ -1318,8 +1385,9 @@ cmd_list() {
         "$(json_str "${NAME[i]}")" "$(json_str "${KIND[i]}")" "$(json_str "${CLI[i]}")" \
         "$(json_str "${FOLDER[i]}")" "$(json_str "$state")" "$(json_str "$sid")" "$extras"
       [ "$state" = error ] && printf ',"error":%s' "$(json_str "${failed[${CLI[i]}]}")"
-      printf ',"lifecycle":%s,"identity":%s,"lease":%s,"carrier":%s,"sessionName":%s}' "$(json_str "${LIFE[i]}")" \
+      printf ',"lifecycle":%s,"identity":%s,"lease":%s,"carrier":%s,"sessionName":%s' "$(json_str "${LIFE[i]}")" \
         "$(json_str "${IDENT[i]}")" "$(json_str "$LO_LEASE")" "$(json_str "$LO_CARRIER")" "$(json_str "${SNAME[i]}")"
+      json_extras "$i"
     elif [ -n "$named" ]; then
       printf '%-16s %-*s %-10s %-10s %-8s %-9s %-24s %-38s %s\n' "${NAME[i]}" "$nw" "${SNAME[i]}" "${KIND[i]}" "${LIFE[i]}" "${CLI[i]}" "$st" \
         "$LO_TEXT" "${sid:--}" "${FOLDER[i]}"
@@ -1495,6 +1563,8 @@ check_line() {
     "${DEF[i]:+definition ${DEF[i]}, }" "${KIND[i]}" "${LIFE[i]}" "${IDENT[i]}" "${LEASE[i]}" "${FOLDER[i]}"
   if [ "${#CLIARGS[@]}" -eq 0 ]; then printf ' none'; else printf ' [%s]' "${CLIARGS[@]}"; fi
   [ "${SNAME[i]}" = "${NAME[i]}" ] || printf ', session name "%s"' "${SNAME[i]}"
+  [ -z "${ATTACH[i]:-}" ] || printf ', attachment %s' "${ATTACH[i]}"
+  [ -z "${SKILLS[i]:-}" ] || printf ', skills [%s]' "${SKILLS[i]//$'\x1f'/, }"
   [ -z "${REGPATH[i]:-}" ] || printf ', registry path %s' "${REGPATH[i]}"
   printf '\n'
 }

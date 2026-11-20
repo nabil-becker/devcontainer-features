@@ -8,15 +8,26 @@ here; `task lint` fails when the entry is missing.
 
 Entries from 1.0.0 to 2.1.1 were generated from the commit history (`.github/scripts/changelog.py backfill`) and the "Changes in x.y.z" sections that NOTES.md used to hold; most list commit subjects as written then; the newest of them is in wording for users.
 
-## [2.3.0] - 2026-11-20
+## [2.4.0] - 2026-11-20
 
 ### Added
 
-- The participant component 1.1.0 (shared with `claude-code` `participants: true`): with the
+- The participant component 1.2.0 (shared with `claude-code` `participants: true`): with the
   `component-registry` Feature installed, an agent's start resolves the component registry and hands
   the resolved skills to the agent's CLI, never blocking the start; the agents list key
   `registry-path` gives one agent its own who-you-are path. This Feature stays deprecated; nothing to
   do.
+
+## [2.3.0] - 2026-11-20
+
+### Changed
+
+- Carries the participant component 1.1.0, which also reads `.devcontainer/participants.yml`
+  (`participants:` or `agents:` as the top-level key, `PARTICIPANTS_FILE`) and accepts the entry keys
+  `attachment`, `description` and `skills`. This Feature is deprecated and takes no new work of its own;
+  this release only keeps its copy of the component equal to the one in `claude-code`. Nothing to do:
+  an existing `agents.yml` and `AGENTS_FILE` behave exactly as before. The new names are documented
+  under `claude-code`'s "Participants".
 
 ## [2.2.0] - 2026-11-19
 

@@ -42,7 +42,7 @@
 #     logs       claude logs <id> of its newest session
 #     hint       how to find and resume the agent by hand (when the list cannot be read)
 #     record     record the agent's running session as the agent's (or clear its record)
-#     skills     (1.11.0, optional in the contract, ADR-0064) the component registry's resolved
+#     skills     (1.12.0, optional in the contract, ADR-0064) the component registry's resolved
 #                skills, the folder in $COMPONENT_REGISTRY_SKILLS, copied into Claude Code's own
 #                (personal) skills folder, $CLAUDE_CONFIG_DIR/skills; see "skills" below
 #   agent-adapter-claude session-busy <id>     exit 0 when that session is mid-turn, 1 when not, 3 unknown
@@ -567,7 +567,7 @@ session_gone() {
 # seconds; and a new id that continues the conversation is recorded as the agent's session.
 config_dir() { printf '%s' "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"; }
 
-# skills (1.11.0): the component registry's resolved skills into Claude Code's personal skills
+# skills (1.12.0): the component registry's resolved skills into Claude Code's personal skills
 # folder, $CLAUDE_CONFIG_DIR/skills (the claude-code volume, tier 4; never the repository's
 # .claude/skills: a resolved skill can carry personal facts). dcf-registry hands the folder over in
 # COMPONENT_REGISTRY_SKILLS (a resolved view's skills/, one folder per skill). Each copy is marked

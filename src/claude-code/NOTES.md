@@ -54,6 +54,31 @@ page exists.
 
 Off (the default), nothing of the component is installed and the post-start hook prints nothing.
 
+### The list file and the keys (component 1.1.0, claude-code 1.11.0)
+
+The list is `.devcontainer/participants.yml`, the name to use, with `participants:` as the top-level
+key. `.devcontainer/agents.yml` and the key `agents:` are aliases and keep working. One key per file.
+
+| Where | Which file |
+| --- | --- |
+| `PARTICIPANTS_FILE` set (task variable, root `.env`, `.devcontainer/.env`, environment, in that order) | that path |
+| else `AGENTS_FILE` set | that path |
+| neither set, `participants.yml` exists | `.devcontainer/participants.yml` |
+| otherwise | `.devcontainer/agents.yml` |
+
+When both variables are set, or both default files exist, the first is read and the second ignored,
+with one warning on stderr that names both. A repository that only has `agents.yml` or `AGENTS_FILE`
+gets no warning and no change. An entry may also carry:
+
+- `attachment: mcp | pump | model`, how another Feature (the facilitator) attaches the participant;
+  any other value is refused with the file and line;
+- `description: "..."`, a line of text;
+- `skills: [a, b]` (or one `- value` per line), a list of names.
+
+The `agents` command reads and checks them and does nothing else with them. `agents list --json`
+prints them after `sessionName` (`"attachment"`, `"description"`, `"skills"` as an array), only for
+entries that set them, so the output of an older list is unchanged.
+
 ## Deprecated in 1.7.0: claude-host, claude-fleet, claude-host-pin
 
 The [`agents`](../agents) Feature replaces them: a repository lists its agents in
@@ -82,7 +107,7 @@ else should. The contract (verbs, exit codes) is in the `agents` Feature's notes
 | `hint` | how to find and resume the agent by hand (`claude agents`; `cd <folder> && claude --resume`, pick it), for when the list cannot be read (1.8.0) |
 | `stop` | `claude stop <id>` of its newest running session; `--extras` stops every other running one instead. Never `claude rm`. |
 | `logs` | `claude logs <id>` |
-| `skills` | (1.11.0, optional in the contract, ADR-0064) copies the component registry's resolved skills (the folder in `COMPONENT_REGISTRY_SKILLS`, handed over by `dcf-registry handover`) into Claude Code's personal skills folder, `$CLAUDE_CONFIG_DIR/skills`; never `claude`, never the repository's `.claude/skills`. See "Resolved skills" below |
+| `skills` | (1.12.0, optional in the contract, ADR-0064) copies the component registry's resolved skills (the folder in `COMPONENT_REGISTRY_SKILLS`, handed over by `dcf-registry handover`) into Claude Code's personal skills folder, `$CLAUDE_CONFIG_DIR/skills`; never `claude`, never the repository's `.claude/skills`. See "Resolved skills" below |
 
 **Identity by name and folder, action by id.** A session is the agent's when its `cwd` is the
 agent's folder and its `name` is the agent's name, or that name with Claude Code's collision
@@ -154,7 +179,7 @@ fake `claude`; the calls rest on the facts checked live on Claude Code 2.1.308 (
 proposal, section 7). A background session in a folder Claude Code has never trusted fails to
 start (`Workspace not trusted`): run `claude` there once and accept.
 
-### Resolved skills (`skills`, 1.11.0)
+### Resolved skills (`skills`, 1.12.0)
 
 The `component-registry` Feature resolves skills from layers for who you are; this verb is how they
 reach Claude Code. `dcf-registry handover claude` (the participant component at every agent's start,

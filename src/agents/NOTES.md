@@ -101,7 +101,7 @@ agents:
     definition: tooling        # the CLI's agent profile; read, checked and shown, not passed to the CLI in 2.0
     default: true              # at most one agent: what `task agents` with no name starts
     session-name: "{machine} {handle}"   # 2.1: the name its CLI shows; default the option, else {handle}
-    registry-path: /Corp/MyDepartment/team/tooling   # participant 1.1.0: who it is in the component registry
+    registry-path: /Corp/MyDepartment/team/tooling   # participant 1.2.0: who it is in the component registry
 ```
 
 | Key | Values | Rule |
@@ -111,7 +111,7 @@ agents:
 | `lease` | `container`, `none` | A stateful agent's lease is `container` (`none` is refused: that is what `ephemeral` means); an ephemeral agent's is `none`. `machine` and `cluster` are reserved and refused (Limits). One word: `lease: { scope: container }` is refused with a line pointing at the flat form. |
 | `definition` | letters, digits, `.`, `:`, `-`, `_` | Refused together with `--agent` in `args` (two sources for one fact). In 2.0 it is stored and shown only; `agents start` says so in one line and the CLI starts without it. A later 2.x hands it to the adapter. |
 | `session-name` | a template: letters, digits, space, `. _ : @ / ( ) -`, and `{handle}`, `{repo}`, `{machine}` (2.1) | The name the CLI shows for the agent's session, rendered once per start; wins over the Feature option. A value that starts with `{` must be quoted. Refused with its line when it does not render or is over 60 characters. See Session names. |
-| `registry-path` | an absolute path: `/` and segments of letters, digits, `.`, `_`, `-`; no wildcards (participant 1.1.0, agents 2.3.0) | Who this agent is in the component registry, handed to `dcf-registry resolve --as` at its start; without it `COMPONENT_REGISTRY_WHOAMI` applies. A relative path, a pattern or the key twice is refused with its line; `agents check` shows it. Read only when the `component-registry` Feature is installed (see The component registry at an agent's start). |
+| `registry-path` | an absolute path: `/` and segments of letters, digits, `.`, `_`, `-`; no wildcards (participant 1.2.0, agents 2.4.0) | Who this agent is in the component registry, handed to `dcf-registry resolve --as` at its start; without it `COMPONENT_REGISTRY_WHOAMI` applies. A relative path, a pattern or the key twice is refused with its line; `agents check` shows it. Read only when the `component-registry` Feature is installed (see The component registry at an agent's start). |
 | `default` | `true`, `false` | At most one agent; `agents check` names it. `task agents` (no name), `agents` and `agents start` without a name start it exactly as `agents start <name>`; with none marked they print the usage (exit 2) as before. |
 
 - `name`, `cli`, `kind` are required; `folder` defaults to `.` and must stay inside the
@@ -137,6 +137,12 @@ agents:
 **Kinds.** `resident`: runs continuously in the background; starting it means make sure it runs,
 then attach. `on-demand`: starting it opens a new session in this terminal; it resumes its latest
 conversation only when asked.
+
+**Newer names (2.3.0).** This Feature is deprecated, and its copy of the participant component
+(1.1.0) also reads `.devcontainer/participants.yml`, the top-level key `participants:`,
+`PARTICIPANTS_FILE`, and the entry keys `attachment`, `description` and `skills`. They are
+documented under "The list file and the keys" in the [`claude-code` notes](../claude-code); what is
+below stays true for `agents.yml` and `AGENTS_FILE`.
 
 **Where the list is: `AGENTS_FILE`.** A path relative to the repository root (the nearest folder
 at or above the current one holding `.devcontainer/`; an absolute path is used as it is),
@@ -345,7 +351,7 @@ sessions in order, from a container terminal:
   `session-stop` missing leaves the duplicate running (said, exit 1);
   `session-remove` missing skips `--purge` with a note; `record` missing is skipped.
 
-## The component registry at an agent's start (participant 1.1.0)
+## The component registry at an agent's start (participant 1.2.0)
 
 When the `component-registry` Feature is installed (`dcf-registry` on PATH) and its layer list
 exists, `agents start` and `agents up` do two things for each agent before its CLI starts

@@ -103,6 +103,7 @@ tasks:
       - task: components:check
       - task: common:curl-check
       - task: signpacket:check
+      - task: registerengine:check
       - task: taskfiles:check
       - task: versions:check
       - task: changelog:check
@@ -139,6 +140,7 @@ tasks:
       - task: test:register-engine-unit
       - task: test:packet-relay-unit
       - task: test:component-registry-unit
+      - task: test:facilitator-unit
       - task: test:claude-fleet-task
       - task: test:agent-task
 
@@ -158,12 +160,12 @@ tasks:
       - bash test/agents/unit/lease_test.sh
 
   test:agents-registry:
-    desc: 'Docker-free tests of the participant component''s component-registry start hook (components/participant, participant 1.1.0, ADR-0064) against the real dcf-registry (src/component-registry, path layers) and two fake adapters (fakea takes skills, fakeb has no skills verb): the registry absent (nothing said or run), no layer list (one line, the agent starts), resolve failing (one line, the agent still starts, nothing handed over), skills handed over before the CLI starts (the resolved folder reaches the adapter), a CLI without the verb (one line, plain skills, the verb never called), the adapter''s skills verb failing (one line, the agent starts), the per-agent registry-path (parsed, shown by check, refused when relative, a pattern or twice, with file:line; resolved --as it), one resolve per path in agents up, on-demand agents too. Part of lint.'
+    desc: 'Docker-free tests of the participant component''s component-registry start hook (components/participant, participant 1.2.0, ADR-0064) against the real dcf-registry (src/component-registry, path layers) and two fake adapters (fakea takes skills, fakeb has no skills verb): the registry absent (nothing said or run), no layer list (one line, the agent starts), resolve failing (one line, the agent still starts, nothing handed over), skills handed over before the CLI starts (the resolved folder reaches the adapter), a CLI without the verb (one line, plain skills, the verb never called), the adapter''s skills verb failing (one line, the agent starts), the per-agent registry-path (parsed, shown by check, refused when relative, a pattern or twice, with file:line; resolved --as it), one resolve per path in agents up, on-demand agents too. Part of lint.'
     cmds:
       - bash test/agents/unit/registry_hook_test.sh
 
   test:claude-unit:
-    desc: 'Docker-free tests of the claude-code Feature''s claude-host live-session rule (a running session, one with a pid, refuses a second copy; ended sessions never count; CLAUDE_HOST_ALLOW_SECOND; the stale-pin warning and CLAUDE_HOST_UPDATE_PIN; `claude agents --json` unavailable), of the claude-host-pin SessionStart hook (the right .env line, every other byte kept, never fails) of claude-fleet (running by id or by folder, unset variable, start with --bg in the folder, --plan, --no-view, the environment beating .env), the deprecation line of the three, and of agent-adapter-claude (list from `claude agents --json --all`, a session found by name and folder, every action by id, a stopped one woken with --bg --resume <session id>, never -c, never rm, resume refused while running, --extras; the list read past a notice line, a slow first read tried again, a quick error such as a wrapper''s said as it is and not retried, resume on an unreadable list opening Claude Code''s own picker, never a new session; the record of each agent''s session, so a retitled session is still found and never started twice, a /clear and a removed session resolved; session-stop, session-remove, record), and of claude-code-post-start (participants off: silent, nothing run; on: agents up --post-start once, never fatal; left to the agents Feature''s own hook when that Feature is installed), of the additionalDirectories managed-settings drop-in (empty, one, several, a space in a path, ~ expanded, re-run idempotent, a relative path refused), and of the adapter''s skills verb (1.11.0: the resolved skills copied into $CLAUDE_CONFIG_DIR/skills and marked owned, the folder created even when empty and said new, idempotent, a changed skill replaced, an owned copy no longer resolved removed, an unowned skill never touched, never the repository .claude/skills, owner-only, bad use without COMPONENT_REGISTRY_SKILLS); a fake claude on PATH answers `agents --json` and records the other calls; part of lint.'
+    desc: 'Docker-free tests of the claude-code Feature''s claude-host live-session rule (a running session, one with a pid, refuses a second copy; ended sessions never count; CLAUDE_HOST_ALLOW_SECOND; the stale-pin warning and CLAUDE_HOST_UPDATE_PIN; `claude agents --json` unavailable), of the claude-host-pin SessionStart hook (the right .env line, every other byte kept, never fails) of claude-fleet (running by id or by folder, unset variable, start with --bg in the folder, --plan, --no-view, the environment beating .env), the deprecation line of the three, and of agent-adapter-claude (list from `claude agents --json --all`, a session found by name and folder, every action by id, a stopped one woken with --bg --resume <session id>, never -c, never rm, resume refused while running, --extras; the list read past a notice line, a slow first read tried again, a quick error such as a wrapper''s said as it is and not retried, resume on an unreadable list opening Claude Code''s own picker, never a new session; the record of each agent''s session, so a retitled session is still found and never started twice, a /clear and a removed session resolved; session-stop, session-remove, record), and of claude-code-post-start (participants off: silent, nothing run; on: agents up --post-start once, never fatal; left to the agents Feature''s own hook when that Feature is installed), of the additionalDirectories managed-settings drop-in (empty, one, several, a space in a path, ~ expanded, re-run idempotent, a relative path refused), and of the adapter''s skills verb (1.12.0: the resolved skills copied into $CLAUDE_CONFIG_DIR/skills and marked owned, the folder created even when empty and said new, idempotent, a changed skill replaced, an owned copy no longer resolved removed, an unowned skill never touched, never the repository .claude/skills, owner-only, bad use without COMPONENT_REGISTRY_SKILLS); a fake claude on PATH answers `agents --json` and records the other calls; part of lint.'
     cmds:
       - bash test/claude-code/unit/live_session_test.sh
       - bash test/claude-code/unit/adapter_test.sh
@@ -185,6 +187,16 @@ tasks:
     desc: 'Docker-free tests of the register-engine Feature (src/register-engine): the engine with a ledger-like type given through the types folder (reading, refusals, forks, prunes, sync, the index, the change feed) and the types folder''s ownership rules (test_engine.py), format v3 and the 0.2.0 security review''s findings (test_v3.py), and install.sh into a throwaway root with DESTDIR, alone with its own copy of sign-packet''s library (test_feature.py); part of lint. Needs python3 and ssh-keygen.'
     cmds:
       - for t in test/register-engine/unit/test_*.py; do echo "== $t"; python3 -I "$t" || exit 1; done
+  test:facilitator-unit:
+    desc: 'Docker-free tests of the facilitator Feature (src/facilitator), every one on its own throwaway repository and state folder, keys in files, no SLIM (the poll transport): the routing rules, the addressed mentions, rule 3 to the asker (test_routing.py); the hop limit, /continue, a human resetting the chain, the message budget, the rate, a stale participant held never dropped, say needing a human chain (test_guard.py); every packet its writer''s, verify on a good chain, a tampered packet, a wrong signer and a broken reply_to, its exit codes, keys and tokens mode 600 (test_record.py); the MCP protocol over stdio: initialize, tools/list, receive blocking and timing out, woken by a delivery, the token check, a cancelled receive taking nothing, a clean standard output (test_mcp.py); the participant list, its alias agents.yml, facilitator.yml, the settings'' order, lean refused (test_participants.py); the two fake attachments, a fake MCP client and the model wrapper on a fake OpenAI-compatible endpoint, with a fake claude that must never run (test_attachments.py); the infrastructure with fake dirctl and slimctl: idempotent up, a crash said not restarted, down by pid, a port''s owner named, the configs on loopback (test_infra.py); install.sh into a throwaway root: the tree, the options, the refusals, a checksum that does not match (test_feature.py). Part of lint. Needs python3 3.11+, ssh-keygen and ssh-agent.'
+    cmds:
+      - for t in test/facilitator/unit/test_*.py; do echo "== $t"; python3 -I "$t" || exit 1; done
+
+  test:facilitator-integration:
+    desc: 'The jester flow on the real AGNTCY components (test/facilitator/integration/jester_flow.py): infra up twice, register (OASF records in the Directory), two fake agents through facilitator mcp over SLIM, the five messages routed by the rules (every mention delivered), every task completed, verify; everything stopped by pid. Needs an installed facilitator Feature (the jester_flow scenario runs it), or FACILITATOR_BIN, FACILITATOR_DIRCTL and FACILITATOR_SLIMCTL; not part of lint (it needs the 250 MB of AGNTCY binaries).'
+    cmds:
+      - python3 -I test/facilitator/integration/jester_flow.py
+
   test:packet-relay-unit:
     desc: 'Docker-free tests of the packet-relay Feature (src/packet-relay): two parties, three, a party away, a lossy folder, a slow partial sync between two machines'' copies, forged and misplaced files, a fork, a gap lost for good and its skip, a lost state, a folder without hard links, the guards on egress and ingress and the command (test_relay.py), and install.sh into a throwaway root with DESTDIR, alone with its own copy of sign-packet''s library, the guard options baked and refused when unusable (test_feature.py); part of lint. Needs python3 and ssh-keygen.'
     cmds:
@@ -542,6 +554,32 @@ tasks:
             [ "$copy" = src/sign-packet/signpacket ] && continue
             [ -d "$copy" ] || continue
             rm -rf "$copy" && cp -r src/sign-packet/signpacket "$copy" && rm -rf "$copy/__pycache__" && echo "synced $copy"
+          done
+
+  registerengine:check:
+    desc: 'Fail if a Feature''s vendored copy of register-engine''s library (src/<id>/registerengine/, carried by facilitator so it installs alone) differs from src/register-engine/registerengine/. Run `task registerengine:sync` to refresh them. Part of lint.'
+    silent: true
+    cmds:
+      - cmd: |
+          rc=0; canon=src/register-engine/registerengine
+          [ -d "$canon" ] || { echo "no $canon in this tree"; exit 0; }
+          for copy in src/*/registerengine; do
+            [ "$copy" = "$canon" ] && continue
+            [ -d "$copy" ] || continue
+            if ! diff -rq -x __pycache__ "$canon" "$copy" >/dev/null; then echo "stale copy: $copy differs from $canon (task registerengine:sync)"; rc=1; fi
+          done
+          [ "$rc" -eq 0 ] && echo "register-engine library copies are up to date"
+          exit "$rc"
+
+  registerengine:sync:
+    desc: 'Copy src/register-engine/registerengine/ over every Feature''s vendored copy of it (src/<id>/registerengine/), after a change to register-engine''s library; bump each Feature that carries a copy.'
+    silent: true
+    cmds:
+      - cmd: |
+          for copy in src/*/registerengine; do
+            [ "$copy" = src/register-engine/registerengine ] && continue
+            [ -d "$copy" ] || continue
+            rm -rf "$copy" && cp -r src/register-engine/registerengine "$copy" && rm -rf "$copy/__pycache__" && echo "synced $copy"
           done
 
   repo:setup:

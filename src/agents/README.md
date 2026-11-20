@@ -121,7 +121,7 @@ agents:
     definition: tooling        # the CLI's agent profile; read, checked and shown, not passed to the CLI in 2.0
     default: true              # at most one agent: what `task agents` with no name starts
     session-name: "{machine} {handle}"   # 2.1: the name its CLI shows; default the option, else {handle}
-    registry-path: /Corp/MyDepartment/team/tooling   # participant 1.1.0: who it is in the component registry
+    registry-path: /Corp/MyDepartment/team/tooling   # participant 1.2.0: who it is in the component registry
 ```
 
 | Key | Values | Rule |
@@ -131,7 +131,7 @@ agents:
 | `lease` | `container`, `none` | A stateful agent's lease is `container` (`none` is refused: that is what `ephemeral` means); an ephemeral agent's is `none`. `machine` and `cluster` are reserved and refused (Limits). One word: `lease: { scope: container }` is refused with a line pointing at the flat form. |
 | `definition` | letters, digits, `.`, `:`, `-`, `_` | Refused together with `--agent` in `args` (two sources for one fact). In 2.0 it is stored and shown only; `agents start` says so in one line and the CLI starts without it. A later 2.x hands it to the adapter. |
 | `session-name` | a template: letters, digits, space, `. _ : @ / ( ) -`, and `{handle}`, `{repo}`, `{machine}` (2.1) | The name the CLI shows for the agent's session, rendered once per start; wins over the Feature option. A value that starts with `{` must be quoted. Refused with its line when it does not render or is over 60 characters. See Session names. |
-| `registry-path` | an absolute path: `/` and segments of letters, digits, `.`, `_`, `-`; no wildcards (participant 1.1.0, agents 2.3.0) | Who this agent is in the component registry, handed to `dcf-registry resolve --as` at its start; without it `COMPONENT_REGISTRY_WHOAMI` applies. A relative path, a pattern or the key twice is refused with its line; `agents check` shows it. Read only when the `component-registry` Feature is installed (see The component registry at an agent's start). |
+| `registry-path` | an absolute path: `/` and segments of letters, digits, `.`, `_`, `-`; no wildcards (participant 1.2.0, agents 2.4.0) | Who this agent is in the component registry, handed to `dcf-registry resolve --as` at its start; without it `COMPONENT_REGISTRY_WHOAMI` applies. A relative path, a pattern or the key twice is refused with its line; `agents check` shows it. Read only when the `component-registry` Feature is installed (see The component registry at an agent's start). |
 | `default` | `true`, `false` | At most one agent; `agents check` names it. `task agents` (no name), `agents` and `agents start` without a name start it exactly as `agents start <name>`; with none marked they print the usage (exit 2) as before. |
 
 - `name`, `cli`, `kind` are required; `folder` defaults to `.` and must stay inside the
@@ -157,6 +157,12 @@ agents:
 **Kinds.** `resident`: runs continuously in the background; starting it means make sure it runs,
 then attach. `on-demand`: starting it opens a new session in this terminal; it resumes its latest
 conversation only when asked.
+
+**Newer names (2.3.0).** This Feature is deprecated, and its copy of the participant component
+(1.1.0) also reads `.devcontainer/participants.yml`, the top-level key `participants:`,
+`PARTICIPANTS_FILE`, and the entry keys `attachment`, `description` and `skills`. They are
+documented under "The list file and the keys" in the [`claude-code` notes](../claude-code); what is
+below stays true for `agents.yml` and `AGENTS_FILE`.
 
 **Where the list is: `AGENTS_FILE`.** A path relative to the repository root (the nearest folder
 at or above the current one holding `.devcontainer/`; an absolute path is used as it is),
@@ -385,7 +391,7 @@ sessions in order, from a container terminal:
   `session-stop` missing leaves the duplicate running (said, exit 1);
   `session-remove` missing skips `--purge` with a note; `record` missing is skipped.
 
-## The component registry at an agent's start (participant 1.1.0)
+## The component registry at an agent's start (participant 1.2.0)
 
 When the `component-registry` Feature is installed (`dcf-registry` on PATH) and its layer list
 exists, `agents start` and `agents up` do two things for each agent before its CLI starts
@@ -600,15 +606,26 @@ the `SESSIONS` / `HOST_SESSION` settings, which claude-code 2.0 removes; the mig
 
 ## Changes
 
-### [2.3.0] - 2026-11-20
+### [2.4.0] - 2026-11-20
 
 #### Added
 
-- The participant component 1.1.0 (shared with `claude-code` `participants: true`): with the
+- The participant component 1.2.0 (shared with `claude-code` `participants: true`): with the
   `component-registry` Feature installed, an agent's start resolves the component registry and hands
   the resolved skills to the agent's CLI, never blocking the start; the agents list key
   `registry-path` gives one agent its own who-you-are path. This Feature stays deprecated; nothing to
   do.
+
+### [2.3.0] - 2026-11-20
+
+#### Changed
+
+- Carries the participant component 1.1.0, which also reads `.devcontainer/participants.yml`
+  (`participants:` or `agents:` as the top-level key, `PARTICIPANTS_FILE`) and accepts the entry keys
+  `attachment`, `description` and `skills`. This Feature is deprecated and takes no new work of its own;
+  this release only keeps its copy of the component equal to the one in `claude-code`. Nothing to do:
+  an existing `agents.yml` and `AGENTS_FILE` behave exactly as before. The new names are documented
+  under `claude-code`'s "Participants".
 
 ### [2.2.0] - 2026-11-19
 
@@ -619,12 +636,6 @@ the `SESSIONS` / `HOST_SESSION` settings, which claude-code 2.0 removes; the mig
 #### Changed
 
 - The code moved into the shared participant component (`components/participant`, vendored here in `participant/`), installed once into `/usr/local/lib/dcf-participant`, with `/usr/local/bin/agents` a symlink into it. When `claude-code` with `participants: true` (or another Feature) installed the same or a newer copy, this Feature installs nothing of it; otherwise it installs it as before. The state folders, the Taskfile include and every path a user sees are as in 2.1.3. Nothing to do.
-
-### [2.1.3] - 2026-11-03
-
-#### Changed
-
-- The README now has a "How it fits" section with a small diagram of how the Feature sits in a devcontainer, a table of the data it keeps and the storage tier of each, and "Used in" links to the reference architectures that use it. Documentation only: the Feature itself is unchanged. Nothing to do.
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/agents/CHANGELOG.md).
 

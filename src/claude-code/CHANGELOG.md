@@ -8,7 +8,7 @@ here; `task lint` fails when the entry is missing.
 
 Entries from 1.0.0 to 1.9.7 were generated from the commit history (`.github/scripts/changelog.py backfill`) and the "Changes in x.y.z" sections that NOTES.md used to hold; most list commit subjects as written then; the newest of them is in wording for users.
 
-## [1.11.0] - 2026-11-20
+## [1.12.0] - 2026-11-20
 
 ### Added
 
@@ -22,10 +22,25 @@ Entries from 1.0.0 to 1.9.7 were generated from the commit history (`.github/scr
   skill already used in a conversation keeps its old text until a new conversation.
 - **`claude-code-setup` creates `$CLAUDE_CONFIG_DIR/skills`** at every create, even empty: Claude Code
   watches a skills folder only if it existed when the session started (otherwise `/reload-skills`).
-- With `participants: true`, the participant component 1.1.0: the component registry's resolve and
+- With `participants: true`, the participant component 1.2.0: the component registry's resolve and
   skills hand-over at an agent's start, and the agents list key `registry-path` (see the notes).
 
 Nothing to do: without the `component-registry` Feature nothing calls the new verb.
+
+## [1.11.0] - 2026-11-20
+
+### Added
+
+- **With `participants: true`, the agent list can be `.devcontainer/participants.yml`** (top-level key
+  `participants:` or `agents:`), or the path in `PARTICIPANTS_FILE`; `agents.yml` and `AGENTS_FILE` keep
+  working as aliases. `PARTICIPANTS_FILE` beats `AGENTS_FILE`, and `participants.yml` beats `agents.yml`
+  when neither variable is set; when both are present you get one warning naming both and
+  `participants.yml` is read. An entry may carry `attachment` (`mcp`, `pump` or `model`), `description`
+  and `skills` without an unknown-key warning; `agents list --json` passes them through. This is the
+  participant component 1.1.0 (see its changelog). See "Participants" in the notes.
+
+Nothing to do: an existing `agents.yml` behaves exactly as before. To adopt the new name, rename the
+file to `participants.yml` (and `agents:` to `participants:`) and delete `agents.yml`.
 
 ## [1.10.0] - 2026-11-19
 

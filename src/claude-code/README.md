@@ -19,7 +19,7 @@ Claude Code (https://code.claude.com/docs) as a member of this collection's ecos
 | install | How the claude binary gets there. 'auto': keep a claude already in the image (official Feature, base image) and only add the ecosystem pieces, else install the native binary. 'native': always install the verified native binary at /usr/local/bin/claude (wins over an npm install on PATH). 'none': never install the binary, only the pieces. | string | auto |
 | additionalDirectories | Comma-separated folders every Claude session in the container may read and edit besides the one it starts in (Claude Code's permissions.additionalDirectories), written at build time to the managed-settings drop-in /etc/claude-code/managed-settings.d/50-devcontainer-features-claude-code.json, so no wrapper adding --add-dir is needed and the user's own settings are not touched. Absolute paths, or ~/... for the remote user's home (expanded at build time); a relative path fails the build. Empty: nothing is written. File access only: unlike --add-dir, a folder listed here does not load its CLAUDE.md, skills or other .claude/ configuration. | string | - |
 | remoteControl | Start every Claude agent the agents Feature runs with Remote Control on (--remote-control), so agents.yml need not repeat it in each agent's args. Applied by agent-adapter-claude to the sessions it starts or wakes, unless an agent's args already have --remote-control or --no-remote-control (the adapter's own per-agent opt-out). Per run: AGENT_ADAPTER_CLAUDE_REMOTE_CONTROL=0 or 1. | boolean | false |
-| participants | Install the participant component: the agent list (.devcontainer/agents.yml, or AGENTS_FILE), the agents command, the agents:* tasks (task agents -- <name>, agents:list, agents:up, ...) and `agents up` at every container start, which the agents Feature installed until it was deprecated (agents 2.2.0). One copy in /usr/local/lib/dcf-participant, shared with any other Feature that installs it (the agents Feature included). The session name template is AGENTS_SESSION_NAME (.env or the environment) or each agent's session-name key; the default is the handle. false: nothing of it is installed. | boolean | false |
+| participants | Install the participant component: the agent list (.devcontainer/participants.yml or PARTICIPANTS_FILE; .devcontainer/agents.yml and AGENTS_FILE still work), the agents command, the agents:* tasks (task agents -- <name>, agents:list, agents:up, ...) and `agents up` at every container start, which the agents Feature installed until it was deprecated (agents 2.2.0). One copy in /usr/local/lib/dcf-participant, shared with any other Feature that installs it (the agents Feature included). The session name template is AGENTS_SESSION_NAME (.env or the environment) or each agent's session-name key; the default is the handle. false: nothing of it is installed. | boolean | false |
 | version | Native binary version to install (e.g. '2.1.286'), or a release channel: 'stable' or 'latest'. Ignored when an existing claude is kept (install=auto) or install=none. | string | stable |
 
 ## Customizations
@@ -84,6 +84,31 @@ page exists.
 
 Off (the default), nothing of the component is installed and the post-start hook prints nothing.
 
+### The list file and the keys (component 1.1.0, claude-code 1.11.0)
+
+The list is `.devcontainer/participants.yml`, the name to use, with `participants:` as the top-level
+key. `.devcontainer/agents.yml` and the key `agents:` are aliases and keep working. One key per file.
+
+| Where | Which file |
+| --- | --- |
+| `PARTICIPANTS_FILE` set (task variable, root `.env`, `.devcontainer/.env`, environment, in that order) | that path |
+| else `AGENTS_FILE` set | that path |
+| neither set, `participants.yml` exists | `.devcontainer/participants.yml` |
+| otherwise | `.devcontainer/agents.yml` |
+
+When both variables are set, or both default files exist, the first is read and the second ignored,
+with one warning on stderr that names both. A repository that only has `agents.yml` or `AGENTS_FILE`
+gets no warning and no change. An entry may also carry:
+
+- `attachment: mcp | pump | model`, how another Feature (the facilitator) attaches the participant;
+  any other value is refused with the file and line;
+- `description: "..."`, a line of text;
+- `skills: [a, b]` (or one `- value` per line), a list of names.
+
+The `agents` command reads and checks them and does nothing else with them. `agents list --json`
+prints them after `sessionName` (`"attachment"`, `"description"`, `"skills"` as an array), only for
+entries that set them, so the output of an older list is unchanged.
+
 ## Deprecated in 1.7.0: claude-host, claude-fleet, claude-host-pin
 
 The [`agents`](../agents) Feature replaces them: a repository lists its agents in
@@ -112,7 +137,7 @@ else should. The contract (verbs, exit codes) is in the `agents` Feature's notes
 | `hint` | how to find and resume the agent by hand (`claude agents`; `cd <folder> && claude --resume`, pick it), for when the list cannot be read (1.8.0) |
 | `stop` | `claude stop <id>` of its newest running session; `--extras` stops every other running one instead. Never `claude rm`. |
 | `logs` | `claude logs <id>` |
-| `skills` | (1.11.0, optional in the contract, ADR-0064) copies the component registry's resolved skills (the folder in `COMPONENT_REGISTRY_SKILLS`, handed over by `dcf-registry handover`) into Claude Code's personal skills folder, `$CLAUDE_CONFIG_DIR/skills`; never `claude`, never the repository's `.claude/skills`. See "Resolved skills" below |
+| `skills` | (1.12.0, optional in the contract, ADR-0064) copies the component registry's resolved skills (the folder in `COMPONENT_REGISTRY_SKILLS`, handed over by `dcf-registry handover`) into Claude Code's personal skills folder, `$CLAUDE_CONFIG_DIR/skills`; never `claude`, never the repository's `.claude/skills`. See "Resolved skills" below |
 
 **Identity by name and folder, action by id.** A session is the agent's when its `cwd` is the
 agent's folder and its `name` is the agent's name, or that name with Claude Code's collision
@@ -184,7 +209,7 @@ fake `claude`; the calls rest on the facts checked live on Claude Code 2.1.308 (
 proposal, section 7). A background session in a folder Claude Code has never trusted fails to
 start (`Workspace not trusted`): run `claude` there once and accept.
 
-### Resolved skills (`skills`, 1.11.0)
+### Resolved skills (`skills`, 1.12.0)
 
 The `component-registry` Feature resolves skills from layers for who you are; this verb is how they
 reach Claude Code. `dcf-registry handover claude` (the participant component at every agent's start,
@@ -470,7 +495,7 @@ the CLI) contend for `.claude.json.lock`; run one.
 
 ## Changes
 
-### [1.11.0] - 2026-11-20
+### [1.12.0] - 2026-11-20
 
 #### Added
 
@@ -484,10 +509,25 @@ the CLI) contend for `.claude.json.lock`; run one.
   skill already used in a conversation keeps its old text until a new conversation.
 - **`claude-code-setup` creates `$CLAUDE_CONFIG_DIR/skills`** at every create, even empty: Claude Code
   watches a skills folder only if it existed when the session started (otherwise `/reload-skills`).
-- With `participants: true`, the participant component 1.1.0: the component registry's resolve and
+- With `participants: true`, the participant component 1.2.0: the component registry's resolve and
   skills hand-over at an agent's start, and the agents list key `registry-path` (see the notes).
 
 Nothing to do: without the `component-registry` Feature nothing calls the new verb.
+
+### [1.11.0] - 2026-11-20
+
+#### Added
+
+- **With `participants: true`, the agent list can be `.devcontainer/participants.yml`** (top-level key
+  `participants:` or `agents:`), or the path in `PARTICIPANTS_FILE`; `agents.yml` and `AGENTS_FILE` keep
+  working as aliases. `PARTICIPANTS_FILE` beats `AGENTS_FILE`, and `participants.yml` beats `agents.yml`
+  when neither variable is set; when both are present you get one warning naming both and
+  `participants.yml` is read. An entry may carry `attachment` (`mcp`, `pump` or `model`), `description`
+  and `skills` without an unknown-key warning; `agents list --json` passes them through. This is the
+  participant component 1.1.0 (see its changelog). See "Participants" in the notes.
+
+Nothing to do: an existing `agents.yml` behaves exactly as before. To adopt the new name, rename the
+file to `participants.yml` (and `agents:` to `participants:`) and delete `agents.yml`.
 
 ### [1.10.0] - 2026-11-19
 
@@ -497,12 +537,6 @@ Nothing to do: without the `component-registry` Feature nothing calls the new ve
 - **A `postStartCommand`, `claude-code-post-start`,** which runs `agents up --post-start` when `participants` is on (and the `agents` Feature, whose own hook does the same, is not installed). Off, it does nothing and prints nothing.
 
 Nothing to do: with `participants` left at `false` the Feature installs what it did in 1.9.9, plus the silent post-start hook.
-
-### [1.9.9] - 2026-11-03
-
-#### Changed
-
-- The README now has a "How it fits" section with a small diagram of how the Feature sits in a devcontainer, a table of the data it keeps and the storage tier of each, and "Used in" links to the reference architectures that use it. Where the Feature has them, its best practices and anti-patterns are in the README too. Documentation only: the Feature itself is unchanged. Nothing to do.
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/claude-code/CHANGELOG.md).
 

@@ -211,7 +211,7 @@ flowchart LR
 
 ## Decisions taken with the requirements (2026-10-19)
 
-- **MCP: none for now.** No Feature offers an MCP server; tasks are the agent API (NFR-7). Revisit per tool when an agent shows friction a task cannot fix. "Offer MCP" would mean an optional `mcp` option installing a pinned, verified server registered for Claude Code, with its credentials in the Feature's state volume.
+- **MCP: none for now**, with one exception since 2026-11-19 (ADR-0061): `facilitator` (0.1.0) offers an MCP server (`facilitator mcp --as <handle>`, four tools), because its participants are agents talking to each other, which a task cannot carry. It registers nothing in a CLI (NFR-13): `facilitator snippet` prints the CLI's own command. Every other Feature: tasks are the agent API (NFR-7). Revisit per tool when an agent shows friction a task cannot fix. "Offer MCP" would mean an optional `mcp` option installing a pinned, verified server registered for Claude Code, with its credentials in the Feature's state volume.
 - **git:** the doc says git is installed from the distribution only when absent, unverified; the apt fallback keeps the wrapper working on a bare base image. Revisit if NFR-3 is made strict.
 - **openbao:** a state volume and setup hook after the release (`openbao-state-build`).
 - **devhost "Where it comes from":** moved out of the Feature's NOTES into `docs/iterations.md`; it told an adopter nothing to act on.
