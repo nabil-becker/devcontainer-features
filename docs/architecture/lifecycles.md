@@ -193,6 +193,20 @@ component's start sequence runs `resolve` at every agent's start, and `/registry
 `/registry-remember`, which refreshes) run it mid-session; `task component-registry:resolve` runs
 it by hand.
 
+## A skill moving into the registry
+
+From slice 4 of the [component registry](../proposals/component-registry.md) (`architecture-review`,
+devhost 1.16.0). A committed skill passes through these states; this repository's
+`architecture-review` is in `both`, and the last transition is the Operator's to make.
+
+```mermaid
+stateDiagram-v2
+  [*] --> committed: .claude/skills/<name> only
+  committed --> both: layers written, checked equal (but for the headings)
+  both --> resolved_only: switch-over (proposed): the committed copies removed
+  both --> committed: the layers removed from the list
+```
+
 ## A resolved skill in the CLI's skills folder
 
 From `src/claude-code/NOTES.md` (claude-code 1.12.0, the adapter's `skills` verb, ADR-0064). One per

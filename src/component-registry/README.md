@@ -298,6 +298,63 @@ None of it is committed. `resolve` removes the copies no layer still names; a ch
 new copy, never the old one as a fallback. A bind mount on the same target keeps it on the host
 disk instead.
 
+## First real use: architecture-review in two layers (slice 4)
+
+This repository's own devhost is the first user. `.devcontainer/registry.yml` lists two layers,
+both `required` (a missing one leaves the last view, never a half skill that would shadow the
+committed one) and both `at: /` (they apply to every who-you-are path):
+
+| Rank | Layer | Source | Holds |
+| --- | --- | --- | --- |
+| 1 | `devhost` | `path` `/usr/local/share/devhost/registry` (the devhost Feature 1.16.0, from `local-features/devhost/share/registry`) | the review method: front matter, steps, the section format, "never edit the design sections"; usable alone |
+| 2 | `devcontainer-features` | `path` `.devcontainer/registry/repo` (committed) | "In this repository": the NFR file, the CLI capability matrix and NFR-12, NFR-13, the placement layers |
+
+The participant start hook resolves it for `COMPONENT_REGISTRY_WHOAMI` (containerEnv, a role
+default `/devcontainer-features/operator`; a person sets theirs in `.devcontainer/.env`) and hands
+the skills to Claude Code.
+
+**The equality check** (`task test:registry-first-use`, part of lint) resolves the real layer
+list and compares the resolved `skills/architecture-review/SKILL.md` with the committed
+`.claude/skills/architecture-review/SKILL.md`. They are equal after removing only the two
+`## Layer <id>` headings (each with the blank line before it); byte equality is impossible by
+design, because text stacking writes a heading for every layer, the first included (the resolved
+file opens `## Layer devhost` above `# Architecture review`). What the design could not express,
+found by this use:
+
+- **Text only appends, layer by layer.** The repository-specific lines sat inside the method
+  (two of the seven checks, the NFR path in the first, the placement layers in the sixth); no
+  `.reg` line can put a higher layer's text between a lower layer's lines. The committed skill
+  was restated once, in the same words, as the method then an "In this repository" section the
+  method points to; the test compares with that.
+- **Front matter comes from the lowest block only.** A `description:value` in a higher layer is
+  resolved into `meta/` but never written into `SKILL.md`, so a repository cannot adapt a skill's
+  description; the generic description is in the base layer.
+- **A relative link breaks.** The resolved copy lives in the CLI's skills folder, so a link such
+  as `../../../PROCESS.md` points nowhere; the base layer names files as plain paths.
+
+A heading option would give byte equality: a layer list key (say `heading: false`) or a `.reg`
+directive that stacks a layer's text with no `## Layer <id>` line. It is not built: the
+resolver's rendering is unchanged in this slice.
+
+### Switch-over (proposed, not done)
+
+Today both the committed skill (`.claude/skills/architecture-review/`, project scope) and the
+resolved one (Claude Code's personal skills folder, handed over at the agent's start) exist; the
+personal one wins the name, so after the next rebuild the session runs the resolved skill, equal
+to the committed one apart from the two headings. Switching over would take:
+
+- **This repository**: delete `.claude/skills/architecture-review/` (the resolved copy is then
+  the only one; a session started without the registry, on the workstation for example, has no
+  architecture review), and drop the template copy's equality check from the test.
+- **The devhost Feature's consumers**: `devhost-init` copies the template (`init.py`) into each
+  consumer's `.claude/skills/`; that copy holds this repository's section too. Either the template
+  becomes the base layer only (consumers keep a committed skill, generic), or consumers add the
+  component-registry Feature and a `registry.yml` naming the devhost layer (plus their own layer
+  for their rules) and `devhost-init` stops copying it. Each consumer's
+  `DEVCONTAINER_CONTRIBUTION.md` would say which.
+- **The headings**: with the heading option above, the resolved skill would equal the committed
+  one byte for byte, and the switch-over would change nothing a reader sees.
+
 ## Use it
 
 ```json
@@ -352,7 +409,8 @@ every skipped line with its reason, and `resolved N component(s) for <W>`.
 - Sources `git` and `path` only. A `path` source's version is a fingerprint of names, sizes and
   modification times, so a change that keeps all three is not seen.
 - `*` and `**` are whole segments; there are no value filters.
-- The text heading is fixed (`## Layer <id>`).
+- The text heading is fixed (`## Layer <id>`), for every layer, the first included; a higher
+  layer's text only appends, and front matter comes from the lowest block (slice 4, above).
 - A `ref` is checked against this view only: its scope part is ignored, its component and key
   must resolve for the same who-you-are path.
 

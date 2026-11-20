@@ -140,6 +140,7 @@ tasks:
       - task: test:register-engine-unit
       - task: test:packet-relay-unit
       - task: test:component-registry-unit
+      - task: test:registry-first-use
       - task: test:facilitator-unit
       - task: test:claude-fleet-task
       - task: test:agent-task
@@ -213,6 +214,11 @@ tasks:
     cmds:
       - bash test/component-registry/unit/registry_test.sh
       - bash test/component-registry/unit/http_test.sh
+
+  test:registry-first-use:
+    desc: 'Docker-free test of the component registry''s first real use (slice 4 of docs/proposals/component-registry.md, test/component-registry/unit/first_use_test.sh): the real dcf-registry resolves the real layer list (.devcontainer/registry.yml: the devhost Feature''s generic layer, local-features/devhost/share/registry, pointed at its source folder; this repository''s layer, .devcontainer/registry/repo) into a temp state folder, and the resolved skills/architecture-review/SKILL.md must equal the committed .claude/skills/architecture-review/SKILL.md after removing only the per-layer `## Layer <id>` headings text stacking adds (byte equality is impossible by design; the test asserts the headings are the only difference); the devhost template copy equals the committed skill; the generic layer alone resolves to a usable skill naming nothing of this repository. Part of lint.'
+    cmds:
+      - bash test/component-registry/unit/first_use_test.sh
 
   test:agents-unit:
     desc: 'Docker-free tests of the agents command (the participant component, components/participant): the agent list (the YAML subset, required keys, unknown keys warned, errors with file and line), AGENTS_FILE from the task variable, .env, .devcontainer/.env, the environment or the default (a missing file named with its source), each verb per kind (start, --resume, --new and its question, up, list, stop, logs), the no-terminal rule, the fallbacks when the adapter answers exit 3, a listing that fails (state error, nothing started, the hint, never a fresh session), an on-demand agent shown none unless running, reset (a dry run by default, duplicates stopped, --purge, only listed agents and their folders, unlisted sessions untouched, a session mid-turn not stopped, uncommitted changes a warning and with --purge a refusal, --force, refused inside a Claude Code session, --all), the once-per-container-start marker, and the component Taskfile (the deprecation line of agents:version and agents:check when the agents Feature is installed, the component version alone otherwise); a fake adapter keeps sessions in a file and records every call; part of lint. Needs task for the Taskfile part.'

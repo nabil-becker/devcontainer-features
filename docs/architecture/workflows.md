@@ -178,3 +178,20 @@ sequenceDiagram
   person->>person: start the CLI
   Note over R,C: /registry-refresh runs resolve and handover to every adapter, mid-session
 ```
+
+In this repository (slice 4, the first real use) the list has two required layers, and the
+resolved `architecture-review` reaches Claude Code's personal skills folder, which wins the name
+over the committed project copy:
+
+```mermaid
+flowchart LR
+  devhost["devhost layer (rank 1)<br/>/usr/local/share/devhost/registry<br/>the review method"]
+  repo["devcontainer-features layer (rank 2)<br/>.devcontainer/registry/repo<br/>In this repository"]
+  component-registry["dcf-registry resolve<br/>body:text stacked, ## Layer id per layer"]
+  personal["Claude Code personal skills<br/>architecture-review (wins the name)"]
+  project["committed .claude/skills/architecture-review<br/>(project; kept until the switch-over)"]
+  devhost --> component-registry
+  repo --> component-registry
+  component-registry -->|handover, skills verb| personal
+  personal -.->|equal but for the headings, task test:registry-first-use| project
+```

@@ -343,6 +343,19 @@ flowchart LR
 - A layer copy and the view are as sensitive as their most sensitive layer (a person's own layer may hold health facts): owner-only, never committed. `explain` prints to the terminal only.
 - The CLI's skills folder (Claude Code: `$CLAUDE_CONFIG_DIR/skills`, the claude-code volume) gets owner-only copies, each marked owned by the registry; never the repository's `.claude/skills`.
 - `/registry-remember` writes only to the layer marked `writable: true`, and only to a folder (a `path` source): the person's own layer, wherever they keep it.
+- In this repository (slice 4) two `path` layers feed the resolve: the devhost Feature's folder in the image (`/usr/local/share/devhost/registry`) and the committed `.devcontainer/registry/repo`; both public, both `required`, so a missing one leaves the last view and never hands over half a skill.
+
+```mermaid
+flowchart LR
+  external-devhost-layer["devhost image: /usr/local/share/devhost/registry (tier 4, image)"]
+  external-repo-layer["checkout: .devcontainer/registry/repo (tier 1)"]
+  component-registry["component-registry: dcf-registry"]
+  external-cli-skills["Claude Code personal skills, tier 4"]
+  external-devhost-layer -->|registry-source-path| component-registry
+  external-repo-layer -->|registry-source-path| component-registry
+  component-registry -->|handover| external-cli-skills
+```
+
 - Sources: `src/component-registry/NOTES.md`, `src/claude-code/NOTES.md`, `docs/proposals/component-registry.md`, `docs/adr/0063-*.md`, `docs/adr/0064-*.md`.
 
 ## Gaps seen while drawing
