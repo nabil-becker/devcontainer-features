@@ -151,6 +151,7 @@ def main() -> int:
             expect(not any(r["running"] for r in rows), "infra down: nothing left running")
         except ValueError:
             pass
+    __import__("shutil").rmtree(tmp, ignore_errors=True)
     print("PASS" if ok else "FAIL")
     return 0 if ok else 1
 

@@ -80,6 +80,7 @@ def test_up_idempotent_status_down():
         if inf:
             inf.down()
         e.close()
+        __import__("shutil").rmtree(tmp, ignore_errors=True)
 
 
 def test_port_in_use_names_its_owner():
@@ -104,6 +105,7 @@ def test_port_in_use_names_its_owner():
     finally:
         s.close()
         e.close()
+        __import__("shutil").rmtree(tmp, ignore_errors=True)
 
 
 def test_online_schema_check_when_asked():
