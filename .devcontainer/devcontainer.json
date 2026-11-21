@@ -157,6 +157,9 @@
     "COMPONENT_REGISTRY_WHOAMI": "${localEnv:COMPONENT_REGISTRY_WHOAMI:/devcontainer-features/operator}"
   },
   "postCreateCommand": "bash .devcontainer/post-create.sh",
+  // No Docker cache is kept between uses (dind-no-cache): every start empties the
+  // docker-in-docker daemon, which is used only for `task test`.
+  "postStartCommand": "bash .devcontainer/dind-clean.sh --wait",
   "remoteUser": "vscode",
   "customizations": {
     "vscode": {

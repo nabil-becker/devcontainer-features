@@ -40,7 +40,7 @@ tasks:
       - task --list
 
   test:
-    desc: 'Run `devcontainer features test` for one Feature (FEATURE=go-task) or all of them. IMAGE overrides the base image for the auto-generated test; SCENARIOS=false skips scenarios.json. Needs a Docker daemon (CI, or Docker Desktop on the workstation). Linux/macOS only (the CLI shells out to chmod/bash on the host).'
+    desc: 'Run `devcontainer features test` for one Feature (FEATURE=go-task) or all of them. IMAGE overrides the base image for the auto-generated test; SCENARIOS=false skips scenarios.json. Needs a Docker daemon (CI, or Docker Desktop on the workstation). Linux/macOS only (the CLI shells out to chmod/bash on the host). Refuses to start with under 20 GB free where /var/lib/docker lives (FORCE=1 overrides), and afterwards, pass or fail, prunes everything in the docker-in-docker daemon (images, containers, volumes, build cache), which is used only for tests here.'
     platforms: [linux, darwin]
     vars:
       FEATURE: '{{.FEATURE | default ""}}'
@@ -49,18 +49,22 @@ tasks:
       - sh: docker info >/dev/null 2>&1
         msg: 'no Docker daemon here; Feature tests run in CI on every PR, or locally with Docker Desktop on the workstation'
     cmds:
+      - bash {{.ROOT_DIR}}/.devcontainer/dind-guard.sh
+      - defer: bash {{.ROOT_DIR}}/.devcontainer/dind-clean.sh
       - task: devcontainer:cli
         vars:
           SUBCOMMAND: features
           ARGS: 'test -p "{{.ROOT_DIR}}" -i {{.TEST_IMAGE}} --skip-duplicated{{if .FEATURE}} -f {{.FEATURE}}{{end}}{{if ne .SCENARIOS "true"}} --skip-scenarios{{end}} {{.CLI_ARGS}}'
 
   test:global:
-    desc: 'Run only test/_global scenarios (Features combined). Needs a Docker daemon (CI, or Docker Desktop on the workstation). Linux/macOS only, like test.'
+    desc: 'Run only test/_global scenarios (Features combined). Needs a Docker daemon (CI, or Docker Desktop on the workstation). Linux/macOS only, like test. Same free-space guard (FORCE=1 overrides) and the same prune of the whole docker-in-docker daemon afterwards, pass or fail.'
     platforms: [linux, darwin]
     preconditions:
       - sh: docker info >/dev/null 2>&1
         msg: 'no Docker daemon here; Feature tests run in CI on every PR, or locally with Docker Desktop on the workstation'
     cmds:
+      - bash {{.ROOT_DIR}}/.devcontainer/dind-guard.sh
+      - defer: bash {{.ROOT_DIR}}/.devcontainer/dind-clean.sh
       - task: devcontainer:cli
         vars:
           SUBCOMMAND: features
@@ -122,6 +126,7 @@ tasks:
       - task: test:build-lock
       - task: test:bootstrap-dir
       - task: test:host-mounts
+      - task: test:dind-clean
       - task: test:ssh-key-import
       - task: test:ssh-agent-unit
       - task: test:openbao-unit
@@ -310,6 +315,11 @@ tasks:
     cmds:
       - bash test/bootstrap/host_type_test.sh
 
+  test:dind-clean:
+    desc: 'Docker-free bash tests of .devcontainer/dind-clean.sh (prunes the docker-in-docker daemon, skips with one line when no daemon answers) and dind-guard.sh (refuses under 20 GB free, FORCE=1 overrides), with docker and df stubbed; part of lint.'
+    cmds:
+      - bash test/devcontainer/dind_clean_test.sh
+
   test:host-mounts:
     desc: 'Docker-free bash tests of the host mounts the bash twin (src/devcontainer-cli/devcontainer-cli.sh) adds to `up`: the --mount argument per host type (linux, macos, windows-wsl-docker), the source folder created, a mount skipped when the repository''s devcontainer.json already declares its target (JSONC comments, trailing commas, object form, --config), HOST_MOUNTS=false, none for build/exec/read-configuration, the SSH agent socket mount per host type and SSH_AGENT_MODE=key, the cloud folder (DCF_HOST_CLOUD_FOLDER at the fixed /mnt/cloud-folder-host, a Windows path passed as is, a missing folder skipped and never created), FUSE on request (the grant''s three variables, refused with a warning on a wslc engine), and what `host` lists; a stub devcontainer records its arguments; part of lint. The PowerShell twin is in test:bootstrap.'
     cmds:
@@ -381,12 +391,14 @@ tasks:
         platforms: [linux, darwin]
 
   test:devhost:docker:
-    desc: 'Run the devhost Feature''s Docker tests (test/devhost: defaults and the non_root scenario) for local-features/devhost, which is not under src/ and so is outside `task test`, CI and the global scenarios. Copies it and its tests into a temporary project folder shaped like a collection (src/devhost, test/devhost) and runs `devcontainer features test` there. IMAGE overrides the base image. Needs a Docker daemon and the devcontainer CLI. Linux/macOS only.'
+    desc: 'Run the devhost Feature''s Docker tests (test/devhost: defaults and the non_root scenario) for local-features/devhost, which is not under src/ and so is outside `task test`, CI and the global scenarios. Copies it and its tests into a temporary project folder shaped like a collection (src/devhost, test/devhost) and runs `devcontainer features test` there. IMAGE overrides the base image. Needs a Docker daemon and the devcontainer CLI. Linux/macOS only. Same free-space guard (FORCE=1 overrides) and the same prune of the whole docker-in-docker daemon afterwards, pass or fail.'
     platforms: [linux, darwin]
     preconditions:
       - sh: docker info >/dev/null 2>&1
         msg: 'no Docker daemon here; the devhost Docker tests run only where Docker does'
     cmds:
+      - bash {{.ROOT_DIR}}/.devcontainer/dind-guard.sh
+      - defer: bash {{.ROOT_DIR}}/.devcontainer/dind-clean.sh
       - cmd: |
           tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
           mkdir -p "$tmp/src" "$tmp/test"
