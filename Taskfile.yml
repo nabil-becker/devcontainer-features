@@ -99,7 +99,7 @@ tasks:
   lint:
     desc: 'shellcheck, yamllint, PSScriptAnalyzer, the vendored-helper and toolchain checks, the Feature version literals in container tests (versions:check), and every Docker-free unit test (test:*-unit and friends; see each task''s desc). CI runs exactly this inside .devcontainer/ci; the tools must be installed - this repo''s devcontainer has them, at the pinned versions.'
     cmds:
-      - shellcheck -x src/*/*.sh components/*/*.sh local-features/*/*.sh local-features/*/share/bin/*.sh local-features/*/share/jobs/*/*.sh test/*/*.sh test/*/unit/*.sh test/bootstrap/*.sh bootstrap/*.sh bootstrap/host/*.sh .githooks/* .devcontainer/*.sh
+      - shellcheck -x src/*/*.sh bundles/*/*.sh components/*/*.sh local-features/*/*.sh local-features/*/share/bin/*.sh local-features/*/share/jobs/*/*.sh test/*/*.sh test/*/unit/*.sh test/bootstrap/*.sh bootstrap/*.sh bootstrap/host/*.sh .githooks/* .devcontainer/*.sh
       - yamllint --strict .
       - task: lint:toolchain
       - pwsh -NoLogo -NoProfile -File '{{.ROOT_DIR}}/.github/scripts/Invoke-PSScriptAnalyzer.ps1'
@@ -108,6 +108,7 @@ tasks:
       - task: common:curl-check
       - task: signpacket:check
       - task: registerengine:check
+      - task: bundle:check
       - task: taskfiles:check
       - task: versions:check
       - task: changelog:check
@@ -208,6 +209,11 @@ tasks:
     desc: 'The jester flow on the real AGNTCY components (test/facilitator/integration/jester_flow.py): infra up twice, register (OASF records in the Directory), two fake agents and the person (FACILITATOR_HANDLE=you) through facilitator mcp over SLIM, the person''s say, the five messages routed by the rules (every mention delivered), every task completed, the person''s mail and transcript, the person''s next message held at the hop limit, continue, verify; everything stopped by pid. Needs an installed facilitator Feature (the jester_flow scenario runs it), or FACILITATOR_BIN, FACILITATOR_DIRCTL and FACILITATOR_SLIMCTL; not part of lint (it needs the 250 MB of AGNTCY binaries).'
     cmds:
       - python3 -I test/facilitator/integration/jester_flow.py
+
+  test:facilitator-image:
+    desc: 'The facilitator node image with the sample compose file (test/facilitator/node_image.sh): starts bundles/facilitator/compose.yml under a project of its own with the image facilitator-node:<version>-local (task bundle:build, then bundle:image, first), waits for the hub to be healthy, runs facilitator check in it (green), checks the non-root user, every port on loopback and the bundle''s MANIFEST.json, and that OpenBao answers from the hub over the compose network, then removes the containers, volumes and network. Needs a Docker daemon with compose; not part of lint.'
+    cmds:
+      - bash test/facilitator/node_image.sh
 
   test:packet-relay-unit:
     desc: 'Docker-free tests of the packet-relay Feature (src/packet-relay): two parties, three, a party away, a lossy folder, a slow partial sync between two machines'' copies, forged and misplaced files, a fork, a gap lost for good and its skip, a lost state, a folder without hard links, the guards on egress and ingress and the command (test_relay.py), and install.sh into a throwaway root with DESTDIR, alone with its own copy of sign-packet''s library, the guard options baked and refused when unusable (test_feature.py); part of lint. Needs python3 and ssh-keygen.'
@@ -608,6 +614,78 @@ tasks:
             [ -d "$copy" ] || continue
             rm -rf "$copy" && cp -r src/register-engine/registerengine "$copy" && rm -rf "$copy/__pycache__" && echo "synced $copy"
           done
+
+  bundle:check:
+    desc: 'Fail if the facilitator Feature''s copy of the node bundle script (src/facilitator/bundle-build.sh, with which the Feature builds the bundle from its own source when no released bundle is pinned) differs from bundles/facilitator/install.sh. Run `task bundle:sync` to refresh it. Part of lint.'
+    silent: true
+    cmds:
+      - cmd: |
+          if cmp -s bundles/facilitator/install.sh src/facilitator/bundle-build.sh; then echo "the bundle script copy is up to date"; exit 0; fi
+          echo "stale copy: src/facilitator/bundle-build.sh differs from bundles/facilitator/install.sh (task bundle:sync)"; exit 1
+
+  bundle:sync:
+    desc: 'Copy bundles/facilitator/install.sh over src/facilitator/bundle-build.sh after a change to the bundle script; bump the facilitator Feature.'
+    silent: true
+    cmds:
+      - install -m 0755 bundles/facilitator/install.sh src/facilitator/bundle-build.sh && echo "synced src/facilitator/bundle-build.sh"
+
+  bundle:build:
+    desc: 'Build the facilitator node bundle for one architecture into dist/ (facilitator-<version>-linux-<arch>.tar.gz and its SHA256SUMS line) with bundles/facilitator/install.sh: ARCH=amd64|arm64 (default: this machine''s; arm64 on amd64 is a cross build, no emulation), ASSETS=<folder> serves the upstream downloads offline, OUT=<folder> instead of dist. Never root; the release-bundle workflow runs the same script.'
+    vars:
+      ARCH: '{{.ARCH | default ""}}'
+      OUT: '{{.OUT | default "dist"}}'
+      ASSETS: '{{.ASSETS | default ""}}'
+    cmds:
+      - bash bundles/facilitator/install.sh --out "{{.OUT}}"{{if .ARCH}} --arch {{.ARCH}}{{end}}{{if .ASSETS}} --assets "{{.ASSETS}}"{{end}}
+
+  bundle:stage:
+    desc: 'Stage a bundle built by bundle:build into src/facilitator/bundle/ (git-ignored), with its SHA256SUMS line, so that `task test FEATURE=facilitator` installs that bundle rather than building one from source; the Feature still checks it against its SHA256SUMS, and against digests.txt when pinned. ARCH and OUT as bundle:build; `task bundle:stage -- clean` removes the staged folder.'
+    silent: true
+    vars:
+      ARCH: '{{.ARCH | default ""}}'
+      OUT: '{{.OUT | default "dist"}}'
+    cmds:
+      - cmd: |
+          set -eu
+          if [ "{{.CLI_ARGS}}" = clean ]; then rm -rf src/facilitator/bundle && echo "removed src/facilitator/bundle"; exit 0; fi
+          arch="{{.ARCH}}"; [ -n "$arch" ] || case "$(uname -m)" in aarch64|arm64) arch=arm64 ;; *) arch=amd64 ;; esac
+          v="$(bash bundles/facilitator/install.sh --version)"
+          asset="facilitator-$v-linux-$arch.tar.gz"
+          [ -f "{{.OUT}}/$asset" ] || { echo "no {{.OUT}}/$asset: task bundle:build ARCH=$arch"; exit 1; }
+          mkdir -p src/facilitator/bundle
+          cp "{{.OUT}}/$asset" src/facilitator/bundle/
+          grep "  $asset\$" "{{.OUT}}/SHA256SUMS" >src/facilitator/bundle/SHA256SUMS
+          echo "staged src/facilitator/bundle/$asset"
+
+  bundle:image:
+    desc: 'Build the facilitator node image (bundles/facilitator/Dockerfile) from the bundle in dist/ (OUT=<folder> otherwise) for this machine''s architecture, tagged facilitator-node:<version>-local; the release-node-image workflow builds the published one from the released asset. Needs a Docker daemon.'
+    silent: true
+    vars:
+      OUT: '{{.OUT | default "dist"}}'
+    cmds:
+      - cmd: |
+          set -eu
+          v="$(bash bundles/facilitator/install.sh --version)"
+          docker build -t "facilitator-node:$v-local" --build-arg "BUNDLE_VERSION=$v" -f bundles/facilitator/Dockerfile "{{.OUT}}"
+
+  bundle:pin:
+    desc: 'After the Operator has run release-bundle: download the release facilitator-bundle-v<version> (`task bundle:pin -- 0.3.0`), check each asset against its SHA256SUMS, the digest GitHub records for it and its build attestation (gh attestation verify), and add the lines to src/facilitator/digests.txt, for the pull request that pins the bundle. Needs gh, logged in.'
+    silent: true
+    cmds:
+      - cmd: |
+          set -eu
+          v="{{.CLI_ARGS}}"; [ -n "$v" ] || { echo "usage: task bundle:pin -- <bundle version>"; exit 2; }
+          tag="facilitator-bundle-v$v"; repo=nabil-becker/devcontainer-features
+          work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
+          gh release download "$tag" --repo "$repo" --pattern SHA256SUMS --pattern "facilitator-$v-linux-*.tar.gz" --dir "$work"
+          (cd "$work" && sha256sum -c SHA256SUMS)
+          while read -r sum name; do
+            api="$(gh api "repos/$repo/releases/tags/$tag" --jq ".assets[] | select(.name == \"$name\") | .digest")"
+            [ "$api" = "sha256:$sum" ] || { echo "$name: SHA256SUMS says $sum, GitHub records $api"; exit 1; }
+            gh attestation verify "$work/$name" --repo "$repo" >/dev/null
+            grep -q "  $name\$" src/facilitator/digests.txt || echo "$sum  $name" >>src/facilitator/digests.txt
+            echo "pinned $name $sum"
+          done <"$work/SHA256SUMS"
 
   repo:setup:
     desc: 'Once per clone: set core.hooksPath to .githooks (auto DCO sign-off) and the `git cs` alias directly in this clone''s git config, and remove an `include.path ../.gitconfig` and a `merge.devhost-todo` section that earlier runs wrote (the include resolves next to a git dir outside the worktree, ADR 0020, where any process could plant a config). Touches only this clone''s git config, never your global config. Idempotent.'

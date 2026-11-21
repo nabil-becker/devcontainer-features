@@ -8,6 +8,6 @@ set -e
 source dev-container-features-test-lib
 
 here="$(cd "$(dirname "$0")" && pwd)"
-check "the jester flow end to end, verified" python3 -I "$here/integration/jester_flow.py"
+check "the jester flow end to end, verified" /opt/facilitator/python/bin/python3 -I "$here/integration/jester_flow.py"
 
 reportResults

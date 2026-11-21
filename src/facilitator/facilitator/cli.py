@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -32,8 +33,25 @@ def _fac(a) -> Facilitator:
     return Facilitator(settings_mod.load())
 
 
+def _bundle() -> dict | None:
+    """The node bundle's MANIFEST.json (beside lib/ in /opt/facilitator), or None from a source tree."""
+    try:
+        return json.loads((settings_mod.LIB.parent / "MANIFEST.json").read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def _deprecations(fac) -> None:
+    """CONTRIBUTING's deprecation notice: one line on stderr from version and check."""
+    for name in fac.s.deprecated():
+        print(f"facilitator: {name} is deprecated: use bundleVersion (removed in 1.0.0)", file=sys.stderr)
+
+
 def _versions(fac) -> dict:
-    out = {"facilitator": __version__, "python": sys.version.split()[0], "library": str(settings_mod.LIB)}
+    out = {"facilitator": __version__, "python": sys.version.split()[0], "library": str(settings_mod.LIB),
+           "mode": fac.s["FACILITATOR_MODE"]}
+    b = _bundle()
+    out["bundle"] = f"{b.get('version')} linux-{b.get('arch')}" if b else "none (a source tree)"
     try:
         from registerengine import __version__ as rv, core
         out["register-engine"] = rv
@@ -63,8 +81,10 @@ def cmd_version(a) -> int:
     fac = _fac(a)
     v = _versions(fac)
     v["backend"] = fac.s["FACILITATOR_BACKEND"]
-    _emit(a, v, f"facilitator {v['facilitator']} (backend {v['backend']}; register-engine {v.get('register-engine')}, "
-                f"sign-packet {v.get('sign-packet')})\n"
+    _deprecations(fac)
+    _emit(a, v, f"facilitator {v['facilitator']} (backend {v['backend']}; mode {v['mode']}; register-engine "
+                f"{v.get('register-engine')}, sign-packet {v.get('sign-packet')})\n"
+                f"bundle       : {v['bundle']}\n"
                 f"dirctl       : {v['dirctl']}\nslimctl      : {v['slimctl']}\nslim-bindings: {v['slim-bindings']} "
                 f"(the node version it speaks)\npython       : {v['python']}\nlibrary      : {v['library']}")
     return 0
@@ -77,6 +97,10 @@ def cmd_check(a) -> int:
     def part(name, ok, detail, needed=True):
         parts.append({"part": name, "ready": bool(ok), "detail": detail, "needed": needed})
 
+    _deprecations(fac)
+    leaf = fac.s.mode() == "leaf"
+    part("mode", True, "leaf: the thin client only; no Directory, SLIM or ssh-agent runs here" if leaf
+         else "node: the Directory, SLIM and the ssh-agent run here")
     part("python", sys.version_info >= (3, 11), sys.version.split()[0])
     for tool in ("ssh-keygen", "ssh-agent", "ssh-add"):
         part(tool, shutil.which(tool), shutil.which(tool) or "missing (openssh-client)")
@@ -90,7 +114,8 @@ def cmd_check(a) -> int:
         part("record", False, str(e))
     v = _versions(fac)
     part("dirctl", v["dirctl"] != "missing", v["dirctl"])
-    part("slimctl", v["slimctl"] != "missing", v["slimctl"])
+    part("slimctl", v["slimctl"] != "missing" or leaf, v["slimctl"] if not leaf else "not installed (mode leaf)",
+         needed=not leaf)
     transport = fac.s["FACILITATOR_TRANSPORT"]
     part("slim-bindings", v["slim-bindings"] != "missing" or transport == "poll",
          v["slim-bindings"] if transport == "slim" else f"{v['slim-bindings']} (transport poll: tests only, no SLIM)")
@@ -98,7 +123,7 @@ def cmd_check(a) -> int:
     fb = (fac.state.keys / "FALLBACK").exists()
     part("keys", True, f"OpenBao {st}" + ("; some keys are in the 0.1.0 fallback file (keys/FALLBACK)" if fb else ""))
     inf = fac.infra()
-    for row in inf.status():
+    for row in ([] if leaf else inf.status()):
         why = "healthy" if row["healthy"] else "not running: facilitator infra up"
         if row.get("port_owners"):
             why += "; port in use by " + ", ".join(f"{o} ({k})" for k, o in row["port_owners"].items())
@@ -148,6 +173,9 @@ def cmd_start(a) -> int:
     cmd_setup(a)
     try:
         fac = _fac(a)
+        if fac.s.mode() == "leaf":
+            print("facilitator: mode leaf: no daemon is started here (the thin client only)")
+            return 0
         if not fac.s.bool("FACILITATOR_AUTOSTART"):
             print("facilitator: autostart is off; facilitator infra up starts the Directory and SLIM")
             return 0
@@ -162,6 +190,9 @@ def cmd_infra(a) -> int:
     fac = _fac(a)
     inf = fac.infra()
     which = [a.component] if a.component else None
+    if a.action == "up" and fac.s.mode() == "leaf":
+        raise FacilitatorError("infra up: mode leaf runs no Directory, SLIM or ssh-agent here (the Feature's option "
+                               "mode: node installs a node)")
     if a.action == "up":
         for c, word in inf.up(which):
             print(f"facilitator: {c} {word}")
@@ -182,6 +213,57 @@ def cmd_infra(a) -> int:
         f"{'  pid ' + str(r['pid']) if r['pid'] and r['running'] else ''}  {' '.join(r.get('ports', {}).values())}"
         + (f"  ({r['note']})" if r.get("note") else "") for r in rows))
     return 0 if all(r["healthy"] for r in rows) else 1
+
+
+def cmd_node(a) -> int:
+    """node run: the node in the foreground, for a container whose only process tree is the node (the server
+    image, under tini). It makes the state folder and the facilitator's key, starts the ssh-agent, the Directory
+    and the SLIM node, then waits: a signal (TERM, INT) stops all three and exits 0; one of them dying stops the
+    others and exits 1, so the container's restart policy is the supervisor. Role standalone, every port on
+    loopback (roles and listeners come with slice N3)."""
+    fac = _fac(a)
+    if fac.s.mode() == "leaf":
+        raise FacilitatorError("node run: mode leaf runs no node (the Feature's option mode: node installs one)")
+    fac.state.ensure()
+    fac.record.facilitator_key()
+    inf = fac.infra()
+    stop: list[int] = []
+
+    def on_signal(signum, _frame):
+        stop.append(signum)
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(sig, on_signal)
+    try:
+        for c, word in inf.up():
+            print(f"facilitator: {c} {word}", flush=True)
+    except InfraError:
+        inf.down()
+        raise
+    b = _bundle()
+    print(f"facilitator: node running (role standalone, every port on loopback; facilitator {__version__}"
+          + (f", bundle {b.get('version')} linux-{b.get('arch')}" if b else "") + f"; state {fac.state.home})",
+          flush=True)
+    rc = 0
+    while not stop:
+        try:                                   # reap what the node started and that has exited
+            while os.waitpid(-1, os.WNOHANG)[0] > 0:
+                pass
+        except ChildProcessError:
+            pass
+        dead = [c for c in COMPONENTS if not inf.running(c)]
+        if dead:
+            time.sleep(0.5)                    # look twice before stopping the node
+            dead = [c for c in dead if not inf.running(c)]
+        if dead:
+            print(f"facilitator: {', '.join(dead)} stopped; stopping the node (facilitator infra logs)",
+                  file=sys.stderr, flush=True)
+            rc = 1
+            break
+        time.sleep(1)
+    for c, word in inf.down():
+        print(f"facilitator: {c} {word}", flush=True)
+    return rc
 
 
 def cmd_register(a) -> int:
@@ -427,6 +509,8 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--all", action="store_true", help="every participant of the list and every human")
     c.add_argument("--new-key", action="store_true", help="make a new key (the old one stays valid for what it signed)")
     c.add_argument("--no-directory", action="store_true", help="do not push the OASF record")
+    c = command("node", cmd_node, "the node in the foreground (the server image's command): run", False)
+    c.add_argument("action", choices=["run"])
     command("participants", cmd_participants, "the participant list and who is registered")
     command("status", cmd_status, "who is attached, and each conversation's hops, budget and pause")
     c = command("mail", cmd_mail, "a person's unread messages, read only (the MCP tool mail marks them read); "

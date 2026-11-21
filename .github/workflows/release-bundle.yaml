@@ -1,0 +1,105 @@
+name: "Release the facilitator node bundle"
+# Manual, the Operator starts it (ruling AC; an agent never runs it). Builds the node bundle
+# (bundles/facilitator/install.sh) for linux amd64 and arm64, each natively on its own runner and smoke-tested
+# there, then publishes both tarballs and one SHA256SUMS as the assets of the release
+# facilitator-bundle-v<version> with a GitHub build attestation for each. The version is the application's
+# (src/facilitator/facilitator/__init__.py). Next: a pull request pins the digests in
+# src/facilitator/digests.txt (task bundle:pin -- <version>), the Operator merges it and starts the Feature
+# release, then release-node-image.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-bundle
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          # GitHub's arm64 runner, free for public repositories. Without it, the script cross-builds arm64 on
+          # ubuntu-latest (nothing it runs is arm64), but the smoke test below then needs QEMU.
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+
+      - name: "Build the bundle"
+        run: bash bundles/facilitator/install.sh --arch "${{ matrix.arch }}" --out dist
+
+      - name: "Smoke test: unpack at /opt/facilitator and run it"
+        run: |
+          set -eu
+          asset="$(cd dist && ls facilitator-*-linux-${{ matrix.arch }}.tar.gz)"
+          (cd dist && sha256sum -c SHA256SUMS)
+          sudo tar -xzf "dist/$asset" -C /opt --no-same-owner
+          export FACILITATOR_HOME="$RUNNER_TEMP/state"
+          /opt/facilitator/bin/facilitator version
+          /opt/facilitator/bin/dirctl version
+          /opt/facilitator/bin/slimctl version
+          /opt/facilitator/python/bin/python3 -I -c 'import slim_bindings; print(slim_bindings.get_version())'
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bundle-${{ matrix.arch }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: bundle-*
+          path: parts
+
+      - name: "One SHA256SUMS for both architectures"
+        id: sums
+        run: |
+          set -eu
+          mkdir dist
+          cp parts/*/facilitator-*.tar.gz dist/
+          cat parts/*/SHA256SUMS | sort -k2 > dist/SHA256SUMS
+          (cd dist && sha256sum -c SHA256SUMS)
+          version="$(bash bundles/facilitator/install.sh --version)"
+          [ "$(wc -l < dist/SHA256SUMS)" -eq 2 ] || { echo "expected two bundles"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/facilitator-*.tar.gz
+
+      - name: "Publish the release facilitator-bundle-v${{ steps.sums.outputs.version }}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.sums.outputs.version }}
+        run: |
+          set -eu
+          tag="facilitator-bundle-v$VERSION"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "$tag exists; a published bundle is never replaced. Bump the application version."; exit 1
+          fi
+          gh release create "$tag" dist/* --target "$GITHUB_SHA" --title "facilitator node bundle $VERSION" \
+            --notes "The facilitator node bundle $VERSION for linux amd64 and arm64 (bundles/facilitator). Verify: sha256sum -c SHA256SUMS; gh attestation verify <asset> --repo $GITHUB_REPOSITORY. Pinned in src/facilitator/digests.txt by a pull request."

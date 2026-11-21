@@ -1,6 +1,8 @@
 """The infrastructure, with fake dirctl and slimctl that only listen on their port: up starts them and is
 idempotent, status sees a crash and says so, down stops them by pid, a port in use is refused naming its
-owner, the configs are rendered with every port on loopback and the online schema check off unless asked."""
+owner, the configs are rendered with every port on loopback and the online schema check off unless asked; a
+stale Directory daemon.pid is removed before a start; `node run` keeps the node in the foreground, stops it on a
+signal (exit 0) and stops it all when one part dies (exit 1)."""
 import sys
 from pathlib import Path
 
@@ -10,6 +12,7 @@ import helpers  # noqa: E402
 import os  # noqa: E402
 import signal  # noqa: E402
 import socket  # noqa: E402
+import subprocess  # noqa: E402
 import time  # noqa: E402
 
 from facilitator.infra import InfraError, pid_alive, port_owner  # noqa: E402
@@ -115,6 +118,82 @@ def test_online_schema_check_when_asked():
         assert "schema.oasf.outshift.com" in cfg.split("operations:", 1)[1].splitlines()[0]
     finally:
         e.close()
+
+
+def test_a_stale_daemon_pid_is_removed():
+    tmp = Path(__import__("tempfile").mkdtemp(prefix="fac-infra-"))
+    e = helpers.Env(**fakes(tmp / "bin"), **env_ports())
+    inf = None
+    try:
+        inf = e.fac().infra()
+        (e.home / "dir").mkdir(parents=True)
+        (e.home / "dir" / "daemon.pid").write_text("1\n")             # left by a removed container
+        assert inf.up_one("dir") == "started"
+        assert not (e.home / "dir" / "daemon.pid").exists()
+    finally:
+        if inf:
+            inf.down()
+        e.close()
+        __import__("shutil").rmtree(tmp, ignore_errors=True)
+
+
+def _node_run(e):
+    argv = [sys.executable, "-I", str(helpers.SRC / "bin" / "facilitator"), "node", "run"]
+    return subprocess.Popen(argv, cwd=e.root, env=dict(os.environ), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True)
+
+
+def _wait_running(p, e, seconds=20):
+    end = time.time() + seconds
+    while time.time() < end:
+        pids = [(e.home / "run" / f"{c}.pid") for c in ("dir", "slim")]
+        if p.poll() is not None:
+            break
+        if all(f.exists() for f in pids):
+            time.sleep(1.5)
+            return {f.stem: int(f.read_text()) for f in pids}
+        time.sleep(0.1)
+    if p.poll() is not None:
+        raise AssertionError(f"node run exited {p.returncode}: {p.communicate()}")
+    raise AssertionError("node run did not start its parts")
+
+
+def test_node_run_stops_on_a_signal():
+    tmp = Path(__import__("tempfile").mkdtemp(prefix="fac-infra-"))
+    e = helpers.Env(**fakes(tmp / "bin"), **env_ports())
+    p = _node_run(e)
+    try:
+        pids = _wait_running(p, e)
+        p.send_signal(signal.SIGTERM)
+        out, err = p.communicate(timeout=30)
+        assert p.returncode == 0, err
+        assert "node running (role standalone" in out and "slim stopped now" in out, out
+        assert not any(pid_alive(x, "start") for x in pids.values())
+    finally:
+        if p.poll() is None:
+            p.kill()
+        e.fac().infra().down()
+        e.close()
+        __import__("shutil").rmtree(tmp, ignore_errors=True)
+
+
+def test_node_run_stops_all_when_one_dies():
+    tmp = Path(__import__("tempfile").mkdtemp(prefix="fac-infra-"))
+    e = helpers.Env(**fakes(tmp / "bin"), **env_ports())
+    p = _node_run(e)
+    try:
+        pids = _wait_running(p, e)
+        os.kill(pids["slim"], signal.SIGKILL)
+        out, err = p.communicate(timeout=30)
+        assert p.returncode == 1, (out, err)
+        assert "slim stopped; stopping the node" in err, err
+        assert not pid_alive(pids["dir"], "start")
+    finally:
+        if p.poll() is None:
+            p.kill()
+        e.fac().infra().down()
+        e.close()
+        __import__("shutil").rmtree(tmp, ignore_errors=True)
 
 
 if __name__ == "__main__":
