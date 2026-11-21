@@ -211,9 +211,14 @@ tasks:
       - python3 -I test/facilitator/integration/jester_flow.py
 
   test:facilitator-image:
-    desc: 'The facilitator node image with the sample compose file (test/facilitator/node_image.sh): starts bundles/facilitator/compose.yml under a project of its own with the image facilitator-node:<version>-local (task bundle:build, then bundle:image, first), waits for the hub to be healthy, runs facilitator check in it (green), checks the non-root user, every port on loopback and the bundle''s MANIFEST.json, and that OpenBao answers from the hub over the compose network, then removes the containers, volumes and network. Needs a Docker daemon with compose; not part of lint.'
+    desc: 'The facilitator node image with the sample compose file (test/facilitator/node_image.sh): starts bundles/facilitator/compose.yml under a project of its own with the image facilitator-node:<version>-local (task bundle:build, then bundle:image, first): a hub (role hub from its mounted mesh.yml), a spoke and an OpenBao, sealed. Waits for the hub and the spoke to be healthy; checks the hub fails closed (no certificate while OpenBao is sealed, check says why, every port on loopback), the spoke standalone until it joins, both non-root, no port published to the host, the bundle''s MANIFEST.json, and that OpenBao answers from the hub over the compose network; then removes the containers, volumes and network. FACILITATOR_OPENBAO_IMAGE names another OpenBao image. Needs a Docker daemon with compose; not part of lint.'
     cmds:
       - bash test/facilitator/node_image.sh
+
+  test:facilitator-mesh:
+    desc: 'Slice N3 end to end in Docker (test/facilitator/mesh_flow.sh): an OpenBao (initialised and unsealed by the script, a PKI for corp.test whose intermediate is signed by a root kept outside it, an AppRole), a hub and two spokes on one internal network, every node the image facilitator-node:<version>-local (task bundle:build, then bundle:image, first). Join tokens (single use), a conversation from spoke A''s agent to spoke B''s through the hub with verify on both spokes, a local-only agent not listed, the Directory synced by registry, lock one refusing an untrusted CA, lock two refusing the spike''s impostor, the hub restarting, a held message, check naming a TLS refusal, a revoked spoke refused; removes every container, volume and network. FACILITATOR_TEST_OPENBAO names another OpenBao image. Needs a Docker daemon; not part of lint.'
+    cmds:
+      - bash test/facilitator/mesh_flow.sh
 
   test:packet-relay-unit:
     desc: 'Docker-free tests of the packet-relay Feature (src/packet-relay): two parties, three, a party away, a lossy folder, a slow partial sync between two machines'' copies, forged and misplaced files, a fork, a gap lost for good and its skip, a lost state, a folder without hard links, the guards on egress and ingress and the command (test_relay.py), and install.sh into a throwaway root with DESTDIR, alone with its own copy of sign-packet''s library, the guard options baked and refused when unusable (test_feature.py); part of lint. Needs python3 and ssh-keygen.'

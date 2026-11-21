@@ -6,6 +6,49 @@ of the Feature and whether they must act (an option renamed, a task removed, a r
 The version in `devcontainer-feature.json` is bumped in the same change that adds its entry
 here; `task lint` fails when the entry is missing.
 
+## [0.4.0] - 2026-11-21
+
+Hub and spoke with local and private trust (slice N3 of the facilitator-node proposal; ADR-0067 to ADR-0071).
+Nothing changes without a `mesh.yml`: a node stays standalone with every port on loopback. Rebuild the container.
+
+### Added
+
+- **`mesh.yml`** (`.devcontainer/mesh.yml`, `FACILITATOR_MESH_FILE`): `preset` (`solo`, `team`; `open` refused: not yet,
+  slice N5), `role` (`standalone`, `spoke`, `hub`; `peer` refused: slice N5), `node`, `trust` (SPIFFE trust domains
+  mapped to `local` or `private`), `expose` (a handle or a full SPIFFE ID mapped to its widest level) and `limits` per
+  level. The Feature options `hopLimit`, `messageBudget` and `rateLimit` are the defaults; `mesh.yml` overrides them per
+  level. A file with findings never opens anything: the node runs standalone (fail narrow).
+- **Node certificates** (ed25519, URI `spiffe://<domain>/node/<id>` and the DNS name its dialers use) issued by a hub's
+  **OpenBao PKI** (an intermediate; the root kept offline), 24 h, renewed at half life; a home domain may be self-issued.
+- **The two locks:** a SLIM listener per trust level on a hub, each with only that level's CA bundle; and the
+  application's check of every card and every entry against `mesh.yml` (the ID's domain must be the domain whose CA
+  signed it; every packet key bound to a SPIFFE ID by its node's signed card). Refusals in `mesh/refused.log`.
+- **`facilitator node invite`** (a single-use join token valid 15 minutes; refused inside an agent's job), **`node join`**
+  (a spoke's certificate from the hub's issuer, the trust bundle checked against the token, the hub written into
+  `mesh.yml`, a static SLIM link of type `peer`), **`node revoke`** (no renewal; refused by lock two; asks to confirm),
+  `node status`, `node bundle` (a federated domain's trust bundle), `node renew`, `node restore-roster`; **`node approve`
+  is refused: not yet, slice N5**. Tasks `facilitator:node-invite`, `node-join`, `node-revoke`, `node-approve`,
+  `node-status` and `facilitator:explain`.
+- **The peers part** (`infra` part `peers`, started on a hub and a joined spoke): cards and the hub's roster (backed up
+  into the hub's OpenBao KV, so its snapshot carries it), replicas of the conversations a node's participants are in
+  (pushed on write, retried until delivered: a held message waits), renewals. An @handle on another node is reached
+  through the hub; `verify` passes on every node holding the conversation and names each remote signer's SPIFFE ID.
+- **`check`** shows the mesh, the certificate, what is open beyond loopback, the hub, TLS refusals from the SLIM log
+  and lock two's refusals; `check <mesh.yml>...` (or `-`) lints mesh files by NFR-11's contract.
+  **`explain`** prints the level a handle or SPIFFE ID gets and each level's effective limits with their source.
+- **The Directory per role** (`node.directory.peering`): a hub's OCI and libp2p on its name, a spoke on loopback with
+  the hub as its bootstrap peer, syncing the hub's records by registry, one way. dirctl 1.9.1 has no mDNS switch, so
+  peering needs `directory.firewall` (`auto`: iptables drops UDP 5353; or `external`).
+
+### Changed
+
+- The node image's role is its mounted `/etc/facilitator/mesh.yml`; the sample compose runs the hub as a hub (from
+  `bundles/facilitator/hub/mesh.yml`) beside OpenBao and a spoke, publishing nothing. A hub whose OpenBao is sealed runs
+  on loopback until its certificate is issued.
+- In a mesh, a node's participants have SLIM names of their own (`agntcy/facilitator-<node>/<handle>`).
+- `bundleVersion` defaults to `0.4.0`, not released yet: the Feature builds the bundle from its own source until
+  `release-bundle` runs and `digests.txt` pins it.
+
 ## [0.3.1] - 2026-11-21
 
 ### Changed

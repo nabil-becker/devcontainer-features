@@ -23,6 +23,8 @@ released only when no consumer's `devcontainer.json` names them.
         |  transport: SLIM (slim-bindings)     directory: AGNTCY Directory (dirctl)
         v
   infrastructure the Feature starts on loopback: dirctl daemon (8888, 5555, 8999, 8889), SLIM node (46357), ssh-agent
+  (and, from 0.4.0, as a hub or a spoke of a mesh: a SLIM listener per level or a link to the hub, and the peers part;
+  "A hub and its spokes" below)
 
   one node bundle per architecture, two installers:
   bundles/facilitator/install.sh --(release-bundle, the Operator)--> facilitator-<v>-linux-<arch>.tar.gz + SHA256SUMS
@@ -161,12 +163,15 @@ copied to `/opt/facilitator`; user `facilitator` (uid 10001), no login shell; st
 `participants.yml` mounted read-only when wanted; `ENTRYPOINT tini -- facilitator node run`;
 `HEALTHCHECK facilitator infra status`; nothing exposed. `facilitator node run` starts the ssh-agent, the Directory
 and SLIM, stays in the foreground, stops all three on a signal and exits non-zero when one dies, so the
-container's restart policy supervises it. In 0.3.0 it runs **role standalone**: every port on loopback inside the
-container; the hub's networking and trust come with slice N3.
+container's restart policy supervises it. Its role is its mounted `/etc/facilitator/mesh.yml`
+(`FACILITATOR_MESH_FILE`): from 0.4.0 a hub (below, "A hub and its spokes"); with no file, standalone, every port on
+loopback inside the container.
 
-The sample [`bundles/facilitator/compose.yml`](../../bundles/facilitator/compose.yml) runs the hub beside an
-OpenBao 2.7.2 (by digest) on an internal network that publishes nothing (ruling AI). OpenBao starts sealed:
-initialise it once and unseal it by hand after every start (ruling AB), from your own terminal:
+The sample [`bundles/facilitator/compose.yml`](../../bundles/facilitator/compose.yml) runs the hub (role hub, from
+[`bundles/facilitator/hub/mesh.yml`](../../bundles/facilitator/hub/mesh.yml)) beside an OpenBao 2.7.2 (by digest) and
+one spoke, on an internal network that publishes nothing (ruling AI). OpenBao starts sealed: initialise it once and
+unseal it by hand after every start (ruling AB), from your own terminal; the rest is "Setting up a hub and its
+spokes" below:
 
 ```sh
 docker compose -f bundles/facilitator/compose.yml up -d
@@ -178,6 +183,212 @@ docker compose -f bundles/facilitator/compose.yml exec hub facilitator check
 Locally: `task bundle:build`, `task bundle:image` (tags `facilitator-node:<v>-local`), `task test:facilitator-image`.
 Why not AGNTCY's own images or Helm charts (NFR-9): they run one daemon each, with no supervisor for the three
 processes a node needs and no bundle shared with this Feature (not checked against their latest releases).
+
+## A hub and its spokes (slice N3)
+
+From 0.4.0 a node can be a **hub** (an intranet node other nodes link to) or a **spoke** (a node that links to one
+hub), beside the default **standalone** (0.3.0's behaviour, nothing open). Two levels of trust are built: **local**
+(this machine, unrestricted) and **private** (an intranet domain). Public trust, approving a stranger's node,
+MCP over HTTP and peer-to-peer meshes are slices N4 and N5, and are refused by name until then
+([proposal facilitator-node](../../docs/proposals/facilitator-node.md), ADR-0067 to ADR-0071).
+
+```
+   spoke-a (a devcontainer or the image)        hub-1 (the node image)              spoke-b
+   agents a1, a2; person pa                     OpenBao beside it: PKI for          agent b1; person pb
+                                                corp.example (an intermediate;
+   SLIM  ---- mTLS, link of type peer ---->     the root stays offline)   <-------- SLIM
+   (dials out, opens nothing)                   SLIM listener "private": the CA
+                                                bundle of private domains only
+   peers part: hello (its card)  ------------>  peers part: lock two on the card;
+              <- roster (every card, revoked)    the roster of cards, backed up
+   a1: "@b1 ..." -> the conversation's entries, signed, -> routed by the hub's SLIM -> spoke-b: lock two, replica
+```
+
+### mesh.yml
+
+One file per node, `.devcontainer/mesh.yml` (or `FACILITATOR_MESH_FILE`; in the image `/etc/facilitator/mesh.yml`).
+No file is `preset: solo`, `role: standalone`. Sections: `preset`, `role`, `node`, `trust`, `expose`, `limits`
+(the slice's brief put `role` and `node` here, where the proposal had them in `facilitator.yml`).
+
+```yaml
+preset: team                     # solo (only this machine) | team (plus your intranet domains); open: slice N5
+role: spoke                      # standalone | spoke | hub; peer: slice N5
+node:
+  id: laptop-nb                  # default: the host name; node join writes it
+  hub: hub.corp.example:46358    # these four are written by `facilitator node join`
+  hub_name: hub.corp.example
+  hub_node: hub-1
+  domain: corp.example
+  directory:
+    peering: false               # the Directory beyond loopback; see "The Directory" below
+trust:                           # SPIFFE trust domain -> level; a domain not listed is refused
+  corp.example: private
+expose:                          # handle or full SPIFFE ID -> the widest level it may be reached from
+  "*": local                     # the default: an agent opts outward, never inward
+  triage: private
+limits:                          # per level: hops, budget, rate, copy, svid_ttl, max_packet
+  private:
+    hops: 4
+```
+
+A hub's `node` adds `name` (the DNS name in its certificate, which its spokes dial as `server_name`), `listen`
+(one SLIM listener per level, e.g. `private: 0.0.0.0:46358`), `join` (the join endpoint's address) and `issuer`
+(`domain`, `openbao`, `mount`, `role`, `kv`, `approle`: the file with `role_id=` and `secret_id=` lines);
+[`bundles/facilitator/hub/mesh.yml`](../../bundles/facilitator/hub/mesh.yml) is a whole one.
+
+- **The reach rule:** a caller whose domain is at level L sees and messages an agent exposed E only when E is at
+  least as wide as L (local < private). A spoke's card lists only the participants exposed at least as wide as its
+  domain's level, so a local-only agent never leaves its node: no other node lists it, and `@` it answers as an
+  unknown handle.
+- **Limits** in this order (ruling AD): the level's default, then the Feature options `hopLimit`, `messageBudget`
+  and `rateLimit` (for local and private), then `mesh.yml` `limits`. `facilitator explain <handle or SPIFFE ID>`
+  prints each effective value and where it came from. A message gets the limits of its **origin level**, the widest
+  level of the writers of its lineage.
+- `facilitator check mesh.yml` (or `-`) lints the file by NFR-11's contract: `path:line: rule: message`,
+  `--format json`, exit 0, 1 or 2. **A file with findings never opens anything**: the node runs standalone and
+  `check` says why (fail narrow).
+
+### Identity, and the two locks
+
+A node's identity is an ed25519 certificate file: URI SAN `spiffe://<domain>/node/<id>`, a DNS SAN (the
+`server_name` its dialers use), `CA:false`, server and client auth. A hub's domain is issued by **OpenBao PKI**: an
+intermediate in the hub's OpenBao, the **root kept offline**; certificates last **24 h** and are renewed at half
+life; OpenBao is **unsealed by hand** after every start, and while it is sealed nothing is issued or renewed (a day's
+margin). A node's home domain `<id>.local` may be self-issued (its own CA in the volume). SLIM reads its TLS key from
+a file, so the node's certificate key is a file in the volume, mode 600 (the exception ADR-0069 decision 4 writes).
+
+- **Lock one, the listener:** a hub has one SLIM listener per level, each with the CA bundle of that level's
+  domains only; a certificate from any other CA is refused in the TLS handshake.
+- **Lock two, the application:** SLIM never checks the SPIFFE ID (spike 2), so the facilitator does, on every card
+  and every entry: the certificate must chain to a trust bundle, the domain the ID names must be the domain whose
+  CA signed it, the domain must be in `trust` within the preset, and the node must not be revoked. Each node's
+  **card** (its certificate, its facilitator's packet key and its exposed participants' packet keys, signed with the
+  certificate's key) binds packet keys to SPIFFE IDs, so every packet's signer has an ID: an entry signed by a key no
+  admitted card binds to the principal it writes as is refused, and so is a roster entry adding such a key. A card
+  or a roster older than the one held is a replay; a handle two nodes announce is reachable on neither.
+- Refusals go to `mesh/refused.log`; `facilitator check` shows the last ones ("lock two") and the TLS refusals in the
+  SLIM log (a refused dialer sees only a timeout; the reason is in the dialer's log: `UnknownIssuer`,
+  `CertificateRequired`, `not valid for name`).
+
+### Setting up a hub and its spokes, step by step
+
+Everything a person does here is a person's act: `node invite`, `node revoke`, `node bundle` and
+`node restore-roster` refuse to run inside an agent's job (`CLAUDECODE`, `DEVHOST_JOB_CHILD`, `FACILITATOR_HANDLE`, or a
+name in `FACILITATOR_AGENT_JOB_VARS`).
+
+1. **Start the hub and its OpenBao** (the sample compose, or your own):
+   `docker compose -f bundles/facilitator/compose.yml up -d`. The hub reads
+   [`hub/mesh.yml`](../../bundles/facilitator/hub/mesh.yml); until it has a certificate it runs on loopback and
+   `check` says why.
+2. **Initialise and unseal OpenBao** (once; then unseal after every start):
+   `docker compose ... exec openbao bao operator init`, then `... bao operator unseal`.
+3. **Make the domain's PKI** with the root token (ADR-0050), the root CA on a machine of its own:
+
+   ```sh
+   # in OpenBao (bao, logged in with the root token)
+   bao secrets enable -path=pki-corp pki && bao secrets tune -max-lease-ttl=8760h pki-corp
+   bao write -field=csr pki-corp/intermediate/generate/internal common_name="corp.example intermediate" key_type=ed25519 > int.csr
+   # offline, where the root key lives
+   openssl x509 -req -in int.csr -CA root.pem -CAkey root.key -days 365 -set_serial 0x$(openssl rand -hex 8) \
+     -extfile <(printf 'basicConstraints=critical,CA:true,pathlen:0\nkeyUsage=critical,keyCertSign,cRLSign\n') -out int.pem
+   cat int.pem root.pem > int-root.pem          # the intermediate WITH its root: the trust bundle needs both
+   # in OpenBao again
+   bao write pki-corp/intermediate/set-signed certificate=@int-root.pem
+   bao write pki-corp/roles/node allowed_domains=corp.example allow_subdomains=true allow_bare_domains=true \
+     allowed_uri_sans='spiffe://corp.example/*' key_type=ed25519 ttl=24h max_ttl=24h require_cn=false \
+     server_flag=true client_flag=true key_usage=DigitalSignature ext_key_usage=ServerAuth,ClientAuth \
+     use_csr_common_name=false use_csr_sans=false
+   bao secrets enable -path=secret -version=2 kv
+   bao policy write facilitator-hub - <<'EOF'
+   path "pki-corp/sign/node" { capabilities = ["create", "update"] }
+   path "pki-corp/revoke" { capabilities = ["create", "update"] }
+   path "secret/data/facilitator/mesh/*" { capabilities = ["create", "update", "read"] }
+   EOF
+   bao auth enable approle
+   bao write auth/approle/role/facilitator-hub token_policies=facilitator-hub token_ttl=1h
+   ```
+
+   The role refuses any URI outside `spiffe://corp.example/*` and any DNS name outside `corp.example`, and the hub, not
+   the requester, decides each node's ID (run in this slice: OpenBao refused both).
+4. **Give the hub its AppRole**, as a file (never baked into the image): `role_id=` from
+   `bao read auth/approle/role/facilitator-hub/role-id`, `secret_id=` from
+   `bao write -f auth/approle/role/facilitator-hub/secret-id`, written to the `approle` path in the hub's
+   `mesh.yml`. Within seconds the hub gets its certificate and opens its listener: `facilitator check` shows the
+   certificate and the open ports.
+5. **Federated domains** (optional): put another domain's CA bundle on the hub with
+   `facilitator node bundle partner.example --file partner.pem`, map it in `trust`, restart the hub.
+6. **Invite a spoke** on the hub: `facilitator node invite` (task `facilitator:node-invite`) prints a join token: single
+   use, 15 minutes, with the address of the join endpoint and the SHA-256 of the domain's trust bundle. The join
+   endpoint is open while a token is live (and 30 s after).
+7. **Join** on the spoke (`role: spoke` and its `expose` in its `mesh.yml`; its participants registered):
+   `facilitator node join --token <token>` (task `facilitator:node-join`). It fetches the bundle, checks it against
+   the token's hash before trusting the hub's certificate (no trust on first use), sends a request for its own key,
+   and writes its certificate, the bundle, the mesh's SLIM secret and the hub into `mesh.yml`.
+8. **Restart the spoke** (`facilitator infra down` then `up`, or the container): its SLIM node links to the hub
+   (type `peer`, `server_name` the hub's name), the peers part says hello with its card, and the hub answers with the
+   roster. `facilitator check` shows the hub and the cards admitted; `who` lists the other nodes' exposed agents.
+
+From then on an agent mentions another node's agent like any other (`@b1`); `verify` passes on every node that
+holds the conversation and names each remote signer's SPIFFE ID and level.
+
+**Revoke** a spoke on the hub: `facilitator node revoke <node>` (asks to confirm). Its certificate is not renewed and
+expires within `svid_ttl` (24 h); lock two refuses it on the hub at once and on every spoke at its next roster
+(within 30 s); its card is kept, marked, so what it signed before stays readable. SLIM itself does not check
+revocation (no CRL), so until expiry its TLS link may still form; for an urgent cut-off also restart the hub without
+its bundle or stop the listener. What it already holds is not recalled.
+
+**Back up** a hub's roster: every join and revoke writes it into OpenBao's KV (`secret/facilitator/mesh/roster`), so
+OpenBao's snapshot carries it (ruling BH); `facilitator node restore-roster` reads it back.
+
+### What crosses between nodes
+
+- A conversation is one register; every node one of its members is on holds a whole replica (copy `member` at
+  private, `full` at local), and the hub holds none unless one of its participants is a member. Each write is queued
+  for the other member nodes; the register travels whole until delivered (an entry's id is its hash, so it is
+  idempotent), so a node that was away catches up and a held message waits (`mesh/outbox/`).
+- Every node's dispatcher routes its own members' messages; each node of a conversation anchors the facilitator keys
+  of the others (from their cards). An @handle on another node is reached through the hub: the spokes' SLIM nodes link
+  only to the hub, which routes between them (static `peer` links, SP3).
+- A lineage that leaves a replica into a conversation this node does not hold is reported as "not copied here"
+  (exit 0), with the node to verify it on.
+- The SLIM names of a node's participants are its own (`agntcy/facilitator-<node>/<handle>`), and the peers part is
+  `agntcy/facilitator-node/<node>` with the mesh's secret: another node cannot open a session to a participant's
+  process (a different app secret).
+
+### Ports (ADR-0071)
+
+`check` lists what is open beyond loopback ("open ports"). A standalone node and a spoke open nothing (a spoke dials
+out). A hub opens its SLIM listeners (`node.listen`, mutual TLS), the join endpoint only while a join token is live,
+and, with `directory.peering`, its Directory's libp2p and OCI ports. The Directory's API (8888) and gateway (8889)
+never leave loopback. Nothing opens without a `mesh.yml` whose preset allows a level above local.
+
+### The Directory, and mDNS
+
+dirctl 1.9.1 has **no setting that turns mDNS off**: in this slice three daemons on one Docker network found each
+other by mDNS, **including one whose libp2p was bound to loopback** (it dials out to what it finds); this is true of a
+standalone node too, on any network segment it shares with another Directory. Its OCI registry also accepts an
+anonymous push. So:
+
+- By default (`directory.peering: false`) nothing of the Directory leaves loopback, and the mesh learns another node's
+  agents from its signed card, not from the Directory.
+- With `directory.peering: true` a hub opens its OCI registry and libp2p on its name; a spoke keeps everything on
+  loopback, dials the hub as its `bootstrap_peers` (the peer id is computed from the Directory's own key), publishes
+  every 10 s, and syncs the records the hub's card names **by registry**
+  (`dirctl sync create --registry http://<hub>:<oci> --cids ...`), one way; the hub pulls from a spoke only if the spoke
+  sets `directory.open_oci` (ruling BI). Peering needs `directory.firewall`: `auto` adds iptables rules dropping UDP
+  5353 in and out (root, `NET_ADMIN` and `iptables` in the container), or `external` when the host or the network does
+  it and limits the open ports to the listed peers; otherwise the Directory refuses to start.
+
+### Failure modes, as run
+
+| Failure | What happens |
+| --- | --- |
+| The hub restarts | the spokes' SLIM links reconnect (about 5 s); a message sent meanwhile is delivered (3 s after, in the test) |
+| A spoke goes away | messages for it wait in the others' outbox and are tried every 5 s; it receives them when it returns |
+| A node is revoked | refused by lock two (the hub at once, the spokes at their next roster); no renewal; its old entries stay readable |
+| The hub's OpenBao is sealed | no certificate issued or renewed; a hub without one runs on loopback and opens nothing |
+| A wrong `server_name` or CA | the dialer's SLIM log says `not valid for name` or `UnknownIssuer`; `check` names it |
+| An invalid `mesh.yml` | the node runs standalone (fail narrow); `check` lists the findings |
 
 ## Using it in devcontainer.json
 
@@ -287,13 +498,13 @@ minute, which a person's messages are not counted against) are unchanged.
 | --- | --- | --- |
 | `installTaskfile` | `true` | The Taskfile, as every Feature. |
 | `backend` | `agntcy` | What carries the directory and delivery. `lean` (packet-relay) is refused in this version: "not yet: slice 5". `FACILITATOR_BACKEND`. |
-| `mode` | `node` | `node`: the whole bundle; the Directory, the SLIM node and the ssh-agent run here (`autostart`). `leaf`: **the thin client only**, for a machine that runs no node: the bundle without `slimctl`, no daemon at container start, `infra up` and `node run` refused, `check` ready without them. A leaf connects to a node over the network from slice N3 (`facilitator mcp --node`); in 0.3.0 it installs and answers MCP but has no node to reach. `FACILITATOR_MODE`. |
-| `bundleVersion` | `0.3.0` | The node bundle (the release `facilitator-bundle-v<version>`), checked against `digests.txt`; `latest` means the bundle this Feature version was made with. With no pin, the bundle is built from the Feature's own source (above). |
+| `mode` | `node` | `node`: the whole bundle; the Directory, the SLIM node and the ssh-agent run here (`autostart`). `leaf`: **the thin client only**, for a machine that runs no node: the bundle without `slimctl`, no daemon at container start, `infra up` and `node run` refused, `check` ready without them. A leaf connecting to a node over the network (`facilitator mcp --node`) is not built yet (slice N3 built hubs and spokes): it installs and answers MCP but has no node to reach. `FACILITATOR_MODE`. |
+| `bundleVersion` | `0.4.0` | The node bundle (the release `facilitator-bundle-v<version>`), checked against `digests.txt`; `latest` means the bundle this Feature version was made with. With no pin, the bundle is built from the Feature's own source (above). |
 | `dirVersion` | empty | **Deprecated in 0.3.0** (above): `1.9.1` or `latest` accepted with a notice, anything else refused. |
 | `slimVersion` | empty | **Deprecated in 0.3.0** (above): `3.4.6` or `latest` accepted with a notice, anything else refused. |
-| `hopLimit` | `6` | Hops since the message that began the chain (a person's later messages count too) before the conversation pauses. `FACILITATOR_HOP_LIMIT`. |
-| `messageBudget` | `40` | Messages between two `continue`; past it participants' messages are kept and held. `FACILITATOR_MESSAGE_BUDGET`. |
-| `rateLimit` | `10` | Messages a participant may write in a minute; one more is refused, not written. `FACILITATOR_RATE_LIMIT`. |
+| `hopLimit` | `6` | Hops since the message that began the chain (a person's later messages count too) before the conversation pauses. The default of the local and private levels; `mesh.yml` `limits` overrides it per level (ruling AD). `FACILITATOR_HOP_LIMIT`. |
+| `messageBudget` | `40` | Messages between two `continue`; past it participants' messages are kept and held. The local and private default, as `hopLimit`. `FACILITATOR_MESSAGE_BUDGET`. |
+| `rateLimit` | `10` | Messages a participant may write in a minute; one more is refused, not written. The local and private default, as `hopLimit`. `FACILITATOR_RATE_LIMIT`. |
 | `receiveWaitSeconds` | `300` | How long `receive` blocks without `wait_seconds` (a 300 s call held in the T1 run). `FACILITATOR_RECEIVE_WAIT_SECONDS`. |
 | `staleSeconds` | `900` | Without a `receive` for this long a participant counts as not attached. `FACILITATOR_STALE_SECONDS`. |
 | `facilitatorBudget` | `20` | Model calls per conversation for the AI facilitator; read and shown, unused before slice 6. `FACILITATOR_BUDGET`. |
@@ -303,7 +514,9 @@ minute, which a person's messages are not counted against) are unchanged.
 
 **Settings are plain variables too** (NFR-6), resolved: the command line, the repository's `.env`,
 `.devcontainer/.env`, the environment, then the options as installed. Besides those above:
-`FACILITATOR_HOME`, `PARTICIPANTS_FILE` (alias `AGENTS_FILE`), `FACILITATOR_FILE`, `FACILITATOR_HANDLE` and
+`FACILITATOR_HOME`, `PARTICIPANTS_FILE` (alias `AGENTS_FILE`), `FACILITATOR_FILE`, `FACILITATOR_MESH_FILE` (the
+node's `mesh.yml`, default `.devcontainer/mesh.yml`; above), `FACILITATOR_AGENT_JOB_VARS` (more variables that mark an
+agent's job, which `node invite` and `node revoke` refuse), `FACILITATOR_HANDLE` and
 `FACILITATOR_TOKEN` (who `facilitator mcp` attaches as, set per CLI by its harness or by the person), the ports
 (`FACILITATOR_DIR_PORT` 8888, `FACILITATOR_DIR_OCI_PORT` 5555, `FACILITATOR_DIR_P2P_PORT` 8999,
 `FACILITATOR_DIR_GATEWAY_PORT` 8889, `FACILITATOR_SLIM_PORT` 46357), `FACILITATOR_KEYS` (`auto` | `openbao` |
@@ -319,7 +532,11 @@ facilitator's own key, the anchor of every conversation's roster), `keys/` (publ
 in the fallback), `tokens/`, `attach/` (when each participant last called `receive`), `mail/` (what each
 person's `mail` handed over, and the turn hook's cached line), `dir/` (the
 Directory's data, `node.key` included), `slim/` (its rendered config), `secrets/` (fallback only), `run/`
-(pidfiles, the ssh-agent's socket), `logs/`. **Conversations are working data**: lost with the volume,
+(pidfiles, the ssh-agent's socket), `logs/`, and in a mesh `mesh/`: `certs/<domain>/` (the node's key, mode 600,
+its certificate and the domain's trust bundle), `cards/` (the other nodes' admitted cards), `convs/` (which node
+each member of a shared conversation is on), `outbox/`, `refused.log` (lock two's refusals), `status.json` (the
+peers part), on a hub `roster.json` and `invites.json` (join tokens, hashed), `secret` (the mesh's SLIM app secret).
+**Conversations are working data**: lost with the volume,
 never committed (D12); a tier-2 mirror is a later item.
 
 ### Keys: OpenBao, or the 0.1.0 fallback (an ADR-0048 exception)
@@ -353,9 +570,16 @@ mistake, not an attacker.
 | Task | Command | What |
 | --- | --- | --- |
 | `facilitator:version` | `facilitator version` | What is installed. |
-| `facilitator:check` | `facilitator check` | One line per part, each port's owner when it is taken, each participant registered and last seen; no secret printed; exit 1 when not ready. |
+| `facilitator:check` | `facilitator check [mesh.yml... \| -] [--format json]` | One line per part, each port's owner when it is taken, each participant registered and last seen, and the mesh: the file, the certificate, what is open beyond loopback, the hub, TLS refusals and lock two's refusals; no secret printed; exit 1 when not ready. With paths: lints mesh files (NFR-11). |
+| `facilitator:explain` | `facilitator explain <handle or SPIFFE ID>` | The level it gets here, what it reaches, each level's effective limits and where each came from. Read only. |
+| `facilitator:node-invite` | `facilitator node invite` | On a hub: a join token (single use, 15 minutes). Refused inside an agent's job. |
+| `facilitator:node-join` | `facilitator node join --token <token or file> [<join address>]` | On a spoke: its certificate from the hub's issuer; the hub into `mesh.yml`. |
+| `facilitator:node-revoke` | `facilitator node revoke <node> [--yes]` | On a hub: no renewal, refused by lock two. Asks to confirm; refused inside an agent's job. |
+| `facilitator:node-approve` | `facilitator node approve` | Not yet: slice N5 (a public node joins by key and a person's approval). |
+| `facilitator:node-status` | `facilitator node status` | The peers part, the admitted cards, a hub's roster, the last refusals (JSON). |
+| (no task) | `facilitator node bundle <domain> --file <pem>`, `node renew`, `node restore-roster`, `node peers` | A federated domain's trust bundle; renew this spoke's certificate now; a hub's roster back from OpenBao; the peers part in the foreground (`infra up` starts it). |
 | `facilitator:setup` | `facilitator-setup` | The state folder and the facilitator's key (idempotent, never fatal). |
-| `facilitator:infra` | `facilitator infra up\|down\|status\|logs [agent\|dir\|slim]` | The infrastructure; `up` is idempotent, nothing is restarted on a crash (`status` says so). |
+| `facilitator:infra` | `facilitator infra up\|down\|status\|logs [agent\|dir\|slim\|peers]` | The infrastructure; `up` is idempotent, nothing is restarted on a crash (`status` says so). |
 | `facilitator:participants` | `facilitator participants` | The list and who is registered. |
 | `facilitator:register` | `facilitator register <handle>... \| --all` | Key, token, OASF record. |
 | `facilitator:status` | `facilitator status` | Who is attached; each conversation's messages, hops, budget, pause. Read only. |
@@ -428,8 +652,16 @@ each delivery in its route.
 
 ## Limits
 
-- One container: participants, the Directory and SLIM are on loopback; across containers is slice N3. A leaf
-  (`mode: leaf`) installs but has no node to reach before then; the node image runs role standalone.
+- Hub and spoke with local and private trust only (slice N3): public trust, a node joining by key and approval, peer
+  to peer, MCP over HTTP and cloud AIs are slices N4 and N5. A leaf (`mode: leaf`) has no way to reach a node yet:
+  N3 built nodes, not leaf clients.
+- Revocation is the certificate's 24 h lifetime plus lock two: SLIM checks no revocation list, and a renewed
+  certificate or a changed bundle reaches the SLIM node only when it restarts (its `reload_interval` and
+  `reload_client_ca_file` did nothing in 3.4.6 here); the peers part restarts it after a renewal.
+- The mesh's SLIM app secret is shared by every joined node and is not rotated when one is revoked (lock one and lock
+  two still refuse it).
+- A handle is the mesh's once: two nodes announcing one handle make it reachable on neither.
+- dirctl 1.9.1 cannot switch mDNS off (above, "The Directory, and mDNS").
 - The arm64 bundle is built (a cross build) and checked here, but runs only on the arm64 runner of
   `release-bundle`; nothing on arm64 runs in CI's Feature tests.
 - `agntcy` only; `lean` (packet-relay) is slice 5, and there is **no silent fallback**: when the
@@ -476,6 +708,11 @@ the Directory's data) is kept. A new AGNTCY or CPython version is a new bundle (
 `release-bundle` and pinned in `digests.txt`. 0.x: the MCP tools, the packet fields and the CLI verbs may still
 change before 1.0.
 
+**From 0.3.x to 0.4.0:** rebuild the container. Nothing changes without a `mesh.yml`: the node stays standalone.
+The bundle is 0.4.0 (unreleased: until `release-bundle` runs and `digests.txt` pins it, the Feature builds it from its
+own source). The node image's role is its mounted `mesh.yml`; the sample compose's hub is now a hub, which opens its
+listener once its OpenBao issues its certificate.
+
 **From 0.2.0 to 0.3.0:** rebuild the container. The tree moves from `/usr/local/lib/facilitator` to
 `/opt/facilitator` (the commands stay on `PATH`); the Feature no longer installs Python from apt; drop
 `dirVersion` and `slimVersion` (deprecated). A Directory that refused to start after a container was removed
@@ -493,7 +730,8 @@ person's messages now count as hops.
 | `facilitator/app.py` | intake, the dispatcher, a person's mail, the session (an agent's receive, reply, say, who; a person's say, mail, transcript, continue, who) |
 | `facilitator/router.py`, `guard.py`, `collector.py` | the routing rules, the limits, plain joining |
 | `facilitator/record.py`, `signer.py`, `verify.py` | the record over register-engine, keys and signing, `verify` |
-| `facilitator/transport.py`, `directory.py`, `infra.py` | SLIM, the Directory client, the infrastructure |
+| `facilitator/transport.py`, `directory.py`, `infra.py` | SLIM, the Directory client, the infrastructure (the SLIM and Directory configs per role) |
+| `facilitator/mesh.py`, `identity.py`, `peers.py` | `mesh.yml` and lock two's decision; certificates, cards, join tokens and the OpenBao issuer; what crosses between nodes and the peers part |
 | `facilitator/mcp.py`, `model.py`, `transcript.py`, `cli.py` | the MCP server, the model wrapper, the transcript, the command |
 | `types.d/facilitator.py` | the `conversation` register type |
 | `registerengine/`, `signpacket/` | copies of `src/register-engine` and `src/sign-packet` (`task registerengine:check`, `task signpacket:check`) |
@@ -501,5 +739,7 @@ person's messages now count as hops.
 | `digests.txt` | the SHA-256 of each released bundle asset, one line each (`task bundle:pin`) |
 
 Tests: `test/facilitator/unit/` (`task test:facilitator-unit`, part of `task lint`; `test_feature.py` builds a
-skeleton bundle and installs it), `test/facilitator/node_image.sh` (`task test:facilitator-image`) and
+skeleton bundle and installs it; `test_mesh.py` the mesh's policy and lock two), `test/facilitator/node_image.sh`
+(`task test:facilitator-image`), `test/facilitator/mesh_flow.sh` (`task test:facilitator-mesh`: an OpenBao, a hub and
+two spokes) and
 `test/facilitator/integration/jester_flow.py` (`task test:facilitator-integration`; the `jester_flow` scenario).

@@ -2,7 +2,7 @@
   "id": "facilitator",
   "version": "0.4.0",
   "name": "facilitator (conversations between agents of any vendor, on AGNTCY)",
-  "description": "The communication layer between agents of any vendor running in the devcontainer: an MCP server each participant's CLI starts (receive, reply, say, who) and a person's own Claude Code or Copilot session attaches to (say, mail, transcript, continue, who), one shared entry with the handle from FACILITATOR_HANDLE, deterministic routing by @handle with hop, budget and rate limits, every message a sign-packet packet in a register-engine conversation register, verified back to the human who began it. Installs the facilitator node bundle (its own CPython, dirctl, slimctl and the application, checksummed; the same bundle as the server image) and runs the AGNTCY Agent Directory and a SLIM node on loopback, started as infrastructure (mode node), or only the thin client (mode leaf); never starts, stops or configures a participant. Includes a local-model wrapper for any OpenAI-compatible endpoint and a turn hook line for Claude Code ('Facilitator: N new messages').",
+  "description": "The communication layer between agents of any vendor running in the devcontainer: an MCP server each participant's CLI starts (receive, reply, say, who) and a person's own Claude Code or Copilot session attaches to (say, mail, transcript, continue, who), one shared entry with the handle from FACILITATOR_HANDLE, deterministic routing by @handle with hop, budget and rate limits, every message a sign-packet packet in a register-engine conversation register, verified back to the human who began it. Installs the facilitator node bundle (its own CPython, dirctl, slimctl and the application, checksummed; the same bundle as the server image) and runs the AGNTCY Agent Directory and a SLIM node on loopback, started as infrastructure (mode node), or only the thin client (mode leaf); never starts, stops or configures a participant. A node is standalone (nothing open) unless its mesh.yml (FACILITATOR_MESH_FILE) makes it a hub or a spoke: nodes link over SLIM with mutual TLS, certificates from an OpenBao PKI per trust domain, a listener per trust level and the application's SPIFFE ID check (local and private trust; join tokens, revoke). Includes a local-model wrapper for any OpenAI-compatible endpoint and a turn hook line for Claude Code ('Facilitator: N new messages').",
   "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/facilitator",
   "licenseURL": "https://github.com/nabil-becker/devcontainer-features/blob/main/LICENSE",
   "options": {
@@ -21,7 +21,7 @@
       "type": "string",
       "enum": ["node", "leaf"],
       "default": "node",
-      "description": "node (the default): the whole bundle, and the Directory, the SLIM node and the facilitator's ssh-agent run here (autostart). leaf: the thin client only (facilitator mcp and what it needs; no slimctl): no daemon is started, infra up and node run are refused; it connects to a node over the network from slice N3. FACILITATOR_MODE."
+      "description": "node (the default): the whole bundle, and the Directory, the SLIM node and the facilitator's ssh-agent run here (autostart). leaf: the thin client only (facilitator mcp and what it needs; no slimctl): no daemon is started, infra up and node run are refused; a leaf reaching a node over the network is not built yet (slice N3 built hubs and spokes). FACILITATOR_MODE."
     },
     "bundleVersion": {
       "type": "string",
@@ -44,7 +44,7 @@
     "hopLimit": {
       "type": "string",
       "default": "6",
-      "description": "Hops since the message that began the chain (a person's later messages count too) before the conversation pauses; a person's continue resumes it. FACILITATOR_HOP_LIMIT."
+      "description": "Hops since the message that began the chain (a person's later messages count too) before the conversation pauses; a person's continue resumes it. The default of the local and private trust levels; mesh.yml limits override it per level. FACILITATOR_HOP_LIMIT."
     },
     "messageBudget": {
       "type": "string",
