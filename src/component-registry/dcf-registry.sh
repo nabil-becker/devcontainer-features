@@ -34,6 +34,8 @@
 #       required: true            # optional: never fetched stops resolve (on a source too)
 #       writable: true            # optional: where remember appends (one layer, a path source)
 #       heading: false            # optional (1.3.0): stack its text without a "## Layer <id>" line
+#       namespace: acme           # optional (1.7.0): its components are acme:<name>, and it merges
+#                                 # only with layers of the same namespace (see below)
 #       sources:                  # merged in this order
 #         - kind: git             # registry-source-git on PATH
 #           url: https://git.example.invalid/corp/registry.git
@@ -60,7 +62,19 @@
 # The resolved view: skills/<name>/ (SKILL.md and its files, what a consumer copies),
 # agents/<name>/ (1.6.0, an agent definition: model, skills and from.tsv, what the participant
 # reads at the agent's start), meta/<kind>/<name>/ (provenance.tsv, keys.tsv, values/<key>),
-# meta/refs.tsv, meta/problems.tsv, layers.tsv, whoami and agent-names.
+# meta/refs.tsv, meta/problems.tsv, meta/namespaced.tsv (1.7.0), layers.tsv, whoami and agent-names.
+#
+# Layer namespaces (1.7.0, ADR-0073 decision 4): a layer with namespace: acme brings acme:<name> for
+# every component it names (its [skills/arch-review] is skills/acme:arch-review), so a layer pointed
+# at a public or community source cannot change anything outside its namespace. Its sections match,
+# lock, @replace and set types only among the layers of the same namespace, which merge with each
+# other exactly as layers do (order, specificity, locks, permission keys from the namespace's lowest
+# layer); the layers without a namespace are the Operator's own and never reach a namespaced
+# component, nor it theirs. A ref resolves inside its own namespace and never crosses one (it is
+# reported dangling). In the view a namespaced skill is skills/<ns>--<name>/ (a ':' is no skill
+# folder name; its SKILL.md is named the same, whatever its text says), its metadata under its
+# registry name, meta/skills/<ns>:<name>/; a namespaced agent definition is agents/<ns>:<name>/ and
+# applies to no agent of the agents list in this release. explain takes either name.
 #
 # Agent definitions (1.6.0): an agents/<name> component holds two fields, model:value and
 # skills:list, and model.<cli>:value, a model for agents of that CLI only; a line for any other key
@@ -165,7 +179,7 @@ resolve_whoami() { # $1: the --as value, may be empty
 # ------------------------------------------------------------- the layer list ----
 # The parser: the YAML subset above, one record per line out (tab-separated):
 #   Y <n> <line>                      layer n starts
-#   K <n> <key> <value> <line>        id, at, required, writable, heading
+#   K <n> <key> <value> <line>        id, at, required, writable, heading, namespace
 #   S <n> <m> <line>                  source m of layer n starts
 #   P <n> <m> <key> <value> <line>    kind, url, branch, tag, commit, path, remote, required,
 #                                     driver, host, port, database, user, sslmode, table, query, allow-insecure, auth.type, auth.secret, auth.user, auth.header
@@ -204,7 +218,7 @@ function scalar(s, what) {
 function setkey(where, k, v,   id) {
   if (v ~ /\t/) fail("a tab in the value of '" k "'")
   if (where == "layer") {
-    if (k !~ /^(id|at|required|writable|heading)$/) fail("unknown key '" k "' in a layer (id, at, sources, required, writable, heading)")
+    if (k !~ /^(id|at|required|writable|heading|namespace)$/) fail("unknown key '" k "' in a layer (id, at, sources, required, writable, heading, namespace)")
     if ((n, k) in seen) fail("'" k "' appears twice in one layer")
     seen[n, k] = 1
     printf "K\t%d\t%s\t%s\t%d\n", n, k, v, NR
@@ -355,17 +369,24 @@ END {
 }
 AWK
 
-# load_list: parse and check RF_ABS into NL and the arrays L_ID, L_AT, L_REQ, L_LINE, L_NSRC and,
+# Layer namespaces (1.7.0, ADR-0073 decision 4): a name of lower-case letters and digits in words
+# joined by one -, at most 40 characters (so <ns>--<name>, a namespaced skill's folder, splits at its
+# first --). component-registry (the built-in base layer) and anthropic-skills (Claude Code's
+# synced skills) are reserved.
+NS_RE='^[a-z0-9]+(-[a-z0-9]+)*$'
+NS_RESERVED="$BASE_ID anthropic-skills"
+
+# load_list: parse and check RF_ABS into NL and the arrays L_ID, L_AT, L_REQ, L_LINE, L_NSRC, L_NS and,
 # keyed "<n>.<m>", S_KIND, S_REQ, S_LINE, S_ARGS (key=value lines handed to the source).
 load_list() {
   local out rc rec a b c d errs=0 i j at k v
   [ -f "$RF_ABS" ] || die 2 "no layer list at $RF_ABS (from $RF_SOURCE); write one (see the component-registry Feature notes) or set COMPONENT_REGISTRY_FILE to its path relative to $ROOT."
   out="$(awk "$LIST_PARSER" "$RF_ABS")"; rc=$?
-  NL=0; L_ID=() L_AT=() L_WR=() L_HD=() L_REQ=() L_LINE=() L_NSRC=() S_KIND=() S_REQ=() S_LINE=() S_ARGS=() S_PIN=()
+  NL=0; L_ID=() L_AT=() L_WR=() L_HD=() L_NS=() L_NSL=() L_REQ=() L_LINE=() L_NSRC=() S_KIND=() S_REQ=() S_LINE=() S_ARGS=() S_PIN=()
   while IFS=$'\t' read -r rec a b c d _; do
     case "$rec" in
       Y) NL="$a"; L_LINE[a]="$b" L_NSRC[a]=0 L_REQ[a]=false ;;
-      K) case "$b" in id) L_ID[a]="$c" ;; at) L_AT[a]="$c" ;; required) L_REQ[a]="$c" ;; writable) L_WR[a]="$c" ;; heading) L_HD[a]="$c" ;; esac ;;
+      K) case "$b" in id) L_ID[a]="$c" ;; at) L_AT[a]="$c" ;; required) L_REQ[a]="$c" ;; writable) L_WR[a]="$c" ;; heading) L_HD[a]="$c" ;; namespace) L_NS[a]="$c" L_NSL[a]="$d" ;; esac ;;
       S) L_NSRC[a]="$b"; S_LINE["$a.$b"]="$c" S_REQ["$a.$b"]=false S_ARGS["$a.$b"]='' ;;
       P) case "$c" in
            kind) S_KIND["$a.$b"]="$d" ;;
@@ -393,6 +414,14 @@ load_list() {
     case "${L_REQ[i]}" in true | false) ;; *) warn "$at: required is true or false"; errs=$((errs + 1)) ;; esac
     case "${L_WR[i]:-false}" in true | false) ;; *) warn "$at: writable is true or false"; errs=$((errs + 1)) ;; esac
     case "${L_HD[i]:-true}" in true | false) ;; *) warn "$at: heading is true or false"; errs=$((errs + 1)) ;; esac
+    if [ -n "${L_NS[i]+x}" ]; then
+      v="${L_NS[i]}"
+      if ! [[ "$v" =~ $NS_RE ]] || [ "${#v}" -gt 40 ]; then
+        warn "$RF:${L_NSL[i]}: layer ${L_ID[i]:-$i}: namespace '$v' may hold only lower-case letters and digits, in words joined by one - (like acme or acme-tools), at most 40 characters"; errs=$((errs + 1))
+      elif [[ " $NS_RESERVED " == *" $v "* ]]; then
+        warn "$RF:${L_NSL[i]}: layer ${L_ID[i]:-$i}: namespace '$v' is reserved; pick another"; errs=$((errs + 1))
+      fi
+    fi
     [ "${L_NSRC[i]}" -gt 0 ] || { warn "$at has no sources"; errs=$((errs + 1)); }
     for ((j = 1; j <= L_NSRC[i]; j++)); do
       k="$i.$j"; at="$RF:${S_LINE[$k]}: layer ${L_ID[i]:-$i} source $j"
@@ -509,6 +538,13 @@ function q(s) { gsub(/'/, "'\\''", s); return "'" s "'" }
 function tsv(s) { gsub(/[\t\r\n]/, " ", s); return s == "" ? "-" : s }
 function first(s,   i) { i = index(s, "/"); return i ? substr(s, 1, i - 1) : s }
 function rest(s,   i) { i = index(s, "/"); return i ? substr(s, i + 1) : "" }
+# Layer namespaces (1.7.0): a namespaced component is <kind>/<ns>:<name>. cns(c) is its namespace
+# ("" for the Operator's own), cbare(c) the <kind>/<name> its layers' sections match, disk(c) where
+# it lands in the view: a skill as skills/<ns>--<name> (the folder and SKILL.md name Claude Code and
+# the adapters take; a ':' is no skill folder name), anything else under its registry name.
+function cns(c,   n) { n = c; sub(/^[^\/]*\//, "", n); return index(n, ":") ? substr(n, 1, index(n, ":") - 1) : "" }
+function cbare(c,   k, n) { k = c; sub(/\/.*$/, "", k); n = c; sub(/^[^\/]*\//, "", n); sub(/^[^:]*:/, "", n); return k "/" n }
+function disk(c,   ns) { ns = cns(c); if (ns == "" || c !~ /^skills\//) return c; return "skills/" ns "--" substr(cbare(c), 8) }
 # segmatch(p, s): pattern p matches path s; both without a leading /, "" is the root.
 # * is one segment, ** any number (none included).
 function segmatch(p, s,   ph) {
@@ -557,7 +593,7 @@ function section(raw, loc,   path, excl, a, n, k, scope, comp, found, seg) {
   Sscope[NS] = scope; Scomp[NS] = comp; Sexcl[NS] = excl; Sfile[NS] = FILEID; Srank[NS] = RANK
   Slayer[NS] = CURLAYER; Sloc[NS] = loc; Sord[NS] = ++ORD; Swild[NS] = wildcards(scope) + wildcards(comp)
   Sraw[NS] = (excl ? "!" : "") raw
-  Sreplace[NS] = 0
+  Sreplace[NS] = 0; Sns[NS] = NSP
   SECOK = 1
 }
 function entry(t, loc,   k, ty, data, p) {
@@ -650,7 +686,7 @@ function agentwhy(k, t, d) {
 # model.<the agent's cli> line by layer, then specificity, then fewer wildcards; on a tie there the
 # suffixed key wins, then the later line.
 function agentout(c, n, cand, cs,   dir, a, i, x, nit, it, items, out, seen, cli, mk, best, bbase, bsuf, base, suf) {
-  dir = VIEW "/" c
+  dir = VIEW "/" c; CNSA = cns(c)
   system("mkdir -p " q(dir))
   cli = (c in ACLI) ? ACLI[c] : ""
   if (cli != "") { print cli > (dir "/cli"); close(dir "/cli") }
@@ -665,9 +701,18 @@ function agentout(c, n, cand, cs,   dir, a, i, x, nit, it, items, out, seen, cli
   if (("skills" in RES) && KT["skills"] == "list" && RES["skills"] != "") {
     nit = split(RES["skills"], items, "\n"); out = ""; split("", seen)
     for (x = 1; x <= nit; x++) {
-      it = items[x]; sub(/^ref:/, "", it); sub(/:.*$/, "", it)
+      # 1.7.0: an item is the skill's name as the CLI knows it, <ns>--<name> for a namespaced one. In
+      # a namespace every item is that namespace's skill; the Operator's own agent may name one as
+      # <ns>:<name> (a ref never crosses a namespace, so ref: items stay in the agent's own).
+      it = items[x]; ins = CNSA
+      if (it ~ /^ref:/) { sub(/^ref:/, "", it); sub(/:.*$/, "", it) }
+      else if (match(it, /^[a-z0-9]+(-[a-z0-9]+)*:/) && it !~ /\//) {
+        if (CNSA != "") { printf "R\t%s\t-\t-\tskills\titem '%s': an agent definition in namespace %s names that namespace's skills only (write the name without a prefix)\n", c, items[x], CNSA; continue }
+        ins = substr(it, 1, RLENGTH - 1); it = substr(it, RLENGTH + 1)
+      } else sub(/:.*$/, "", it)
       if (it ~ /(^|\/)skills\//) sub(/^.*skills\//, "", it)
-      if (it !~ /^[A-Za-z0-9._-]+$/) { printf "R\t%s\t-\t-\tskills\titem '%s' names no skill (a name or ref:skills/<name>)\n", c, items[x]; continue }
+      if (it !~ /^[A-Za-z0-9._-]+$/) { printf "R\t%s\t-\t-\tskills\titem '%s' names no skill (a name, <namespace>:<name> or ref:skills/<name>)\n", c, items[x]; continue }
+      if (ins != "") it = ins "--" it
       if (it in seen) continue
       seen[it] = 1; out = out it "\n"
     }
@@ -711,19 +756,21 @@ function reftarget(s,   p, a, n, k, found, comp) {
 }
 function resolve(c,   i, j, n, d, x, y, cand, cs, lowrank, rmax, rloc, rlay, k, ty, tmp, parts, kd, out, items, it, nit, a, na, b, w, blk, lastlay, fm, p, base, nkeys) {
   base = META "/" c
+  CNS = cns(c); CB = cbare(c)
   system("mkdir -p " q(base "/values"))
   PROV = base "/provenance.tsv"
   printf "" > PROV
   n = 0; split("", cand); split("", cs)
   for (i = 1; i <= NLN; i++) {
     j = Lsec[i]
-    if (!segmatch(Scomp[j], c)) continue
+    # 1.7.0: a line reaches a component of its own namespace only (none: the Operator's own)
+    if (Sns[j] != CNS || !segmatch(Scomp[j], CB)) continue
     d = deepest(Sscope[j])
-    if (d < 0) { if (Scomp[j] == c) NA[++nna] = i; continue }
+    if (d < 0) { if (Scomp[j] == CB) NA[++nna] = i; continue }
     x = 0
     for (y = j + 1; y <= NS; y++) {
       if (!Sexcl[y] || Sfile[y] != Sfile[j]) continue
-      if ((Scomp[y] == "" || segmatch(Scomp[y], c)) && deepest(Sscope[y]) >= 0) { x = y; break }
+      if ((Scomp[y] == "" || segmatch(Scomp[y], CB)) && deepest(Sscope[y]) >= 0) { x = y; break }
     }
     if (x) { EX[++nex] = i; EXBY[nex] = x; continue }
     cand[++n] = i; cs[n] = strength(Lrank[i], d, Swild[j], Lord[i])
@@ -746,10 +793,10 @@ function resolve(c,   i, j, n, d, x, y, cand, cs, lowrank, rmax, rloc, rlay, k, 
   # @replace: the strongest replacing section that applies drops every weaker line
   rmax = -1
   for (j = 1; j <= NS; j++) {
-    if (!Sreplace[j] || !segmatch(Scomp[j], c)) continue
+    if (!Sreplace[j] || Sns[j] != CNS || !segmatch(Scomp[j], CB)) continue
     d = deepest(Sscope[j]); if (d < 0) continue
     x = 0
-    for (y = j + 1; y <= NS; y++) if (Sexcl[y] && Sfile[y] == Sfile[j] && (Scomp[y] == "" || segmatch(Scomp[y], c)) && deepest(Sscope[y]) >= 0) { x = y; break }
+    for (y = j + 1; y <= NS; y++) if (Sexcl[y] && Sfile[y] == Sfile[j] && (Scomp[y] == "" || segmatch(Scomp[y], CB)) && deepest(Sscope[y]) >= 0) { x = y; break }
     if (x) continue
     w = strength(Srank[j], d, Swild[j], Sord[j])
     if (w > rmax) { rmax = w; rloc = Sloc[j]; rlay = Slayer[j] }
@@ -787,7 +834,7 @@ function resolve(c,   i, j, n, d, x, y, cand, cs, lowrank, rmax, rloc, rlay, k, 
           p = Ldata[i]; sub(/^@dir[ \t]+/, "", p); sub(/\/+$/, "", p)
           if (!inside(p) || !isdir(Lcopy[i] "/" p)) { ST[i] = "skipped"; WHY[i] = "no folder " p " in the layer copy"; continue }
           ST[i] = "used"; WHY[i] = (i == w ? "the strongest files line; its files replace weaker ones of the same name" : "files overlaid, a stronger line's file of the same name replaces it")
-          printf "C\t%s\t%s\n", c, Lcopy[i] "/" p
+          printf "C\t%s\t%s\n", disk(c), Lcopy[i] "/" p
           RES[k] = p
         }
         continue
@@ -856,9 +903,16 @@ function resolve(c,   i, j, n, d, x, y, cand, cs, lowrank, rmax, rloc, rlay, k, 
       for (x = 1; x <= 2; x++) {
         k = (x == 1 ? "name" : "description")
         if (!(k in RES) || KT[k] != "value" || RES[k] == "") continue
+        if (k == "name" && CNS != "") {
+          for (a = 1; a <= n; a++) { i = cand[a]; if (Lkey[i] == k && ST[i] == "used" && WHY[i] == "the strongest line") WHY[i] = "the strongest line; not written into SKILL.md: a namespaced skill is named " substr(disk(c), 8) " there" }
+          continue
+        }
         fm = setfm(fm, k, RES[k])
         for (a = 1; a <= n; a++) { i = cand[a]; if (Lkey[i] == k && ST[i] == "used" && WHY[i] == "the strongest line") WHY[i] = "the strongest line; written into SKILL.md's front matter" }
       }
+      # 1.7.0: a namespaced skill's SKILL.md is always named <ns>--<name>, whatever its text says, so
+      # it can never take the name of a skill outside its namespace
+      if (CNS != "") fm = setfm(fm, "name", substr(disk(c), 8))
     }
     # a bare first block (heading: false) keeps the blank line between the front matter and the text
     printf "%s%s\n", (fm == "" ? "" : fm (BODYBARE ? "\n\n" : "\n")), BODYOUT > (base "/body.md"); close(base "/body.md")
@@ -885,7 +939,7 @@ function resolve(c,   i, j, n, d, x, y, cand, cs, lowrank, rmax, rloc, rlay, k, 
   }
   close(base "/keys.tsv")
   if (c ~ /^agents\//) agentout(c, n, cand, cs)
-  printf "N\t%s\n", c
+  printf "N\t%s\t%s\n", c, disk(c)
 }
 BEGIN {
   FS = "\t"
@@ -897,21 +951,37 @@ BEGIN {
   printf "" > PROBLEMS
 }
 {
-  RANK = $1; CURLAYER = $2; AT = $3; SRC = $4; VER = $5; COPY = $6; REL = $7
+  RANK = $1; CURLAYER = $2; AT = $3; SRC = $4; VER = $5; COPY = $6; REL = $7; NSP = ($8 == "-" ? "" : $8)
   parse(COPY "/" REL)
 }
 END {
   # The components: the literal component paths of the sections that apply to W.
   nc = 0
   for (j = 1; j <= NS; j++) {
-    c = Scomp[j]
-    if (Sexcl[j] || c == "" || wildcards(c) > 0 || (c in SEEN)) continue
+    b = Scomp[j]
+    if (Sexcl[j] || b == "" || wildcards(b) > 0) continue
+    split(b, cp, "/")
+    # 1.7.0: a namespaced layer's component is <kind>/<ns>:<name>
+    c = (Sns[j] == "" ? b : cp[1] "/" Sns[j] ":" substr(b, length(cp[1]) + 2))
+    if (c in SEEN) continue
     if (deepest(Sscope[j]) < 0) continue
-    split(c, cp, "/")
     if (!(cp[1] in ACT)) { CURLAYER = Slayer[j]; problem(Sloc[j], "kind " cp[1] " is not in this release; [" Sraw[j] "] is not resolved"); SEEN[c] = 1; continue }
-    if (c !~ /^[a-z]+\/[A-Za-z0-9_-][A-Za-z0-9._-]*$/) { CURLAYER = Slayer[j]; problem(Sloc[j], "a " cp[1] " component is " cp[1] "/<name>, one segment: [" Sraw[j] "]"); SEEN[c] = 1; continue }
-    SEEN[c] = 1; COMP[++nc] = c
+    if (b !~ /^[a-z]+\/[A-Za-z0-9_-][A-Za-z0-9._-]*$/) { CURLAYER = Slayer[j]; problem(Sloc[j], "a " cp[1] " component is " cp[1] "/<name>, one segment: [" Sraw[j] "]"); SEEN[c] = 1; continue }
+    SEEN[c] = 1; COMP[++nc] = c; FIRSTJ[c] = j
   }
+  # 1.7.0: a namespaced skill whose folder name (<ns>--<name>) is already an un-namespaced skill's
+  # is not resolved: the Operator's own skill keeps the name.
+  x = 0
+  for (y = 1; y <= nc; y++) {
+    c = COMP[y]
+    if (cns(c) != "" && disk(c) != c && (disk(c) in SEEN)) {
+      CURLAYER = Slayer[FIRSTJ[c]]
+      problem(Sloc[FIRSTJ[c]], c " would be handed over as " substr(disk(c), 8) ", the name of the un-namespaced skill " disk(c) "; that one keeps it and " c " is not resolved")
+      continue
+    }
+    COMP[++x] = c
+  }
+  nc = x
   # agents the participant asked for (1.6.0): resolved even when only a pattern names them
   na = split(AGENTNAMES, an, " ")
   for (x = 1; x <= na; x++) {
@@ -923,19 +993,29 @@ END {
   for (x = 1; x <= nc; x++) resolve(COMP[x])
   # refs: each with its target, ok or dangling
   printf "" > (META "/refs.tsv")
+  for (y = 1; y <= nc; y++) INCOMP[COMP[y]] = 1
+  # 1.7.0: the namespaced components and the names they are handed over by
+  printf "" > (META "/namespaced.tsv")
+  for (y = 1; y <= nc; y++) if (cns(COMP[y]) != "") print COMP[y] "\t" cns(COMP[y]) "\t" disk(COMP[y]) >> (META "/namespaced.tsv")
+  close(META "/namespaced.tsv")
   for (x = 1; x <= nrefs; x++) {
     split(REFS[x], rf, SUBSEP)
     reftarget(rf[3])
-    st = "ok"; why = ""
+    st = "ok"; why = ""; rns = cns(rf[1]); outside = ""
     if (RT_WHY != "") { st = "dangling"; why = RT_WHY }
     else {
       split(RT_COMP, cp, "/")
       if (!(cp[1] in ACT)) { st = "dangling"; why = "kind " cp[1] " is not in this release" }
+      # 1.7.0: a ref resolves inside its own namespace and never crosses one, either way
+      else if (rns != "") { outside = RT_COMP; RT_COMP = cp[1] "/" rns ":" substr(RT_COMP, length(cp[1]) + 2) }
     }
     if (st == "ok") {
-      found = 0; for (y = 1; y <= nc; y++) if (COMP[y] == RT_COMP) found = 1
-      if (!found) { st = "dangling"; why = "no component " RT_COMP " for " WHO }
+      if (!(RT_COMP in INCOMP)) {
+        st = "dangling"; why = "no component " RT_COMP " for " WHO
+        if (outside != "" && (outside in INCOMP)) why = why "; a ref in namespace " rns " stays inside it, and " outside " is outside it"
+      }
       else if (RT_KEY != "" && !((RT_COMP, RT_KEY) in RK)) { st = "dangling"; why = RT_COMP " has no key " RT_KEY }
+      if (st == "dangling" && rns == "" && RT_KEY != "" && ((RT_COMP ":" RT_KEY) in INCOMP)) why = why "; a ref never reaches into a namespace (" RT_COMP ":" RT_KEY " is in one)"
     }
     print rf[1] "\t" rf[2] "\t" tsv(rf[3]) "\t" tsv(RT_COMP) "\t" tsv(RT_KEY) "\t" st "\t" tsv(why) >> (META "/refs.tsv")
   }
@@ -971,14 +1051,14 @@ cmd_resolve() {
   stage="$STATE_DIR/views/$stamp"
   mkdir -p "$stage/meta" "$stage/skills"
   : > "$TMP/manifest"
-  printf 'rank\tlayer\tat\tsource\tkind\tversion\tstate\tfetched\tnote\n' > "$stage/layers.tsv"
+  printf 'rank\tlayer\tat\tsource\tkind\tversion\tstate\tfetched\tnote\tnamespace\n' > "$stage/layers.tsv"
   # The built-in base layer first (rank 0): the utility skills, read where the Feature installed
   # them, never fetched.
   if [ -d "$BASE_DIR" ]; then
     v="$(cat "$SHARE_DIR/version" 2>/dev/null || echo unknown)"
-    printf '0\t%s\t/\t1\tbuiltin\t%s\tbuiltin\t-\tthe Feature'"'"'s utility skills, %s\n' "$BASE_ID" "$v" "$BASE_DIR" >> "$stage/layers.tsv"
+    printf '0\t%s\t/\t1\tbuiltin\t%s\tbuiltin\t-\tthe Feature'"'"'s utility skills, %s\t-\n' "$BASE_ID" "$v" "$BASE_DIR" >> "$stage/layers.tsv"
     while IFS= read -r f; do
-      [ -n "$f" ] && printf '0\t%s\t/\t1\t%s\t%s\t%s\n' "$BASE_ID" "$v" "$BASE_DIR" "$f" >> "$TMP/manifest"
+      [ -n "$f" ] && printf '0\t%s\t/\t1\t%s\t%s\t%s\t-\n' "$BASE_ID" "$v" "$BASE_DIR" "$f" >> "$TMP/manifest"
     done < <(cd "$BASE_DIR" && find . -maxdepth 1 -type f -name '*.reg' | sed 's|^\./||' | LC_ALL=C sort)
   fi
   for ((n = 1; n <= NL; n++)); do
@@ -998,10 +1078,10 @@ cmd_resolve() {
             warn "layer $id source $m ($kind): not read, no copy yet: $SRC_NOTE"
           fi ;;
       esac
-      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$n" "$id" "${L_AT[n]}" "$m" "$kind" "${SRC_VER:--}" "$SRC_STATE" "${SRC_AT:--}" "${SRC_NOTE:--}" | tr -d '\r' >> "$stage/layers.tsv"
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$n" "$id" "${L_AT[n]}" "$m" "$kind" "${SRC_VER:--}" "$SRC_STATE" "${SRC_AT:--}" "${SRC_NOTE:--}" "${L_NS[n]:--}" | tr -d '\r' >> "$stage/layers.tsv"
       [ "$SRC_STATE" = missing ] && continue
       while IFS= read -r f; do
-        [ -n "$f" ] && printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$n" "$id" "${L_AT[n]}" "$m" "$SRC_VER" "$dir" "$f" >> "$TMP/manifest"
+        [ -n "$f" ] && printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$n" "$id" "${L_AT[n]}" "$m" "$SRC_VER" "$dir" "$f" "${L_NS[n]:--}" >> "$TMP/manifest"
       done < <(cd "$dir" && find . -maxdepth 1 -type f -name '*.reg' | sed 's|^\./||' | LC_ALL=C sort)
     done
   done
@@ -1045,8 +1125,9 @@ cmd_resolve() {
   while IFS=$'\t' read -r line c layer loc key why; do
     case "$line" in
       C) mkdir -p "$stage/$c"; cp -R "$layer/." "$stage/$c/" ;;
-      N) nres=$((nres + 1)); mkdir -p "$stage/$c"
-         [ -f "$stage/meta/$c/body.md" ] && cp "$stage/meta/$c/body.md" "$stage/$c/SKILL.md" ;;
+      # N <component> <where it lands in the view>: a namespaced skill as skills/<ns>--<name> (1.7.0)
+      N) nres=$((nres + 1)); mkdir -p "$stage/$layer"
+         [ -f "$stage/meta/$c/body.md" ] && cp "$stage/meta/$c/body.md" "$stage/$layer/SKILL.md" ;;
       R) nskip=$((nskip + 1)); warn "skipped $layer $loc $c:$key: $why" ;;
       Q) nprob=$((nprob + 1)); warn "skipped $c $layer: $loc" ;;
     esac
@@ -1068,18 +1149,31 @@ view_path() {
   [ -f "$VIEW/whoami" ] || die 1 "no resolved view in $STATE_DIR yet; run dcf-registry resolve (task component-registry:resolve)"
 }
 
-# normalise <path>: [scope/]kind/name[:key] -> NP_COMP, NP_KEY
+# normalise <path>: [scope/]kind/[ns:]name[:key] -> NP_COMP, NP_KEY. The name may be a namespaced
+# one (1.7.0): kind/ns:name:key is plain; kind/a:b is the namespaced component a:b when the view
+# (VIEW) holds one, else the key b of a; a skill's folder name ns--name is taken for ns:name too.
 normalise() {
-  local s="$1" k found='' seg comp=''
+  local s="$1" k found='' seg comp='' last pre
+  local -a parts
   NP_KEY=''
-  case "$s" in *:*) NP_KEY="${s##*:}"; s="${s%:*}" ;; esac
   s="${s#/}"
   IFS=/ read -r -a segs <<< "$s"
   for seg in "${segs[@]}"; do
-    if [ -z "$found" ]; then for k in $KINDS; do [ "$seg" = "$k" ] && found=1; done; fi
+    if [ -z "$found" ]; then for k in $KINDS; do [ "${seg%%:*}" = "$k" ] && found=1; done; fi
     [ -n "$found" ] && comp="${comp:+$comp/}$seg"
   done
-  NP_COMP="$comp"
+  case "$comp" in */*) pre="${comp%/*}/" last="${comp##*/}" ;; *) pre='' last="$comp" ;; esac
+  IFS=: read -r -a parts <<< "$last"
+  case "${#parts[@]}" in
+    2) if [ -n "${VIEW:-}" ] && [ -d "$VIEW/meta/$pre$last" ]; then :; else last="${parts[0]}" NP_KEY="${parts[1]}"; fi ;;
+    3) last="${parts[0]}:${parts[1]}" NP_KEY="${parts[2]}" ;;
+    0 | 1) ;;
+    *) last="${parts[0]}:${parts[1]}" NP_KEY="${last#*:*:}" ;;
+  esac
+  if [[ "$last" == *--* && "$last" != *:* ]] && [ -n "${VIEW:-}" ] && [ ! -d "$VIEW/meta/$pre$last" ] && [ -d "$VIEW/meta/$pre${last%%--*}:${last#*--}" ]; then
+    last="${last%%--*}:${last#*--}"
+  fi
+  NP_COMP="$pre$last"
 }
 
 # Colour for explain (1.4.0): six colours of the Okabe-Ito set (distinguishable with the usual
@@ -1125,12 +1219,23 @@ cmd_explain() {
   [ -n "$NP_COMP" ] || die 2 "'$path' names no component (a path with a ${KINDS// /, } segment, like skills/diagrams)"
   if [ "$uses" -eq 1 ]; then
     printf 'What refers to %s%s (resolved for %s):\n' "$NP_COMP" "${NP_KEY:+:$NP_KEY}" "$who"
-    s="$(awk -F'\t' -v c="$NP_COMP" -v k="$NP_KEY" '$4 == c && (k == "" || $5 == k) { printf "  %s:%s -> %s (%s)\n", $1, $2, $3, $6 }' "$VIEW/meta/refs.tsv")"
+    # a ref inside a namespace names its target without the prefix: the resolved target is shown
+    s="$(awk -F'\t' -v c="$NP_COMP" -v k="$NP_KEY" 'function ns(x,  n) { n = x; sub(/^[^\/]*\//, "", n); return index(n, ":") ? " [namespace " substr(n, 1, index(n, ":") - 1) "]" : "" }
+      $4 == c && (k == "" || $5 == k) { printf "  %s:%s -> %s%s (%s)%s\n", $1, $2, $3, (ns($1) != "" ? " = " $4 : ""), $6, ns($1) }' "$VIEW/meta/refs.tsv")"
     if [ -n "$s" ]; then printf '%s\n' "$s"; else echo "  nothing"; fi
     return 0
   fi
   [ -f "$VIEW/meta/$NP_COMP/provenance.tsv" ] || die 1 "no component $NP_COMP in the view resolved for $who (dcf-registry resolve, or check the path)"
-  printf '%s, resolved for %s at %s\n' "$NP_COMP" "$who" "$(cat "$VIEW/resolved")"
+  # 1.7.0: a namespaced component says its namespace on every line of its own
+  local ns='' nsl='' disk
+  case "${NP_COMP#*/}" in *:*) ns="${NP_COMP#*/}"; ns="${ns%%:*}"; nsl=" [namespace $ns]" ;; esac
+  if [ -n "$ns" ]; then
+    disk="$(awk -F'\t' -v c="$NP_COMP" '$1 == c { print $3; exit }' "$VIEW/meta/namespaced.tsv" 2>/dev/null)"
+    printf '%s, resolved for %s at %s\n' "$NP_COMP" "$who" "$(cat "$VIEW/resolved")"
+    printf 'Namespace %s: only the layers with namespace: %s reach it%s.\n' "$ns" "$ns" "$([ "$disk" != "$NP_COMP" ] && [ -n "$disk" ] && printf '; handed over as %s' "${disk#*/}")"
+  else
+    printf '%s, resolved for %s at %s\n' "$NP_COMP" "$who" "$(cat "$VIEW/resolved")"
+  fi
   if [ "$EX_COLOUR" -eq 1 ]; then
     i=0
     while IFS=$'\t' read -r n id _; do
@@ -1149,26 +1254,26 @@ cmd_explain() {
   while IFS= read -r s; do
     id="$(printf '%s' "$s" | awk '{ print $2 }')"
     pline "$(lcolour "$id")" "$s"
-  done < <(awk -F'\t' 'NR > 1 { printf "  %s %s at %s, source %s (%s): %s, %s%s\n", $1, $2, $3, $4, $5, $7, $6, ($7 == "offline" ? ", the last good copy from " $8 : "") }' "$VIEW/layers.tsv")
+  done < <(awk -F'\t' 'NR > 1 { printf "  %s %s at %s, source %s (%s): %s, %s%s%s\n", $1, $2, $3, $4, $5, $7, $6, ($7 == "offline" ? ", the last good copy from " $8 : ""), ($10 != "" && $10 != "-" ? ", namespace " $10 : "") }' "$VIEW/layers.tsv")
   while IFS=$'\t' read -r k t s; do
     [ -n "$NP_KEY" ] && [ "$k" != "$NP_KEY" ] && continue
-    printf '\n%s:%s = %s\n' "$k" "$t" "$s"
+    printf '\n%s:%s = %s%s\n' "$k" "$t" "$s" "$nsl"
     while IFS=$'\t' read -r st key type layer _ ver loc data why; do
       [ "$key" = "$k" ] || continue
       [ "$why" != - ] || why=''
       if [ "$type" = lock ]; then s="lock $key"; else s="$key:$type = $data"; fi
-      printf -v s '  %-12s %s@%s %s  %s%s' "$st" "$layer" "$ver" "$loc" "$s" "${why:+  ($why)}"
+      printf -v s '  %-12s %s@%s%s %s  %s%s' "$st" "$layer" "$ver" "$nsl" "$loc" "$s" "${why:+  ($why)}"
       case "$st" in used) sgr="$(lcolour "$layer")" ;; *) sgr='2;9' ;; esac
       pline "$sgr" "$s"
     done < "$VIEW/meta/$NP_COMP/provenance.tsv"
   done < "$VIEW/meta/$NP_COMP/keys.tsv"
   # Lines that did not make a key: skipped, dropped, excluded, not applying, locks.
-  s="$(awk -F'\t' -v k="$NP_KEY" 'FILENAME == ARGV[1] { has[$1] = 1; next } (k == "" || $2 == k) && !($2 in has) { printf "  %-12s %s@%s %s  %s  (%s)\n", $1, $4, $6, $7, ($3 == "lock" ? "lock " $2 : $2 ":" $3 " = " $8), $9 }' "$VIEW/meta/$NP_COMP/keys.tsv" "$VIEW/meta/$NP_COMP/provenance.tsv")"
+  s="$(awk -F'\t' -v k="$NP_KEY" -v nsl="$nsl" 'FILENAME == ARGV[1] { has[$1] = 1; next } (k == "" || $2 == k) && !($2 in has) { printf "  %-12s %s@%s%s %s  %s  (%s)\n", $1, $4, $6, nsl, $7, ($3 == "lock" ? "lock " $2 : $2 ":" $3 " = " $8), $9 }' "$VIEW/meta/$NP_COMP/keys.tsv" "$VIEW/meta/$NP_COMP/provenance.tsv")"
   if [ -n "$s" ]; then
     printf '\nOther lines:\n'
     while IFS= read -r t; do pline "$([ "$EX_COLOUR" -eq 1 ] && echo '2;9')" "$t"; done <<< "$s"
   fi
-  s="$(awk -F'\t' -v c="$NP_COMP" -v k="$NP_KEY" '$1 == c && $6 == "dangling" && (k == "" || $2 == k) { printf "  %s:%s -> %s (%s)\n", $1, $2, $3, $7 }' "$VIEW/meta/refs.tsv")"
+  s="$(awk -F'\t' -v c="$NP_COMP" -v k="$NP_KEY" -v nsl="$nsl" '$1 == c && $6 == "dangling" && (k == "" || $2 == k) { printf "  %s:%s -> %s%s (%s)\n", $1, $2, $3, nsl, $7 }' "$VIEW/meta/refs.tsv")"
   if [ -n "$s" ]; then
     printf '\nDangling refs:\n'
     while IFS= read -r t; do pline "$([ "$EX_COLOUR" -eq 1 ] && echo '2;9')" "$t"; done <<< "$s"
@@ -1178,7 +1283,8 @@ cmd_explain() {
     if [ -f "$VIEW/$NP_COMP/model" ]; then
       awk -F'\t' -v m="$(head -n 1 "$VIEW/$NP_COMP/model")" -v cli="$(cat "$VIEW/$NP_COMP/cli" 2>/dev/null)" '$1 == "model" { printf "Effective model%s: %s (%s from %s at %s)\n", (cli == "" ? "" : " for its CLI, " cli), m, $4, $2, $3 }' "$VIEW/$NP_COMP/from.tsv"
     fi
-    echo "The registry wins: its skills replace the agents list's, and its model a model chosen in the agent's CLI arguments." ;;
+    echo "The registry wins: its skills replace the agents list's, and its model a model chosen in the agent's CLI arguments."
+    [ -z "$ns" ] || echo "A namespaced agent definition (namespace $ns) applies to no agent of the agents list in this release." ;;
   esac
   return 0
 }
@@ -1229,6 +1335,10 @@ cmd_handover() {
   real="$(readlink -f "$VIEW")"
   [ -d "$real/skills" ] || die 1 "the resolved view $real has no skills folder; run dcf-registry resolve"
   COMPONENT_REGISTRY_SKILLS="$real/skills" "$ad" skills "$name" "$folder" </dev/null; rc=$?
+  # 1.7.0: a namespaced skill goes to the CLI by its folder name, <ns>--<name>; say which
+  local nsk
+  nsk="$(awk -F'\t' '$1 ~ /^skills\// { printf "%s%s as %s", (n++ ? ", " : ""), substr($1, 8), substr($3, 8) }' "$real/meta/namespaced.tsv" 2>/dev/null)"
+  [ "$rc" -ne 0 ] || [ -z "$nsk" ] || say "$cli: namespaced skills are handed over by their folder name, <namespace>--<name>: $nsk"
   exec 8>&-
   if [ "$rc" -eq 3 ]; then say "$cli: its adapter answered that it cannot take resolved skills; its sessions keep their plain skills"; fi
   return "$rc"

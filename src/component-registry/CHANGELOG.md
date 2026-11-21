@@ -6,6 +6,38 @@ of the Feature and whether they must act (an option renamed, a task removed, a r
 The version in `devcontainer-feature.json` is bumped in the same change that adds its entry
 here; `task lint` fails when the entry is missing.
 
+## [1.7.0] - 2026-11-21
+
+### Added
+
+- **Layer namespaces** (ADR-0073, decision 4): `namespace: <name>` on a layer in the layer list
+  prefixes every component the layer brings (`skills/acme:arch-review`, `agents/acme:reviewer`).
+  Layers that share a namespace merge with each other as layers do (order, specificity, locks,
+  `@replace`, types, permission keys from the namespace's lowest layer); different namespaces
+  never mix, and the un-namespaced layers (the Operator's own) never reach a namespaced component,
+  nor it theirs. A name is lower-case letters and digits in words joined by one `-`, at most 40;
+  anything else, and the reserved `component-registry` and `anthropic-skills`, is refused with
+  `file:line`.
+- A namespaced skill lands in the view, and in a CLI's skills folder, as `skills/<ns>--<name>/`,
+  its `SKILL.md` named the same whatever its text says (a `:` is no skill folder name for the
+  adapters, and Claude Code keeps the `:` for the prefixes it makes); one whose folder name an
+  un-namespaced skill already has is not resolved and is reported. `meta/namespaced.tsv` maps the
+  registry name to it; `handover` says which skills went by their folder name.
+- Refs resolve inside their own namespace and never cross one, either way (reported dangling,
+  with why). A namespaced agent definition (`agents/<ns>:<name>/` in the view) applies to no
+  agent of the agents list in this release; the Operator's own agent may name a namespaced skill
+  as `<ns>:<name>` in its `skills`, written to the view as `<ns>--<name>`.
+- `explain` shows each layer's namespace, a namespace line with the hand-over name, and
+  `[namespace <ns>]` on every line of a namespaced component; it takes `kind/<ns>:<name>[:key]`
+  or the folder name; `--uses` shows a namespaced ref's resolved target.
+
+### Changed
+
+- `layers.tsv` gains a tenth column, `namespace` (`-` for none). In an agent definition's
+  `skills`, a plain item `<a>:<b>` (a lower-case `<a>`) now names the namespaced skill `a:b`; it
+  was read as the skill `a` before. Nothing to do for a layer list without a namespace: it
+  resolves exactly as in 1.6.0.
+
 ## [1.6.0] - 2026-11-20
 
 ### Added
