@@ -2,8 +2,9 @@ name: "Release the facilitator node image"
 # Manual, the Operator starts it, after release-bundle and after the pull request that pins the bundle's
 # digests in src/facilitator/digests.txt is merged (ruling AC: the image is built from the released asset by
 # digest). Downloads both assets of facilitator-bundle-v<version>, refuses any whose sha256 differs from the pin
-# on main, and pushes ghcr.io/<owner>/facilitator-node:<version> for linux/amd64 and linux/arm64 (QEMU runs the
-# image's one apt-get step for arm64), with a build attestation.
+# on main, and pushes ghcr.io/<owner>/facilitator-node:<version> for linux/amd64 and linux/arm64 (each architecture
+# built natively on its own runner, then joined into one multi-arch tag), with a build attestation. It uses the
+# docker CLI the runners carry, so it needs no action outside the repository's allow-list (GitHub's own only).
 on:
   workflow_dispatch:
 
@@ -11,15 +12,22 @@ permissions:
   contents: read
 
 jobs:
-  image:
+  build:
     if: ${{ github.ref == 'refs/heads/main' }}
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     environment: release
     permissions:
       contents: read
       packages: write
-      id-token: write
-      attestations: write
+    outputs:
+      version: ${{ steps.bundle.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -41,24 +49,46 @@ jobs:
           done
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: "Build and push linux/${{ matrix.arch }}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.bundle.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+          OWNER: ${{ github.repository_owner }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          set -eu
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+          tag="ghcr.io/$OWNER/facilitator-node:$VERSION-$ARCH"
+          DOCKER_BUILDKIT=1 docker build --platform "linux/$ARCH" --build-arg "BUNDLE_VERSION=$VERSION" \
+            -f bundles/facilitator/Dockerfile -t "$tag" ctx
+          docker push "$tag"
 
-      - id: push
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: ctx
-          file: bundles/facilitator/Dockerfile
-          platforms: linux/amd64,linux/arm64
-          build-args: BUNDLE_VERSION=${{ steps.bundle.outputs.version }}
-          tags: ghcr.io/${{ github.repository_owner }}/facilitator-node:${{ steps.bundle.outputs.version }}
-          push: true
-          provenance: true
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: "One tag for both architectures"
+        id: push
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.build.outputs.version }}
+          OWNER: ${{ github.repository_owner }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          set -eu
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+          image="ghcr.io/$OWNER/facilitator-node"
+          docker buildx imagetools create -t "$image:$VERSION" "$image:$VERSION-amd64" "$image:$VERSION-arm64"
+          digest="$(docker buildx imagetools inspect "$image:$VERSION" --format '{{json .Manifest}}' | jq -r .digest)"
+          case "$digest" in sha256:*) ;; *) echo "no digest for $image:$VERSION"; exit 1 ;; esac
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
 
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:

@@ -6,7 +6,8 @@
 # with the agent's, never counts; "host (2)" does); every action takes the session's id,
 # never the name; a stopped session is woken with --bg --resume <full session id>, never -c;
 # resume refuses a running session; stop keeps the newest unless --extras, never rm;
-# start-bg and new tag the session with --name (AGENT_SESSION_NAME, else the handle). A fake `claude` keeps sessions in a table,
+# start-bg and new tag the session with --name (AGENT_SESSION_NAME, else the handle), and start-bg,
+# new and resume run with --model from AGENT_MODEL in place of any --model in the args (1.13.0). A fake `claude` keeps sessions in a table,
 # renders them as `claude agents --json` does and records every other call with its folder.
 # Part of `task lint` (`task test:claude-unit`). ADAPTER_SH points the test at another copy.
 set -u
@@ -1169,6 +1170,43 @@ for n in n1 n2 n3 n4 n5 n6 n7; do
   end_session "$(awk -F'\t' -v n="$n" '$3 == n { print $1 }' "$FAKE_TABLE")"
 done
 check 'names: the history keeps the last five names before the current one, newest first' "n7	n6+n5+n4+n3+n2" "$(rec | cut -f5,6)"
+
+# ------------------------------------------------------------ the model (1.13.0) ----
+# AGENT_MODEL (the component registry's agent definition, from the participant component): start-bg,
+# new and resume run with --model <it>, in place of any --model in the args (the registry wins), said
+# in one line; a wake stays bare; a value that is not one word is left out with a note.
+adm() { local m="$1"; shift; (cd "$T" && PATH="$bin:$PATH" AGENT_MODEL="$m" agent-adapter-claude "$@" 2>&1); }
+rm -f "$records"; rm -rf "$CLAUDE_CONFIG_DIR/jobs"; table
+out="$(adm opus start-bg host "$repo")"
+check 'model: start-bg adds --model from AGENT_MODEL' "$repo|--bg|--name|host|--model|opus;" "$(calls)"
+rm -f "$records"; table
+out="$(adm opus start-bg host "$repo" -- --model sonnet --effort high)"
+check 'model: AGENT_MODEL replaces a --model in the args, the other args kept' "$repo|--bg|--name|host|--model|opus|--effort|high;" "$(calls)"
+contains 'model: the replaced --model is said' "$out" 'model opus replaces --model sonnet from the args'
+rm -f "$records"; table
+out="$(adm opus start-bg host "$repo" -- --model=haiku)"
+check 'model: AGENT_MODEL replaces a --model= in the args' "$repo|--bg|--name|host|--model|opus;" "$(calls)"
+rm -f "$records"; table
+out="$(adm 'two words' start-bg host "$repo" -- --model sonnet)"
+check 'model: a bad AGENT_MODEL leaves the args'"'"' --model as it is' "$repo|--bg|--name|host|--model|sonnet;" "$(calls)"
+rm -f "$records"; table
+out="$(adm 'claude-opus-4-5[1m]' new host "$repo")"
+contains 'model: new adds --model' "$(calls)" "|--model|claude-opus-4-5[1m];"
+table "a1|sess-a1|reviewer|$repo/rooms/review|interactive|0|done|1000"
+out="$(adm opus resume reviewer "$repo/rooms/review")"
+check 'model: resume adds --model' "$repo/rooms/review|--resume|sess-a1|--model|opus;" "$(calls)"
+rm -f "$records"; rm -rf "$CLAUDE_CONFIG_DIR/jobs"
+table "w1|sess-w1|host|$repo|background|0|stopped|100"
+SAVED_STATE=stopped saved_opts w1 --name host
+out="$(adm opus wake host "$repo")"
+check 'model: a wake stays bare (its saved options)' "$repo|--bg|--resume|sess-w1;" "$(calls)"
+rm -f "$records"; table
+out="$(adm 'two words' start-bg host "$repo")"
+check 'model: a value that is not one word is left out' "$repo|--bg|--name|host;" "$(calls)"
+contains 'model: a value that is not one word is said' "$out" 'AGENT_MODEL is not one word'
+rm -f "$records"; table
+out="$(adm '' start-bg host "$repo")"
+check 'model: an empty AGENT_MODEL changes nothing' "$repo|--bg|--name|host;" "$(calls)"
 
 # Across every call above: never rm (but the one session-remove asked for), never -c or
 # --continue; in the code, never an action by name.

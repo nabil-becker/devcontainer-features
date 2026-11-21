@@ -1,7 +1,7 @@
 
 # Component registry (component-registry)
 
-A registry for agentic components, shaped like the Windows Registry (ADR-0063). Layers from any number of sources (a git branch, tag or commit; one .reg file over http(s) with bearer, header or basic log-in, the secret through dcf-secret and never over plain http without allow-insecure; a folder or mounted file share; a folder in the cloud folder, from the cloud-folder Feature; the rows of a SQLite or PostgreSQL table or query, rendered into a .reg file, the password through dcf-secret into the client's environment only) are fetched into local layer copies (version first, so an unchanged layer is skipped; offline, the last good copy is used and said) and merged by value type into one resolved view for who you are (COMPONENT_REGISTRY_WHOAMI, a path such as /Corp/MyDepartment/team/me): value replaces, list combines (!item takes out), text stacks in layer order (under a heading per layer, or none with the layer key heading: false), a skill's name and description values go into its SKILL.md front matter, ref points at another path; the higher layer wins, the more specific scope inside a layer, a locked key beats both, and a permission key comes from a component's lowest layer only. dcf-registry resolve and dcf-registry explain <path> [--uses] [--color auto|always|never] (task component-registry:resolve, :explain); release 1 resolves skills, and dcf-registry handover gives them to a CLI's adapter (agent-adapter-<cli> skills; Claude Code: its personal skills folder, live in running sessions), which the participant component (claude-code participants: true) does at every agent's start. A built-in base layer ships the utility skills /registry-refresh, /registry-explain and /registry-remember (appends to the layer marked writable: true). The layer list is .devcontainer/registry.yml (option registryFile, COMPONENT_REGISTRY_FILE). Layer copies and the resolved view live owner-only in a named volume at COMPONENT_REGISTRY_STATE_DIR=/var/lib/devcontainer-features/component-registry, made usable by component-registry-setup at start. Bash, awk and sed; nothing downloaded at build.
+A registry for agentic components, shaped like the Windows Registry (ADR-0063). Layers from any number of sources (a git branch, tag or commit; one .reg file over http(s) with bearer, header or basic log-in, the secret through dcf-secret and never over plain http without allow-insecure; a folder or mounted file share; a folder in the cloud folder, from the cloud-folder Feature; the rows of a SQLite or PostgreSQL table or query, rendered into a .reg file, the password through dcf-secret into the client's environment only) are fetched into local layer copies (version first, so an unchanged layer is skipped; offline, the last good copy is used and said) and merged by value type into one resolved view for who you are (COMPONENT_REGISTRY_WHOAMI, a path such as /Corp/MyDepartment/team/me): value replaces, list combines (!item takes out), text stacks in layer order (under a heading per layer, or none with the layer key heading: false), a skill's name and description values go into its SKILL.md front matter, ref points at another path; the higher layer wins, the more specific scope inside a layer, a locked key beats both, and a permission key comes from a component's lowest layer only. dcf-registry resolve and dcf-registry explain <path> [--uses] [--color auto|always|never] (task component-registry:resolve, :explain); release 1 resolves skills, and dcf-registry handover gives them to a CLI's adapter (agent-adapter-<cli> skills; Claude Code: its personal skills folder, live in running sessions), which the participant component (claude-code participants: true) does at every agent's start. From 1.6.0 it also resolves agent definitions (agents/<name>: model and skills only, which replace the agents list's; the registry never sets an agent's identity, lease, folder, args or permissions), which the participant component reads at each agent's start. A built-in base layer ships the utility skills /registry-refresh, /registry-explain and /registry-remember (appends to the layer marked writable: true). The layer list is .devcontainer/registry.yml (option registryFile, COMPONENT_REGISTRY_FILE). Layer copies and the resolved view live owner-only in a named volume at COMPONENT_REGISTRY_STATE_DIR=/var/lib/devcontainer-features/component-registry, made usable by component-registry-setup at start. Bash, awk and sed; nothing downloaded at build.
 
 ## Example Usage
 
@@ -28,11 +28,12 @@ A registry for agentic components, shaped like the Windows Registry (ADR-0063). 
     copies/<layer>/<n>/   layer copies
         | dcf-registry resolve, for COMPONENT_REGISTRY_WHOAMI
         v
-    view -> views/<stamp>/   the resolved view: skills/<name>/, meta/
+    view -> views/<stamp>/   the resolved view: skills/<name>/, agents/<name>/, meta/
         | dcf-registry handover <cli>: agent-adapter-<cli> skills (at an agent's start,
         |   by the participant component; or /registry-refresh)
         v
   the CLI's own skills folder (Claude Code: $CLAUDE_CONFIG_DIR/skills, marked owned)
+  agents/<name>/ (1.6.0): read by the participant component at the agent's start (model, skills)
 
   dcf-registry explain <path> [--uses] [--color auto|always|never]   read-only
 ```
@@ -72,7 +73,10 @@ Release 1.2.0 adds the `http` source (and, with cloud-folder 1.4.0, the `cloud-f
 Release 1.3.0 adds the layer key `heading: false` (stack a layer's text without a heading) and
 writes a skill's `name` and `description` values into its `SKILL.md` front matter.
 Release 1.5.0 adds the `db` source (`sqlite` and `postgres`).
-It resolves **skills** only.
+Release 1.6.0 adds the second component kind, **agent definitions** (`agents/<name>`: `model` and
+`skills`, read by the participant component at the agent's start; below).
+It resolves **skills** and **agent definitions**; prompts and settings are not in this release (a
+section for them is reported and not resolved).
 
 ## What it installs
 
@@ -107,6 +111,7 @@ Settings are plain variables (NFR-6), each from the task variable, then the root
 | `COMPONENT_REGISTRY_FILE` | the option | The layer list. |
 | `COMPONENT_REGISTRY_STATE_DIR` | `/var/lib/devcontainer-features/component-registry` (`containerEnv`) | The state folder. |
 | `COMPONENT_REGISTRY_LOCK_WAIT` | `120` | Seconds a `resolve` waits for another one to finish. |
+| `COMPONENT_REGISTRY_AGENTS` | the current view's names | 1.6.0: agents, comma-separated `name` or `name:cli` items, whose definitions `resolve` makes even when only a pattern names them, the effective model picked for the CLI. The participant component sets it to the listed agents; a person seldom does. Empty clears the names. |
 
 ## The layer list
 
@@ -258,7 +263,8 @@ One or more `*.reg` files at the root of the layer's copy, read in name order, l
 
 ```
 [path]                    a section; [path] @replace replaces the component below it
-key:type = data           an entry; type is value, list, text or ref
+key:type = data           an entry; type is value, list, text or ref; a key is letters,
+                          digits, _ - and (1.6.0) . (model.claude)
 lock key                  a higher layer cannot change this key
 ; comment
 [!path]                   an exclusion: the sections above it in this file no longer apply
@@ -324,6 +330,54 @@ the hand-over together get at most `COMPONENT_REGISTRY_START_WAIT` seconds there
 hanging fetch and a held lock included); past it the CLI starts with the last good skills already
 in its folder, said in one line. `/registry-refresh` keeps `COMPONENT_REGISTRY_LOCK_WAIT`.
 
+## Agent definitions (1.6.0)
+
+An agent definition adapts an agent of a repository's agents list (the participant component's
+`participants.yml` or `agents.yml`) from any layer: the model a department's agents run on, the
+skills a person's reviewer is said to use. It is the component `agents/<name>`, `<name>` the
+agent's handle, with two fields; the design is section 6.1 of the proposal.
+
+| Key | Type | Merge | Read by the participant as |
+| --- | --- | --- | --- |
+| `model` | `value` | the strongest line | `AGENT_MODEL`, handed to the CLI adapter on the calls about the agent; Claude Code's adapter (claude-code 1.13.0) and Copilot's (copilot 0.2.0) pass it as `--model`, in place of any `--model` in the agent's arguments. One word of letters, digits and `. _ : / @ [ ] -`, at most 100 characters. For the agent's own CLI (the list's `cli`) |
+| `model.<cli>` | `value` | the strongest line | the same, for agents of that CLI only (`model.claude`, `model.copilot`). It beats a plain `model` of the same layer and path; otherwise the usual order holds, so a higher layer's or a more specific path's plain `model` beats it. A suffix no listed agent has applies to none. A `lock model` holds every `model.<cli>` too |
+| `skills` | `list` | combined, `!item` removes | the agent's `skills` (shown by `agents check` and `agents list --json`, which the facilitator reads), replacing its list entry's `skills:`. An item is a skill name or `ref:[scope/]skills/<name>`; a ref is checked like any ref, so `explain skills/<name> --uses` lists the agents that name it. Remove an item as it was written (`!ref:skills/x` for `ref:skills/x`) |
+
+```
+[/Corp/agents/*]                       ; every agent, at /Corp and below
+model:value = sonnet
+model.copilot:value = gpt-5.4          ; but Copilot agents run gpt-5.4
+[/Corp/MyDepartment/agents/reviewer]
+model:value = opus
+skills:list = ref:skills/architecture-review
+```
+
+- **The registry wins** (the Operator's ruling of 2026-11-21). For the two fields it may set, a
+  registry value replaces the list's: its `skills` replace the entry's `skills:`, and its model
+  replaces a model chosen in the agent's arguments (its `args`, or the extra arguments of one
+  start; the adapter drops that flag and says so). The list fills only what the registry leaves
+  unset, and still says which agents exist. A failed resolve, or no registry, leaves an agent
+  exactly as the list says.
+- **What the registry never sets.** A line for any other key of an agent is skipped and reported
+  (`resolve` names it, `explain` shows why): `name`, `cli`, `kind`, `folder`, `lifecycle`,
+  `identity`, `lease`, `default`, `session-name`, `registry-path`, `attachment`, `args` and
+  `definition` (the last two could widen a permission), and every permission key
+  (`allowed-tools`, `disallowed-tools`, `permission*`), even in the lowest layer.
+- **Which agents.** A component exists when a section names it literally; a pattern such as
+  `[agents/*]` applies to those and to every name in `COMPONENT_REGISTRY_AGENTS`, which the
+  participant component sets to the listed agents and their CLIs (`name:cli` items) at each
+  start, so the effective model is picked for each agent's CLI (an agent without a CLI named gets
+  the plain `model`). The names are kept in the view
+  (`agent-names`), so a `resolve` without the variable and `/registry-refresh` keep them.
+- **At an agent's start** the participant component (participant 1.3.0) resolves for the agent's
+  path, as for skills, then reads `view/agents/<name>/`, only when the view's `whoami` is that
+  path; otherwise one line says the view is another path's and the agent starts without the
+  definition. One line names what it used and from which layers.
+- **Shown by** `dcf-registry explain agents/<name>` (every line, its layer and version, the
+  skipped ones and why, then the effective model for the agent's CLI with its key and layer) and by
+  `agents check` (`model gpt-5.4 (registry: corp, model.copilot)`, and the list's values it
+  replaced).
+
 ## The match rule
 
 For who you are, `W`:
@@ -358,11 +412,13 @@ a reader sees the old view or the new one, never half of each:
 | Path | What it holds |
 | --- | --- |
 | `skills/<name>/` | `SKILL.md` and the skill's files: what a consumer copies |
-| `meta/skills/<name>/values/<key>` | each resolved value (a list one item per line; text as stacked) |
-| `meta/skills/<name>/keys.tsv` | key, type, one-line summary |
-| `meta/skills/<name>/provenance.tsv` | every line considered: state (`used`, `overridden`, `skipped`, `dropped`, `excluded`, `not-applying`), key, type, layer, rank, version, `source:file:line`, data, why; `-` for an empty field |
+| `agents/<name>/` | (1.6.0) an agent definition: `model` (one line, the effective model for its CLI), `cli` (the CLI it was resolved for), `skills` (one name per line), `from.tsv` (field, layer, `source:file:line`, key of each line used); what the participant component reads |
+| `meta/<kind>/<name>/values/<key>` | each resolved value (a list one item per line; text as stacked) |
+| `meta/<kind>/<name>/keys.tsv` | key, type, one-line summary |
+| `meta/<kind>/<name>/provenance.tsv` | every line considered: state (`used`, `overridden`, `skipped`, `dropped`, `excluded`, `not-applying`), key, type, layer, rank, version, `source:file:line`, data, why; `-` for an empty field |
 | `meta/refs.tsv` | every ref: from, key, target, its component and key, `ok` or `dangling`, why |
 | `meta/problems.tsv` | lines that could not be read |
+| `agent-names` | (1.6.0) the agents whose definitions were resolved for every pattern (`COMPONENT_REGISTRY_AGENTS`) |
 | `layers.tsv`, `whoami`, `resolved` | each source's version and state (`fetched`, `unchanged`, `offline`, `missing`), who it was resolved for, when |
 
 ## State
@@ -471,7 +527,8 @@ every skipped line with its reason, and `resolved N component(s) for <W>`.
 
 - `go-task` for the tasks; git in the image for `git` sources; `openbao` for `dcf-secret` (a
   source secret without it: the source says so and reads without one).
-- `claude-code` 1.12.0: its adapter's `skills` verb, and with `participants: true` the participant
+- `claude-code` 1.13.0: its adapter passes an agent definition's model as `--model`; 1.12.0: its
+  adapter's `skills` verb, and with `participants: true` the participant
   component, which resolves and hands over at every agent's start. Neither is required: without
   them `handover` and `refresh` say no adapter takes skills.
 - `cloud-folder` 1.4.0: its `cloud-folder` source. `curl` in the image for `http` sources; `sqlite3` or `psql` for `db` sources.
@@ -480,7 +537,11 @@ every skipped line with its reason, and `resolved N component(s) for <W>`.
 
 ## Limits
 
-- Skills only; other kinds are reported and not resolved.
+- Skills and agent definitions; other kinds (prompts, settings) are reported and not resolved. An
+  agent definition has two fields, `model` and `skills`, and for them the registry beats the agents
+  list; a person who wants another model for one run sets it in their own layer.
+- An agent's `skills` from the registry are what it is said to use (`agents list --json`); they do
+  not limit which resolved skills its CLI receives (every resolved skill is handed over).
 - One resolved view per container, and one skills folder per CLI configuration: agents with
   different who-you-are paths do not each keep their own skills; the latest resolve is what every
   session of that CLI reads.
@@ -508,6 +569,33 @@ Pin the major in the Feature reference (`component-registry:1`); a rebuild picks
 else; the `.reg` grammar and the layer list keys only grow within 1.x.
 
 ## Changes
+
+### [1.6.0] - 2026-11-20
+
+#### Added
+
+- **Agent definitions** (`agents/<name>`, the second component kind; proposal section 6.1). Two
+  fields, each merged by its type: `model:value` (the model the agent's CLI runs on, one word; and
+  `model.<cli>:value`, the model for agents of that CLI only, which beats a plain `model` of the same
+  layer and path; a key may now hold `.`) and
+  `skills:list` (a skill name or `ref:skills/<name>`, checked as a ref, so `explain skills/<name>
+  --uses` lists the agents that name it). A line for any other key of an agent is skipped and
+  reported: the agents list owns the identity, the address, the lease, the folder, `args` and
+  `definition`, and an agent definition carries no permission key at all.
+- **The resolved view's `agents/<name>/`**: `model` (one line), `skills` (one name per line) and
+  `from.tsv` (field, layer, `source:file:line` of each line used), what the participant component
+  (participant 1.3.0) reads at the agent's start; `meta/agents/<name>/` as for skills.
+- **`COMPONENT_REGISTRY_AGENTS`** (comma-separated `name:cli` items, set by the participant
+  component): `resolve` resolves `agents/<name>` for each, so a pattern such as `[agents/*]` reaches an
+  agent no layer names, and writes the effective model for that agent's CLI (`from.tsv` names the
+  key it came from); the names are kept in the view (`agent-names`), so `/registry-refresh` keeps them.
+- `explain agents/<name>` closes with where the participant reads the definition and that its
+  values replace the agents list's (the registry wins for `model` and `skills`, the Operator's
+  ruling of 2026-11-21).
+
+Nothing to do for a layer list or a layer that holds skills only: they resolve as before. A
+section for `agents/...`, reported as "not in this release" until now, is resolved from this
+release.
 
 ### [1.5.0] - 2026-11-20
 
@@ -540,25 +628,6 @@ the source says how). Nothing to do for a layer list without a `db` source. Rebu
   colour is never the only signal. The default, `auto`, colours only when stdout is a terminal and
   `NO_COLOR` is unset; `always` colours regardless (also over `NO_COLOR`); `never` does not. Without
   colour the output is byte for byte that of 1.3.0, so scripts keep working. Nothing to act on.
-
-### [1.3.0] - 2026-11-20
-
-#### Added
-
-- **`heading: false` on a layer.** A layer in the layer list can say `heading: false`: its `text`
-  lines (a skill's `body`) are stacked with no `## Layer <id>` heading, after one blank line, so
-  layers written to read as one document resolve to exactly that document. `explain` still names
-  each line's layer. The default, `true`, is the 1.2.0 rendering, unchanged. A value other than
-  `true` or `false` is refused with its line.
-- **Front matter values.** A skill's `name:value` and `description:value` are written into the
-  front matter of its `SKILL.md` (the strongest line wins, as for any value): the key's line is
-  replaced, or added, or a front matter is made for a body that has none. Only these two keys; a
-  permission key such as `allowed-tools` still comes from the lowest layer. `explain` says the
-  value was written into the front matter.
-
-Nothing to do: a layer list and `.reg` files of 1.2.0 resolve as before, except that a skill whose
-higher layer already set `name` or `description` values now has them in its front matter. Rebuild
-to get it.
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/component-registry/CHANGELOG.md).
 

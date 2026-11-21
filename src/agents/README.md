@@ -394,16 +394,27 @@ sessions in order, from a container terminal:
 ## The component registry at an agent's start (participant 1.2.0)
 
 When the `component-registry` Feature is installed (`dcf-registry` on PATH) and its layer list
-exists, `agents start` and `agents up` do two things for each agent before its CLI starts
+exists, `agents start` and `agents up` do these for each agent before its CLI starts
 (ADR-0064):
 
 1. `dcf-registry resolve`, `--as` the entry's `registry-path`, else for
-   `COMPONENT_REGISTRY_WHOAMI`. Once per path in one run (`agents up` with several agents).
+   `COMPONENT_REGISTRY_WHOAMI`. Once per path in one run (`agents up` with several agents), and
+   again when another path's resolve came in between (participant 1.3.0).
 2. `dcf-registry handover <cli> <name> <folder>`, which asks the adapter's `supports` for `skills`
    and, when listed, calls `agent-adapter-<cli> skills <name> <folder>` with the resolved skills
    folder in `COMPONENT_REGISTRY_SKILLS`.
+3. (participant 1.3.0, component-registry 1.6.0) the agent's **definition**: `resolve` is handed
+   the listed agents' names and CLIs (`COMPONENT_REGISTRY_AGENTS`, `name:cli`; a layer's
+   `model.<cli>` is the model for agents of that CLI), and the resolved view's
+   `agents/<name>/` is read when the view is for the agent's path. Its `model` reaches the adapter
+   in `AGENT_MODEL` (the adapter contract, below), and the adapter uses it in place of a model the
+   CLI arguments choose; its `skills` replace the entry's `skills`. The registry wins for these two
+   fields (the Operator's ruling of 2026-11-21), the list fills what it leaves unset, and it sets
+   nothing else (not the identity, lease, folder, `args`, `definition` or any permission). One line says
+   what was used and from which layers; `agents check` shows it, `agents list --json` adds
+   `"model"`.
 
-Both steps together wait at most `COMPONENT_REGISTRY_START_WAIT` seconds per agent (default 15; a
+Resolve and the hand-over together wait at most `COMPONENT_REGISTRY_START_WAIT` seconds per agent (default 15; a
 whole number, a bad value means 15), a layer fetch that hangs and the wait for another resolve's
 lock included: each runs under `timeout`, which stops the whole process group (a git fetch too),
 and the lock wait is capped to what is left. Past the limit the CLI starts with the last good
@@ -456,6 +467,11 @@ agent-adapter-<cli> supports   the verbs it supports, one per line
 Exit: 0 done, 1 failed, 2 bad use, 3 not supported by this CLI.
 Environment (2.1): AGENT_SESSION_NAME is the rendered session name on every call about the agent
 (an adapter that can name a session uses it, else the handle) and empty on the others (Session names).
+Environment (participant 1.3.0): AGENT_MODEL is the model of the agent's definition in the component
+registry on every call about the agent, empty on the others and without a definition. An adapter
+that can choose a model passes it on the verbs that start a session, in place of a model the CLI
+arguments choose; one that does not read it starts the CLI on its own default (no supports
+capability: a variable cannot answer exit 3). claude-code 1.13.0 and copilot 0.2.0 pass it as --model.
 ```
 
 `<folder>` is absolute. A session is the agent's when its folder is the agent's and its name is
@@ -613,6 +629,16 @@ the `SESSIONS` / `HOST_SESSION` settings, which claude-code 2.0 removes; the mig
 
 ## Changes
 
+### [2.5.0] - 2026-11-20
+
+#### Added
+
+- The participant component 1.3.0 (shared with `claude-code` `participants: true`): with the
+  `component-registry` Feature (1.6.0) installed, an agent's start reads the agent's definition from
+  the registry: its model is handed to the CLI adapter in `AGENT_MODEL`, and its skills are the
+  agent's, replacing the list entry's; the registry wins for these two fields. This Feature
+  stays deprecated; nothing to do.
+
 ### [2.4.0] - 2026-11-20
 
 #### Added
@@ -634,16 +660,6 @@ the `SESSIONS` / `HOST_SESSION` settings, which claude-code 2.0 removes; the mig
   this release only keeps its copy of the component equal to the one in `claude-code`. Nothing to do:
   an existing `agents.yml` and `AGENTS_FILE` behave exactly as before. The new names are documented
   under `claude-code`'s "Participants".
-
-### [2.2.0] - 2026-11-19
-
-#### Deprecated
-
-- **This Feature is deprecated: use the `claude-code` Feature with `"participants": true`** (claude-code 1.10.0), which installs the same code (ADR-0061). Nothing breaks in 2.x: the `task agents:*` names, the `agents` command, `.devcontainer/agents.yml`, `AGENTS_FILE`, the `sessionName` option and the verbs `task devcontainer:agent` calls are unchanged. `task agents:version` and `task agents:check` now print one line on stderr, `deprecated: use claude-code participants: true`. 3.0.0 retires the Feature, only after the conditions in the notes ("Deprecated in 2.2.0"). To move: set `"participants": true` on `claude-code`, remove the `agents` line, and put a `sessionName` you set here into `AGENTS_SESSION_NAME` (`containerEnv` or `.devcontainer/.env`).
-
-#### Changed
-
-- The code moved into the shared participant component (`components/participant`, vendored here in `participant/`), installed once into `/usr/local/lib/dcf-participant`, with `/usr/local/bin/agents` a symlink into it. When `claude-code` with `participants: true` (or another Feature) installed the same or a newer copy, this Feature installs nothing of it; otherwise it installs it as before. The state folders, the Taskfile include and every path a user sees are as in 2.1.3. Nothing to do.
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/agents/CHANGELOG.md).
 
