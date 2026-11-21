@@ -22,6 +22,7 @@ DEFAULTS = {
     "FACILITATOR_DIR_ONLINE_CHECK": "false",
     "FACILITATOR_AUTOSTART": "true",
     "FACILITATOR_FILE": ".devcontainer/facilitator.yml",
+    "FACILITATOR_MESH_FILE": ".devcontainer/mesh.yml",
     "PARTICIPANTS_FILE": "",
     "AGENTS_FILE": "",
     "FACILITATOR_DIR_PORT": "8888",
