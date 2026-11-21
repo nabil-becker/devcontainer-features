@@ -51,6 +51,9 @@
 #   agent-adapter-claude list       name<TAB>session id<TAB>state<TAB>folder, newest first
 #   agent-adapter-claude supports   the verbs above, one per line
 # Exit: 0 done, 1 failed, 2 bad use, 3 not supported.
+# AGENT_MODEL (1.13.0): start-bg, new and resume run with --model <it>, in place of any --model in the
+# args (the component registry's agent definition wins, handed over by the participant component);
+# wake stays bare.
 #
 # Identity by name and folder, action by id: a session is the agent's when its cwd is the
 # folder and its name is one the agent's session has had (the handle, the session name now, the
@@ -1147,6 +1150,31 @@ if [ "$rc_out" -eq 0 ] && [ "$rc_has" -eq 0 ]; then
   case "$verb" in start-bg | wake | attach | new) remote_control_on && rc_args+=(--remote-control) ;; esac
 fi
 set -- "${rc_args[@]}"
+# The model (1.13.0): AGENT_MODEL is the model of the agent's definition in the component registry
+# (participant 1.3.0). start-bg, new and resume pass it as --model, in place of any --model the args
+# hold (the registry wins, the Operator's ruling of 2026-11-21; one line says what it replaced). A
+# wake stays bare (its saved options), and a value that is not one word is left out with a note
+# (the args are then used as they are).
+if [ -n "${AGENT_MODEL-}" ]; then
+  case "$verb" in start-bg | new | resume)
+    model_re='^[][A-Za-z0-9._:/@-]+$'
+    if [ "${#AGENT_MODEL}" -gt 100 ] || ! [[ "$AGENT_MODEL" =~ $model_re ]]; then
+      note "$NAME: AGENT_MODEL is not one word; starting without it."
+    else
+      model_args=() model_was='' skip=0
+      for a in "$@"; do
+        if [ "$skip" -eq 1 ]; then model_was="$a"; skip=0; continue; fi
+        case "$a" in
+          --model) skip=1 ;;
+          --model=*) model_was="${a#--model=}" ;;
+          *) model_args+=("$a") ;;
+        esac
+      done
+      [ -z "$model_was" ] || note "$NAME: the component registry's model $AGENT_MODEL replaces --model $model_was from the args."
+      set -- --model "$AGENT_MODEL" ${model_args[@]+"${model_args[@]}"}
+    fi ;;
+  esac
+fi
 
 case "$verb" in
   skills) skills_handover; exit $? ;;

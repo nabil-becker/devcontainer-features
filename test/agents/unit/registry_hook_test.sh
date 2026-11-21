@@ -12,7 +12,12 @@
 # refused when not an absolute path, with file:line; resolved --as it), one resolve per path in
 # agents up, and on-demand agents too; the start limit (participant 1.2.0,
 # COMPONENT_REGISTRY_START_WAIT): the fast path, a hanging layer source stopped at the limit, a lock
-# held by another resolve, a bad value. Part of `task lint` (`task test:agents-registry`).
+# held by another resolve, a bad value; agent definitions (participant 1.3.0, component-registry
+# 1.6.0): resolve handed the listed agents, the model in AGENT_MODEL on the calls about the agent
+# only, each path its own model in agents up, an adapter that ignores it, the registry's skills and
+# model replacing the list's (the Operator's ruling of 2026-11-21), the list's where it sets none, nothing read without a layer list or the registry,
+# check and list --json, and fake views (a bracketed model, one that is not a word, a skill name
+# that is not one, a view for another path). Part of `task lint` (`task test:agents-registry`).
 set -u
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -35,13 +40,14 @@ cp "$agents_sh" "$bin/agents"
 cp "$reg/dcf-registry.sh" "$regbin/dcf-registry.real"
 cp "$reg/registry-source-path.sh" "$regbin/registry-source-path"
 # shellcheck disable=SC2016  # the wrapper expands its own variables
-printf '#!/usr/bin/env bash\necho "$*" >> "%s/reg-calls"\nexec bash "%s/dcf-registry.real" "$@"\n' "$T" "$regbin" > "$regbin/dcf-registry"
+printf '#!/usr/bin/env bash\necho "$*" >> "%s/reg-calls"\n[ "$1" = resolve ] && echo "AGENTS=${COMPONENT_REGISTRY_AGENTS-unset}" >> "%s/reg-env"\nexec bash "%s/dcf-registry.real" "$@"\n' "$T" "$T" "$regbin" > "$regbin/dcf-registry"
 # fakea: takes skills; records each call and, for skills, the folder and the skills in it
 cat > "$bin/agent-adapter-fakea" <<'FAKE'
 #!/usr/bin/env bash
 verb="$1"; shift
 [ "$verb" = supports ] && { printf '%s\n' start-bg wake attach resume new list stop logs skills; exit 0; }
 echo "$verb|$*" >> "$CALLS_A"
+echo "$verb|${AGENT_MODEL-unset}" >> "$MODELS_A"
 [ "$verb" = list ] && { cat "$SESS_A" 2>/dev/null; exit 0; }
 name="$1" folder="$2"
 case "$verb" in
@@ -62,14 +68,17 @@ cat > "$bin/agent-adapter-fakeb" <<'FAKE'
 verb="$1"; shift
 [ "$verb" = supports ] && { printf '%s\n' new resume attach; exit 0; }
 echo "$verb|$*" >> "$CALLS_B"
+echo "$verb|${AGENT_MODEL-unset}" >> "$MODELS_B"
 case "$verb" in new | resume | attach) exit 0 ;; *) exit 3 ;; esac
 FAKE
 chmod +x "$bin"/* "$regbin"/*
 
 repo="$T/repo"; mkdir -p "$repo/.devcontainer" "$T/layer"
-export SESS_A="$T/sess-a" CALLS_A="$T/calls-a" CALLS_B="$T/calls-b" T_SKILL="$T/skill-seen"
+export SESS_A="$T/sess-a" CALLS_A="$T/calls-a" CALLS_B="$T/calls-b" T_SKILL="$T/skill-seen" MODELS_A="$T/models-a" MODELS_B="$T/models-b"
 export AGENTS_SHARE_DIR="$T/agshare" AGENTS_STATE_DIR="$T/state" AGENTS_START_ID=start-1 AGENTS_SETTLE_INTERVAL=0 AGENTS_SETTLE_TIMEOUT=0
 export COMPONENT_REGISTRY_STATE_DIR="$T/regstate" COMPONENT_REGISTRY_SHARE_DIR="$T/share"
+# the test isolation rule: anything that can reach handover never touches the real Claude Code config
+export CLAUDE_CONFIG_DIR="$T/claude-config"; mkdir -p "$CLAUDE_CONFIG_DIR"
 unset AGENTS_FILE AGENTS_FILE_TASK_VAR AGENTS_TTY CLAUDE_CODE_CHILD_SESSION AGENTS_SESSION_NAME AGENTS_SESSION_NAME_TASK_VAR AGENT_SESSION_NAME DCF_HOST_MACHINE
 unset COMPONENT_REGISTRY_WHOAMI COMPONENT_REGISTRY_FILE COMPONENT_REGISTRY_WHOAMI_TASK_VAR COMPONENT_REGISTRY_FILE_TASK_VAR
 cat > "$T/layer/a.reg" <<'EOF'
@@ -100,7 +109,7 @@ agents:
     cli: fakea
     kind: on-demand
 YAML
-reset() { rm -rf "$T/state" "$T/regstate"; : > "$SESS_A"; : > "$CALLS_A"; : > "$CALLS_B"; : > "$T/reg-calls"; rm -f "$T_SKILL"; unset FAKEA_SKILLS_FAIL; }
+reset() { rm -rf "$T/state" "$T/regstate"; : > "$SESS_A"; : > "$CALLS_A"; : > "$CALLS_B"; : > "$MODELS_A"; : > "$MODELS_B"; : > "$T/reg-calls"; : > "$T/reg-env"; rm -f "$T_SKILL"; unset FAKEA_SKILLS_FAIL; }
 # run <with registry: 1|0> <agents args...>: OUT and RC; only the test's folders and the system
 # folders on PATH, so a registry installed in this container is never the one used
 run() {
@@ -234,6 +243,108 @@ check 'start limit, the lock held: nothing handed over' 0 "$(skills_calls)"
 reset
 COMPONENT_REGISTRY_START_WAIT=abc run 1 start host
 check 'start limit, a bad value: the default applies, handed over' 1 "$(skills_calls)"
+
+# ------------------------------- agent definitions (participant 1.3.0, component-registry 1.6.0) ----
+# The registry's agents/<name>: its model reaches the adapter in AGENT_MODEL on the calls about the
+# agent (empty on the others); its skills replace the list entry's (the registry wins for both); read
+# only when the view is for the agent's path; check and list --json show it.
+cat > "$T/layer/agents.reg" <<'EOF'
+[/Corp/agents/*]
+model:value = sonnet
+[/Corp/review/agents/rev]
+model:value = opus
+skills:list = ref:skills/demo, plan
+kind:value = on-demand
+EOF
+reset
+run 1 start host
+check 'definition: the agent starts (exit 0)' 0 "$RC"
+check 'definition: resolve is handed the listed agents and their CLIs' 'host:fakea,rev:fakea,pair:fakeb,od:fakea' "$(sed -n 's/^AGENTS=//p' "$T/reg-env" 2>/dev/null | head -n 1)"
+check 'definition: the pattern model reaches start-bg in AGENT_MODEL' 'start-bg|sonnet' "$(grep '^start-bg' "$MODELS_A")"
+check 'definition: AGENT_MODEL is empty on list' 'list|' "$(grep '^list' "$MODELS_A" | head -n 1)"
+contains 'definition: one line names the model and its layer' "$OUT" "host: the component registry's agent definition: model sonnet (registry: corp)."
+reset
+run 1 start rev
+check 'definition: the agent'"'"'s own path gets its own model' 'start-bg|opus' "$(grep '^start-bg' "$MODELS_A")"
+contains 'definition: skills from the registry' "$OUT" 'skills [demo, plan] (registry: corp)'
+run 1 check
+check 'definition: check exits 0' 0 "$RC"
+contains 'definition: check shows the model from the registry' "$OUT" 'rev: cli fakea, resident, stateful (identity rev, lease container), folder ., args: none, registry path /Corp/review, model opus (registry: corp), skills [demo, plan] (registry: corp)'
+contains 'definition: check says host'"'"'s definition is not read (the view is rev'"'"'s)' "$OUT" "host: cli fakea, resident, stateful (identity host, lease container), folder ., args: none, registry: its definition is not read: the resolved view is for /Corp/review, not /Corp/me"
+run 1 list --json
+contains 'definition: list --json has the model' "$OUT" '"model":"opus"'
+contains 'definition: list --json has the registry'"'"'s skills' "$OUT" '"skills":["demo","plan"]'
+lacks 'definition: list --json has no model for an agent whose view is not read' "$(printf '%s' "$OUT" | sed 's/},{/}\n{/g' | grep '"name":"host"')" '"model"'
+lacks 'definition: kind is never taken from the registry' "$OUT" '"name":"rev","kind":"on-demand"'
+contains 'definition: resolve reports the skipped kind' "$(cd "$repo" && PATH="$bin:$regbin:/usr/bin:/bin" dcf-registry explain agents/rev 2>&1)" 'the agents list owns kind'
+# up with two paths: each resident resolved for its own path, each with its own model
+reset
+run 1 up
+check 'definition, up: host sonnet, rev opus' 'start-bg|sonnet start-bg|opus' "$(grep '^start-bg' "$MODELS_A" | tr '\n' ' ' | sed 's/ $//')"
+# up with a path, another path, then the first path again: resolved again, its own definition
+printf 'agents:\n  - name: host\n    cli: fakea\n    kind: resident\n  - name: rev\n    cli: fakea\n    kind: resident\n    registry-path: /Corp/review\n  - name: host2\n    cli: fakea\n    kind: resident\n' > "$repo/.devcontainer/agents.yml.3"
+cp "$repo/.devcontainer/agents.yml" "$T/agents.keep"; mv "$repo/.devcontainer/agents.yml.3" "$repo/.devcontainer/agents.yml"
+reset
+run 1 up
+check 'definition, up with a path again after another: resolved again' 3 "$(grep -c '^resolve' "$T/reg-calls")"
+check 'definition, up with a path again after another: each its own model' 'start-bg|sonnet start-bg|opus start-bg|sonnet' "$(grep '^start-bg' "$MODELS_A" | tr '\n' ' ' | sed 's/ $//')"
+cp "$T/agents.keep" "$repo/.devcontainer/agents.yml"
+# model.<cli> under [agents/*]: each agent gets the model for its own CLI
+cp "$T/layer/agents.reg" "$T/agents.reg.keep"
+printf '[/Corp/agents/*]\nmodel.fakeb:value = b-model\n' >> "$T/layer/agents.reg"
+reset
+TTY=1 run 1 start pair
+check 'definition, model.<cli>: the fakeb agent gets model.fakeb' 'new|b-model' "$(grep '^new' "$MODELS_B")"
+contains 'definition, model.<cli>: the start line names the key' "$OUT" 'model b-model (registry: corp, model.fakeb)'
+reset
+run 1 start host
+check 'definition, model.<cli>: the fakea agent keeps the plain model' 'start-bg|sonnet' "$(grep '^start-bg' "$MODELS_A")"
+cp "$T/agents.reg.keep" "$T/layer/agents.reg"
+# a CLI whose adapter does not read AGENT_MODEL (fakeb) starts as before
+reset
+TTY=1 run 1 start pair
+check 'definition, fakeb: starts (exit 0)' 0 "$RC"
+check 'definition, fakeb: given the model, which it may ignore' 'new|sonnet' "$(grep '^new' "$MODELS_B")"
+# the registry wins (the Operator's ruling of 2026-11-21): its skills replace the list's, and its
+# model replaces a --model in the list's args (the adapter swaps it; check says so)
+cp "$repo/.devcontainer/agents.yml" "$T/agents.keep"
+printf 'agents:\n  - name: rev\n    cli: fakea\n    kind: resident\n    registry-path: /Corp/review\n    skills: [mine]\n    args: [--model, haiku]\n  - name: host\n    cli: fakea\n    kind: resident\n    skills: [kept]\n' > "$repo/.devcontainer/agents.yml"
+reset
+run 1 start rev
+contains 'definition, list skills: the registry replaces them, said' "$OUT" "skills [demo, plan] (registry: corp), replacing the list's skills [mine]"
+contains 'definition, list args --model: the replacement is said' "$OUT" 'model opus (registry: corp), replacing --model haiku in its args'
+check 'definition, list args --model: AGENT_MODEL is still the registry'"'"'s' 'start-bg|opus' "$(grep '^start-bg' "$MODELS_A")"
+run 1 list --json
+contains 'definition, list skills: list --json shows the registry'"'"'s skills' "$OUT" '"skills":["demo","plan"]'
+lacks 'definition, list skills: list --json drops the replaced ones' "$(printf '%s' "$OUT" | sed 's/},{/}\n{/g' | grep '"name":"rev"')" '"mine"'
+contains 'definition, the list fills what the registry leaves unset (host has no registry skills)' "$OUT" '"skills":["kept"]'
+run 1 check
+contains 'definition, check: the replaced skills and model are named' "$OUT" "replacing the list's skills [mine]"
+cp "$T/agents.keep" "$repo/.devcontainer/agents.yml"
+# no layer list: nothing read, AGENT_MODEL empty
+reset; mv "$repo/.devcontainer/registry.yml" "$T/registry.keep"
+run 1 start host
+check 'definition, no layer list: AGENT_MODEL empty' 'start-bg|' "$(grep '^start-bg' "$MODELS_A")"
+lacks 'definition, no layer list: nothing said of a definition' "$OUT" 'agent definition'
+mv "$T/registry.keep" "$repo/.devcontainer/registry.yml"
+# the registry absent: nothing read even when a view is there
+reset; mkdir -p "$T/regstate/view/agents/host"; echo /Corp/me > "$T/regstate/view/whoami"; echo big > "$T/regstate/view/agents/host/model"
+run 0 start host
+check 'definition, registry absent: AGENT_MODEL empty' 'start-bg|' "$(grep '^start-bg' "$MODELS_A")"
+# fake views, read by check (read-only, no resolve)
+reset; mkdir -p "$T/regstate/view/agents/host"; echo /Corp/me > "$T/regstate/view/whoami"
+echo 'claude-opus-4-5[1m]' > "$T/regstate/view/agents/host/model"; printf 'model\tteam\t1:x.reg:3\n' > "$T/regstate/view/agents/host/from.tsv"
+run 1 check
+contains 'fake view: a model with brackets is read' "$OUT" 'model claude-opus-4-5[1m] (registry: team)'
+check 'fake view: check resolves nothing' '' "$(grep resolve "$T/reg-calls")"
+echo 'two words; rm -rf /' > "$T/regstate/view/agents/host/model"; printf 'ok\nbad name\n' > "$T/regstate/view/agents/host/skills"
+run 1 check
+contains 'fake view: a model that is not one word is left out, said' "$OUT" "host: the registry's model 'two words; rm -rf /' is not one word; left out."
+contains 'fake view: only skill names are read' "$OUT" 'skills [ok] (registry: ?)'
+echo /Corp/other > "$T/regstate/view/whoami"
+run 1 check
+contains 'fake view for another path: not read, said' "$OUT" 'registry: its definition is not read: the resolved view is for /Corp/other, not /Corp/me'
+rm -f "$T/layer/agents.reg"
 
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

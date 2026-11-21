@@ -158,6 +158,10 @@ with the agent's who-you-are path (its `registry-path`, else `COMPONENT_REGISTRY
 `dcf-registry handover`, which calls the CLI adapter's `skills` verb when `supports` lists it, and
 only then starts the CLI. `task component-registry:resolve` runs the resolve by hand;
 `/registry-refresh` runs resolve and the hand-over mid-session. No step ever blocks the start.
+From release 2 (proposal section 6.1; component-registry 1.6.0, participant 1.3.0) the resolve is
+handed the listed agents' names, and before the CLI starts the participant reads the agent's
+definition from the view (only when the view is for the agent's path): its model goes to the adapter
+in `AGENT_MODEL`, its skills replace the entry's; for those two fields the registry wins over the list.
 
 ```mermaid
 sequenceDiagram
@@ -169,7 +173,7 @@ sequenceDiagram
   alt no layer list
     R-->>person: one line, the agent starts with its plain skills
   end
-  person->>R: resolve, for registry-path, COMPONENT_REGISTRY_WHOAMI or --as
+  person->>R: resolve, for registry-path, COMPONENT_REGISTRY_WHOAMI or --as (COMPONENT_REGISTRY_AGENTS: the listed agents)
   R->>R: take the lock (flock)
   loop each layer, each source
     R->>S: version
@@ -198,7 +202,10 @@ sequenceDiagram
   else not listed or exit 3
     R-->>person: one line, the CLI keeps its plain skills
   end
-  person->>person: start the CLI
+  opt release 2: the view is for this agent's path
+    person->>person: read view/agents/<name>/: model, skills (they replace the list's)
+  end
+  person->>C: start, AGENT_MODEL = the definition's model (it replaces a model in the CLI args)
   Note over R,C: /registry-refresh runs resolve and handover to every adapter, mid-session
 ```
 

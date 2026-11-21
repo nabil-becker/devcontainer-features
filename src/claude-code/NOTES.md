@@ -79,6 +79,14 @@ The `agents` command reads and checks them and does nothing else with them. `age
 prints them after `sessionName` (`"attachment"`, `"description"`, `"skills"` as an array), only for
 entries that set them, so the output of an older list is unchanged.
 
+**Agent definitions from the component registry** (component 1.3.0, claude-code 1.13.0; the
+`component-registry` Feature 1.6.0). A layer may define `agents/<name>` with a `model` and `skills`
+(the component-registry notes, "Agent definitions"). At the agent's start, after the registry
+resolves for the agent's path, the definition is read from the resolved view: its model goes to the
+adapter (below) and its skills replace the entry's `skills`. The registry wins for these two
+fields (the Operator's ruling of 2026-11-21), and sets nothing else. `agents check` shows what came from
+the registry and from which layers; `agents list --json` adds `"model"` when a definition sets one.
+
 ## Deprecated in 1.7.0: claude-host, claude-fleet, claude-host-pin
 
 The [`agents`](../agents) Feature replaces them: a repository lists its agents in
@@ -107,6 +115,7 @@ else should. The contract (verbs, exit codes) is in the `agents` Feature's notes
 | `hint` | how to find and resume the agent by hand (`claude agents`; `cd <folder> && claude --resume`, pick it), for when the list cannot be read (1.8.0) |
 | `stop` | `claude stop <id>` of its newest running session; `--extras` stops every other running one instead. Never `claude rm`. |
 | `logs` | `claude logs <id>` |
+| (any start) | (1.13.0) `AGENT_MODEL`, the model of the agent's definition in the component registry (set by the participant component), is passed as `--model` on `start-bg`, `new` and `resume`, in place of any `--model` or `--model=` in the agent's arguments (the list's `args` and one start's extra arguments alike: the registry wins, the Operator's ruling of 2026-11-21; one line says what it replaced). A wake stays bare (its saved options); a value that is not one word is left out with a note |
 | `skills` | (1.12.0, optional in the contract, ADR-0064) copies the component registry's resolved skills (the folder in `COMPONENT_REGISTRY_SKILLS`, handed over by `dcf-registry handover`) into Claude Code's personal skills folder, `$CLAUDE_CONFIG_DIR/skills`; never `claude`, never the repository's `.claude/skills`. See "Resolved skills" below |
 
 **Identity by name and folder, action by id.** A session is the agent's when its `cwd` is the

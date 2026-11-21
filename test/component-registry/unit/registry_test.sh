@@ -12,7 +12,9 @@
 # in, owner-only modes, idempotent, two concurrent runs), explain (provenance with layer and
 # version, skipped lines and why, dangling refs, --uses), the setup script and the Taskfile; and
 # release 1.1.0: the built-in base layer of utility skills, layer-list, handover to a CLI adapter's
-# skills verb (fake adapters with and without it), refresh, and remember into the writable layer.
+# skills verb (fake adapters with and without it), refresh, and remember into the writable layer;
+# and release 1.6.0: agent definitions (model and skills, the fields the registry never sets,
+# COMPONENT_REGISTRY_AGENTS, the view's agents/<name>/, explain).
 # Part of `task lint` (`task test:component-registry-unit`).
 set -u
 
@@ -296,7 +298,7 @@ nokey:ref = skills/x:nothere
 EOF
 mkdir -p "$l2/x-files"; echo dept-b > "$l2/x-files/b.md"
 printf '[skills/v]\nv:value = 1\n[!/Corp/**]\n' > "$l2/y-excl.reg"
-printf 'not a line\n[skills/q\nk:number = 1\n[/Corp/agents/helper]\nmodel:value = big\n' > "$l2/z-broken.reg"
+printf 'not a line\n[skills/q\nk:number = 1\n[/Corp/prompts/helper]\nmodel:value = big\n' > "$l2/z-broken.reg"
 out="$(dcf-registry resolve --as "$W" 2>&1)"; rc=$?
 check "merge fixtures resolve (content never fails a resolve)" 0 "$rc"
 check "type clash: the lowest layer's type wins" blue "$(val skills/x color)"
@@ -321,8 +323,8 @@ check "! exclusion section: it excludes only the component it names" blue "$(val
 contains "an unreadable line is reported with its place" "$out" "skipped two 1:z-broken.reg:1: not a section"
 contains "an unknown type is reported" "$out" "type 'number' is none of value, list, text, ref"
 contains "a bad section header is reported" "$out" "1:z-broken.reg:2: a section header needs a closing ]"
-contains "a kind not in this release is reported" "$out" "kind agents is not in this release"
-check "a kind not in this release is not resolved" no "$([ -e "$(V)/agents" ] && echo yes || echo no)"
+contains "a kind not in this release is reported" "$out" "kind prompts is not in this release"
+check "a kind not in this release is not resolved" no "$([ -e "$(V)/prompts" ] && echo yes || echo no)"
 check "ref: the strongest line's path" /skills/x "$(val skills/w w)"
 contains "a ref to nothing is reported by resolve" "$out" "dangling ref: skills/w:gone -> skills/missing (no component skills/missing for $W)"
 ex="$(dcf-registry explain skills/w)"
@@ -613,6 +615,116 @@ check "front matter: made for a body without one, name and description from the 
 contains "front matter: a permission key in a higher layer is not written (the lowest's stays)" "$(sed -n 4p "$(V)/skills/s/SKILL.md")" "allowed-tools: Read"
 lacks "front matter: allowed-tools is never set from a value" "$(cat "$(V)/skills/s/SKILL.md")" "Bash"
 check "front matter: a multi-line description is replaced whole, the keys after it kept" "$(printf '%s\n' '---' 'name: u' 'description: one line now' 'model: x' '---' '' 'U.')" "$(cat "$(V)/skills/u/SKILL.md")"
+
+# ------------------------------------------- release 1.6.0: agent definitions ----
+new_case agents
+aa="$(layer corp)"; ab="$(layer dept)"; ac="$(layer mine)"
+cat > "$aa/a.reg" <<'EOF'
+[/Corp/agents/*]
+model:value = sonnet
+[agents/reviewer]
+skills:list = ref:skills/review, ref:skills/diagrams
+kind:value = resident
+allowed-tools:list = Bash
+[skills/review]
+body:text = Review.
+EOF
+cat > "$ab/b.reg" <<'EOF'
+[agents/reviewer]
+model:value = opus
+args:list = --dangerously-skip-permissions
+definition:value = boss
+model:value = two words
+model:list = x
+skills:value = one
+color:value = red
+EOF
+cat > "$ac/c.reg" <<'EOF'
+[/**/agents/reviewer]
+skills:list = !ref:skills/diagrams, plan, ref:/Corp/skills/review:body, bad/one
+EOF
+path_list "corp:/Corp:$aa" "dept:/Corp/MyDepartment:$ab" "mine:$W:$ac"
+out="$(COMPONENT_REGISTRY_AGENTS=host,reviewer,bad.name dcf-registry resolve --as "$W" 2>&1)"; rc=$?
+check "agents: resolve succeeds" 0 "$rc"
+check "agents: model is the strongest value" opus "$(cat "$(V)/agents/reviewer/model" 2>/dev/null)"
+check "agents: skills combined, !item removed, a ref gives its skill name, one name per line" "$(printf '%s\n' review plan)" "$(cat "$(V)/agents/reviewer/skills" 2>/dev/null)"
+check "agents: a pattern [agents/*] reaches an agent named only in COMPONENT_REGISTRY_AGENTS" sonnet "$(cat "$(V)/agents/host/model" 2>/dev/null)"
+check "agents: the requested names are kept in the view, a bad one left out" "$(printf '%s\n' host reviewer)" "$(cat "$(V)/agent-names")"
+contains "agents: a bad requested name is said" "$out" "'bad.name' is not an agent name"
+contains "agents: from.tsv names the layer and line of the model" "$(cat "$(V)/agents/reviewer/from.tsv")" "$(printf 'model\tdept\t1:b.reg:2')"
+contains "agents: from.tsv names every layer of the skills" "$(cat "$(V)/agents/reviewer/from.tsv")" "$(printf 'skills\tmine\t1:c.reg:2')"
+lacks "agents: from.tsv holds no skipped line" "$(cat "$(V)/agents/reviewer/from.tsv")" "kind"
+contains "agents: a field the list owns is skipped (kind)" "$out" "agents/reviewer:kind: the agents list owns kind; the registry never sets it"
+contains "agents: args is skipped as a possible widening" "$out" "agents/reviewer:args: the agents list owns args; the registry never sets it for an agent; it could widen a permission"
+contains "agents: definition is skipped as a possible widening" "$out" "agents/reviewer:definition: the agents list owns definition"
+contains "agents: a permission key is skipped even in the lowest layer" "$out" "agents/reviewer:allowed-tools: an agent definition carries no permission key"
+contains "agents: a model of two words is skipped" "$out" "agents/reviewer:model: a model is one word"
+contains "agents: model of another type is skipped" "$out" "model is one value: model:value = <model>"
+contains "agents: skills of another type is skipped" "$out" "skills is a list"
+contains "agents: an unknown field is skipped" "$out" "agents/reviewer:color: not an agent definition field (model, model.<cli>, skills)"
+contains "agents: a skills item that names no skill is reported" "$out" "item 'bad/one' names no skill"
+check "agents: a ref item is checked like any ref" ok "$(awk -F'\t' '$1 == "agents/reviewer" && $3 == "skills/review" { print $6; exit }' "$(V)/meta/refs.tsv")"
+contains "agents: explain --uses lists the agent that names a skill" "$(dcf-registry explain skills/review --uses)" "agents/reviewer:skills -> skills/review"
+ex="$(dcf-registry explain agents/reviewer)"
+contains "agents: explain shows the model's lines" "$ex" "model:value = opus"
+contains "agents: explain shows the overridden pattern line" "$ex" "overridden   corp@"
+contains "agents: explain shows a skipped field and why" "$ex" "kind:value = resident  (the agents list owns kind"
+contains "agents: explain says where the participant reads it" "$ex" "the participant reads model and skills from"
+check "agents: an agent the pattern gives only a model has no skills file" no "$([ -e "$(V)/agents/host/skills" ] && echo yes || echo no)"
+check "agents: the agents folder is owner-only" 700 "$(stat -c %a "$(V)/agents/reviewer")"
+out="$(dcf-registry resolve --as "$W" 2>&1)"
+check "agents: a later resolve without COMPONENT_REGISTRY_AGENTS keeps the view's names" sonnet "$(cat "$(V)/agents/host/model" 2>/dev/null)"
+out="$(COMPONENT_REGISTRY_AGENTS='' dcf-registry resolve --as "$W" 2>&1)"
+check "agents: an empty COMPONENT_REGISTRY_AGENTS clears them" no "$([ -e "$(V)/agents/host" ] && echo yes || echo no)"
+check "agents: an agent a section names literally is still resolved" opus "$(cat "$(V)/agents/reviewer/model" 2>/dev/null)"
+out="$(dcf-registry resolve --as /Corp/Finance/x 2>&1)"
+check "agents: another path gets only the lines that apply to it (corp's pattern, not dept's opus)" sonnet "$(cat "$(V)/agents/reviewer/model" 2>/dev/null)"
+
+# model.<cli> (the Operator's ruling of 2026-11-21): a model for agents of one CLI; it beats a plain
+# model at the same layer and path, and loses to a higher layer's or a more specific path's plain one
+new_case agentcli
+ma="$(layer corp)"; mb="$(layer dept)"
+cat > "$ma/a.reg" <<'EOF'
+[/Corp/agents/*]
+model:value = sonnet
+model.copilot:value = gpt-5.4
+model.nosuchcli:value = whatever
+[/Corp/agents/ops]
+model.claude:value = haiku
+[/Corp/agents/rev]
+model.claude:value = opus
+lock model
+EOF
+cat > "$mb/b.reg" <<'EOF'
+[/Corp/agents/ops]
+model:value = big-dept
+[/Corp/agents/rev]
+model.claude:value = dept-tries
+EOF
+path_list "corp:/Corp:$ma" "dept:/Corp/MyDepartment:$mb"
+out="$(COMPONENT_REGISTRY_AGENTS=host:claude,pair:copilot,odd:codex,ops:claude,rev:claude,bare dcf-registry resolve --as "$W" 2>&1)"; rc=$?
+check "model.<cli>: resolve succeeds" 0 "$rc"
+check "model.<cli>: a claude agent under [agents/*] gets the plain model" sonnet "$(cat "$(V)/agents/host/model" 2>/dev/null)"
+check "model.<cli>: a copilot agent under [agents/*] gets model.copilot (same layer and path: the suffix wins)" gpt-5.4 "$(cat "$(V)/agents/pair/model" 2>/dev/null)"
+check "model.<cli>: a CLI with no suffixed key gets the plain model" sonnet "$(cat "$(V)/agents/odd/model" 2>/dev/null)"
+check "model.<cli>: an agent with no CLI named gets the plain model" sonnet "$(cat "$(V)/agents/bare/model" 2>/dev/null)"
+check "model.<cli>: a higher layer's plain model beats a lower layer's suffixed one" big-dept "$(cat "$(V)/agents/ops/model" 2>/dev/null)"
+check "model.<cli>: the view records the CLI it resolved for" copilot "$(cat "$(V)/agents/pair/cli" 2>/dev/null)"
+contains "model.<cli>: from.tsv names the key the model came from" "$(cat "$(V)/agents/pair/from.tsv")" "$(printf 'model\tcorp\t1:a.reg:3\tmodel.copilot')"
+contains "model.<cli>: from.tsv names the plain key when it wins" "$(cat "$(V)/agents/ops/from.tsv")" "$(printf 'model\tdept\t1:b.reg:2\tmodel')"
+check "model.<cli>: a lock on model holds model.<cli> in a higher layer" opus "$(cat "$(V)/agents/rev/model" 2>/dev/null)"
+contains "model.<cli>: the locked line is reported" "$out" "a lock on model holds every model.<cli>"
+contains "model.<cli>: explain shows the effective model, its key and layer" "$(dcf-registry explain agents/pair)" "Effective model for its CLI, copilot: gpt-5.4 (model.copilot from corp at 1:a.reg:3)"
+lacks "model.<cli>: an unknown suffix is no problem" "$out" "nosuchcli"
+: > "$mb/b.reg"
+cat > "$ma/a.reg" <<'EOF'
+[/Corp/agents/*]
+model.copilot:value = gpt-5.4
+[/Corp/MyDepartment/agents/*]
+model:value = deeper-same-layer
+EOF
+out="$(COMPONENT_REGISTRY_AGENTS=pair:copilot dcf-registry resolve --as "$W" 2>&1)"
+check "model.<cli>: a more specific path's plain model beats a less specific suffixed one (same layer)" deeper-same-layer "$(cat "$(V)/agents/pair/model" 2>/dev/null)"
 
 echo "component-registry unit: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

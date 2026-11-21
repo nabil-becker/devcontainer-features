@@ -165,6 +165,18 @@ against two fake adapters and now the two real ones).
 
 The session name is `AGENT_SESSION_NAME` when the caller sets it (one line), else the handle.
 
+**The model (0.2.0).** `AGENT_MODEL`, the model of the agent's definition in the component registry
+(set by the participant component 1.3.0; a `model.copilot` key in a layer is the model for Copilot
+agents only), is passed as `--model <model>` on `new` and `resume`, in place of any `--model` or
+`--model=` in the agent's arguments: the registry wins (the Operator's ruling of 2026-11-21), and one
+line says what it replaced. A value that is not one word is left out with a note. `run-once` is left
+as its caller sends it. The flag is Copilot CLI's own, checked in the pinned version: `copilot --help`
+of Copilot CLI 1.0.114 (the npm package `@github/copilot-linux-x64` 1.0.114, the version the official
+Feature pins here) lists `--model <model>  Set the AI model to use (use 'auto' to let Copilot pick
+automatically)`. Which model names it accepts is the CLI's and the account's: `auto`, or a model id
+from Copilot's own list (`/model` in a session; the command reference,
+https://docs.github.com/en/copilot/reference/cli-command-reference, also names `COPILOT_MODEL`).
+
 **`run-once` and trust.** With no one to ask, a tool the CLI would ask about is refused. A turn may use
 tools only when the caller passes `--allow-tool '<rule>'` after `--`, or sets
 `AGENT_ADAPTER_COPILOT_ALLOW_ALL_TOOLS=1` (`--allow-all-tools`, off by default: an unattended turn that
@@ -285,6 +297,18 @@ the line "manage the environment, not the CLI" (NFR-13); `trust` answers exit 3 
 - **go-task**: the Taskfile (`copilot:*`).
 
 ## Changes
+
+### [0.2.0] - 2026-11-20
+
+#### Added
+
+- **The model of an agent definition.** `agent-adapter-copilot` reads `AGENT_MODEL` (the component
+  registry's agent definition, handed over by the participant component 1.3.0; a layer's
+  `model.copilot` key sets it for Copilot agents only) and passes it as `--model` on `new` and
+  `resume`, in place of any `--model` in the agent's arguments (the registry wins, said in one line).
+  The flag is Copilot CLI 1.0.114's own (`copilot --help`). `run-once` is unchanged.
+- With `participants: true`, the participant component 1.3.0: agent definitions from the component
+  registry at an agent's start; the registry's skills replace the list entry's and are shown.
 
 ### [0.1.0] - 2026-11-20
 
