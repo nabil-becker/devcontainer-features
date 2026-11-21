@@ -113,6 +113,7 @@ Settings are plain variables (NFR-6), each from the task variable, then the root
 | `COMPONENT_REGISTRY_FILE` | the option | The layer list. |
 | `COMPONENT_REGISTRY_STATE_DIR` | `/var/lib/devcontainer-features/component-registry` (`containerEnv`) | The state folder. |
 | `COMPONENT_REGISTRY_LOCK_WAIT` | `120` | Seconds a `resolve` waits for another one to finish. |
+| `COMPONENT_REGISTRY_SKILLS_MODE` | `split` | (1.7.0, ADR-0068) How a CLI keeps an agent's skills, for every agent whose agents list entry has no `registry-skills`: `split` (shared plus the agent's own), `shared` (the whole view shared, the latest hand-over wins), `off` (nothing handed over). `handover --skills-mode` beats it. |
 
 ## The layer list
 
@@ -274,7 +275,7 @@ in its folder, said in one line. `/registry-refresh` keeps `COMPONENT_REGISTRY_L
 
 Agents with different `registry-path`s in one container each get the skills their path resolves
 ([ADR-0068](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/adr/0068-each-agent-reads-the-skills-its-registry-path-resolves-through-an-added-directory-and-the-personal-folder-keeps-what-every-agent-shares.md),
-proposed; it amends ADR-0064's "one per container").
+it amends ADR-0064's "one per container").
 
 ```text
   agents start rev   resolve --as /Corp/review  ->  paths/+Corp+review -> views/<a>/
@@ -305,6 +306,12 @@ proposed; it amends ADR-0064's "one per container").
   its own path is refreshed and nothing else. A changed layer that other agents also read reaches
   them at their next start or refresh; meanwhile Claude Code moves that skill out of the shared
   folder into each agent's own (the views no longer agree), so no agent reads another's text.
+- **What you will see and how to override it.** `dcf-registry handovers --skills` lists each
+  agent's path, its skills mode and, from the adapter's read-only `skills-show`, its own folder,
+  its own skills and the shared ones. The mode is the agents list's `registry-skills`
+  (`handover --skills-mode`), else `COMPONENT_REGISTRY_SKILLS_MODE`, else `split`; `shared` puts an
+  agent's whole view in the shared folder as before 1.7.0 (the latest hand-over wins), `off` hands
+  nothing over and forgets the agent. `refresh` repeats each agent's recorded mode.
 - **Where the CLI keeps them** is the adapter's (NFR-13). Claude Code (claude-code 1.14.0): what
   every agent's view has alike stays personal, the rest goes to an added directory per agent; see
   the claude-code notes.
@@ -516,6 +523,10 @@ else; the `.reg` grammar and the layer list keys only grow within 1.x.
   every recorded hand-over, each path resolved once; with no record, as before.
 - `/registry-refresh` runs `dcf-registry refresh --session "${CLAUDE_SESSION_ID}"`, so it refreshes
   the calling agent in Claude Code.
+- **The skills mode** (`handover --skills-mode split|shared|off`, else the setting
+  `COMPONENT_REGISTRY_SKILLS_MODE`, else `split`), given to the adapter, recorded and repeated by
+  `refresh`; `off` forgets the agent. `handovers --skills` lists each agent's path, mode, own folder
+  and own skills (from the adapter's `skills-show`).
 
 Nothing to do. The adapter's `skills` verb also gets `COMPONENT_REGISTRY_PATH`; with claude-code
 1.14.0 agents of different paths keep their own skills.

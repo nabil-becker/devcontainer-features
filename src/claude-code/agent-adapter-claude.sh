@@ -643,10 +643,38 @@ prune_skills() {
   return 0
 }
 
+# skills_show (1.14.0, ADR-0068; the optional verb skills-show <name> <folder>): what Claude Code
+# holds for the agent, read-only, one tab-separated line each:
+#   own <its own folder, the one --add-dir passes, or ->    own-skills <names, or ->
+#   shared <the personal folder>                            shared-skills <the registry's there, or ->
+skills_show() {
+  local pers rd nm d o='' sh=''
+  pers="$(config_dir)/skills" rd="$(agent_add_dir "$NAME" "$FOLDER")"
+  for d in "$pers"/*/; do [ -f "$d$SKILLS_MARK" ] && sh="$sh${sh:+ }$(basename "$d")"; done
+  if [ -d "$rd/.claude/skills" ]; then
+    for d in "$rd"/.claude/skills/*/; do [ -f "$d$SKILLS_MARK" ] && o="$o${o:+ }$(basename "$d")"; done
+    printf 'own\t%s\nown-skills\t%s\n' "$rd" "${o:--}"
+  else
+    printf 'own\t-\nown-skills\t-\n'
+  fi
+  printf 'shared\t%s\nshared-skills\t%s\n' "$pers" "${sh:--}"
+  return 0
+}
+# count_owned <folder>: how many skills in it the registry owns
+count_owned() { local d n=0; for d in "$1"/*/; do [ -f "$d$SKILLS_MARK" ] && n=$((n + 1)); done; printf '%s' "$n"; }
+
 skills_handover() {
   local src="${COMPONENT_REGISTRY_SKILLS:-}" forget='' pers base me a d nm fo new='' anew='' swept=0
-  local pc ps pr pm oc os orr own='' ref ok
+  local pc ps pr pm oc os orr own='' ref ok smode="${COMPONENT_REGISTRY_SKILLS_MODE:-split}"
   [ "${COMPONENT_REGISTRY_FORGET:-}" = 1 ] && forget=1
+  # (1.14.0, ADR-0068) the mode the agents list (registry-skills) or the container
+  # (COMPONENT_REGISTRY_SKILLS_MODE) chose: split (the default), shared (the whole view personal, the
+  # latest hand-over wins, no own folder), off (as forget)
+  case "$smode" in
+    split | shared) ;;
+    off) forget=1 ;;
+    *) die 2 "skills: COMPONENT_REGISTRY_SKILLS_MODE is '$smode', not split, shared or off." ;;
+  esac
   if [ -z "$forget" ]; then
     [ -n "$src" ] || die 2 "skills needs COMPONENT_REGISTRY_SKILLS, the resolved skills folder (dcf-registry handover sets it)."
     [ -d "$src" ] || die 2 "skills: COMPONENT_REGISTRY_SKILLS is '$src', which is not a folder."
@@ -660,6 +688,20 @@ skills_handover() {
     flock -w "${AGENT_ADAPTER_SKILLS_WAIT:-60}" 7 || die 1 "skills: another hand-over has held $base/.lock for ${AGENT_ADAPTER_SKILLS_WAIT:-60}s; try again."
   fi
   me="$base/$(agent_key "$NAME" "$FOLDER")"
+  if [ -z "$forget" ] && [ "$smode" = shared ]; then
+    # shared: no own folder; the whole view into the personal folder, as before 1.14.0
+    rm -rf "$me"
+    local -a all=()
+    for d in "$src"/*/; do nm="$(basename "$d")"; [ -d "$d" ] || continue; if skill_name_ok "$nm"; then all+=("$nm"); else note "skills: '$nm' is not a skill name; skipped."; fi; done
+    PUT_RC=0 PUT_COPIED=0 PUT_SAME=0 PUT_MINE=0 PRUNED=0
+    put_skills "$pers" "$src" "${all[@]+"${all[@]}"}"
+    prune_skills "$pers" "${all[@]+"${all[@]}"}"
+    [ "$PUT_MINE" -eq 0 ] || own=", $PUT_MINE left to their owner"
+    echo "claude: $((PUT_COPIED + PUT_SAME)) resolved skill(s) in $pers ($PUT_COPIED copied, $PUT_SAME unchanged, $PRUNED removed$own): $NAME's whole view (registry skills shared: the latest hand-over wins for every session)."
+    if [ -n "$new" ]; then echo "claude: $pers is new; a session started before now needs /reload-skills, one started from now on reads it."
+    else echo "claude: running sessions pick the change up; a skill already used in a conversation keeps its old text until it is used in a new conversation."; fi
+    return "$PUT_RC"
+  fi
   if [ -n "$forget" ]; then
     if [ -d "$me" ]; then rm -rf "$me"; echo "claude: $NAME's own registry skills ($me) removed."
     else echo "claude: $NAME has no registry skills of its own here; nothing to remove."; fi
@@ -1172,7 +1214,7 @@ extras_note() { # extras_note <running lines>
 verb="${1:-}"
 [ $# -gt 0 ] && shift
 case "$verb" in
-  supports) printf '%s\n' start-bg wake attach resume new list stop logs hint record session-busy session-stop session-remove skills supports; exit 0 ;;
+  supports) printf '%s\n' start-bg wake attach resume new list stop logs hint record session-busy session-stop session-remove skills skills-show supports; exit 0 ;;
   list)
     # newest first, an agent's recorded session before the others (it is the one the agent is)
     ALL="$(sessions)" || exit 1
@@ -1213,7 +1255,7 @@ case "$verb" in
       echo "$want: removed from the session list"
     fi
     exit 0 ;;
-  start-bg | wake | attach | resume | new | stop | logs | hint | record | skills) ;;
+  start-bg | wake | attach | resume | new | stop | logs | hint | record | skills | skills-show) ;;
   '') die 2 "usage: agent-adapter-claude <verb> <name> <folder> [-- claude args]" ;;
   *) die 3 "'$verb' is not supported" ;;
 esac
@@ -1274,9 +1316,33 @@ case "$verb" in
   start-bg | wake | attach | resume | new)
     ADD_DIR="$(agent_add_dir "$NAME" "$FOLDER")"
     if [ -d "$ADD_DIR/.claude/skills" ]; then
-      prev='' has=''
-      for a in "$@"; do [ "$prev" = --add-dir ] && [ "$a" = "$ADD_DIR" ] && has=1; prev="$a"; done
-      [ -n "$has" ] || set -- "$@" --add-dir "$ADD_DIR"
+      # never twice: the agent's own args may name it already (--add-dir <it>, --add-dir=<it>, or
+      # among several folders after one --add-dir); another folder there is kept as it is
+      has='' inadd=''
+      for a in "$@"; do
+        case "$a" in
+          --add-dir) inadd=1 ;;
+          --add-dir=*) inadd=''; [ "${a#--add-dir=}" = "$ADD_DIR" ] && has=1 ;;
+          -*) inadd='' ;;
+          *) [ -n "$inadd" ] && [ "$a" = "$ADD_DIR" ] && has=1 ;;
+        esac
+      done
+      if [ -z "$has" ]; then set -- "$@" --add-dir "$ADD_DIR"; fi
+      # what it did, one line (ADR-0068: the Operator asked for it to be seen); not on a wake or
+      # an attach, whose options Claude Code puts back
+      case "$verb" in start-bg | new | resume)
+        note "$NAME: registry skills: $(count_owned "$(config_dir)/skills") shared, $(count_owned "$ADD_DIR/.claude/skills") own -> --add-dir $ADD_DIR${has:+ (already in its args)}"
+        # a clash (ADR-0068, the Operator's S3): a project skill of the same name wins in its sessions
+        for d in "$ADD_DIR"/.claude/skills/*/; do
+          [ -f "$d$SKILLS_MARK" ] || continue
+          nm="$(basename "$d")"
+          if [ -d "$FOLDER/.claude/skills/$nm" ]; then
+            note "$NAME: registry skills: clash: the project's $FOLDER/.claude/skills/$nm wins in its sessions; its own $nm runs as /$REG_ADD:$nm."
+          elif [ -d "$(config_dir)/skills/$nm" ]; then
+            note "$NAME: registry skills: clash: the personal $(config_dir)/skills/$nm wins in its sessions; its own $nm runs as /$REG_ADD:$nm."
+          fi
+        done ;;
+      esac
     else
       ADD_DIR=''
     fi ;;
@@ -1284,6 +1350,7 @@ esac
 
 case "$verb" in
   skills) skills_handover; exit $? ;;
+  skills-show) skills_show; exit $? ;;
   start-bg | new) ;;
   record)
     # record the session the agent is now: its running one (recorded first), else none

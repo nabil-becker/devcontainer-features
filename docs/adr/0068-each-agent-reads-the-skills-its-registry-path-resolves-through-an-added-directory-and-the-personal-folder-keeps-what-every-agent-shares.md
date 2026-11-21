@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | proposed |
+| **Status** | accepted |
 | **Date** | 2026-11-20 |
 | **Deciders** | the Operator; proposed by the host |
 
@@ -69,8 +69,31 @@ Claude Code facts, from its skills documentation (https://code.claude.com/docs/e
    `COMPONENT_REGISTRY_FORGET=1`) drops an agent's own folder and record; `agents up` (participant
    1.4.0) forgets the recorded agents of this repository that are no longer in the agent list; the
    adapter drops an agent whose folder no longer exists at any hand-over.
-5. **The contract** (ADR-0037, ADR-0064): the optional `skills` verb also receives
-   `COMPONENT_REGISTRY_PATH` and may receive `COMPONENT_REGISTRY_FORGET=1`; where a CLI keeps an
+5. **Transparency** (the Operator's first condition, 2026-11-21). Each start that passes the
+   flag prints one line, `<agent>: registry skills: <n> shared, <m> own -> --add-dir <folder>`
+   (`(already in its args)` when it was); nothing when no flag is added. Each hand-over says where
+   the skills went and which project skills win. The adapter's optional, read-only verb
+   `skills-show <name> <folder>` gives the agent's own folder and skills and the shared ones;
+   `agents check` prints them per agent with its mode, and `dcf-registry handovers --skills` for
+   every recorded agent.
+6. **Control and override** (the Operator's second condition, 2026-11-21). The agents list key
+   `registry-skills: split | shared | off` per agent, else the container default
+   `COMPONENT_REGISTRY_SKILLS_MODE` (the task variable, `.env`, `.devcontainer/.env`, the
+   environment), else `split`. `split` is decisions 1 to 4; `shared` hands the agent's whole view
+   to the personal folder as ADR-0064 did (the latest hand-over wins, no own folder, no flag);
+   `off` resolves and hands over nothing for the agent and drops its own folder (its sessions still
+   read the personal folder every session reads). The mode reaches the adapter as
+   `COMPONENT_REGISTRY_SKILLS_MODE` through `dcf-registry handover --skills-mode`, is recorded and
+   repeated by `refresh`. An `--add-dir` to the agent's own folder already in its args is never
+   added twice; one to another folder is kept as it is.
+7. **The limits are accepted** (the Operator's ruling S3, 2026-11-21): a committed project skill
+   with the same name as an agent's own copy wins in that agent's sessions, and the own copy stays
+   runnable as `/registry:<name>`; a plain `claude` started by hand sees only the shared skills.
+   Both are documented, and the start line names each clash (the skill and the project path).
+   Today's only real case is `architecture-review`; its switch-over (backlog) removes it.
+8. **The contract** (ADR-0037, ADR-0064, the Operator's ruling S2): the optional `skills` verb also receives
+   `COMPONENT_REGISTRY_PATH` and `COMPONENT_REGISTRY_SKILLS_MODE`, and may receive
+   `COMPONENT_REGISTRY_FORGET=1`; an adapter may offer the read-only `skills-show`; where a CLI keeps an
    agent's own skills, and how its sessions read them, stays the adapter's (NFR-13).
 
 ## Options considered
@@ -128,3 +151,4 @@ plain names.
 | Date | Change |
 |---|---|
 | 2026-11-20 | First draft, with `component-registry` 1.7.0, `claude-code` 1.14.0, participant 1.4.0 (backlog item `agent-skills-folders`). |
+| 2026-11-21 | Decided by the Operator. S1: the mechanism (Option A, decisions 1 to 4) accepted with two conditions, "make sure there is transparency in that behavior, and a way for people to control or override it if need be"; decisions 5 and 6 answer them. S2: option (A), the two environment variables `COMPONENT_REGISTRY_PATH` and `COMPONENT_REGISTRY_FORGET` on the existing `skills` call (decision 8). S3: option 1, the limits accepted, documented, and a clash named in the start line (decision 7). Status accepted. |

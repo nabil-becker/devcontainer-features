@@ -20,6 +20,12 @@ copy. Backward compatible within a major (NFR-5): `agents.yml` and `AGENTS_FILE`
 
 ### Added
 
+- **The key `registry-skills: split | shared | off`**, with the container default
+  `COMPONENT_REGISTRY_SKILLS_MODE` (task variable, `.env`, `.devcontainer/.env`, environment; else
+  `split`): `shared` keeps the 1.2.0 behaviour for that agent (its whole view shared, the latest start
+  wins), `off` resolves and hands over nothing for it and drops its own copies. Each start says the
+  mode and where it came from; `agents check` prints it per agent with the agent's own folder and
+  skills (from the adapter's `skills-show`).
 - `agents up` forgets (`dcf-registry forget`) an agent the registry handed skills to that is no
   longer in the agent list (in this repository; the sessions no agent started are left alone): its
   CLI drops the agent's own skills folder. Never fatal.

@@ -404,6 +404,14 @@ exists, `agents start` and `agents up` do two things for each agent before its C
    `agent-adapter-<cli> skills <name> <folder>` with that path's resolved skills folder in
    `COMPONENT_REGISTRY_SKILLS`.
 
+The key `registry-skills: split | shared | off` (participant 1.4.0, ADR-0068) says how the CLI keeps
+the agent's skills; without it `COMPONENT_REGISTRY_SKILLS_MODE` (task variable, `.env`,
+`.devcontainer/.env`, environment), else `split`. `split`: what every agent's view has alike is
+shared, the rest is the agent's own; `shared`: its whole view shared, the latest start wins; `off`:
+no resolve and no hand-over for it, its own copies dropped. `agents check` prints each agent's mode,
+where it came from and, when the adapter has the read-only `skills-show` verb, its own folder and
+skills.
+
 `agents up` (participant 1.4.0) first forgets (`dcf-registry forget`) every agent of this
 repository the registry handed skills to that is no longer in the list.
 
@@ -420,7 +428,7 @@ example no who-you-are path), a CLI whose adapter has no `skills` verb (`takes n
 skills`), a hand-over that fails. Without `dcf-registry` nothing is run or said. Each path keeps
 its own resolved view (component-registry 1.7.0), and a CLI whose adapter keeps an agent's own skills
 apart (Claude Code from claude-code 1.14.0: an added directory per agent) gives two agents with
-different `registry-path`s each their own skills ([ADR-0068](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/adr/0068-each-agent-reads-the-skills-its-registry-path-resolves-through-an-added-directory-and-the-personal-folder-keeps-what-every-agent-shares.md), proposed).
+different `registry-path`s each their own skills ([ADR-0068](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/adr/0068-each-agent-reads-the-skills-its-registry-path-resolves-through-an-added-directory-and-the-personal-folder-keeps-what-every-agent-shares.md)).
 
 ## The adapter contract
 
@@ -627,7 +635,8 @@ the `SESSIONS` / `HOST_SESSION` settings, which claude-code 2.0 removes; the mig
 
 - The participant component 1.4.0 (shared with `claude-code` `participants: true`): an agent's
   hand-over names its own `registry-path`, and `agents up` forgets the agents no longer in the list
-  (ADR-0068). This Feature stays deprecated; nothing to do.
+  (ADR-0068); the key `registry-skills: split | shared | off` and the container default
+  `COMPONENT_REGISTRY_SKILLS_MODE` choose how the CLI keeps an agent's skills. This Feature stays deprecated; nothing to do.
 
 ### [2.4.0] - 2026-11-20
 

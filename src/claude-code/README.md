@@ -137,6 +137,7 @@ else should. The contract (verbs, exit codes) is in the `agents` Feature's notes
 | `hint` | how to find and resume the agent by hand (`claude agents`; `cd <folder> && claude --resume`, pick it), for when the list cannot be read (1.8.0) |
 | `stop` | `claude stop <id>` of its newest running session; `--extras` stops every other running one instead. Never `claude rm`. |
 | `logs` | `claude logs <id>` |
+| `skills-show` | (1.14.0, optional, read-only) the agent's own folder, its skills, the personal folder and the registry's skills there, one tab-separated line each (`own`, `own-skills`, `shared`, `shared-skills`); `agents check` and `dcf-registry handovers --skills` print them |
 | `skills` | (1.12.0, optional in the contract, ADR-0064) copies the component registry's resolved skills (the folder in `COMPONENT_REGISTRY_SKILLS`, handed over by `dcf-registry handover`) into Claude Code's personal skills folder, `$CLAUDE_CONFIG_DIR/skills`; per agent (1.14.0, ADR-0068) the skills the agents' views disagree on go to the agent's own folder, read through `--add-dir`; `COMPONENT_REGISTRY_FORGET=1` drops it; never `claude`, never the repository's `.claude/skills`. See "Resolved skills" below |
 
 **Identity by name and folder, action by id.** A session is the agent's when its `cwd` is the
@@ -234,7 +235,7 @@ or `/registry-refresh`) calls it with the resolved view's `skills/` folder in
 ### Each agent its own registry skills (1.14.0)
 
 Agents with different `registry-path`s in one container each read their own resolved skills, under
-one login and one Claude Code state ([ADR-0068](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/adr/0068-each-agent-reads-the-skills-its-registry-path-resolves-through-an-added-directory-and-the-personal-folder-keeps-what-every-agent-shares.md), proposed).
+one login and one Claude Code state ([ADR-0068](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/adr/0068-each-agent-reads-the-skills-its-registry-path-resolves-through-an-added-directory-and-the-personal-folder-keeps-what-every-agent-shares.md)).
 
 ```text
   dcf-registry handover claude <agent> <folder> --as <its path>
@@ -268,6 +269,34 @@ one login and one Claude Code state ([ADR-0068](https://github.com/nabil-becker/
   dropped at any hand-over; the split is made again without it.
 - **Disk.** Each agent's view is kept twice at most (its `want` copy and its own folder), small text
   files, in this Feature's volume (tier 4, owner-only).
+- **What you will see.** Each `start-bg`, `new` and `resume` that adds the flag prints one line on
+  standard error, for example
+  `agent-adapter-claude: rev: registry skills: 3 shared, 2 own -> --add-dir /var/lib/devcontainer-features/claude-code/registry-agents/rev.123/registry`
+  (`(already in its args)` at the end when the agent's own args name the folder), and one more line
+  per clash: `rev: registry skills: clash: the project's <folder>/.claude/skills/<name> wins in its
+  sessions; its own <name> runs as /registry:<name>.` An agent with no own folder gets no flag and
+  no line. Each hand-over says where the skills went and which project
+  skills win. `agents check` shows each agent's mode and, from the adapter's read-only
+  `skills-show <name> <folder>` verb, its own folder and the skills in it;
+  `dcf-registry handovers --skills` lists the same for every agent the registry handed skills to.
+- **Control.** The agents list key `registry-skills` per agent, else `COMPONENT_REGISTRY_SKILLS_MODE`
+  for the container (the task variable, `.env`, `.devcontainer/.env` or the environment), else
+  `split`:
+  - `split` (the default): as above.
+  - `shared`: the agent's whole view into the personal folder, no own folder and no flag: the 1.12.0
+    behaviour, where the latest hand-over wins for every session.
+  - `off`: nothing resolved or handed over for the agent; its own folder is dropped. Its sessions
+    still read the personal folder every Claude Code session reads.
+  An `--add-dir` to the agent's own folder already in its `args` (`--add-dir <it>`, `--add-dir=<it>`,
+  or among several folders after one `--add-dir`) is never added twice; an `--add-dir` to another
+  folder is kept as it is, and the agent's own is added after it.
+- **Limits** (accepted by the Operator, 2026-11-21). A committed project skill
+  (`<folder>/.claude/skills/<name>`) with the same name as an agent's own copy wins in that agent's
+  sessions; the own copy stays runnable as `/registry:<name>`, and the start line names the clash.
+  A plain `claude` started by hand (not through `agents`) gets no `--add-dir` and sees only the
+  shared skills. Today's only real case of the first is `architecture-review` in this repository,
+  and only if agents with different paths disagree on it; the architecture-review switch-over
+  (backlog) removes the committed copy and with it the clash.
 - **Not chosen:** a `CLAUDE_CONFIG_DIR` per agent (separate logins, session lists and jobs), the
   `permissions.additionalDirectories` setting (file access only, it loads no skills), a plugin per
   agent (every skill renamed `/<plugin>:<skill>`). ADR-0068 has the comparison.
@@ -553,6 +582,14 @@ the CLI) contend for `.claude.json.lock`; run one.
   sessions and the registry's runs as `/registry:<name>` (said at the hand-over).
 - `COMPONENT_REGISTRY_FORGET=1` (`dcf-registry forget`) drops an agent's own folder; an agent whose
   folder no longer exists is dropped at any hand-over.
+- **You see what it does:** each start that adds the flag prints one line,
+  `<agent>: registry skills: <n> shared, <m> own -> --add-dir <folder>`; the new read-only verb
+  `skills-show <name> <folder>` (in `supports`) gives the agent's own folder and skills, which
+  `agents check` and `dcf-registry handovers --skills` print.
+- **You can override it:** `COMPONENT_REGISTRY_SKILLS_MODE` (`split`, `shared`, `off`), set by the
+  agents list's `registry-skills` or the container default of the same name. `shared` is the 1.12.0
+  behaviour (whole view personal, no flag); `off` drops the agent's folder. An `--add-dir` to the
+  agent's folder already in its args is never added twice; one to another folder is kept.
 
 Nothing to do where every agent shares one who-you-are path: everything stays personal, and the
 added directory is empty. A background session started before this version lacks the flag; its

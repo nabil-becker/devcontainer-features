@@ -525,7 +525,7 @@ dcf-registry handover >/dev/null 2>&1; check "handover without a CLI: exit 2" 2 
 
 # refresh: resolve for the view's path, then every adapter on PATH (with no hand-over recorded:
 # the records the hand-overs above made are taken away; 1.7.0 refreshes the recorded ones, below)
-check "handover: recorded (cli, name, folder, path, mode)" "takes	host	/some/folder	/Corp/me	whoami" "$(dcf-registry handovers | head -n 1)"
+check "handover: recorded (cli, name, folder, path, path mode, skills mode)" "takes	host	/some/folder	/Corp/me	whoami	split" "$(dcf-registry handovers | head -n 1)"
 rm -f "$COMPONENT_REGISTRY_STATE_DIR/handovers.tsv"
 out="$(PATH="$abin:$PATH" dcf-registry refresh 2>&1)"; rc=$?
 check "refresh: exit 0" 0 "$rc"
@@ -546,7 +546,7 @@ rbin="$T/rec-adapter"; mkdir -p "$rbin"
 # a fake adapter that takes skills and lists sessions: it logs each hand-over (agent, folder, path,
 # the last line of the skill "mine") and each forget to rec-log; its list is the file rec-list
 # shellcheck disable=SC2016
-printf '#!/usr/bin/env bash\ncase "$1" in\n  supports) printf "skills\\nlist\\n" ;;\n  list) cat "%s/rec-list" 2>/dev/null ;;\n  skills) if [ "${COMPONENT_REGISTRY_FORGET:-}" = 1 ]; then echo "forget $2 $3" >> "%s/rec-log"; else echo "skills $2 $3 $COMPONENT_REGISTRY_PATH $(tail -n 1 "$COMPONENT_REGISTRY_SKILLS/mine/SKILL.md" 2>/dev/null)" >> "%s/rec-log"; fi ;;\n  *) exit 3 ;;\nesac\n' "$T" "$T" "$T" > "$rbin/agent-adapter-rec"
+printf '#!/usr/bin/env bash\ncase "$1" in\n  supports) printf "skills\\nskills-show\\nlist\\n" ;;\n  skills-show) printf "own\\t/own/$2\\nown-skills\\tmine\\nshared\\t/shared\\nshared-skills\\tshared\\n" ;;\n  list) cat "%s/rec-list" 2>/dev/null ;;\n  skills) echo "$2 ${COMPONENT_REGISTRY_SKILLS_MODE:-unset}" >> "%s/rec-mode"; if [ "${COMPONENT_REGISTRY_FORGET:-}" = 1 ]; then echo "forget $2 $3" >> "%s/rec-log"; else echo "skills $2 $3 $COMPONENT_REGISTRY_PATH $(tail -n 1 "$COMPONENT_REGISTRY_SKILLS/mine/SKILL.md" 2>/dev/null)" >> "%s/rec-log"; fi ;;\n  *) exit 3 ;;\nesac\n' "$T" "$T" "$T" "$T" > "$rbin/agent-adapter-rec"
 chmod +x "$rbin/agent-adapter-rec"
 RP="$rbin:$bin:/usr/bin:/bin"
 P() { printf '%s' "$COMPONENT_REGISTRY_STATE_DIR/paths/$1"; }
@@ -566,14 +566,14 @@ PATH="$RP" dcf-registry handover rec az /fz --as /Corp/x >/dev/null 2>&1
 check "two agents, two paths: each gets its own path's skills" "skills ax /fx /Corp/x for x|skills ay /fy /Corp/y for y|skills az /fz /Corp/x for x" "$(paste -sd'|' "$T/rec-log")"
 check "same path: one view shared" "$(readlink -f "$(P +Corp+x)")" "$(grep -c . "$COMPONENT_REGISTRY_STATE_DIR/handovers.tsv" >/dev/null; readlink -f "$(P +Corp+x)")"
 check "records: one line per agent" 3 "$(dcf-registry handovers | grep -c .)"
-check "records: an agent's own path is mode as" "rec	ax	/fx	/Corp/x	as" "$(dcf-registry handovers | grep -P '\tax\t')"
+check "records: an agent's own path is mode as" "rec	ax	/fx	/Corp/x	as	split" "$(dcf-registry handovers | grep -P '\tax\t')"
 out="$(PATH="$RP" dcf-registry handover rec aq /fq --as /Corp/never 2>&1)"; rc=$?
 check "handover --as a path never resolved: exit 1" 1 "$rc"
 contains "handover --as a path never resolved: says how" "$out" "resolve --as /Corp/never"
 : > "$T/rec-log"
 COMPONENT_REGISTRY_WHOAMI=/Corp/x PATH="$RP" dcf-registry handover rec aw /fw >/dev/null 2>&1
 check "no --as: the who-you-are setting's view, not the latest" "skills aw /fw /Corp/x for x" "$(cat "$T/rec-log")"
-check "no --as: recorded mode whoami" "rec	aw	/fw	/Corp/x	whoami" "$(dcf-registry handovers | grep -P '\taw\t')"
+check "no --as: recorded mode whoami" "rec	aw	/fw	/Corp/x	whoami	split" "$(dcf-registry handovers | grep -P '\taw\t')"
 out="$(dcf-registry explain skills/mine --as /Corp/x 2>&1)"
 contains "explain --as a path with its own view, not the latest" "$out" "resolved for /Corp/x"
 # a resolve keeps every path's view (an agent may not have been handed its skills yet) and drops
@@ -610,6 +610,35 @@ lw="$(cat "$(V)/whoami")"
 check "forget: the latest view's path keeps its view" yes "$([ -f "$(P "${lw//\//+}")/whoami" ] && echo yes || echo no)"
 check "forget: a recorded path keeps its view" yes "$([ -f "$(P +Corp+x)/whoami" ] && echo yes || echo no)"
 dcf-registry forget rec >/dev/null 2>&1; check "forget without name and folder: exit 2" 2 $?
+# the skills mode (ADR-0068): --skills-mode, else COMPONENT_REGISTRY_SKILLS_MODE, else split
+: > "$T/rec-mode"
+PATH="$RP" dcf-registry handover rec ax /fx --as /Corp/x >/dev/null 2>&1
+check "skills mode: the default is split, given to the adapter" "ax split" "$(tail -n 1 "$T/rec-mode")"
+COMPONENT_REGISTRY_SKILLS_MODE=shared PATH="$RP" dcf-registry handover rec ax /fx --as /Corp/x >/dev/null 2>&1
+check "skills mode: the setting (environment) applies" "ax shared" "$(tail -n 1 "$T/rec-mode")"
+printf 'COMPONENT_REGISTRY_SKILLS_MODE=shared\n' > .env
+PATH="$RP" dcf-registry handover rec ax /fx --as /Corp/x >/dev/null 2>&1
+check "skills mode: the setting (.env) applies" "ax shared" "$(tail -n 1 "$T/rec-mode")"
+check "skills mode: recorded" "rec	ax	/fx	/Corp/x	as	shared" "$(dcf-registry handovers | grep -P '\tax\t')"
+PATH="$RP" dcf-registry handover rec ax /fx --as /Corp/x --skills-mode split >/dev/null 2>&1
+check "skills mode: --skills-mode (the agents list) beats the setting" "ax split" "$(tail -n 1 "$T/rec-mode")"
+rm -f .env
+COMPONENT_REGISTRY_SKILLS_MODE=shared PATH="$RP" dcf-registry handover rec az /fz --as /Corp/x >/dev/null 2>&1
+: > "$T/rec-mode"
+PATH="$RP" dcf-registry refresh >/dev/null 2>&1
+check "skills mode: refresh repeats each agent's recorded mode" "ax split|az shared" "$(grep -E '^a[xz] ' "$T/rec-mode" | sort | paste -sd'|')"
+out="$(PATH="$RP" dcf-registry handover rec ax /fx --as /Corp/x --skills-mode sometimes 2>&1)"; rc=$?
+check "skills mode: a bad value is refused (exit 2)" 2 "$rc"
+contains "skills mode: says the values" "$out" "not split, shared or off"
+: > "$T/rec-log"
+PATH="$RP" dcf-registry handover rec az /fz --as /Corp/x --skills-mode off >/dev/null 2>&1
+check "skills mode off: the adapter drops the agent's copies" "forget az /fz" "$(cat "$T/rec-log")"
+check "skills mode off: no record" 0 "$(dcf-registry handovers | grep -cP '\taz\t')"
+out="$(PATH="$RP" dcf-registry handovers --skills 2>&1)"
+contains "handovers --skills: the agent, its path and mode" "$out" "ax (rec, /fx): path /Corp/x (its registry-path), registry skills split"
+contains "handovers --skills: its own folder" "$out" "  own folder: /own/ax"
+contains "handovers --skills: its own skills" "$out" "  own skills: mine"
+contains "handovers --skills: the shared ones" "$out" "  shared (/shared): shared"
 # the lock: two resolves for two paths at once both finish, each with its own view
 new_case perpathlock
 l="$(layer a)"; printf '[/**/skills/shared]\nbody:text = same\n' > "$l/a.reg"; path_list "a:/Corp:$l"

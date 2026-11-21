@@ -9,7 +9,8 @@
 # .claude/skills; owner-only copies; bad use without COMPONENT_REGISTRY_SKILLS. Per agent (1.14.0,
 # ADR-0068): two agents of different paths split into personal and own folders, one path shared,
 # a refresh that agrees again, a project clash said, forget, an agent whose folder is gone, two
-# hand-overs at once, --add-dir on new and start-bg (once, none without a folder). No claude runs:
+# hand-overs at once, --add-dir on new and start-bg (once, none without a folder); the line each
+# start prints, the duplicate rule, skills-show, the modes split, shared and off. No claude runs:
 # the verb never calls the CLI. Part of `task lint` (`task test:claude-unit`).
 set -u
 
@@ -23,6 +24,7 @@ T="$(cd "$T" && pwd -P)"
 pass=0 fail=0
 check() { if [ "$2" = "$3" ]; then pass=$((pass + 1)); echo "ok   - $1"; else fail=$((fail + 1)); echo "FAIL - $1 (expected '$2', got '$3')"; fi; }
 contains() { case "$2" in *"$3"*) pass=$((pass + 1)); echo "ok   - $1" ;; *) fail=$((fail + 1)); echo "FAIL - $1 (no '$3' in '$2')" ;; esac; }
+lacks() { case "$2" in *"$3"*) fail=$((fail + 1)); echo "FAIL - $1 ('$3' found in '$2')" ;; *) pass=$((pass + 1)); echo "ok   - $1" ;; esac; }
 
 mkdir -p "$T/bin" "$T/view/skills" "$T/repo/.claude/skills/review" "$T/cfg"
 # a claude that must never run for this verb
@@ -183,6 +185,54 @@ contains 'start-bg: --add-dir the agent'"'"'s own folder' "$(cat "$T/claude-call
 mkdir -p "$R/fz"
 (cd "$R/fz" && PATH="$T/bin:/usr/bin:/bin" CLAUDE_CONFIG_DIR="$R/cfg" bash "$adapter" new zed "$R/fz" >/dev/null 2>&1)
 check 'new: an agent never handed skills gets no --add-dir' 0 "$(grep -c -- '--add-dir' "$T/claude-calls")"
+
+# ------------------------------- transparency and control (claude-code 1.14.0, ADR-0068) ----
+AD="$R/cfg/registry-agents/$(key ana "$R/fa")/registry"
+newcall() { : > "$T/claude-calls"; (cd "$R/fa" && PATH="$T/bin:/usr/bin:/bin" CLAUDE_CONFIG_DIR="$R/cfg" bash "$adapter" "$@" 2>&1); }
+out="$(newcall new ana "$R/fa")"
+contains 'transparency: new says what it added' "$out" "ana: registry skills: $(find "$PS" -mindepth 2 -maxdepth 2 -name .component-registry | wc -l) shared, $(find "$AD/.claude/skills" -mindepth 2 -maxdepth 2 -name .component-registry | wc -l) own -> --add-dir $AD"
+out="$(newcall start-bg ana "$R/fa")"
+contains 'transparency: start-bg says it too' "$out" "ana: registry skills: "
+out="$(newcall new ana "$R/fa" -- "--add-dir=$AD")"
+check 'duplicate: --add-dir=<its folder> in its args, not added again' 0 "$(grep -c -- "--add-dir $AD" "$T/claude-calls")"
+contains 'duplicate: said as already in its args' "$out" "(already in its args)"
+newcall new ana "$R/fa" -- --add-dir /other "$AD" >/dev/null
+check 'duplicate: its folder among several after one --add-dir, not added again' 1 "$(grep -o -- "$AD" "$T/claude-calls" | wc -l)"
+newcall new ana "$R/fa" -- --add-dir /other >/dev/null
+contains 'another folder: kept as it is, its own added after' "$(cat "$T/claude-calls")" "--add-dir /other --add-dir $AD"
+lacks 'transparency: no clash, no clash line' "$(newcall new ana "$R/fa")" 'clash'
+mkdir -p "$R/fa/.claude/skills/diagrams"; echo 'the project diagrams' > "$R/fa/.claude/skills/diagrams/SKILL.md"
+out="$(newcall new ana "$R/fa")"
+contains 'transparency: a project clash named in one line at the start' "$out" "ana: registry skills: clash: the project's $R/fa/.claude/skills/diagrams wins in its sessions; its own diagrams runs as /registry:diagrams."
+rm -rf "$R/fa/.claude"
+out="$(cd "$R/fz" && PATH="$T/bin:/usr/bin:/bin" CLAUDE_CONFIG_DIR="$R/cfg" bash "$adapter" new zed "$R/fz" 2>&1)"
+lacks 'transparency: nothing added, nothing said' "$out" 'registry skills:'
+# skills-show
+contains 'skills-show is in supports' "$(PATH="$T/bin:/usr/bin:/bin" bash "$adapter" supports)" 'skills-show'
+out="$(cd "$R/fa" && PATH="$T/bin:/usr/bin:/bin" CLAUDE_CONFIG_DIR="$R/cfg" bash "$adapter" skills-show ana "$R/fa")"
+check 'skills-show: its own folder' "$AD" "$(printf '%s\n' "$out" | awk -F'\t' '$1 == "own" { print $2 }')"
+check 'skills-show: its own skills' "diagrams" "$(printf '%s\n' "$out" | awk -F'\t' '$1 == "own-skills" { print $2 }')"
+check 'skills-show: the shared ones' "shared" "$(printf '%s\n' "$out" | awk -F'\t' '$1 == "shared-skills" { print $2 }')"
+out="$(cd "$R/fz" && PATH="$T/bin:/usr/bin:/bin" CLAUDE_CONFIG_DIR="$R/cfg" bash "$adapter" skills-show zed "$R/fz")"
+check 'skills-show: an agent with no own folder' "-" "$(printf '%s\n' "$out" | awk -F'\t' '$1 == "own" { print $2 }')"
+# modes
+mode() { (cd "$2" && PATH="$T/bin:/usr/bin:/bin" CLAUDE_CONFIG_DIR="$R/cfg" COMPONENT_REGISTRY_SKILLS="$R/view-$3" COMPONENT_REGISTRY_PATH="/Corp/$3" COMPONENT_REGISTRY_SKILLS_MODE="$4" bash "$adapter" skills "$1" "$2" 2>&1); }
+out="$(mode ana "$R/fa" x split)"
+check 'mode split (explicit): as the default, diagrams contested stays own' 'for x' "$(cat "$AD/.claude/skills/diagrams/SKILL.md" 2>/dev/null)"
+out="$(mode ana "$R/fa" x shared)"; rc=$?
+check 'mode shared: exit 0' 0 "$rc"
+check 'mode shared: its whole view personal' 'for x' "$(cat "$PS/diagrams/SKILL.md" 2>/dev/null)"
+check 'mode shared: no own folder' no "$([ -e "$R/cfg/registry-agents/$(key ana "$R/fa")" ] && echo yes || echo no)"
+contains 'mode shared: said, with what it means' "$out" "registry skills shared: the latest hand-over wins for every session"
+out="$(newcall new ana "$R/fa")"
+lacks 'mode shared: no --add-dir at the next start' "$(cat "$T/claude-calls")" '--add-dir'
+mode ana "$R/fa" x split >/dev/null
+out="$(mode ana "$R/fa" x off)"; rc=$?
+check 'mode off: exit 0' 0 "$rc"
+check 'mode off: its own folder dropped' no "$([ -e "$R/cfg/registry-agents/$(key ana "$R/fa")" ] && echo yes || echo no)"
+check 'mode off: the split made again without it (bob alone: all personal)' 'for y' "$(cat "$PS/diagrams/SKILL.md" 2>/dev/null)"
+out="$(mode ana "$R/fa" x sometimes)"; rc=$?
+check 'mode: a bad value is bad use (exit 2)' 2 "$rc"
 
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

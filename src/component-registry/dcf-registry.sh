@@ -11,14 +11,18 @@
 #   dcf-registry version                        the Feature version and the layer list in use
 #   dcf-registry layer-list                     print the layer list's path; exit 0 when it is
 #                                               there, 1 when not (the agents start hook asks)
-#   dcf-registry handover <cli> [<name> <folder>] [--as <path>]
+#   dcf-registry handover <cli> [<name> <folder>] [--as <path>] [--skills-mode split|shared|off]
 #                                               hand the view resolved for that path (default: the
 #                                               who-you-are setting's) to that CLI's adapter
 #                                               (agent-adapter-<cli> skills, when its supports lists
-#                                               it; exit 3 when it cannot take them) and record it
+#                                               it; exit 3 when it cannot take them) and record it;
+#                                               the mode (default COMPONENT_REGISTRY_SKILLS_MODE,
+#                                               else split) says how the CLI keeps them
 #   dcf-registry forget <cli> <name> <folder>   (1.7.0) the adapter drops that agent's own copies
 #                                               and the record goes
-#   dcf-registry handovers                      (1.7.0) the records: cli, name, folder, path, mode
+#   dcf-registry handovers [--skills]           (1.7.0) the records: cli, name, folder, path, path
+#                                               mode, skills mode; --skills: each agent's own
+#                                               skills too (the adapter's skills-show)
 #   dcf-registry refresh [--as <path>] [--session <id>]
 #                                               resolve, then hand over (/registry-refresh): --as
 #                                               one path to every CLI adapter on PATH; --session the
@@ -64,8 +68,9 @@
 #   paths/<key>                (1.7.0) one symlink per who-you-are path (/ becomes +), to that
 #                              path's latest view, swapped the same way: agents with different
 #                              paths each keep their own view
-#   handovers.tsv              (1.7.0) cli, name, folder, path, mode (as: the agent's own path;
-#                              whoami: the who-you-are setting) of every hand-over, for refresh
+#   handovers.tsv              (1.7.0) cli, name, folder, path, path mode (as: the agent's own path;
+#                              whoami: the who-you-are setting), skills mode (split, shared) of
+#                              every hand-over, for refresh
 #   resolve.lock               flock, so two resolves never interleave (one lock for every path:
 #                              the layer copies are shared); handovers.lock guards the records
 # The resolved view: skills/<name>/ (SKILL.md and its files, what a consumer copies),
@@ -1035,14 +1040,15 @@ view_for() {
   VPATH="$(cat "$VIEW/whoami")"
 }
 
-# record_handover <cli> <name> <folder> <path> <mode> | forget: one line per cli, name and folder
+# record_handover <cli> <name> <folder> <path> <mode> [<skills mode>] | forget: one line per cli,
+# name and folder
 record_handover() {
-  local cli="$1" name="$2" folder="$3" path="${4:-}" mode="${5:-}" f="$STATE_DIR/handovers.tsv"
+  local cli="$1" name="$2" folder="$3" path="${4:-}" mode="${5:-}" smode="${6:-split}" f="$STATE_DIR/handovers.tsv"
   exec 6>>"$STATE_DIR/handovers.lock"
   flock -w 30 6 || { warn "the hand-over records are busy ($STATE_DIR/handovers.lock); not recorded"; exec 6>&-; return 0; }
   (umask 077
    { [ -f "$f" ] && awk -F'\t' -v c="$cli" -v n="$name" -v d="$folder" '!($1 == c && $2 == n && $3 == d)' "$f"
-     [ "$mode" = forget ] || printf '%s\t%s\t%s\t%s\t%s\n' "$cli" "$name" "$folder" "$path" "$mode"
+     [ "$mode" = forget ] || printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$cli" "$name" "$folder" "$path" "$mode" "$smode"
    } > "$f.new.$$" && mv -f "$f.new.$$" "$f")
   exec 6>&-
 }
@@ -1204,12 +1210,14 @@ skills_adapter() { # skills_adapter <cli>: AD, the adapter that takes skills; re
   fi
 }
 cmd_handover() {
-  local cli name folder as='' real rc
+  local cli name folder as='' real rc smode='' s
   local -a pos=()
   while [ $# -gt 0 ]; do
     case "$1" in
       --as) [ $# -ge 2 ] || die 2 "--as needs a path"; as="$2"; shift 2 ;;
       --as=*) as="${1#--as=}"; shift ;;
+      --skills-mode) [ $# -ge 2 ] || die 2 "--skills-mode needs split, shared or off"; smode="$2"; shift 2 ;;
+      --skills-mode=*) smode="${1#--skills-mode=}"; shift ;;
       -*) die 2 "handover: unknown option '$1' (handover <cli> [<name> <folder>] [--as <path>])" ;;
       *) pos+=("$1"); shift ;;
     esac
@@ -1220,6 +1228,14 @@ cmd_handover() {
   [[ "$name" =~ ^[A-Za-z0-9_-]+$ ]] || die 2 "handover: '$name' is not an agent name"
   resolve_settings
   [ -n "$folder" ] || folder="$ROOT"
+  # (1.7.0, ADR-0068) how the CLI keeps the agent's skills: --skills-mode (the agents list's
+  # registry-skills), else the setting COMPONENT_REGISTRY_SKILLS_MODE, else split
+  if [ -z "$smode" ]; then s="$(setting COMPONENT_REGISTRY_SKILLS_MODE)"; smode="${s%%$'\t'*}"; fi
+  case "${smode:=split}" in
+    split | shared) ;;
+    off) cmd_forget "$cli" "$name" "$folder"; return $? ;;
+    *) die 2 "skills mode '$smode' is not split, shared or off (--skills-mode, COMPONENT_REGISTRY_SKILLS_MODE)" ;;
+  esac
   skills_adapter "$cli" || return 3
   [ -d "$STATE_DIR" ] || die 1 "no state folder $STATE_DIR; run dcf-registry resolve first"
   command -v flock >/dev/null 2>&1 || die 1 "flock (util-linux) is needed to read the view while no resolve swaps it"
@@ -1228,8 +1244,8 @@ cmd_handover() {
   view_for "$as"
   real="$(readlink -f "$VIEW")"
   [ -d "$real/skills" ] || die 1 "the resolved view $real has no skills folder; run dcf-registry resolve"
-  COMPONENT_REGISTRY_SKILLS="$real/skills" COMPONENT_REGISTRY_PATH="$VPATH" "$AD" skills "$name" "$folder" </dev/null; rc=$?
-  [ "$rc" -eq 0 ] && record_handover "$cli" "$name" "$folder" "$VPATH" "$VMODE"
+  COMPONENT_REGISTRY_SKILLS="$real/skills" COMPONENT_REGISTRY_PATH="$VPATH" COMPONENT_REGISTRY_SKILLS_MODE="$smode" "$AD" skills "$name" "$folder" </dev/null; rc=$?
+  [ "$rc" -eq 0 ] && record_handover "$cli" "$name" "$folder" "$VPATH" "$VMODE" "$smode"
   exec 8>&-
   if [ "$rc" -eq 3 ]; then say "$cli: its adapter answered that it cannot take resolved skills; its sessions keep their plain skills"; fi
   return "$rc"
@@ -1258,9 +1274,21 @@ cmd_forget() {
 }
 
 cmd_handovers() {
-  [ $# -eq 0 ] || die 2 "handovers takes no arguments"
-  [ -f "$STATE_DIR/handovers.tsv" ] && cat "$STATE_DIR/handovers.tsv"
-  return 0
+  local show='' c n f p m sm out sup
+  case "${1:-}" in '') ;; --skills) show=1 ;; *) die 2 "handovers takes no arguments but --skills" ;; esac
+  [ -f "$STATE_DIR/handovers.tsv" ] || return 0
+  if [ -z "$show" ]; then cat "$STATE_DIR/handovers.tsv"; return 0; fi
+  # --skills (1.7.0, ADR-0068): one block per agent, with what its CLI holds for it
+  while IFS=$'\t' read -r c n f p m sm; do
+    [ -n "$c" ] || continue
+    printf '%s (%s, %s): path %s (%s), registry skills %s\n' "$n" "$c" "$f" "$p" "$([ "$m" = as ] && echo its registry-path || echo the who-you-are setting)" "${sm:-split}"
+    out='' sup="$(agent-adapter-"$c" supports </dev/null 2>/dev/null)" || sup=''
+    if printf '%s\n' "$sup" | grep -qx skills-show; then out="$(agent-adapter-"$c" skills-show "$n" "$f" </dev/null 2>/dev/null)" || out=''; fi
+    if [ -z "$out" ]; then echo "  $c does not say where it keeps them (no skills-show)"; continue; fi
+    printf '%s\n' "$out" | awk -F'\t' '
+      $1 == "own" { own = $2 } $1 == "own-skills" { os = $2 } $1 == "shared-skills" { ss = $2 } $1 == "shared" { sf = $2 }
+      END { printf "  own folder: %s\n  own skills: %s\n  shared (%s): %s\n", own, os, sf, ss }'
+  done < "$STATE_DIR/handovers.tsv"
 }
 
 # refresh [--as <path>] [--session <id>] (1.1.0; per agent 1.7.0, /registry-refresh): resolve now and
@@ -1281,7 +1309,7 @@ refresh_paths() { # refresh_paths <path>...: resolve each once; RESOLVED[path]=o
   done
 }
 cmd_refresh() {
-  local as='' sid='' cli n=0 rc fail=0 s c nm fo p mode who cur=''
+  local as='' sid='' cli n=0 rc fail=0 s c nm fo p mode sm who cur=''
   local -a recs=()
   declare -gA RESOLVED=()
   while [ $# -gt 0 ]; do
@@ -1305,13 +1333,13 @@ cmd_refresh() {
       [ -n "$s" ] || continue
       nm="${s%%$'\t'*}" fo="${s#*$'\t'}"
       for s in "${recs[@]+"${recs[@]}"}"; do
-        IFS=$'\t' read -r c n2 f2 p mode <<< "$s"
+        IFS=$'\t' read -r c n2 f2 p mode sm <<< "$s"
         [ "$c" = "$cli" ] && [ "$n2" = "$nm" ] && [ "$f2" = "$fo" ] || continue
         [ "$mode" = whoami ] && [ -n "$cur" ] && p="$cur"
         say "refreshing $nm ($cli) for $p, its own path"
         refresh_paths "$p"
         [ "${RESOLVED[$p]}" = ok ] || die 1 "resolve failed; nothing was handed over, the skills stay as they were"
-        if [ "$mode" = as ] || [ -z "$cur" ]; then ( cmd_handover "$cli" "$nm" "$fo" --as "$p" ); else ( cmd_handover "$cli" "$nm" "$fo" ); fi
+        if [ "$mode" = as ] || [ -z "$cur" ]; then ( cmd_handover "$cli" "$nm" "$fo" --as "$p" --skills-mode "${sm:-split}" ); else ( cmd_handover "$cli" "$nm" "$fo" --skills-mode "${sm:-split}" ); fi
         rc=$?
         say "a CLI that does not watch its skills folder reads the new skills when its session is restarted"
         return "$rc"
@@ -1321,12 +1349,12 @@ cmd_refresh() {
   fi
   if [ -z "$as" ] && [ "${#recs[@]}" -gt 0 ]; then
     for s in "${recs[@]}"; do
-      IFS=$'\t' read -r c nm fo p mode <<< "$s"
+      IFS=$'\t' read -r c nm fo p mode sm <<< "$s"
       [ "$mode" = whoami ] && [ -n "$cur" ] && p="$cur"
       [ -n "$p" ] || continue
       refresh_paths "$p"
       [ "${RESOLVED[$p]}" = ok ] || { fail=1; continue; }
-      if [ "$mode" = as ] || [ -z "$cur" ]; then ( cmd_handover "$c" "$nm" "$fo" --as "$p" ); else ( cmd_handover "$c" "$nm" "$fo" ); fi
+      if [ "$mode" = as ] || [ -z "$cur" ]; then ( cmd_handover "$c" "$nm" "$fo" --as "$p" --skills-mode "${sm:-split}" ); else ( cmd_handover "$c" "$nm" "$fo" --skills-mode "${sm:-split}" ); fi
       rc=$?
       case "$rc" in 0 | 3) ;; *) fail=1; warn "$c: the handover to $nm failed (exit $rc)" ;; esac
     done

@@ -23,6 +23,10 @@ here; `task lint` fails when the entry is missing.
   every recorded hand-over, each path resolved once; with no record, as before.
 - `/registry-refresh` runs `dcf-registry refresh --session "${CLAUDE_SESSION_ID}"`, so it refreshes
   the calling agent in Claude Code.
+- **The skills mode** (`handover --skills-mode split|shared|off`, else the setting
+  `COMPONENT_REGISTRY_SKILLS_MODE`, else `split`), given to the adapter, recorded and repeated by
+  `refresh`; `off` forgets the agent. `handovers --skills` lists each agent's path, mode, own folder
+  and own skills (from the adapter's `skills-show`).
 
 Nothing to do. The adapter's `skills` verb also gets `COMPONENT_REGISTRY_PATH`; with claude-code
 1.14.0 agents of different paths keep their own skills.

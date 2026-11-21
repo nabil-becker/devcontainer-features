@@ -14,7 +14,8 @@ Entries from 1.0.0 to 2.1.1 were generated from the commit history (`.github/scr
 
 - The participant component 1.4.0 (shared with `claude-code` `participants: true`): an agent's
   hand-over names its own `registry-path`, and `agents up` forgets the agents no longer in the list
-  (ADR-0068). This Feature stays deprecated; nothing to do.
+  (ADR-0068); the key `registry-skills: split | shared | off` and the container default
+  `COMPONENT_REGISTRY_SKILLS_MODE` choose how the CLI keeps an agent's skills. This Feature stays deprecated; nothing to do.
 
 ## [2.4.0] - 2026-11-20
 
