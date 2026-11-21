@@ -1,6 +1,6 @@
 {
   "id": "facilitator",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "name": "facilitator (conversations between agents of any vendor, on AGNTCY)",
   "description": "The communication layer between agents of any vendor running in the devcontainer: an MCP server each participant's CLI starts (receive, reply, say, who) and a person's own Claude Code or Copilot session attaches to (say, mail, transcript, continue, who), one shared entry with the handle from FACILITATOR_HANDLE, deterministic routing by @handle with hop, budget and rate limits, every message a sign-packet packet in a register-engine conversation register, verified back to the human who began it. Installs the facilitator node bundle (its own CPython, dirctl, slimctl and the application, checksummed; the same bundle as the server image) and runs the AGNTCY Agent Directory and a SLIM node on loopback, started as infrastructure (mode node), or only the thin client (mode leaf); never starts, stops or configures a participant. Includes a local-model wrapper for any OpenAI-compatible endpoint and a turn hook line for Claude Code ('Facilitator: N new messages').",
   "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/facilitator",
