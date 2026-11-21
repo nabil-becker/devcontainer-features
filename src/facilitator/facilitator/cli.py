@@ -417,7 +417,40 @@ def node_run(a) -> int:
 
 def cmd_node(a) -> int:
     return {"run": node_run, "peers": node_peers, "invite": node_invite, "join": node_join, "revoke": node_revoke,
-            "approve": node_approve, "status": node_status, "restore-roster": node_restore}[a.action](a)
+            "approve": node_approve, "status": node_status, "restore-roster": node_restore, "bundle": node_bundle,
+            "renew": node_renew}[a.action](a)
+
+
+def node_bundle(a) -> int:
+    """A federated domain's trust bundle (its CA certificates), placed by a person: lock one admits its nodes on the
+    listener of the level mesh.yml maps the domain to, lock two checks that each one claims only that domain."""
+    refuse_in_agent_job("facilitator node bundle")
+    fac = _fac(a)
+    if not a.target or not a.file:
+        raise SettingsError("node bundle <domain> --file <PEM file with the domain's CA certificates>")
+    if fac.mesh.level_of_domain(a.target) is None:
+        raise FacilitatorError(f"node bundle: {a.target} is not in mesh.yml's trust; map it to a level first")
+    pem = open(a.file).read()
+    if not identity.pem_blocks(pem):
+        raise FacilitatorError(f"node bundle: {a.file} holds no certificate")
+    store = identity.Store(fac.state.home)
+    store.ensure()
+    store.write_bundle(a.target, pem)
+    print(f"facilitator: the trust bundle of {a.target} ({len(identity.pem_blocks(pem))} certificate(s)) is in place; "
+          "SLIM reads bundles at start: restart the node (facilitator infra down slim, then up; or the container)")
+    return 0
+
+
+def node_renew(a) -> int:
+    """Asks the peers part to renew this spoke's certificate now (it does at half life on its own)."""
+    fac = _fac(a)
+    if fac.mesh.role != "spoke":
+        raise FacilitatorError("node renew: a spoke's certificate (a hub renews its own at half life)")
+    store = identity.Store(fac.state.home)
+    store.ensure()
+    (store.root / "renew-now").write_text(identity.now_utc() + "\n")
+    print("facilitator: the peers part asks the hub for a new certificate within a few seconds (facilitator node status)")
+    return 0
 
 
 def node_peers(a) -> int:
@@ -781,8 +814,11 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--no-directory", action="store_true", help="do not push the OASF record")
     c = command("node", cmd_node, "run (the node in the foreground: the server image's command), peers, invite, "
                                   "join, revoke, approve (slice N5), status, restore-roster")
-    c.add_argument("action", choices=["run", "peers", "invite", "join", "revoke", "approve", "status", "restore-roster"])
-    c.add_argument("target", nargs="?", help="join: the hub's join address (default: the token's); revoke: the node")
+    c.add_argument("action", choices=["run", "peers", "invite", "join", "revoke", "approve", "status", "restore-roster",
+                                      "bundle", "renew"])
+    c.add_argument("target", nargs="?", help="join: the hub's join address (default: the token's); revoke: the node; "
+                                             "bundle: the trust domain")
+    c.add_argument("--file", help="bundle: a PEM file with the domain's CA certificates")
     c.add_argument("--token", help="join: the join token, or a file holding it")
     c.add_argument("--yes", action="store_true", help="revoke: do not ask to confirm")
     command("participants", cmd_participants, "the participant list and who is registered")

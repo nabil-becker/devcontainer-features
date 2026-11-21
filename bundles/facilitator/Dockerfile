@@ -43,6 +43,7 @@ ENV PATH=/opt/facilitator/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:
     FACILITATOR_HOME=/var/lib/devcontainer-features/facilitator \
     FACILITATOR_FILE=/etc/facilitator/facilitator.yml \
     PARTICIPANTS_FILE=/etc/facilitator/participants.yml \
+    FACILITATOR_MESH_FILE=/etc/facilitator/mesh.yml \
     FACILITATOR_MODE=node
 # NFR-1: state only in the volume, at the same path as the Feature's.
 VOLUME ["/var/lib/devcontainer-features/facilitator"]

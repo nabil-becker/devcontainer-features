@@ -461,6 +461,8 @@ class Daemon:
         return [(node, self.roster_envelope(node))]
 
     def roster_envelope(self, to: str) -> bytes:
+        if not self.store.cert(self.domain).is_file():
+            raise IdentityError("the hub has no certificate yet")
         r = identity.roster(self.store)
         rev = sorted(identity.revoked(r))
         cards = [c["card"] for n, c in self.net.cards().items() if n not in rev and n in r.get("nodes", {})]
@@ -619,7 +621,12 @@ class Daemon:
             try:
                 if self.mesh.role == "spoke":
                     st = await asyncio.to_thread(self.store.cert_state, self.domain)
-                    if st.get("present") and st["renew_due"] and time.time() - self.status.get("renew_asked", 0) > 60:
+                    now_asked = self.store.root / "renew-now"
+                    asked = now_asked.exists()
+                    if asked:
+                        now_asked.unlink(missing_ok=True)
+                    if st.get("present") and (st["renew_due"] or asked) \
+                            and (asked or time.time() - self.status.get("renew_asked", 0) > 60):
                         req = await asyncio.to_thread(identity.csr, self.store.key(self.domain), self.mesh.node_id)
                         hub = self.mesh.node.get("hub_node")
                         data = await asyncio.to_thread(self.envelope, hub, {"type": "renew", "csr": req})
@@ -627,8 +634,8 @@ class Daemon:
                             self.status["renew_asked"] = time.time()
                 elif self.mesh.role == "hub":
                     st = await asyncio.to_thread(self.store.cert_state, self.domain)
-                    if st.get("present") and st["renew_due"]:
-                        await asyncio.to_thread(ensure_hub_cert, self.fac, True)
+                    if not st.get("present") or st["renew_due"]:
+                        await asyncio.to_thread(ensure_hub_cert, self.fac, st.get("present", False))
                         self.restart_slim = True
             except (IdentityError, OSError) as e:
                 self.err(f"renewal: {e}")
@@ -637,7 +644,7 @@ class Daemon:
                 inf = self.fac.infra()
                 await asyncio.to_thread(inf.down_one, "slim")
                 await asyncio.to_thread(inf.up_one, "slim")
-            await asyncio.sleep(10)
+            await asyncio.sleep(2)
 
     async def joins(self) -> None:
         while not self.stop:

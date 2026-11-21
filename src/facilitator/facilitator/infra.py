@@ -106,8 +106,13 @@ class Infra:
 
     # ------------------------------------------------------------ binaries
 
+    def meshed(self) -> bool:
+        """A hub, or a spoke that has joined its hub (node.hub set by node join): the peers part runs."""
+        m = self.mesh
+        return m is not None and (m.role == "hub" or (m.role == "spoke" and bool(m.node.get("hub"))))
+
     def components(self) -> tuple:
-        return MESH_COMPONENTS if self.mesh is not None and self.mesh.role in ("spoke", "hub") else COMPONENTS
+        return MESH_COMPONENTS if self.meshed() else COMPONENTS
 
     def binary(self, c: str) -> str | None:
         name = self.s["FACILITATOR_DIRCTL"] if c == "dir" else self.s["FACILITATOR_SLIMCTL"]
@@ -168,9 +173,9 @@ class Infra:
             subs = {"@API_PORT@": p["api"], "@OCI_PORT@": p["oci"], "@P2P_PORT@": p["p2p"], "@GATEWAY_PORT@": p["gateway"],
                     "@POLICY_OPERATIONS@": ONLINE_POLICY if self.s.bool("FACILITATOR_DIR_ONLINE_CHECK") else "[]"}
             out = self.state.dir / "daemon.config.yaml"
-        elif self.mesh is not None and self.mesh.role in ("spoke", "hub"):
+        elif self.meshed() and (text := self.slim_mesh_config()) is not None:
             out = self.state.slim / "config.yaml"
-            self.state.write_private(out, self.slim_mesh_config())
+            self.state.write_private(out, text)
             return out
         else:
             text = (AGNTCY / "slim-config.yaml.in").read_text()
@@ -193,9 +198,12 @@ class Infra:
         store = identity.Store(self.state.home)
         dom = m.domain
         if not dom or not store.cert(dom).is_file() or not store.bundle(dom).is_file():
-            what = "the hub's issuer (OpenBao) must issue its certificate first (facilitator node status)" \
-                if m.role == "hub" else "this spoke has not joined a hub (facilitator node join <hub> --token <token>)"
-            raise InfraError(f"slim: no certificate in {dom or 'a trust domain'}: {what}")
+            if m.role == "hub":
+                # the hub's OpenBao is sealed or not set up yet (it is unsealed by hand, ADR-0069): the node runs on
+                # loopback, and the peers part asks for the certificate again and restarts SLIM with the listeners
+                return None
+            raise InfraError(f"slim: no certificate in {dom or 'a trust domain'}: this spoke has not joined a hub "
+                             "(facilitator node join <hub> --token <token>)")
         q = json.dumps
         lines = ["# The facilitator's SLIM node, role " + m.role + " (rendered by facilitator infra up; do not edit).",
                  "tracing:", "  log_level: info", "runtime:", "  n_cores: 2", '  thread_name: "slim-data-plane"',
@@ -310,7 +318,8 @@ class Infra:
             try:
                 ensure_hub_cert(self.fac)
             except IdentityError as e:
-                raise InfraError(f"slim: the hub's certificate: {e}") from None
+                print(f"facilitator: slim: no certificate for the hub yet ({e}); its listeners open once the issuer "
+                      "answers (the peers part keeps asking)", file=__import__("sys").stderr, flush=True)
         cfg = self.render(c)
         env = {k: v for k, v in os.environ.items() if not k.startswith("DIRECTORY_")}
         if c == "dir":
