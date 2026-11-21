@@ -9,7 +9,7 @@ import json
 import time
 from dataclasses import dataclass, field
 
-from . import __version__, collector, directory, guard, participants, router, transport
+from . import __version__, collector, directory, guard, mesh as mesh_mod, participants, router, transport
 from .infra import Infra
 from .record import FACILITATOR, Record, RecordError, new_id
 from .settings import Settings
@@ -48,17 +48,65 @@ class Facilitator:
         self.limits = guard.Limits(settings.int("FACILITATOR_HOP_LIMIT", 1), settings.int("FACILITATOR_MESSAGE_BUDGET", 1),
                                    settings.int("FACILITATOR_RATE_LIMIT", 1))
         self.stale = settings.int("FACILITATOR_STALE_SECONDS", 1)
+        self.mesh_file = mesh_mod.load(settings)          # as written, with its findings (check shows them)
+        self.mesh = mesh_mod.effective(self.mesh_file)    # what runs: standalone when the file has findings
         self._record: Record | None = None
         self._list = None
+        self._net = None
 
     # ------------------------------------------------------------ parts, made when first needed
+
+    @property
+    def net(self):
+        if self._net is None:
+            from .peers import Net
+            self._net = Net(self)
+        return self._net
 
     @property
     def record(self) -> Record:
         if self._record is None:
             self.state.ensure()
-            self._record = Record(self.state, self.signer)
+            self._record = Record(self.state, self.signer, self.net)
         return self._record
+
+    def limits_for(self, level: str) -> guard.Limits:
+        """The loop guard's limits at a level (ruling AD: the preset's, then the Feature options, then mesh.yml)."""
+        if level == "local" and not self.mesh.limits_file.get("local"):
+            return self.limits
+        g = lambda k: self.mesh.limit(level, k, self.s)[0]      # noqa: E731
+        return guard.Limits(g("hops"), g("budget"), g("rate"))
+
+    def remote(self) -> dict:
+        """handle -> what another node's admitted card says of it (empty when standalone)."""
+        return self.net.remote() if self.net.active else {}
+
+    def level_of_message(self, proj: dict, mid: str, convs: dict | None = None) -> str:
+        """A message's origin level (proposal 9): the widest level of the writers of its lineage, by reply_to
+        and refs, as far as this node holds it. A writer's level is its card's, or local for this node's own."""
+        if not self.net.active:
+            return "local"
+        level, seen, todo = "local", set(), [(None, mid)]
+        while todo:
+            c, m_id = todo.pop()
+            p = proj if c is None else (convs or {}).get(c)
+            if p is None and c is not None:
+                try:
+                    _, p, _ = self.record.read(c)
+                except RecordError:
+                    continue
+                (convs if convs is not None else {}).setdefault(c, p)
+            m = (p or {}).get("messages", {}).get(m_id)
+            if m is None or (c, m_id) in seen:
+                continue
+            seen.add((c, m_id))
+            level = mesh_mod.wider(level, self.net.level_of(m["from"], m.get("key")))
+            if m.get("reply_to"):
+                todo.append((c, m["reply_to"]))
+            for r in m.get("refs", []):
+                if "message_id" in r:
+                    todo.append((r["thread"], r["message_id"]))
+        return level
 
     def participants(self):
         if self._list is None:
@@ -70,19 +118,20 @@ class Facilitator:
         return self.participants()[1].humans
 
     def infra(self) -> Infra:
-        return Infra(self.s, self.state, self.signer)
+        return Infra(self.s, self.state, self.signer, self.mesh, self)
 
     def directory(self) -> directory.Directory:
         return directory.Directory(self.infra().binary("dir"), self.s.int("FACILITATOR_DIR_PORT", 1))
 
     def transport_for(self, me: str):
         sec = self.infra().slim_secrets() if self.s["FACILITATOR_TRANSPORT"] == "slim" else None
-        t = transport.make(self.s, sec, me)
+        from .peers import local_ns
+        t = transport.make(self.s, sec, me, local_ns(self.mesh))
         t.start()
         return t
 
     def known(self) -> set[str]:
-        return set(self.state.roster()) - {FACILITATOR}
+        return (set(self.state.roster()) | set(self.remote())) - {FACILITATOR}
 
     # ------------------------------------------------------------ identities (E2, E3)
 
@@ -121,14 +170,26 @@ class Facilitator:
         members = [creator] + [o for o in dict.fromkeys(others) if o != creator]
         if len(members) < 2:
             raise FacilitatorError("a conversation needs at least one other member")
-        known = self.known() | set(self.humans())
+        local = (set(self.state.roster()) - {FACILITATOR}) | set(self.humans())
+        remote = {m: r for m, r in self.remote().items() if m in members and m not in local}
         for m in members:
-            if m not in known:
+            if m not in local and m not in remote:
                 raise FacilitatorError(f"{m} is not registered (facilitator register {m}; facilitator participants lists them)")
         for h in [x for x in members if x in self.humans()]:
             self.ensure_identity(h)
+        if remote:
+            # a conversation shared with another node: each local member must be exposed at least as wide as
+            # the widest level of the remote ones (the reach rule, applied again by the receiving node)
+            widest = "local"
+            for r in remote.values():
+                widest = mesh_mod.wider(widest, r["level"])
+            for m in members:
+                if m not in remote and not mesh_mod.reach_ok(widest, self.mesh.exposure(m)):
+                    raise FacilitatorError(f"{m} is exposed {self.mesh.exposure(m)} (mesh.yml expose), so it cannot be in a "
+                                           f"conversation with {', '.join(sorted(remote))} at level {widest}")
         kind = "direct" if len(members) == 2 else "group"
-        return self.record.create(kind, members, self.humans(), title)
+        humans = list(self.humans()) + [m for m, r in remote.items() if r.get("kind") == "human"]
+        return self.record.create(kind, members, humans, title, remote=remote, node=self.mesh.node_id)
 
     def conversations_of(self, handle: str) -> list[str]:
         out = []
@@ -156,8 +217,9 @@ class Facilitator:
         if author not in th["members"]:
             raise FacilitatorError(f"{author} is not a member of {conv} (its members: {', '.join(th['members'])})")
         human = author in th["humans"]
-        if not human and not guard.rate_ok(proj, author, self.limits, time.time()):
-            raise FacilitatorError(f"rate limit: {author} wrote {self.limits.rate_limit} messages in the last minute; "
+        lim = self.limits_for(self.conv_level(th))
+        if not human and not guard.rate_ok(proj, author, lim, time.time()):
+            raise FacilitatorError(f"rate limit: {author} wrote {lim.rate_limit} messages in the last minute; "
                                    "this one was not written")
         mid = new_id("m")
         data = {"thread": conv, "message_id": mid, "parts": [{"kind": "text", "text": text}],
@@ -185,9 +247,11 @@ class Facilitator:
         _, proj, _ = self.record.read(conv)
         th, m = proj["thread"], proj["messages"][mid]
         humans = set(th["humans"])
-        verdict = guard.check(proj, m["from"], m["from"] in humans, m["hops"], m["root"], self.limits)
+        verdict = guard.check(proj, m["from"], m["from"] in humans, m["hops"], m["root"],
+                              self.limits_for(self.level_of_message(proj, mid)))
         dec = router.route(th, proj["messages"], m["from"], m["text"], m.get("to"), m.get("reply_to"),
                            self.participants()[1].fallback, self.known() | humans)
+        remote = self.remote()
         notices = list(dec.notices)
         tasks, held, live = [], [], []
         if not verdict.deliver:
@@ -197,9 +261,12 @@ class Facilitator:
             now = time.time()
             for h in dec.to:
                 if h in humans:
-                    continue                   # a person reads it with the mail tool (no task, no delivery)
+                    continue                   # a person reads it with the mail tool (no task, no delivery), on
+                                               # this node or, from the replica, on theirs
                 t = new_id("t")
                 tasks.append({"task": t, "assignee": h})
+                if h in remote:
+                    continue                   # on another node: the replica carries the task; its node delivers it
                 if self.state.attached(h, self.stale, now):
                     live.append(h)
                 else:
@@ -229,6 +296,16 @@ class Facilitator:
         return {"conversation": conv, "message_id": mid, "rule": dec.rule, "to": dec.to,
                 "tasks": [t["task"] for t in tasks], "held": held, "notified": delivered,
                 "notices": [t for _, t in notices], "delivered": verdict.deliver}
+
+    def conv_level(self, thread: dict) -> str:
+        """The widest level of a conversation's members (local for this node's own)."""
+        level = "local"
+        if self.net.active:
+            remote = self.remote()
+            for m in thread["members"]:
+                if m in remote:
+                    level = mesh_mod.wider(level, remote[m]["level"])
+        return level
 
     def send(self, author: str, text: str, conv: str | None = None, to: list[str] | None = None,
              tr=None) -> dict:
@@ -358,6 +435,12 @@ class Facilitator:
         humans = list(cfg.humans) + [h for h, i in sorted(roster.items()) if i.get("kind") == "human" and h not in cfg.humans]
         for h in humans:
             rows.append({"handle": h, "kind": "human", "registered": h in roster})
+        # participants of other nodes: only those their node exposes at least as wide as its domain's level (so a
+        # local-only agent of another node is never listed here), through the hub's roster of cards
+        for h, r in sorted(self.remote().items()):
+            rows.append({"handle": h, "kind": r.get("kind", "agent"), "node": r["node"], "level": r["level"],
+                         "description": r.get("description", ""), "skills": r.get("skills", []), "registered": True,
+                         "attached": None, "last_seen": "on another node", "in_directory": False})
         out = {"participants": rows}
         if handle:
             out["you"] = handle

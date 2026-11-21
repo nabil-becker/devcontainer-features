@@ -2,7 +2,10 @@
 conversation, in the volume; every entry a sign-packet packet signed by its writer's key.
 
 The facilitator's key is the anchor (anchors): it writes each conversation's roster (the members'
-keys) and its thread, routes and notices; each member writes its own messages and task states."""
+keys) and its thread, routes and notices; each member writes its own messages and task states. A
+conversation shared with other nodes (slice N3) also anchors the facilitator key of every other node one of
+its members is on (from that node's admitted card), so each node's dispatcher routes its own members'
+messages; every write is queued for those nodes (peers.Net.push)."""
 from __future__ import annotations
 
 import secrets
@@ -48,9 +51,10 @@ def new_id(prefix: str, n: int = 6) -> str:
 
 
 class Record:
-    def __init__(self, state: State, signer: Signer):
+    def __init__(self, state: State, signer: Signer, net=None):
         self.state = state
         self.signer = signer
+        self.net = net if net is not None and net.active else None
         self.type = conversation_type()
         self.kinds = self.type.kinds
         self.checked: set = set()          # signatures already checked by this process
@@ -73,6 +77,16 @@ class Record:
             self.facilitator_key()
         return adapters.load_anchors(self.state.anchors_file)
 
+    def anchors_for(self, conv: str) -> dict:
+        """The anchors of one conversation: this node's facilitator, and in a conversation shared with other
+        nodes, theirs (lock two admitted their cards)."""
+        a = self.anchors()
+        if self.net is not None:
+            extra = self.net.anchors_extra(conv)
+            if extra:
+                a = {**extra, **a}
+        return a
+
     def store(self, conv: str) -> adapters.DirStore:
         return adapters.DirStore(self.state.conversations / conv)
 
@@ -92,8 +106,8 @@ class Record:
         """(the register as read, the conversation as projected, flags)."""
         if not core.REGISTER_RE.fullmatch(conv or ""):
             raise RecordError(f"not a conversation id: {conv!r}")
-        led = core.read(adapters.raws(self.store(conv)), self.anchors(), self.checked if checked is None else checked,
-                        conv, self.kinds)
+        led = core.read(adapters.raws(self.store(conv)), self.anchors_for(conv),
+                        self.checked if checked is None else checked, conv, self.kinds)
         proj, flags = self.type.project(led)
         return led, proj, flags
 
@@ -116,10 +130,13 @@ class Record:
         if principal != FACILITATOR:
             self.ensure_member_key(conv, principal)
         try:
-            return adapters.add(self.store(conv), self.signer.signing_path(principal), principal, kind, data,
-                                self.anchors(), checked=self.checked, register=conv, kinds=self.kinds)
+            i = adapters.add(self.store(conv), self.signer.signing_path(principal), principal, kind, data,
+                             self.anchors_for(conv), checked=self.checked, register=conv, kinds=self.kinds)
         except core.Refused as e:
             raise RecordError(f"the record refused a {kind} by {principal}: {e}") from None
+        if self.net is not None:
+            self.net.push(conv)
+        return i
 
     def ensure_member_key(self, conv: str, principal: str) -> None:
         """A member whose key changed since the conversation began (re-registered) is added again by the
@@ -127,7 +144,7 @@ class Record:
         pub = self.signer.public(principal)
         if not pub:
             raise RecordError(f"{principal} has no key: facilitator register {principal}")
-        led = core.read(adapters.raws(self.store(conv)), self.anchors(), self.checked, conv, self.kinds)
+        led = core.read(adapters.raws(self.store(conv)), self.anchors_for(conv), self.checked, conv, self.kinds)
         keys = self.roster_keys(led)
         if keys.get(principal) == pub:
             return
@@ -136,13 +153,19 @@ class Record:
             change["remove"] = [{"key": keys[principal]}]
         self.add(conv, FACILITATOR, "roster", change)
 
-    def create(self, kind: str, members: list[str], humans: list[str], title: str | None = None) -> str:
-        """A new conversation: the facilitator's roster entry (every member's key), then its thread."""
+    def create(self, kind: str, members: list[str], humans: list[str], title: str | None = None,
+               remote: dict | None = None, node: str | None = None) -> str:
+        """A new conversation: the facilitator's roster entry (every member's key), then its thread. `remote`:
+        handle -> {node, key} of members on other nodes (their keys from admitted cards); the conversation is
+        then shared with those nodes (`node` is this one)."""
         self.facilitator_key()
         conv = new_id("c", 4)
+        remote = remote or {}
+        if remote and self.net is not None:
+            self.net.save_meta(conv, {m: remote[m]["node"] if m in remote else node for m in members}, node)
         adds = []
         for m in members:
-            pub = self.signer.public(m)
+            pub = remote[m]["key"] if m in remote else self.signer.public(m)
             if not pub:
                 raise RecordError(f"{m} has no key: facilitator register {m}")
             adds.append({"key": pub, "as": m, "role": "agent"})

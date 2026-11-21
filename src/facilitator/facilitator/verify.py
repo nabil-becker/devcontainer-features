@@ -17,6 +17,7 @@ class Walker:
         self.fac = fac
         self.cache: dict[str, tuple] = {}
         self.problems: list[str] = []
+        self.partial: list[str] = []
 
     def conv(self, c: str):
         if c not in self.cache:
@@ -38,6 +39,12 @@ class Walker:
                 self.problems.append(f"{c}: entry {i[:12]}: {', '.join(fs)}")
         return self.cache[c]
 
+    def not_copied(self, c: str, other: str) -> bool:
+        """`other` is a conversation this node does not hold, named from `c`, a replica of a conversation shared
+        with another node: not copied here by policy, which is not a break."""
+        return (other != c and self.fac.net.active and self.fac.net.meta(c) is not None
+                and not self.fac.record.exists(other))
+
     def walk(self, c: str, mid: str) -> list[str]:
         """The chain from one message to its root, one line per hop; problems are collected."""
         lines, seen = [], set()
@@ -55,13 +62,18 @@ class Walker:
                 return lines
             seen.add((c, mid))
             e = led.valid[m["entry"]]
-            lines.append(f"{c}/{mid}  hops {m['hops']}  from {m['from']}  signed by {e.key[:28]}...  entry {m['entry'][:12]}")
+            who = ""
+            if self.fac.net.active:
+                b = self.fac.net.binding(e.key)
+                who = (f"  {b[1]} spiffe://{self.fac.net.cards()[b[0]]['card']['domain']}/node/{b[0]} ({b[2]})"
+                       if b else f"  this node ({self.fac.mesh.node_id})")
+            lines.append(f"{c}/{mid}  hops {m['hops']}  from {m['from']}  signed by {e.key[:28]}...{who}  entry {m['entry'][:12]}")
             for r in m.get("refs", []):
-                if "message_id" in r:
+                if "message_id" in r and not self.not_copied(c, r["thread"]):
                     _, rp, _ = self.conv(r["thread"])
                     if rp is None or r["message_id"] not in rp["messages"]:
                         self.problems.append(f"{c}/{mid}: refs {r['thread']}/{r['message_id']}, which does not exist")
-            top = guard.allowed_hops(proj, m["root"], self.fac.limits)
+            top = guard.allowed_hops(proj, m["root"], self.fac.limits_for(self.fac.level_of_message(proj, mid)))
             routes = proj["routes"].get(mid, [])
             if m["hops"] > top and any(r["tasks"] for r in routes):
                 self.problems.append(f"{c}/{mid}: delivered at {m['hops']} hops, past the limit {top}, with no continue")
@@ -77,6 +89,12 @@ class Walker:
                 pc, pm = m["refs"][0]["thread"], m["refs"][0]["message_id"]
             else:
                 self.problems.append(f"{c}/{mid}: {m['hops']} hops and no parent (no reply_to, no refs)")
+                return lines
+            if self.not_copied(c, pc):
+                # a replica (slice N3): the lineage leaves this node's copy into a conversation it is not a member
+                # of, so not copied here by policy (copy member); said so, with where to verify the rest
+                self.partial.append(f"{c}/{mid}: its parent {pc}/{pm} is not copied to this node (copy member); "
+                                    f"verify it on {self.fac.net.meta(c).get('home')}")
                 return lines
             _, pp, _ = self.conv(pc)
             parent = (pp or {}).get("messages", {}).get(pm) if pp else None
@@ -104,5 +122,5 @@ def verify(fac, conv: str, message: str | None = None) -> dict:
     elif proj is not None:
         w.problems.append(f"{conv}: no thread entry")
     return {"conversation": conv, "ok": not w.problems, "messages": len(chains), "chains": chains,
-            "problems": list(dict.fromkeys(w.problems)),
+            "problems": list(dict.fromkeys(w.problems)), "partial": list(dict.fromkeys(w.partial)),
             "entries": len(led.valid) if led is not None else 0}
