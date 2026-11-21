@@ -132,6 +132,9 @@ node:
   listen:
     private: 0.0.0.0:46358
   join: 0.0.0.0:46359
+  directory:
+    peering: true
+    firewall: external
   issuer:
     domain: corp.test
     openbao: http://openbao:8200
@@ -142,16 +145,21 @@ node:
 trust:
   corp.test: private
   partner.test: private
+expose:
+  triage: private
 EOF
 printf 'role_id=%s\nsecret_id=%s\n' "$role_id" "$secret_id" >"$tmp/hub/approle"
 cp "$tmp/root/partner.pem" "$tmp/hub/partner.pem"
-printf 'participants: []\n' >"$tmp/hub/participants.yml"
+printf 'participants:\n  - name: triage\n    cli: claude\n    kind: resident\n    attachment: mcp\n    description: the triage agent of the hub\n' >"$tmp/hub/participants.yml"
 printf 'facilitator:\n  humans: []\n' >"$tmp/hub/facilitator.yml"
 cat >"$tmp/spoke-a/mesh.yml" <<'EOF'
 preset: team
 role: spoke
 node:
   id: spoke-a
+  directory:
+    peering: true
+    firewall: external
 expose:
   "*": local
   pa: private
@@ -176,6 +184,9 @@ preset: team
 role: spoke
 node:
   id: spoke-b
+  directory:
+    peering: true
+    firewall: external
 expose:
   "*": local
   b1: private
@@ -220,6 +231,7 @@ if docker exec "$p-hub" sh -c 'cat /var/lib/devcontainer-features/facilitator/me
 else no "the private listener's bundle"; fi
 
 # ---------------------------------------------------------------- joins
+fx hub register triage >/dev/null
 for n in spoke-a spoke-b; do fx "$n" register --all --no-directory >/dev/null; done
 tok_a="$(docker exec "$p-hub" facilitator node invite 2>/dev/null)"
 if [ -n "$tok_a" ] && wait_for 15 docker exec "$p-spoke-a" bash -c 'exec 3<>/dev/tcp/hub.corp.test/46359'; then
@@ -240,7 +252,26 @@ seen() { docker exec "$p-$1" /opt/facilitator/python/bin/python3 -I /test/mesh_a
 if wait_for 120 seen spoke-a b1 && wait_for 60 seen spoke-b a1; then ok "each spoke lists the other's exposed agent (the hub's roster of cards, lock two on each)"
 else no "the spokes do not see each other"; fx spoke-a check || true; docker logs "$p-spoke-a" 2>&1 | tail -15; fi
 if seen spoke-b a2; then no "spoke-b sees spoke-a's local-only agent a2"; else ok "a private caller does not see a local-only agent (a2 is not listed on spoke-b)"; fi
-if fx spoke-a check | grep -q 'open ports.*none beyond loopback'; then ok "check on a spoke: nothing open beyond loopback (it dials out)"; else no "check's open ports on spoke-a"; fi
+if fx spoke-a check | grep -q 'open ports.*none beyond loopback'; then ok "check on a spoke: nothing open beyond loopback (it dials out, its Directory too)"; else no "check's open ports on spoke-a"; fi
+# the Directory (ruling BI, SP5): the spoke syncs the hub's records by registry; the APIs stay on loopback
+cid="$(docker exec "$p-hub" sh -c 'cat /var/lib/devcontainer-features/facilitator/roster.json' | jget 'd["triage"]["cid"]')"
+if wait_for 150 sh -c "docker exec $p-spoke-a dirctl --server-addr 127.0.0.1:8888 pull $cid --output json | grep -q facilitator.local/triage"; then
+  ok "spoke-a synced the hub's record of triage ($cid) by registry, one way (dirctl sync create --registry)"
+else no "spoke-a did not sync the hub's record"; docker exec "$p-spoke-a" cat /var/lib/devcontainer-features/facilitator/mesh/status.json || true; fi
+hub_peer="$(docker exec "$p-spoke-a" cat /var/lib/devcontainer-features/facilitator/mesh/hub-directory.json | jget 'd["peer_id"]')"
+if docker exec "$p-spoke-a" grep -q "$hub_peer" /var/lib/devcontainer-features/facilitator/dir/daemon.config.yaml; then
+  ok "spoke-a's Directory has the hub as its bootstrap peer ($hub_peer, the id computed from the hub's key)"
+else no "the bootstrap peer"; fi
+if docker exec "$p-spoke-a" sh -c 'grep -h -o "12D3KooW[A-Za-z0-9]*" /var/lib/devcontainer-features/facilitator/logs/dir.log' | grep -q "$hub_peer"; then
+  ok "spoke-a's Directory log names the hub's peer id: the computed id is the daemon's"
+else no "the hub's peer id is not in spoke-a's Directory log"; fi
+if docker exec "$p-hub" sh -c 'cat /proc/net/tcp' | awk '$4 == "0A" { print $2 }' | grep -q ':22B8$' \
+   && ! docker exec "$p-hub" sh -c 'cat /proc/net/tcp' | awk '$4 == "0A" { print $2 }' | grep -q '^0100007F:22B8$'; then
+  no "the hub's Directory API (8888) listens beyond loopback"
+else ok "the hub's Directory API (8888) stays on loopback (ADR-0071 decision 3)"; fi
+if docker exec "$p-spoke-a" sh -c 'cat /proc/net/tcp /proc/net/tcp6' | awk '$4 == "0A" { print $2 }' | grep -Ev '^[0-9A-F]{6}7F:' | grep -q .; then
+  no "spoke-a listens beyond loopback"
+else ok "spoke-a listens on loopback only (a spoke dials out, its Directory too)"; fi
 
 # ---------------------------------------------------------------- a conversation across nodes, through the hub
 conv="$(agent spoke-a open pa a1 b1 -- "@a1 please ask b1 for a joke" | jget 'd["conversation"]')"

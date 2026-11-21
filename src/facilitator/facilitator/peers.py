@@ -466,7 +466,18 @@ class Daemon:
         r = identity.roster(self.store)
         rev = sorted(identity.revoked(r))
         cards = [c["card"] for n, c in self.net.cards().items() if n not in rev and n in r.get("nodes", {})]
-        return self.envelope(to, {"type": "roster", "hub_card": self.my_card(), "cards": cards, "revoked": rev})
+        return self.envelope(to, {"type": "roster", "hub_card": self.my_card(), "cards": cards, "revoked": rev,
+                                  "hub_directory": self.hub_directory()})
+
+    def hub_directory(self) -> dict:
+        """Where a spoke syncs the hub's records from, when the hub's Directory peers: its libp2p peer id and
+        address (the spoke's bootstrap peer) and its OCI registry (registry sync; the API stays on loopback)."""
+        inf = self.fac.infra()
+        if inf.peering() is None:
+            return {}
+        p = inf.ports["dir"]
+        name = self.mesh.node["name"]
+        return {"peer_id": inf.dir_peer_id(), "p2p": f"{name}:{p['p2p']}", "oci": f"{name}:{p['oci']}"}
 
     def on_roster(self, env: dict, c: dict) -> list:
         if env["from"] != self.mesh.node.get("hub_node"):
@@ -491,7 +502,35 @@ class Daemon:
                 self.net.drop_card(node)
         self.status["hub_seen"] = identity.now_utc()
         self.last_roster = time.time()
+        hd = env.get("hub_directory") or {}
+        if hd:
+            (self.store.root / "hub-directory.json").write_text(json.dumps(hd, sort_keys=True))
+            self.sync_from_hub(hd, env["hub_card"])
         return []
+
+    def sync_from_hub(self, hd: dict, hub_card: dict) -> None:
+        """Ruling BI: a spoke syncs the hub's records (the CIDs its card names) by registry: one-way, pulled through
+        the hub's OCI registry, so neither side's API leaves loopback. Each CID once."""
+        inf = self.fac.infra()
+        if inf.peering() is None or not hd.get("oci"):
+            return
+        done_f = self.store.root / "synced.json"
+        try:
+            done = set(json.loads(done_f.read_text()))
+        except (OSError, ValueError):
+            done = set()
+        cids = sorted({p["cid"] for p in hub_card.get("participants", []) if p.get("cid")} - done)
+        if not cids:
+            return
+        import subprocess
+        r = subprocess.run([inf.binary("dir") or "dirctl", "--server-addr", f"127.0.0.1:{inf.ports['dir']['api']}", "sync",
+                            "create", "--registry", f"http://{hd['oci']}", "--repository", "dir", "--cids", ",".join(cids)],
+                           capture_output=True, text=True, timeout=60)
+        if r.returncode == 0:
+            done_f.write_text(json.dumps(sorted(done | set(cids))))
+            self.status["directory_sync"] = f"{identity.now_utc()} {len(cids)} record(s) from {hd['oci']}"
+        else:
+            self.err(f"directory sync from {hd['oci']}: {(r.stderr or r.stdout).strip()[-200:]}")
 
     def on_entries(self, env: dict, c: dict) -> list:
         from registerengine import adapters
@@ -739,7 +778,7 @@ class Daemon:
         identity.save_roster(self.store, r)
         self.backup(r)
         host, port = mesh_mod.parse_addr(self.mesh.node["listen"][level])
-        return 200, {"domain": self.domain, "level": level, "cert": got["cert"],
+        return 200, {"domain": self.domain, "level": level, "cert": got["cert"], "hub_directory": self.hub_directory(),
                      "bundle": self.store.bundle(self.domain).read_text(), "mesh_secret": self.store.mesh_secret(),
                      "hub": {"node": self.mesh.node_id, "name": self.mesh.node["name"],
                              "slim": f"{self.mesh.node['name']}:{port}"},
@@ -871,6 +910,8 @@ def join(fac, hub: str | None, token: str) -> dict:
     store.write_bundle(dom, data["bundle"])
     store.cert(dom).write_text(data["cert"])
     store.set_mesh_secret(data["mesh_secret"])
+    if data.get("hub_directory"):
+        (store.root / "hub-directory.json").write_text(json.dumps(data["hub_directory"], sort_keys=True))
     mesh_mod.write_node(m.path, {"id": node, "hub": data["hub"]["slim"], "hub_name": data["hub"]["name"],
                                  "hub_node": data["hub"]["node"], "domain": dom}, role="spoke",
                         trust={dom: data["level"]})

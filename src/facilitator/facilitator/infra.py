@@ -35,6 +35,18 @@ class InfraError(RuntimeError):
     pass
 
 
+B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+
+
+def b58(b: bytes) -> str:
+    n = int.from_bytes(b, "big")
+    out = ""
+    while n:
+        n, r = divmod(n, 58)
+        out = B58[r] + out
+    return "1" * (len(b) - len(b.lstrip(b"\0"))) + out
+
+
 # ---------------------------------------------------------------- ports and their owners
 
 def port_open(port: int, timeout: float = 0.3) -> bool:
@@ -183,6 +195,8 @@ class Infra:
             out = self.state.slim / "config.yaml"
         for k, v in subs.items():
             text = text.replace(k, str(v))
+        if c == "dir":
+            text = self.dir_peering(text)
         self.state.write_private(out, text)
         return out
 
@@ -229,6 +243,84 @@ class Infra:
         else:
             lines += ["      clients: []"]
         return "\n".join(lines) + "\n"
+
+    def peering(self) -> dict | None:
+        """node.directory when the Directory peers (directory.peering on a hub, or on a spoke that has joined)."""
+        d = (self.mesh.node.get("directory") or {}) if self.meshed() else {}
+        return d if d.get("peering") else None
+
+    def dir_peering(self, text: str) -> str:
+        """The Directory of a node that peers (SP5, ruling BI; spike 2, section 3). Routable addresses only where the
+        role needs them: a hub's OCI registry and libp2p on its name (a spoke syncs from it by registry, so the
+        API, 8888, stays on loopback, ADR-0071 decision 3); a spoke's libp2p on loopback (it dials out to the hub,
+        its bootstrap peer) and its registry on loopback unless directory.open_oci (then the hub may pull from it).
+        publication.scheduler_interval 10 s. mDNS cannot be switched off in dirctl 1.9.1 (no setting; it found and
+        dialled peers even from a loopback-only daemon): the firewall (firewall_up) drops it."""
+        d = self.peering()
+        if d is None:
+            return text
+        m = self.mesh
+        p = self.ports["dir"]
+        name = m.node.get("name")
+        if m.role == "hub" or (d.get("open_oci") and name):
+            text = text.replace(f'registry_address: "127.0.0.1:{p["oci"]}"', f'registry_address: "{name}:{p["oci"]}"')
+        if m.role == "hub":
+            listen = f"/ip4/0.0.0.0/tcp/{p['p2p']}"
+            adv = [f'    directory_api_address: "127.0.0.1:{p["api"]}"', f'    directory_oci_address: "{name}:{p["oci"]}"']
+            boot = []
+        else:
+            listen = f"/ip4/127.0.0.1/tcp/{p['p2p']}"
+            adv = [f'    directory_api_address: "127.0.0.1:{p["api"]}"']
+            hd = self.hub_directory()
+            boot = ["    bootstrap_peers:", f'      - "/dns4/{hd["p2p"].rsplit(":", 1)[0]}/tcp/{hd["p2p"].rsplit(":", 1)[1]}/p2p/{hd["peer_id"]}"'] \
+                if hd.get("peer_id") else []
+        text = text.replace(f'    listen_address: "/ip4/127.0.0.1/tcp/{p["p2p"]}"',
+                            "\n".join([f'    listen_address: "{listen}"'] + adv + boot))
+        return text.replace("scheduler_interval: 5m", "scheduler_interval: 10s")
+
+    def hub_directory(self) -> dict:
+        try:
+            return json.loads((self.state.home / "mesh" / "hub-directory.json").read_text())
+        except (OSError, ValueError):
+            return {}
+
+    def dir_peer_id(self) -> str | None:
+        """The Directory's libp2p peer id, from its key (made here first, so the id is known before the daemon
+        runs): base58btc of the identity multihash of the libp2p public key (ed25519)."""
+        from . import identity
+        key = self.state.dir / "node.key"
+        if not key.is_file():
+            self.state.ensure()
+            identity.new_key(key)
+        pub = subprocess.run(["openssl", "pkey", "-in", str(key), "-pubout", "-outform", "DER"], capture_output=True)
+        if pub.returncode != 0:
+            return None
+        proto = bytes([0x08, 0x01, 0x12, 0x20]) + pub.stdout[-32:]
+        return b58(bytes([0x00, len(proto)]) + proto)
+
+    def firewall_up(self) -> str:
+        """SP5: no discovery on the LAN. With directory.firewall auto (the default when peering), drop mDNS (UDP
+        5353) in and out with iptables, which needs root and NET_ADMIN; with external, a person firewalled it
+        outside (the host, the Docker network). Anything else refuses to start a peering Directory."""
+        d = self.peering()
+        if d is None:
+            return "no peering"
+        mode = d.get("firewall") or "auto"
+        if mode == "external":
+            return "external (a person firewalled mDNS and the open ports outside this container)"
+        ipt = shutil.which("iptables")
+        if os.geteuid() != 0 or not ipt:
+            raise InfraError("dir: directory.peering needs mDNS dropped (dirctl 1.9.1 cannot switch it off): firewall auto "
+                             "needs root, NET_ADMIN and iptables here; or set directory.firewall: external once the host "
+                             "or the network drops UDP 5353 and limits the open ports to the listed peers (ADR-0071)")
+        rules = [["-C", "INPUT", "-p", "udp", "--dport", "5353", "-j", "DROP"],
+                 ["-C", "OUTPUT", "-p", "udp", "--dport", "5353", "-j", "DROP"]]
+        for r in rules:
+            if subprocess.run([ipt, *r], capture_output=True).returncode != 0:
+                a = subprocess.run([ipt, "-A", *r[1:]], capture_output=True, text=True)
+                if a.returncode != 0:
+                    raise InfraError(f"dir: iptables refused the mDNS rule ({a.stderr.strip()}): NET_ADMIN, or firewall: external")
+        return "auto (iptables drops UDP 5353 in and out)"
 
     def bind_check(self) -> None:
         """ADR-0071 decision 2: a bind beyond loopback only with a mesh.yml whose preset allows a level above local,
@@ -329,6 +421,9 @@ class Infra:
             stale = self.state.dir / "daemon.pid"
             if stale.exists():
                 stale.unlink()
+            if self.peering() is not None:
+                self.firewall_up()
+                self.dir_peer_id()
             argv = [binary, "daemon", "start", "--data-dir", str(self.state.dir), "--config", str(cfg)]
         else:
             self.bind_check()

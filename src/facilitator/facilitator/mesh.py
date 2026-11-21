@@ -279,11 +279,13 @@ class Mesh:
             h, p = parse_addr(self.node["join"])
             rows.append({"what": "join endpoint (HTTPS)", "address": f"{h}:{p}", "when": "only while a join token is live"})
         d = self.node.get("directory") or {}
-        if d.get("peering") and not self.findings and self.role in ("hub", "spoke"):
-            rows.append({"what": "Directory libp2p", "address": "0.0.0.0:<p2p port>", "when": "directory.peering"})
-            if self.role == "hub" or d.get("open_oci"):
-                rows.append({"what": "Directory OCI registry (anonymous pull, and anonymous push: firewall it)",
-                             "address": "<node name>:<oci port>", "when": "directory.peering"})
+        if d.get("peering") and not self.findings:
+            if self.role == "hub":
+                rows.append({"what": "Directory libp2p (the spokes' bootstrap peer)", "address": "0.0.0.0:<p2p port>",
+                             "when": "directory.peering"})
+            if self.role == "hub" or (self.role == "spoke" and d.get("open_oci") and self.node.get("name")):
+                rows.append({"what": "Directory OCI registry (anonymous pull, and anonymous push: firewall it to the peers)",
+                             "address": f"{self.node.get('name')}:<oci port>", "when": "directory.peering"})
         return rows
 
 

@@ -376,4 +376,43 @@ def test_slim_config_per_role():
         e.close()
 
 
+def test_directory_per_role():
+    """Routable addresses only where the role needs them (SP5, ruling BI): a peering hub's OCI registry and libp2p on
+    its name, its API on loopback; a spoke's libp2p on loopback with the hub as bootstrap peer; 10 s publication;
+    standalone as before. mDNS has no switch: peering needs firewall auto (root, NET_ADMIN) or external."""
+    peering_hub = HUB.replace("  issuer:", "  directory:\n    peering: true\n    firewall: external\n  issuer:")
+    e, fac = _render(peering_hub, ["corp.test"])
+    try:
+        text = Path(fac.infra().render("dir")).read_text()
+        assert 'registry_address: "hub.corp.test:' in text and 'listen_address: "/ip4/0.0.0.0/tcp/' in text, text
+        assert 'directory_api_address: "127.0.0.1:' in text and 'directory_oci_address: "hub.corp.test:' in text
+        assert 'scheduler_interval: 10s' in text and 'listen_address: "127.0.0.1:' in text     # the API itself
+        pid = fac.infra().dir_peer_id()
+        assert pid.startswith("12D3KooW") and pid == fac.infra().dir_peer_id()                # stable, from its key
+    finally:
+        e.close()
+    spoke = ("preset: team\nrole: spoke\nnode:\n  id: s1\n  hub: hub.corp.test:46358\n  hub_name: hub.corp.test\n"
+             "  hub_node: hub-1\n  domain: corp.test\n  directory:\n    peering: true\ntrust:\n  corp.test: private\n")
+    e, fac = _render(spoke, ["corp.test"])
+    try:
+        (fac.state.home / "mesh" / "hub-directory.json").write_text(json.dumps(
+            {"peer_id": "12D3KooWTEST", "p2p": "hub.corp.test:8999", "oci": "hub.corp.test:5555"}))
+        text = Path(fac.infra().render("dir")).read_text()
+        assert 'listen_address: "/ip4/127.0.0.1/tcp/' in text and "/dns4/hub.corp.test/tcp/8999/p2p/12D3KooWTEST" in text, text
+        assert 'registry_address: "127.0.0.1:' in text and "0.0.0.0" not in text
+        try:
+            fac.infra().firewall_up()
+            assert os.geteuid() == 0                            # only root with iptables may set the rule
+        except Exception as ex:                                 # noqa: BLE001
+            assert "mDNS" in str(ex) and "external" in str(ex), ex
+    finally:
+        e.close()
+    e = helpers.Env()
+    try:
+        text = Path(e.fac().infra().render("dir")).read_text()
+        assert "0.0.0.0" not in text and "bootstrap_peers" not in text and "scheduler_interval: 5m" in text
+    finally:
+        e.close()
+
+
 helpers.run_tests(globals())

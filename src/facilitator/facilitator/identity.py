@@ -364,7 +364,7 @@ def make_token(store: Store, join_addr: str, hub_name: str, bundle_pem: str, now
     now = time.time() if now is None else now
     s = secrets.token_urlsafe(24)
     tid = secrets.token_hex(4)
-    rows = [r for r in _invites(store) if r["expires"] > now and not r["used"]]
+    rows = [r for r in _invites(store) if r["expires"] > now]      # a used one is kept until it expires: "used already"
     rows.append({"id": tid, "hash": hashlib.sha256(s.encode()).hexdigest(), "expires": now + seconds, "used": False,
                  "made": now})
     store.ensure()
