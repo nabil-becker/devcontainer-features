@@ -1,0 +1,2 @@
+# The sample hub runs no participant (an intranet hub that only routes between its spokes).
+participants: []

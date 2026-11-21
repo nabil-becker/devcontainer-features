@@ -152,8 +152,14 @@ def mesh_parts(fac) -> list[tuple]:
         out.append(("certificate", not st["expired"], f"{st['id']} DNS {','.join(st['dns'])}, "
                     + ("EXPIRED" if st["expired"] else f"{left / 3600:.1f} h left, renewed at half life")))
     else:
-        out.append(("certificate", False, f"none in {dom}: " + ("facilitator node join <hub> --token <token>"
-                                                                if m.role == "spoke" else "the issuer (OpenBao) must be unsealed, then facilitator infra up")))
+        try:
+            last = (json.loads(store.status_file.read_text()).get("errors") or [""])[-1]
+        except (OSError, ValueError):
+            last = ""
+        out.append(("certificate", False, f"none in {dom}: " + (
+            "facilitator node join --token <token>" if m.role == "spoke" else
+            "its issuer must answer: OpenBao unsealed by hand, the PKI set up, the AppRole file written (the peers part "
+            "keeps asking, then opens the listeners)" + (f"; last: {last.split(' ', 1)[-1]}" if last else ""))))
     rows = m.open_ports()
     out.append(("open ports", True, "; ".join(f"{r['what']} {r['address']} ({r['when']})" for r in rows)
                 or "none beyond loopback (a spoke dials out)", False))

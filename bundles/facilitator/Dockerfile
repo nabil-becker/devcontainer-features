@@ -3,9 +3,10 @@
 # and its SHA256SUMS (task bundle:image locally; the release-node-image workflow from the released asset, whose
 # digest the workflow checks against src/facilitator/digests.txt before the build).
 #
-#   docker build --build-arg BUNDLE_VERSION=0.3.0 -f bundles/facilitator/Dockerfile <folder with the bundle>
+#   docker build --build-arg BUNDLE_VERSION=0.4.0 -f bundles/facilitator/Dockerfile <folder with the bundle>
 #
-# Role standalone in slice N2: every port on loopback inside the container, nothing exposed. Secrets reach it as
+# The role comes from the mounted mesh.yml (FACILITATOR_MESH_FILE): a hub opens a SLIM listener per level and its join
+# endpoint on its network (slice N3); nothing is EXPOSEd or published by the image. Secrets reach it as
 # files or the environment (an OpenBao AppRole, slice N3), never baked in.
 
 # debian:trixie-slim, by digest (the multi-arch index, read from Docker Hub on 2026-11-20).

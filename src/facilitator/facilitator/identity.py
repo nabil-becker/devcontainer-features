@@ -472,7 +472,12 @@ class Issuer:
         if not self.approle:
             raise IdentityError("no OpenBao login: node.issuer.approle names a file with role_id= and secret_id= lines")
         vals = {}
-        for line in Path(self.approle).read_text().splitlines():
+        try:
+            text = Path(self.approle).read_text()
+        except OSError as e:
+            raise IdentityError(f"no OpenBao login: the AppRole file {self.approle} cannot be read ({e.strerror or e}); "
+                                "the Operator writes it (role_id= and secret_id= lines) after creating the hub's AppRole") from None
+        for line in text.splitlines():
             if "=" in line:
                 k, v = line.split("=", 1)
                 vals[k.strip()] = v.strip()

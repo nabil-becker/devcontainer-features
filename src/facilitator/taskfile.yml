@@ -12,9 +12,41 @@ tasks:
     cmds: ['facilitator version {{.CLI_ARGS}}']
 
   check:
-    desc: 'One line per part (Python, OpenSSH, the state folder, the record, the binaries, OpenBao, the Directory, SLIM and the ssh-agent with any port''s owner, each participant registered and last seen); exit non-zero when not ready. No secret is printed. -- --json for machines.'
+    desc: 'One line per part (Python, OpenSSH, the state folder, the record, the binaries, OpenBao, the mesh: mesh.yml, the role, the certificate, what is open beyond loopback, the hub, TLS refusals from the SLIM log and lock two''s refusals; the Directory, SLIM, the peers part and the ssh-agent with any port''s owner, each participant registered and last seen); exit non-zero when not ready. No secret is printed. -- --json for machines. -- <mesh.yml>... (or -) lints mesh files instead: path:line: rule: message, --format json, exit 0 clean, 1 findings, 2 usage.'
     dir: '{{.USER_WORKING_DIR}}'
     cmds: ['facilitator check {{.CLI_ARGS}}']
+
+  explain:
+    desc: 'The level a SPIFFE ID or a handle gets on this node, what it may reach, and the effective limits of each level with where each value came from (the preset, a Feature option, mesh.yml): -- <spiffe id or handle> [--json]. Read only.'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['facilitator explain {{.CLI_ARGS}}']
+
+  node-invite:
+    desc: 'On a hub: print a join token for its domain (single use, valid 15 minutes; the join endpoint is open while one is live). A person''s act: refused inside an agent''s job. Hand the token to the person setting up the spoke.'
+    interactive: true
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['facilitator node invite']
+
+  node-join:
+    desc: 'On a spoke: join a hub with a token from node-invite: -- --token <token or a file holding it> [<hub join address>]. Gets the spoke''s certificate from the hub''s issuer, checks the hub''s trust bundle against the token, writes the hub into mesh.yml (role spoke); then restart the container or run infra up.'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['facilitator node join {{.CLI_ARGS}}']
+
+  node-revoke:
+    desc: 'On a hub: revoke a node: -- <node>. Its certificate is not renewed and lock two refuses it at once on the hub and at the next roster on every spoke; what it already holds is not recalled. Asks to confirm; refused inside an agent''s job.'
+    interactive: true
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['facilitator node revoke {{.CLI_ARGS}}']
+
+  node-approve:
+    desc: 'Approve a public node''s join request: not yet, slice N5 (a private node joins with node-invite''s token).'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['facilitator node approve {{.CLI_ARGS}}']
+
+  node-status:
+    desc: 'The mesh as this node sees it: its role and domain, the peers part''s state, the cards it admitted, a hub''s roster, the last refusals (JSON, read only).'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['facilitator node status']
 
   setup:
     desc: 'Re-run the post-create setup: the state folder in the volume and the facilitator''s own key (idempotent, never fatal).'
@@ -22,7 +54,7 @@ tasks:
     cmds: ['facilitator-setup']
 
   infra:
-    desc: 'The infrastructure the Feature owns, on loopback: -- up | down | status | logs [agent|dir|slim]. up is idempotent; nothing is restarted on a crash (status says so). Participants are never started.'
+    desc: 'The infrastructure the Feature owns: -- up | down | status | logs [agent|dir|slim|peers]. On loopback, unless mesh.yml makes the node a hub (a SLIM listener per level) or a joined spoke (a link to its hub, and the peers part). up is idempotent; nothing is restarted on a crash (status says so). Participants are never started.'
     dir: '{{.USER_WORKING_DIR}}'
     cmds: ['facilitator infra {{.CLI_ARGS | default "status"}}']
 

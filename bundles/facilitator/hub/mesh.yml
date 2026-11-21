@@ -1,0 +1,18 @@
+# The sample hub's mesh.yml (compose.yml mounts it read-only at /etc/facilitator/mesh.yml): the hub of corp.example.
+preset: team
+role: hub
+node:
+  id: hub-1
+  name: hub.corp.example          # the DNS name in its certificate: the spokes dial it as their server_name
+  listen:
+    private: 0.0.0.0:46358        # lock one: the listener of the private level, with the private domains' CA bundle
+  join: 0.0.0.0:46359             # the join endpoint, open only while a join token is live
+  issuer:
+    domain: corp.example
+    openbao: http://openbao:8200
+    mount: pki-corp
+    role: node
+    kv: secret
+    approle: /var/lib/devcontainer-features/facilitator/approle
+trust:
+  corp.example: private
