@@ -363,6 +363,8 @@ else no "spoke-a did not refuse spoke-b"; fi
 if wait_for 30 sh -c "docker exec $p-hub cat /var/lib/devcontainer-features/facilitator/mesh/refused.log | grep -q 'from spoke-b.*revoked'"; then
   ok "the hub refuses the revoked spoke-b (its hello and its renewal): $(docker exec "$p-hub" sh -c 'grep spoke-b /var/lib/devcontainer-features/facilitator/mesh/refused.log | tail -1')"
 else no "the hub did not refuse spoke-b"; fi
+if out="$(fx spoke-a verify --conv "$conv" 2>&1)"; then ok "after the revoke, verify on spoke-a still passes: what spoke-b signed before stays readable"
+else no "verify on spoke-a after the revoke: $out"; fi
 out="$(fx spoke-b node join --token "$(docker exec "$p-hub" facilitator node invite 2>/dev/null)" 2>&1 || true)"
 case "$out" in *revoked*|*"has joined"*|*"is a hub"*|*refused*) ok "a revoked node cannot join again: ${out#facilitator: }" ;; *) no "a revoked node joined again: $out" ;; esac
 

@@ -91,8 +91,10 @@ class Net:
 
     # ------------------------------------------------------------ cards
 
-    def cards(self) -> dict[str, dict]:
-        """node -> {card, level}: the cards this node's peers daemon admitted (lock two), the revoked dropped."""
+    def cards(self, history: bool = False) -> dict[str, dict]:
+        """node -> {card, level}: the cards this node's peers daemon admitted (lock two). A revoked node's card is
+        kept, marked, only so that what it signed before stays readable (history=True: the register's anchors, the
+        signer names verify shows); it never admits anything new."""
         out = {}
         d = self.store.cards
         if not d.is_dir():
@@ -102,15 +104,34 @@ class Net:
                 c = json.loads(f.read_text())
             except (OSError, ValueError):
                 continue
+            if c.get("revoked") and not history:
+                continue
             if c.get("card", {}).get("node") and c["card"]["node"] != self.mesh.node_id:
                 out[c["card"]["node"]] = c
         return out
+
+    def card_at(self, node: str) -> str:
+        """When the card of a node now kept was made (its signed `at`): an older one is a replay."""
+        c = self.cards(history=True).get(node)
+        return c["card"].get("at", "") if c else ""
 
     def save_card(self, card: dict, level: str) -> None:
         self.store.ensure()
         p = self.store.cards / f"{card['node']}.json"
         tmp = p.with_suffix(".tmp")
         tmp.write_text(json.dumps({"card": card, "level": level, "admitted": identity.now_utc()}, sort_keys=True))
+        os.replace(tmp, p)
+
+    def revoke_card(self, node: str) -> None:
+        """Marks a node's card revoked: nothing new from it is admitted; what it signed before stays readable."""
+        p = self.store.cards / f"{node}.json"
+        try:
+            c = json.loads(p.read_text())
+        except (OSError, ValueError):
+            return
+        c["revoked"] = identity.now_utc()
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(json.dumps(c, sort_keys=True))
         os.replace(tmp, p)
 
     def drop_card(self, node: str) -> None:
@@ -124,17 +145,29 @@ class Net:
         admitted card lists. A handle this node has too stays this node's (the remote one is not reachable)."""
         local = set(self.fac.state.roster()) | set(self.fac.humans())
         out: dict[str, dict] = {}
+        clash: set[str] = set()
         for node, c in sorted(self.cards().items()):
             for p in c["card"].get("participants", []):
                 h = p["handle"]
-                if h in local or h == FACILITATOR or h in out:
+                if h in local or h == FACILITATOR:
+                    continue
+                if h in out:
+                    clash.add(h)
                     continue
                 out[h] = {**p, "node": node, "level": c["level"], "domain": c["card"]["domain"]}
-        return out
+        return {h: r for h, r in out.items() if h not in clash}
+
+    def clashes(self) -> set[str]:
+        """Handles two other nodes both announce: neither is reachable from here (check names them)."""
+        seen, clash = set(), set()
+        for _, c in self.cards().items():
+            for p in c["card"].get("participants", []):
+                (clash if p["handle"] in seen else seen).add(p["handle"])
+        return clash
 
     def binding(self, key: str) -> tuple[str, str, str] | None:
-        """(node, principal, level) a card binds this packet key to, or None."""
-        for node, c in self.cards().items():
+        """(node, principal, level) a card binds this packet key to, or None (revoked nodes' too: history)."""
+        for node, c in self.cards(history=True).items():
             if c["card"].get("facilitator") == key:
                 return node, FACILITATOR, c["level"]
             for p in c["card"].get("participants", []):
@@ -160,10 +193,14 @@ class Net:
             return None
 
     def save_meta(self, conv: str, members: dict[str, str], home: str) -> None:
+        """A shared conversation's members and their nodes. Once known, a member's node never changes and no
+        member is removed by a later envelope (a member node cannot drop or move another node's members)."""
         self.store.ensure()
+        old = self.meta(conv) or {}
+        merged = {**members, **old.get("members", {})}
         p = self.store.convs / f"{conv}.json"
         tmp = p.with_suffix(".tmp")
-        tmp.write_text(json.dumps({"members": members, "home": home}, sort_keys=True))
+        tmp.write_text(json.dumps({"members": merged, "home": old.get("home") or home}, sort_keys=True))
         os.replace(tmp, p)
 
     def nodes_of(self, conv: str) -> set[str]:
@@ -173,7 +210,7 @@ class Net:
     def anchors_extra(self, conv: str) -> dict[str, str]:
         """The facilitator keys of the other nodes a shared conversation's members are on: each may write the
         conversation's routes and notices (its own dispatcher), as `facilitator`."""
-        cards = self.cards()
+        cards = self.cards(history=True)
         return {cards[n]["card"]["facilitator"]: FACILITATOR for n in self.nodes_of(conv) if n in cards}
 
     def push(self, conv: str) -> None:
@@ -208,6 +245,10 @@ class Net:
         me = self.mesh.node_id
         if not core.REGISTER_RE.fullmatch(conv or ""):
             return False, f"{conv!r} is not a conversation id"
+        old = (self.meta(conv) or {}).get("members", {})
+        for h, n in members.items():
+            if h in old and old[h] != n:
+                return False, f"the members put {h} on {n}; it is on {old[h]}"
         for h, n in members.items():
             if n == me:
                 if h not in self.fac.state.roster() and h not in self.fac.humans():
@@ -232,11 +273,14 @@ class Net:
                     return True
             return False
 
+        have = set(self.fac.record.store(conv).ids()) if self.fac.record.exists(conv) else set()
         for raw in raws:
             try:
                 e = core.parse(raw, self.fac.record.kinds)
             except Exception as ex:            # noqa: BLE001 - a malformed packet refuses the whole envelope
                 return False, f"a malformed entry: {ex}"
+            if e.id in have:
+                continue                      # held already: checked when it came
             if e.register != conv:
                 return False, f"an entry of another register ({e.register})"
             if not bound(e.key, e.principal):
@@ -308,7 +352,8 @@ class Daemon:
         return identity.make_card(self.store, self.domain, self.mesh.node_id, self.fac.record.facilitator_key(), parts)
 
     def envelope(self, to: str, body: dict) -> bytes:
-        env = {"v": 1, "from": self.mesh.node_id, "to": to, "at": identity.now_utc(), **body}
+        at = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")     # ordered: a replay is older
+        env = {"v": 1, "from": self.mesh.node_id, "to": to, "at": at, **body}
         return json.dumps(identity.sign_envelope(self.store, self.domain, env), separators=(",", ":")).encode()
 
     # ------------------------------------------------------------ SLIM
@@ -435,6 +480,14 @@ class Daemon:
             _log_refusal(self.store, what, f"too large ({len(raw)} bytes)")
             return []
         t = env.get("type")
+        if t in ("hello", "roster"):
+            card = env.get("card") if t == "hello" else env.get("hub_card")
+            if card and card.get("at", "") < self.net.card_at(card.get("node", "")):
+                _log_refusal(self.store, what, "a replay: a card older than the one this node holds")
+                return []
+        if t == "roster" and env.get("at", "") <= self.status.get("roster_at", self.last_roster_at()):
+            _log_refusal(self.store, what, "a replay: a roster no newer than the last one")
+            return []
         if t == "hello" and self.mesh.role == "hub":
             return self.on_hello(env, c)
         if t == "roster" and self.mesh.role == "spoke":
@@ -448,8 +501,21 @@ class Daemon:
         _log_refusal(self.store, what, f"a {t!r} envelope is not served by a {self.mesh.role}")
         return []
 
+    def last_roster_at(self) -> str:
+        try:
+            return (self.store.root / "roster-at").read_text().strip()
+        except OSError:
+            return ""
+
     def on_hello(self, env: dict, c: dict) -> list:
         node = env["from"]
+        mine = {p["handle"] for x, cc in self.net.cards().items() if x != node for p in cc["card"].get("participants", [])}
+        mine |= set(self.fac.state.roster()) | set(self.fac.humans())
+        taken = sorted(mine & {p["handle"] for p in c["card"].get("participants", [])})
+        if taken:
+            _log_refusal(self.store, f"hello from {node}", f"its card announces {', '.join(taken)}, which another node "
+                                                           "announced first (a handle is the mesh's once)")
+            return []
         r = identity.roster(self.store)
         n = r.get("nodes", {}).get(node)
         if n is None:
@@ -485,6 +551,8 @@ class Daemon:
             return []
         rev = set(env.get("revoked") or [])
         (self.store.root / "revoked.json").write_text(json.dumps(sorted(rev)))
+        (self.store.root / "roster-at").write_text(env["at"] + "\n")
+        self.status["roster_at"] = env["at"]
         keep = {env["from"]}
         self.net.save_card(env["hub_card"], c["level"])
         for card in env.get("cards") or []:
@@ -498,7 +566,9 @@ class Daemon:
             self.net.save_card(card, level)
             keep.add(node)
         for node in list(self.net.cards()):
-            if node not in keep:
+            if node in rev:
+                self.net.revoke_card(node)       # kept for the history it signed; nothing new from it
+            elif node not in keep:
                 self.net.drop_card(node)
         self.status["hub_seen"] = identity.now_utc()
         self.last_roster = time.time()

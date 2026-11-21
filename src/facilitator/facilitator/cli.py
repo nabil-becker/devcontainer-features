@@ -174,6 +174,9 @@ def mesh_parts(fac) -> list[tuple]:
     cards = fac.net.cards()
     out.append(("peers", True, ", ".join(f"{n} ({c['level']})" for n, c in sorted(cards.items())) or "no card admitted yet",
                 False))
+    clash = fac.net.clashes()
+    if clash:
+        out.append(("handles", True, f"announced by two nodes, reachable on neither: {', '.join(sorted(clash))}", False))
     tls = tls_refusals(fac)
     out.append(("tls refusals", True, "; ".join(f"{k} x{v}: {dict(TLS_REFUSALS)[k]}" for k, v in tls.items())
                 or "none in the SLIM log", False))
@@ -518,7 +521,7 @@ def node_revoke(a) -> int:
     n["revoked"] = True
     n["revoked_at"] = identity.now_utc()
     identity.save_roster(store, r)
-    fac.net.drop_card(a.target)
+    fac.net.revoke_card(a.target)
     note = ""
     try:
         iss = identity.Issuer(m.node["issuer"])
