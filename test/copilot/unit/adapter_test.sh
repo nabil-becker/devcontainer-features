@@ -3,7 +3,8 @@
 # adapter contract for GitHub Copilot CLI), with a fake `copilot` that records every call with its
 # folder and keeps an MCP table like `copilot mcp add|remove|get` (it refuses a name that exists,
 # as the real CLI does). No Copilot login, no network.
-#   new, resume: copilot --name / --resume <session name> in the folder (AGENT_SESSION_NAME or the handle)
+#   new, resume: copilot --name / --resume <session name> in the folder (AGENT_SESSION_NAME or the handle),
+#   with --model from AGENT_MODEL in place of one in the args (0.2.0)
 #   run-once: the prompt from stdin as -p, --silent --no-ask-user --no-auto-update, no tool grant unless
 #     asked, --session-id a stable UUID only with AGENT_ADAPTER_COPILOT_CONTINUE=1, an empty prompt refused
 #   mcp-attach: copilot mcp add facilitator, no token or handle in the entry, idempotent, nothing with
@@ -93,6 +94,24 @@ reset
 run "$A" resume jester "$T/repo" --; check "resume: copilot --resume <name>" "$T/repo|--resume jester" "$(calls)"
 reset
 AGENT_SESSION_NAME=jester-two run "$A" resume jester "$T/repo" -- --model m; check "resume with a session name and args" "$T/repo|--resume jester-two --model m" "$(calls)"
+# --- the model (0.2.0): AGENT_MODEL as --model on new and resume, in place of one in the args
+reset
+AGENT_MODEL=gpt-5.4 run "$A" new jester "$T/repo" --; check "model: new passes AGENT_MODEL as --model" "$T/repo|--name jester --model gpt-5.4" "$(calls)"
+reset
+AGENT_MODEL=auto run "$A" resume jester "$T/repo" --; check "model: resume passes it too" "$T/repo|--resume jester --model auto" "$(calls)"
+reset
+AGENT_MODEL=gpt-5.4 run "$A" new jester "$T/repo" -- --model m --banner 2>"$T/err"
+check "model: AGENT_MODEL replaces a --model in the args, the others kept" "$T/repo|--name jester --model gpt-5.4 --banner" "$(calls)"
+contains "model: the replacement is said" "$(cat "$T/err")" "model gpt-5.4 replaces --model m from the args"
+reset
+AGENT_MODEL=gpt-5.4 run "$A" new jester "$T/repo" -- --model=m; check "model: a --model= in the args is replaced" "$T/repo|--name jester --model gpt-5.4" "$(calls)"
+reset
+AGENT_MODEL='two words' run "$A" new jester "$T/repo" -- --model m 2>"$T/err"
+check "model: a value that is not one word leaves the args as they are" "$T/repo|--name jester --model m" "$(calls)"
+contains "model: and says so" "$(cat "$T/err")" "AGENT_MODEL is not one word"
+reset
+printf 'hi' | AGENT_MODEL=gpt-5.4 PATH="$bin:$sysp" "$A" run-once jester "$T/repo" -- >/dev/null
+check "model: run-once is left as its caller sends it" "$T/repo|-p hi --silent --no-ask-user --no-auto-update" "$(calls)"
 reset
 check "hint prints how to resume by hand" "yes" "$(run "$A" hint jester "$T/repo" | grep -q "copilot --resume 'jester'" && echo yes)"
 check "hint calls nothing" "" "$(calls)"

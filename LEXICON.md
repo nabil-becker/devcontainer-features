@@ -72,6 +72,17 @@ The domain words of the project itself are not here; they live with the project'
   (ADR-0067; not built yet).
 - **Trust level**: how far a facilitator node trusts a client or peer: local, private or public. A
   client that arrives over MCP over HTTP is public unless marked trusted (ADR-0067; not built yet).
+- **Node bundle**: the built, checksummed package of one facilitator release for one architecture
+  (the application, its venv and own Python interpreter, `dirctl`, `slimctl`); the Feature and the
+  server image both install from it, and the option `bundleVersion` picks it (ADR-0067). Not the SPIFFE
+  trust bundle, which is a trust domain's CA certificates (ADR-0069; not built yet).
+- **Thin client**: the stdio MCP server `facilitator mcp`: it starts no daemon and talks only to a node,
+  the same container's or another machine's (ADR-0067, ADR-0068; not built yet).
+- **Join token**: the single-use, 15-minute token a person makes on the issuing side so that a node or
+  leaf client can join a private trust domain; not the claim token of ADR-0052 (ADR-0067; not built yet).
+- **Facilitator mode**: the Feature option `mode: node | leaf`: `node` (the default) installs and runs a
+  node; `leaf` installs only the bundle and the thin client, starts no daemon, and signs with its own
+  key (ADR-0068; not built yet).
 - **Deprecation**: how a Feature or option goes away: announced in a minor release (a one-line
   notice from `version` and `check`, the NOTES, and a "Deprecated" heading in the CHANGELOG, behaviour
   unchanged) and removed only in the next major (CONTRIBUTING.md).
@@ -394,6 +405,16 @@ The domain words of the project itself are not here; they live with the project'
   is never touched.
 - **registry-path**: the agents list key that gives one agent its who-you-are path for the start
   hook, overriding `COMPONENT_REGISTRY_WHOAMI`.
+- **Agent definition**: a component registry entry at `agents/<name>` that sets two fields for the
+  agent of that name, `model` (a value; `model.<cli>` for agents of one CLI only) and `skills` (a list
+  of skill names or refs); for those two
+  fields the registry wins over the agents list (the list fills only what the registry leaves
+  unset), the list stays the source of which agents exist, and no identity, lease or permission key
+  can be set from it.
+- **Layer namespace**: a name set as `namespace: <name>` on a registry layer; every component the
+  layer brings gets it as a prefix (`acme:arch-review`). Layers that share a namespace merge with
+  each other as any layers do; different namespaces never mix, so a namespaced layer cannot stack
+  onto, override or lock anything outside its namespace (ADR-0073).
 - **Own skills folder**: the directory of registry skills one agent alone reads, added to its Claude
   Code with `--add-dir` (skills in `<dir>/.claude/skills`); it holds the skills that agent's resolved
   view does not share with the other agents' views, the shared ones staying in the personal folder.

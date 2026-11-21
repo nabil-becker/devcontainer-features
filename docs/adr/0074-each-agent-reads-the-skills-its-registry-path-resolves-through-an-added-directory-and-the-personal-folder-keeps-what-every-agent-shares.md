@@ -1,4 +1,4 @@
-# ADR-0068: Each agent reads the skills its registry path resolves through an added directory, and the personal folder keeps what every agent shares
+# ADR-0074: Each agent reads the skills its registry path resolves through an added directory, and the personal folder keeps what every agent shares
 
 | | |
 |---|---|
@@ -44,7 +44,7 @@ Claude Code facts, from its skills documentation (https://code.claude.com/docs/e
 
 ## Decision
 
-1. **A view per who-you-are path** (`component-registry` 1.7.0). `resolve` also points
+1. **A view per who-you-are path** (`component-registry` 1.8.0). `resolve` also points
    `paths/<path with / as +>` at the view it made; `view` stays the latest. `handover <cli> <name>
    <folder> --as <path>` reads that path's view, and without `--as` the who-you-are setting's, so a
    resolve for another agent in between no longer changes what an agent gets. The one resolve lock
@@ -150,5 +150,6 @@ plain names.
 
 | Date | Change |
 |---|---|
-| 2026-11-20 | First draft, with `component-registry` 1.7.0, `claude-code` 1.14.0, participant 1.4.0 (backlog item `agent-skills-folders`). |
+| 2026-11-20 | First draft, with `component-registry` 1.8.0, `claude-code` 1.14.0, participant 1.4.0 (backlog item `agent-skills-folders`). |
 | 2026-11-21 | Decided by the Operator. S1: the mechanism (Option A, decisions 1 to 4) accepted with two conditions, "make sure there is transparency in that behavior, and a way for people to control or override it if need be"; decisions 5 and 6 answer them. S2: option (A), the two environment variables `COMPONENT_REGISTRY_PATH` and `COMPONENT_REGISTRY_FORGET` on the existing `skills` call (decision 8). S3: option 1, the limits accepted, documented, and a clash named in the start line (decision 7). Status accepted. |
+| 2026-11-21 | Renumbered from 0068 to 0074 when merged with main (0068 to 0073 taken); versions after main: `component-registry` 1.8.0, `claude-code` 1.14.0, participant 1.4.0, `agents` 2.6.0, `copilot` 0.2.1. |

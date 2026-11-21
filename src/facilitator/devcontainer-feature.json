@@ -1,8 +1,8 @@
 {
   "id": "facilitator",
-  "version": "0.2.0",
+  "version": "0.3.1",
   "name": "facilitator (conversations between agents of any vendor, on AGNTCY)",
-  "description": "The communication layer between agents of any vendor running in the devcontainer: an MCP server each participant's CLI starts (receive, reply, say, who) and a person's own Claude Code or Copilot session attaches to (say, mail, transcript, continue, who), one shared entry with the handle from FACILITATOR_HANDLE, deterministic routing by @handle with hop, budget and rate limits, every message a sign-packet packet in a register-engine conversation register, verified back to the human who began it. Runs on the AGNTCY Agent Directory (dirctl) and a SLIM node, on loopback, started as infrastructure; never starts, stops or configures a participant. Includes a local-model wrapper for any OpenAI-compatible endpoint and a turn hook line for Claude Code ('Facilitator: N new messages').",
+  "description": "The communication layer between agents of any vendor running in the devcontainer: an MCP server each participant's CLI starts (receive, reply, say, who) and a person's own Claude Code or Copilot session attaches to (say, mail, transcript, continue, who), one shared entry with the handle from FACILITATOR_HANDLE, deterministic routing by @handle with hop, budget and rate limits, every message a sign-packet packet in a register-engine conversation register, verified back to the human who began it. Installs the facilitator node bundle (its own CPython, dirctl, slimctl and the application, checksummed; the same bundle as the server image) and runs the AGNTCY Agent Directory and a SLIM node on loopback, started as infrastructure (mode node), or only the thin client (mode leaf); never starts, stops or configures a participant. Includes a local-model wrapper for any OpenAI-compatible endpoint and a turn hook line for Claude Code ('Facilitator: N new messages').",
   "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/facilitator",
   "licenseURL": "https://github.com/nabil-becker/devcontainer-features/blob/main/LICENSE",
   "options": {
@@ -17,17 +17,29 @@
       "default": "agntcy",
       "description": "What carries the directory and delivery: agntcy (the AGNTCY Agent Directory and SLIM). lean (packet-relay) is refused in this version: not yet, slice 5. FACILITATOR_BACKEND overrides."
     },
+    "mode": {
+      "type": "string",
+      "enum": ["node", "leaf"],
+      "default": "node",
+      "description": "node (the default): the whole bundle, and the Directory, the SLIM node and the facilitator's ssh-agent run here (autostart). leaf: the thin client only (facilitator mcp and what it needs; no slimctl): no daemon is started, infra up and node run are refused; it connects to a node over the network from slice N3. FACILITATOR_MODE."
+    },
+    "bundleVersion": {
+      "type": "string",
+      "proposals": ["0.3.0", "latest"],
+      "default": "0.3.0",
+      "description": "The facilitator node bundle to install (a release asset of this repository, facilitator-bundle-v<version>), verified against the SHA-256 pinned in digests.txt. latest means the bundle this Feature version was made with (0.3.0). With no pin for it, the bundle is built from the Feature's own source, every upstream download checked against the SHA-256 pinned in bundle-build.sh."
+    },
     "dirVersion": {
       "type": "string",
       "proposals": ["1.9.1", "latest"],
-      "default": "1.9.1",
-      "description": "The AGNTCY Directory release (dirctl) to install, verified against the SHA-256 pinned in install.sh. latest means the version pinned here (1.9.1); another version needs its checksums added."
+      "default": "",
+      "description": "Deprecated in 0.3.0 (removed in 1.0.0): use bundleVersion. The bundle fixes dirctl's version (1.9.1); 1.9.1 or latest are accepted, with a deprecation line from install, version and check, and any other version is refused."
     },
     "slimVersion": {
       "type": "string",
       "proposals": ["3.4.6", "latest"],
-      "default": "3.4.6",
-      "description": "The slimctl release (which carries the SLIM node: slimctl slim start) to install, verified against the SHA-256 pinned in install.sh. latest means the version pinned here (3.4.6)."
+      "default": "",
+      "description": "Deprecated in 0.3.0 (removed in 1.0.0): use bundleVersion. The bundle fixes slimctl's version (3.4.6); 3.4.6 or latest are accepted, with a deprecation line from install, version and check, and any other version is refused."
     },
     "hopLimit": {
       "type": "string",
@@ -67,7 +79,7 @@
     "autostart": {
       "type": "boolean",
       "default": true,
-      "description": "postStartCommand starts the infrastructure (facilitator infra up: the Directory, the SLIM node, the facilitator's ssh-agent), never fatally. Participants are never started. FACILITATOR_AUTOSTART."
+      "description": "postStartCommand starts the infrastructure (facilitator infra up: the Directory, the SLIM node, the facilitator's ssh-agent), never fatally; nothing in mode leaf. Participants are never started. FACILITATOR_AUTOSTART."
     },
     "dirOnlineCheck": {
       "type": "boolean",

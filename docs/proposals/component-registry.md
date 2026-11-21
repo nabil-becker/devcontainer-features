@@ -2,7 +2,7 @@
 
 Status: accepted by the Operator 2026-11-19, with the architecture review's changes applied (the
 last section) and the rule that no layer widens a permission; ADR-0063. Supersedes the
-[personalization](personalization.md) proposal. Slice 1 (section 12) is built: `component-registry` 1.0.0 (2026-11-20); slice 2 is built: `component-registry` 1.1.0, `claude-code` 1.12.0, participant 1.2.0, ADR-0064 (2026-11-20); slice 3 is built: `component-registry` 1.2.0 (`http`, one `.reg` file, auth settings only; archives not read) and `cloud-folder` 1.4.0 (`cloud-folder` source) (2026-11-20); slice 4 is built: `architecture-review` in two layers, `devhost` 1.16.0 and this repository's layer, byte-equal to the committed skill with `component-registry` 1.3.0 (`heading: false`, front matter values), the switch-over waiting for the Operator (section 12) (2026-11-20); slice 5 is not.
+[personalization](personalization.md) proposal. Slice 1 (section 12) is built: `component-registry` 1.0.0 (2026-11-20); slice 2 is built: `component-registry` 1.1.0, `claude-code` 1.12.0, participant 1.2.0, ADR-0064 (2026-11-20); slice 3 is built: `component-registry` 1.2.0 (`http`, one `.reg` file, auth settings only; archives not read) and `cloud-folder` 1.4.0 (`cloud-folder` source) (2026-11-20); slice 4 is built: `architecture-review` in two layers, `devhost` 1.16.0 and this repository's layer, byte-equal to the committed skill with `component-registry` 1.3.0 (`heading: false`, front matter values), the switch-over waiting for the Operator (section 12) (2026-11-20); release 2, agent definitions (section 6.1), is built: `component-registry` 1.6.0, participant 1.3.0, `claude-code` 1.13.0 (2026-11-20); slice 5 is not.
 
 Who this serves: the Operator, who rules on it and is its first user (their own layer: "I'm
 colour-blind, adapt diagram colours"); a consumer's maintainer, who points devhosts at an
@@ -235,7 +235,7 @@ exit codes: 0 done, 1 failed, 2 bad use, 3 not supported (the Feature falls back
 | `http` | component-registry | `url` (a `.reg` file or an archive) | `auth`: bearer, header or basic; secret through `dcf-secret`; none for an open endpoint |
 | `path` | component-registry | `path` (a file share is mounted on the host by the launcher, `DCF_HOST_*`) | the folder's own permissions |
 | `cloud-folder` | cloud-folder | `remote` | its existing rclone set-up |
-| `db` | a later release | connection and query | `dcf-secret` |
+| `db` | component-registry (1.5.0) | `driver` (`sqlite` or `postgres`); `path`, or `host`, `port`, `database`, `user`, `sslmode`; one of `table` or `query` returning `(section, key, type, data, locked)` | `auth.secret` (the postgres password) through `dcf-secret`, into the client's environment only |
 
 Review and release are the owner's, before the source; the registry reads what is there.
 
@@ -279,6 +279,115 @@ Utility skills, shipped by the Feature in its own base layer:
 
 A skill already used in a conversation keeps its old text until it is used in a new conversation;
 `/registry-refresh` says so.
+
+### 6.1 Agent definitions (release 2)
+
+*Built (2026-11-20, the Operator's rulings of 2026-11-21 applied): `component-registry` 1.6.0,
+participant 1.3.0, `claude-code` 1.13.0, `copilot` 0.2.0.* Decision
+14 left agent definitions for later; this is the smallest form that makes the layering useful: an
+organization, a department or a person choosing the model an agent runs on and the skills it is
+said to use, without editing any repository's agents list.
+
+**What it is in the tree.** A component `agents/<name>`, where `<name>` is the agent's handle in
+the agents list (one segment). Its keys are fields, each merged by its type (section 3.3), and
+only these are read (a key may hold `.` from 1.6.0, for the CLI suffix):
+
+| Key | Type | Merge | What it does |
+|---|---|---|---|
+| `model` | `value` | the strongest line | the model the agent's own CLI (the agents list's `cli`) runs on: one word of letters, digits and `. _ : / @ [ ] -`, at most 100 characters |
+| `model.<cli>` | `value` | the strongest line | the same, for agents of that CLI only (`model.claude`, `model.copilot`); a suffix no listed agent has applies to none (a CLI not installed yet is fine) |
+| `skills` | `list` | combined, `!item` removes | the skills the agent is said to use (what `agents list --json` shows the facilitator): a skill name or `ref:skills/<name>` (a ref is checked like any ref, so `explain skills/<name> --uses` lists the agents that name it) |
+
+```
+; layer corp (at /Corp): every agent a layer or the list names
+[/Corp/agents/*]
+model:value = sonnet
+; layer dept (at /Corp/MyDepartment)
+[agents/reviewer]
+model:value = opus
+skills:list = ref:skills/architecture-review, ref:skills/diagrams
+; layer mine (at /Corp/MyDepartment/team/me)
+[/**/agents/reviewer]
+skills:list = !ref:skills/diagrams
+```
+
+For `W = /Corp/MyDepartment/team/me`, `agents/reviewer` resolves to `model` `opus` and `skills`
+`architecture-review`; every other agent to `model` `sonnet`.
+
+**A model per CLI** (the Operator's ruling of 2026-11-21, option 2 of three: a plain key per agent,
+a key per CLI, or a model name mapped per CLI). One agent runs one CLI, but a department's
+`[agents/*]` reaches agents of several CLIs, whose model names differ. So the effective model of an
+agent is the strongest of its `model` line and its `model.<its cli>` line, in the usual order
+(higher layer, then the more specific path, then fewer wildcards); only on a tie there does the
+suffixed key win, and then the later line. A higher layer's plain `model` therefore beats a lower
+layer's `model.claude`. A `lock model` holds every `model.<cli>` too. `resolve` writes the effective
+model into the view for each agent's CLI (the participant names the CLIs, below), and `from.tsv`
+records the key it came from.
+
+```
+[/Corp/agents/*]
+model:value = sonnet
+model.copilot:value = gpt-5.4        ; Copilot agents: gpt-5.4; every other agent: sonnet
+```
+
+**Which agents.** A component exists when a section names it literally, as for skills; a pattern
+(`[agents/*]`) applies to those. So that a department's `[agents/*]` reaches the agents of a
+repository that no layer names, the participant hands `resolve` the names of the listed agents
+and their CLIs (the variable `COMPONENT_REGISTRY_AGENTS`, comma-separated `name:cli` items); `resolve` resolves `agents/<name>`
+for each of them too, and keeps the names in the view, so `/registry-refresh` keeps them. An
+older `dcf-registry` ignores the variable.
+
+**What the registry never sets.** Everything else of an agent stays the agents list's, and a line
+for it is skipped and reported (`explain` shows why): the identity and address (`name`,
+`identity`, `session-name`, `registry-path`), where and how it runs (`cli`, `kind`, `folder`,
+`lifecycle`, `lease`, `default`, `attachment`), and anything that can widen a permission: `args`
+(a flag such as a permission mode), `definition` (a CLI profile carries its own tools) and every
+permission key (`allowed-tools`, `disallowed-tools`, `permission*`). Rule 3 (permissions from the
+lowest layer only) is not enough for an agent, since the lowest layer is not the repository; an
+agent definition carries no permission key at all.
+
+**Precedence: the registry wins** (the Operator's ruling of 2026-11-21, which reversed the first
+draft's "the agents list wins": "It's not our responsibility to manage that"). The committed agents
+list stays the source of which agents exist and of every field the registry may never set; for the
+two fields it may set, a registry value replaces the list's, and the list fills only what the
+registry leaves unset:
+
+- `skills`: the registry's skills replace the list entry's `skills:`; the entry's stand only when
+  the registry resolves none for the agent.
+- `model`: the list has no model key; the registry's model replaces any model chosen in the
+  agent's CLI arguments, the list's `args` and the extra arguments of one start alike (one rule,
+  no exception to explain). Which flag chooses the model is a CLI fact, so the adapter does the
+  replacing (NFR-13): the participant hands the registry's model over in `AGENT_MODEL`, and the
+  adapter drops the arguments' own model flag and passes the registry's, saying in one line what it
+  replaced. A person who wants another model for an agent sets it in their own layer, the top one.
+
+The first draft argued the reverse: a layer outside the repository changes a committed decision
+without a trace in the repository. The Operator ruled that managing which model or skills an
+agent gets is the layers' owners' business, not the repository's; `agents check` and the start
+line name every value the registry replaced, which is the trace. A resolve that fails, or no
+registry, still leaves an agent as the list says. Locks need no special rule: the registry already
+beats the list.
+
+**How the participant reads it.** At an agent's start (section 6), after `resolve` for the agent's
+`registry-path` (else `COMPONENT_REGISTRY_WHOAMI`), the participant reads the resolved view's
+`agents/<name>/`, and only when the view's `whoami` is the agent's path (else one line says the
+view is another path's and the agent starts without registry fields). The view is
+machine-readable: `model` (one line), `skills` (one name per line) and `from.tsv` (field, layer,
+`source:file:line` of each line used). The model reaches the adapter in the environment variable
+`AGENT_MODEL` (the effective model for its CLI) on every call about that agent, as `AGENT_SESSION_NAME` does (ADR-0041), empty on
+every other call; an adapter that does not read it starts its CLI on the CLI's own default model
+(NFR-12; no `supports` capability, a variable cannot answer exit 3). Claude Code's adapter
+(`claude-code` 1.13.0) passes `--model` on `start-bg`, `new` and `resume`, and Copilot's
+(`copilot` 0.2.0, Copilot CLI 1.0.114's `--model <model>`) on `new` and `resume`, in place of any
+`--model` in the arguments; a woken session keeps the options it was saved with (a wake is always
+bare). A failed or slow resolve, or no layer list, leaves the agent as the list says.
+
+**How it shows.** `dcf-registry explain agents/<name>` shows an agent definition like any
+component: each field with every line, its layer and version, the skipped lines and why (a field
+the registry never sets, a model that is not one word), and closes with the effective model for
+the agent's CLI and the key and layer it came from. `agents check` shows the fields that came
+from the registry and from which layers (`model opus (registry: dept)`), and names the list's
+values it replaced (`replacing --model haiku in its args`, `replacing the list's skills [x]`).
 
 ## 7. Why not the CLI's own distribution (NFR-9)
 
@@ -465,7 +574,9 @@ classDiagram
    decides what consumers of the devhost Feature get: the template `devhost-init` copies made the
    base layer only, or consumers adding the component-registry Feature and a layer list naming the
    devhost layer.
-5. **Later releases**: the `db` source; agent definitions, prompts and settings as component kinds.
+5. **The `db` source**: *built* (component-registry 1.5.0; sqlite and postgres through the `sqlite3` and `psql` CLIs on PATH, the row contract in the Feature's NOTES).
+6. **Later releases**: prompts and settings as component kinds. Agent definitions are built
+   (section 6.1, component-registry 1.6.0: `model` and `skills`, the registry winning).
 
 ## 13. Relation to other work
 
@@ -480,9 +591,10 @@ classDiagram
 
 ## 14. Open questions
 
-None. The review's questions were ruled on 2026-11-19 (section 2: decisions 3, 10, 14; ADR-0063
+None for release 1. The review's questions were ruled on 2026-11-19 (section 2: decisions 3, 10, 14; ADR-0063
 back to proposed), and the per-agent who-you-are override sits in the agents list entry
-(section 3.1).
+(section 3.1). Release 2 (section 6.1): the precedence was ruled on 2026-11-21 (the registry wins),
+which also settles whether a lock beats the list.
 
 ## Architecture review (2026-11-19)
 

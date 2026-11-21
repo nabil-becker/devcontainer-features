@@ -318,9 +318,39 @@ flowchart LR
 - The release job has `contents: read` and `packages: write` only; READMEs are not generated there.
 - Sources: `CLAUDE.md`, `.github/workflows/release.yaml`, `docs/adr/0040-*.md`, `docs/model/c4-context.md`.
 
+The facilitator's node bundle and the node image (slice N2 of
+[facilitator-node](../proposals/facilitator-node.md)) add a release asset and a second image to this flow:
+
+```mermaid
+flowchart LR
+  subgraph external-zone-gh["GitHub"]
+    external-github["Repository, protected main"]
+    external-release-bundle["release-bundle workflow (manual)"]
+    external-release-asset["Release asset: the node bundle, SHA256SUMS, attestation"]
+    release["Release workflow (manual)"]
+    external-release-node-image["release-node-image workflow (manual)"]
+  end
+  subgraph external-zone-reg["GHCR"]
+    feature-registry["Feature registry: facilitator"]
+    external-node-image["facilitator-node image"]
+  end
+  external-upstream["Upstream: python-build-standalone, AGNTCY dir and slim, PyPI"]
+  external-github -->|Operator starts| external-release-bundle
+  external-upstream -->|each download checked against a pinned SHA-256| external-release-bundle
+  external-release-bundle -->|publishes| external-release-asset
+  external-release-asset -->|digest pinned by a pull request in digests.txt| release
+  release --> feature-registry
+  external-release-asset -->|by digest, checked against the pin| external-release-node-image
+  external-release-node-image --> external-node-image
+  feature-registry -->|the Feature downloads the bundle at build, checked against the pin| consuming-repo["Consuming repos"]
+```
+
+The bundle carries no secret and no state; it is public data. Until a bundle is pinned, the Feature builds it
+from its own source at image build, with the same upstream pins.
+
 ## 7. The component registry
 
-Built in slices 1 to 3 (component-registry 1.2.0, claude-code 1.12.0, cloud-folder 1.4.0): sources `git`, `path`, `http` (one `.reg` file, auth settings only) and `cloud-folder`,
+Built in slices 1 to 3 (component-registry 1.2.0, claude-code 1.12.0, cloud-folder 1.4.0): sources `git`, `path`, `http` (one `.reg` file, auth settings only), `cloud-folder` and, from component-registry 1.5.0, `db` (`sqlite`, `postgres`),
 the view in the Feature's volume, the hand-over to the CLI's skills folder through the adapter's
 `skills` verb, and `/registry-remember` appending to the person's own writable layer.
 
@@ -350,9 +380,11 @@ flowchart LR
 
 - Who you are (`COMPONENT_REGISTRY_WHOAMI`) comes from `.env` or the launcher, never a committed file.
 - An `http` source's secret goes to curl on standard input only, and is refused over plain `http://` unless the source says `allow-insecure: true`; with a secret redirects are not followed. No manifest or signature is required: review is the endpoint owner's.
+- A `db` source's password goes to `psql` in its own environment only (never an argument or a log), the database is opened read-only, and one bad row or an empty result fails the fetch so `resolve` keeps the last good copy.
 - A layer copy and the view are as sensitive as their most sensitive layer (a person's own layer may hold health facts): owner-only, never committed. `explain` prints to the terminal only.
 - The CLI's skills folder (Claude Code: `$CLAUDE_CONFIG_DIR/skills`, the claude-code volume) gets owner-only copies, each marked owned by the registry; never the repository's `.claude/skills`.
-- Each who-you-are path keeps its own view (`paths/<path>`, component-registry 1.7.0), and each hand-over is recorded (`handovers.tsv`: CLI, agent, folder, path; no content). In Claude Code (claude-code 1.14.0) the skills every agent's view has alike stay in `$CLAUDE_CONFIG_DIR/skills`; the rest of an agent's view goes to `$CLAUDE_CONFIG_DIR/registry-agents/<agent>/registry/.claude/skills`, which only that agent's sessions read (`--add-dir`), so one agent's personal facts never reach another agent's skills (ADR-0068).
+- Agent definitions (release 2, component-registry 1.6.0): the view's `agents/<name>/` (a model and skill names) is read by the participant component at the agent's start; the model reaches the CLI adapter only as the environment variable `AGENT_MODEL` of that call, never written elsewhere. An agent definition carries no permission, identity, lease or folder.
+- Each who-you-are path keeps its own view (`paths/<path>`, component-registry 1.8.0), and each hand-over is recorded (`handovers.tsv`: CLI, agent, folder, path; no content). In Claude Code (claude-code 1.14.0) the skills every agent's view has alike stay in `$CLAUDE_CONFIG_DIR/skills`; the rest of an agent's view goes to `$CLAUDE_CONFIG_DIR/registry-agents/<agent>/registry/.claude/skills`, which only that agent's sessions read (`--add-dir`), so one agent's personal facts never reach another agent's skills (ADR-0074).
 - `/registry-remember` writes only to the layer marked `writable: true`, and only to a folder (a `path` source): the person's own layer, wherever they keep it.
 - In this repository (slice 4) two `path` layers feed the resolve: the devhost Feature's folder in the image (`/usr/local/share/devhost/registry`) and the committed `.devcontainer/registry/repo`; both public, both `required`, so a missing one leaves the last view and never hands over half a skill.
 
@@ -367,7 +399,7 @@ flowchart LR
   component-registry -->|handover| external-cli-skills
 ```
 
-- Sources: `src/component-registry/NOTES.md`, `src/claude-code/NOTES.md`, `docs/proposals/component-registry.md`, `docs/adr/0063-*.md`, `docs/adr/0064-*.md`, `docs/adr/0068-*.md`.
+- Sources: `src/component-registry/NOTES.md`, `src/claude-code/NOTES.md`, `docs/proposals/component-registry.md`, `docs/adr/0063-*.md`, `docs/adr/0064-*.md`, `docs/adr/0074-*.md`.
 
 ## Gaps seen while drawing
 

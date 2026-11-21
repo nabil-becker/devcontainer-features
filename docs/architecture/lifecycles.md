@@ -212,7 +212,7 @@ stateDiagram-v2
 ## A resolved skill in the CLI's skills folder
 
 From `src/claude-code/NOTES.md` (claude-code 1.12.0, the adapter's `skills` verb, ADR-0064). One per
-resolved skill, in the CLI's own skills folder. From claude-code 1.14.0 (ADR-0068) the same
+resolved skill, in the CLI's own skills folder. From claude-code 1.14.0 (ADR-0074) the same
 life runs in two places: the personal folder while every agent's view has the skill alike, the
 agent's own folder (read through `--add-dir`) while the views disagree; at a hand-over a skill moves
 from one to the other (added where it is needed first, removed where it is not after), and an

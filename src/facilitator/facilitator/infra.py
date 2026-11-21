@@ -227,6 +227,12 @@ class Infra:
         cfg = self.render(c)
         env = {k: v for k, v in os.environ.items() if not k.startswith("DIRECTORY_")}
         if c == "dir":
+            # A removed container leaves the Directory's own pidfile behind, and the daemon then refuses to
+            # start ("daemon already running", the pid matching any process of a new container; spike 2). It
+            # is not running here (checked above), so the file is stale.
+            stale = self.state.dir / "daemon.pid"
+            if stale.exists():
+                stale.unlink()
             argv = [binary, "daemon", "start", "--data-dir", str(self.state.dir), "--config", str(cfg)]
         else:
             sec = self.slim_secrets(create=True)
@@ -247,6 +253,9 @@ class Infra:
             if self.healthy(c):
                 return word
             if not self.running(c):
+                time.sleep(0.2)              # a command line read in the middle of an exec is empty: look again
+                if self.running(c):
+                    continue
                 raise InfraError(f"{c}: exited at start; see {self.state.logs / (c + '.log')} (facilitator infra logs {c})")
             time.sleep(0.1)
         raise InfraError(f"{c}: not answering on its port after {seconds:.0f} s; see facilitator infra logs {c}")

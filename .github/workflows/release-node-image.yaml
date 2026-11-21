@@ -1,0 +1,97 @@
+name: "Release the facilitator node image"
+# Manual, the Operator starts it, after release-bundle and after the pull request that pins the bundle's
+# digests in src/facilitator/digests.txt is merged (ruling AC: the image is built from the released asset by
+# digest). Downloads both assets of facilitator-bundle-v<version>, refuses any whose sha256 differs from the pin
+# on main, and pushes ghcr.io/<owner>/facilitator-node:<version> for linux/amd64 and linux/arm64 (each architecture
+# built natively on its own runner, then joined into one multi-arch tag), with a build attestation. It uses the
+# docker CLI the runners carry, so it needs no action outside the repository's allow-list (GitHub's own only).
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    environment: release
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      version: ${{ steps.bundle.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: "The released bundle, checked against the pins"
+        id: bundle
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          version="$(bash bundles/facilitator/install.sh --version)"
+          mkdir ctx
+          gh release download "facilitator-bundle-v$version" --pattern SHA256SUMS \
+            --pattern "facilitator-$version-linux-*.tar.gz" --dir ctx
+          for arch in amd64 arm64; do
+            asset="facilitator-$version-linux-$arch.tar.gz"
+            pin="$(awk -v n="$asset" '$2 == n { print $1 }' src/facilitator/digests.txt)"
+            [ -n "$pin" ] || { echo "$asset is not pinned in src/facilitator/digests.txt"; exit 1; }
+            echo "$pin  ctx/$asset" | sha256sum -c -
+          done
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: "Build and push linux/${{ matrix.arch }}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.bundle.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+          OWNER: ${{ github.repository_owner }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          set -eu
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+          tag="ghcr.io/$OWNER/facilitator-node:$VERSION-$ARCH"
+          DOCKER_BUILDKIT=1 docker build --platform "linux/$ARCH" --build-arg "BUNDLE_VERSION=$VERSION" \
+            -f bundles/facilitator/Dockerfile -t "$tag" ctx
+          docker push "$tag"
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: "One tag for both architectures"
+        id: push
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.build.outputs.version }}
+          OWNER: ${{ github.repository_owner }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          set -eu
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+          image="ghcr.io/$OWNER/facilitator-node"
+          docker buildx imagetools create -t "$image:$VERSION" "$image:$VERSION-amd64" "$image:$VERSION-arm64"
+          digest="$(docker buildx imagetools inspect "$image:$VERSION" --format '{{json .Manifest}}' | jq -r .digest)"
+          case "$digest" in sha256:*) ;; *) echo "no digest for $image:$VERSION"; exit 1 ;; esac
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/${{ github.repository_owner }}/facilitator-node
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true

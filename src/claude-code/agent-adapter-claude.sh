@@ -44,7 +44,7 @@
 #     record     record the agent's running session as the agent's (or clear its record)
 #     skills     (1.12.0, optional in the contract, ADR-0064) the component registry's resolved
 #                skills, the folder in $COMPONENT_REGISTRY_SKILLS, copied into Claude Code's own
-#                (personal) skills folder, $CLAUDE_CONFIG_DIR/skills; per agent (1.14.0, ADR-0068)
+#                (personal) skills folder, $CLAUDE_CONFIG_DIR/skills; per agent (1.14.0, ADR-0074)
 #                the ones the agents' views disagree on go to the agent's own folder, which
 #                start-bg, new and resume pass with --add-dir; COMPONENT_REGISTRY_FORGET=1 drops
 #                the agent's folder; see "skills" below
@@ -54,6 +54,9 @@
 #   agent-adapter-claude list       name<TAB>session id<TAB>state<TAB>folder, newest first
 #   agent-adapter-claude supports   the verbs above, one per line
 # Exit: 0 done, 1 failed, 2 bad use, 3 not supported.
+# AGENT_MODEL (1.13.0): start-bg, new and resume run with --model <it>, in place of any --model in the
+# args (the component registry's agent definition wins, handed over by the participant component);
+# wake stays bare.
 #
 # Identity by name and folder, action by id: a session is the agent's when its cwd is the
 # folder and its name is one the agent's session has had (the handle, the session name now, the
@@ -570,7 +573,7 @@ session_gone() {
 # seconds; and a new id that continues the conversation is recorded as the agent's session.
 config_dir() { printf '%s' "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"; }
 
-# skills (1.12.0; per agent 1.14.0, ADR-0068): the component registry's resolved skills for one agent.
+# skills (1.12.0; per agent 1.14.0, ADR-0074): the component registry's resolved skills for one agent.
 # dcf-registry hands the agent's view over in COMPONENT_REGISTRY_SKILLS (a resolved view's skills/,
 # one folder per skill; COMPONENT_REGISTRY_PATH names the path it was resolved for). Two places,
 # both in the claude-code volume (tier 4, owner-only; never the repository's .claude/skills: a
@@ -643,7 +646,7 @@ prune_skills() {
   return 0
 }
 
-# skills_show (1.14.0, ADR-0068; the optional verb skills-show <name> <folder>): what Claude Code
+# skills_show (1.14.0, ADR-0074; the optional verb skills-show <name> <folder>): what Claude Code
 # holds for the agent, read-only, one tab-separated line each:
 #   own <its own folder, the one --add-dir passes, or ->    own-skills <names, or ->
 #   shared <the personal folder>                            shared-skills <the registry's there, or ->
@@ -667,7 +670,7 @@ skills_handover() {
   local src="${COMPONENT_REGISTRY_SKILLS:-}" forget='' pers base me a d nm fo new='' anew='' swept=0
   local pc ps pr pm oc os orr own='' ref ok smode="${COMPONENT_REGISTRY_SKILLS_MODE:-split}"
   [ "${COMPONENT_REGISTRY_FORGET:-}" = 1 ] && forget=1
-  # (1.14.0, ADR-0068) the mode the agents list (registry-skills) or the container
+  # (1.14.0, ADR-0074) the mode the agents list (registry-skills) or the container
   # (COMPONENT_REGISTRY_SKILLS_MODE) chose: split (the default), shared (the whole view personal, the
   # latest hand-over wins, no own folder), off (as forget)
   case "$smode" in
@@ -1014,7 +1017,7 @@ wake_session() {
   rc=0
   bare_check "$short" "$@"
   [ -z "$WHY" ] || note "$NAME: $WHY; woken as it is (the same conversation), so what differs applies at the agent's next fresh start (agents reset, or the session gone)."
-  case "$WHY" in *"--add-dir $ADD_DIR"*) [ -z "$ADD_DIR" ] || note "$NAME: that session does not read its own registry skills; /add-dir $ADD_DIR in it does (ADR-0068)." ;; esac
+  case "$WHY" in *"--add-dir $ADD_DIR"*) [ -z "$ADD_DIR" ] || note "$NAME: that session does not read its own registry skills; /add-dir $ADD_DIR in it does (ADR-0074)." ;; esac
   STARTED_AS="$BARE_NAME"  # the name it keeps (and the record then holds)
   clear_stale_records "$sid"
   mark_woken "$sid"
@@ -1308,7 +1311,32 @@ if [ "$rc_out" -eq 0 ] && [ "$rc_has" -eq 0 ]; then
   case "$verb" in start-bg | wake | attach | new) remote_control_on && rc_args+=(--remote-control) ;; esac
 fi
 set -- "${rc_args[@]}"
-# (1.14.0, ADR-0068) the agent's own registry skills: every session of it the adapter starts gets
+# The model (1.13.0): AGENT_MODEL is the model of the agent's definition in the component registry
+# (participant 1.3.0). start-bg, new and resume pass it as --model, in place of any --model the args
+# hold (the registry wins, the Operator's ruling of 2026-11-21; one line says what it replaced). A
+# wake stays bare (its saved options), and a value that is not one word is left out with a note
+# (the args are then used as they are).
+if [ -n "${AGENT_MODEL-}" ]; then
+  case "$verb" in start-bg | new | resume)
+    model_re='^[][A-Za-z0-9._:/@-]+$'
+    if [ "${#AGENT_MODEL}" -gt 100 ] || ! [[ "$AGENT_MODEL" =~ $model_re ]]; then
+      note "$NAME: AGENT_MODEL is not one word; starting without it."
+    else
+      model_args=() model_was='' skip=0
+      for a in "$@"; do
+        if [ "$skip" -eq 1 ]; then model_was="$a"; skip=0; continue; fi
+        case "$a" in
+          --model) skip=1 ;;
+          --model=*) model_was="${a#--model=}" ;;
+          *) model_args+=("$a") ;;
+        esac
+      done
+      [ -z "$model_was" ] || note "$NAME: the component registry's model $AGENT_MODEL replaces --model $model_was from the args."
+      set -- --model "$AGENT_MODEL" ${model_args[@]+"${model_args[@]}"}
+    fi ;;
+  esac
+fi
+# (1.14.0, ADR-0074) the agent's own registry skills: every session of it the adapter starts gets
 # --add-dir <its folder>, last (the flag takes several folders), once; a wake or attach compares it
 # with the options Claude Code saved, as for any argument
 ADD_DIR=''
@@ -1328,11 +1356,11 @@ case "$verb" in
         esac
       done
       if [ -z "$has" ]; then set -- "$@" --add-dir "$ADD_DIR"; fi
-      # what it did, one line (ADR-0068: the Operator asked for it to be seen); not on a wake or
+      # what it did, one line (ADR-0074: the Operator asked for it to be seen); not on a wake or
       # an attach, whose options Claude Code puts back
       case "$verb" in start-bg | new | resume)
         note "$NAME: registry skills: $(count_owned "$(config_dir)/skills") shared, $(count_owned "$ADD_DIR/.claude/skills") own -> --add-dir $ADD_DIR${has:+ (already in its args)}"
-        # a clash (ADR-0068, the Operator's S3): a project skill of the same name wins in its sessions
+        # a clash (ADR-0074, the Operator's S3): a project skill of the same name wins in its sessions
         for d in "$ADD_DIR"/.claude/skills/*/; do
           [ -f "$d$SKILLS_MARK" ] || continue
           nm="$(basename "$d")"

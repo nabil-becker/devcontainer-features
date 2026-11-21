@@ -79,6 +79,14 @@ The `agents` command reads and checks them and does nothing else with them. `age
 prints them after `sessionName` (`"attachment"`, `"description"`, `"skills"` as an array), only for
 entries that set them, so the output of an older list is unchanged.
 
+**Agent definitions from the component registry** (component 1.3.0, claude-code 1.13.0; the
+`component-registry` Feature 1.6.0). A layer may define `agents/<name>` with a `model` and `skills`
+(the component-registry notes, "Agent definitions"). At the agent's start, after the registry
+resolves for the agent's path, the definition is read from the resolved view: its model goes to the
+adapter (below) and its skills replace the entry's `skills`. The registry wins for these two
+fields (the Operator's ruling of 2026-11-21), and sets nothing else. `agents check` shows what came from
+the registry and from which layers; `agents list --json` adds `"model"` when a definition sets one.
+
 ## Deprecated in 1.7.0: claude-host, claude-fleet, claude-host-pin
 
 The [`agents`](../agents) Feature replaces them: a repository lists its agents in
@@ -108,7 +116,8 @@ else should. The contract (verbs, exit codes) is in the `agents` Feature's notes
 | `stop` | `claude stop <id>` of its newest running session; `--extras` stops every other running one instead. Never `claude rm`. |
 | `logs` | `claude logs <id>` |
 | `skills-show` | (1.14.0, optional, read-only) the agent's own folder, its skills, the personal folder and the registry's skills there, one tab-separated line each (`own`, `own-skills`, `shared`, `shared-skills`); `agents check` and `dcf-registry handovers --skills` print them |
-| `skills` | (1.12.0, optional in the contract, ADR-0064) copies the component registry's resolved skills (the folder in `COMPONENT_REGISTRY_SKILLS`, handed over by `dcf-registry handover`) into Claude Code's personal skills folder, `$CLAUDE_CONFIG_DIR/skills`; per agent (1.14.0, ADR-0068) the skills the agents' views disagree on go to the agent's own folder, read through `--add-dir`; `COMPONENT_REGISTRY_FORGET=1` drops it; never `claude`, never the repository's `.claude/skills`. See "Resolved skills" below |
+| (any start) | (1.13.0) `AGENT_MODEL`, the model of the agent's definition in the component registry (set by the participant component), is passed as `--model` on `start-bg`, `new` and `resume`, in place of any `--model` or `--model=` in the agent's arguments (the list's `args` and one start's extra arguments alike: the registry wins, the Operator's ruling of 2026-11-21; one line says what it replaced). A wake stays bare (its saved options); a value that is not one word is left out with a note |
+| `skills` | (1.12.0, optional in the contract, ADR-0064) copies the component registry's resolved skills (the folder in `COMPONENT_REGISTRY_SKILLS`, handed over by `dcf-registry handover`) into Claude Code's personal skills folder, `$CLAUDE_CONFIG_DIR/skills`; per agent (1.14.0, ADR-0074) the skills the agents' views disagree on go to the agent's own folder, read through `--add-dir`; `COMPONENT_REGISTRY_FORGET=1` drops it; never `claude`, never the repository's `.claude/skills`. See "Resolved skills" below |
 
 **Identity by name and folder, action by id.** A session is the agent's when its `cwd` is the
 agent's folder and its `name` is the agent's name, or that name with Claude Code's collision
@@ -205,7 +214,7 @@ or `/registry-refresh`) calls it with the resolved view's `skills/` folder in
 ### Each agent its own registry skills (1.14.0)
 
 Agents with different `registry-path`s in one container each read their own resolved skills, under
-one login and one Claude Code state ([ADR-0068](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/adr/0068-each-agent-reads-the-skills-its-registry-path-resolves-through-an-added-directory-and-the-personal-folder-keeps-what-every-agent-shares.md)).
+one login and one Claude Code state ([ADR-0074](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/adr/0074-each-agent-reads-the-skills-its-registry-path-resolves-through-an-added-directory-and-the-personal-folder-keeps-what-every-agent-shares.md)).
 
 ```text
   dcf-registry handover claude <agent> <folder> --as <its path>
@@ -269,7 +278,7 @@ one login and one Claude Code state ([ADR-0068](https://github.com/nabil-becker/
   (backlog) removes the committed copy and with it the clash.
 - **Not chosen:** a `CLAUDE_CONFIG_DIR` per agent (separate logins, session lists and jobs), the
   `permissions.additionalDirectories` setting (file access only, it loads no skills), a plugin per
-  agent (every skill renamed `/<plugin>:<skill>`). ADR-0068 has the comparison.
+  agent (every skill renamed `/<plugin>:<skill>`). ADR-0074 has the comparison.
 - **Not stated by Claude Code, and so not relied on:** whether `--add-dir` is saved in a background
   session's options, and whether an added folder's skills folder created after the session started
   is watched (the folder is made before the first start that passes it).

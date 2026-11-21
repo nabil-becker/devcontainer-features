@@ -1,0 +1,7 @@
+# sha256 of the facilitator node bundle's release assets, "<digest>  <asset name>", one per line, from the
+# SHA256SUMS of the GitHub release facilitator-bundle-v<version> (the release-bundle workflow, which the
+# Operator starts). install.sh downloads a bundle only when its asset is pinned here; with no pin it builds
+# the bundle from this Feature's own source (NOTES.md "The bundle"). A pull request adds the lines after each
+# release-bundle run (task bundle:pin -- <version>).
+0fc248666c92c7f78648f2e3379a6f84e00fe95fa72e10edd5630eb5fcb2e8f1  facilitator-0.3.0-linux-amd64.tar.gz
+69e7b006ccd6012159adda32966e1f68b7f7d2eed34023caa15524b897b84402  facilitator-0.3.0-linux-arm64.tar.gz

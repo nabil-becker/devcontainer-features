@@ -6,13 +6,25 @@ of the Feature and whether they must act (an option renamed, a task removed, a r
 The version in `devcontainer-feature.json` is bumped in the same change that adds its entry
 here; `task lint` fails when the entry is missing.
 
-## [0.1.2] - 2026-11-20
+## [0.2.1] - 2026-11-21
 
 ### Changed
 
 - The participant component 1.4.0 it carries: an agent's hand-over names its own `registry-path`,
-  and `agents up` forgets the agents no longer in the list (ADR-0068). The Copilot adapter has no
+  and `agents up` forgets the agents no longer in the list (ADR-0074). The Copilot adapter has no
   `skills` verb, so nothing changes for a Copilot agent; nothing to do.
+
+## [0.2.0] - 2026-11-20
+
+### Added
+
+- **The model of an agent definition.** `agent-adapter-copilot` reads `AGENT_MODEL` (the component
+  registry's agent definition, handed over by the participant component 1.3.0; a layer's
+  `model.copilot` key sets it for Copilot agents only) and passes it as `--model` on `new` and
+  `resume`, in place of any `--model` in the agent's arguments (the registry wins, said in one line).
+  The flag is Copilot CLI 1.0.114's own (`copilot --help`). `run-once` is unchanged.
+- With `participants: true`, the participant component 1.3.0: agent definitions from the component
+  registry at an agent's start; the registry's skills replace the list entry's and are shown.
 
 ## [0.1.0] - 2026-11-20
 

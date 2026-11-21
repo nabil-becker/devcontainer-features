@@ -354,17 +354,28 @@ sessions in order, from a container terminal:
 ## The component registry at an agent's start (participant 1.2.0)
 
 When the `component-registry` Feature is installed (`dcf-registry` on PATH) and its layer list
-exists, `agents start` and `agents up` do two things for each agent before its CLI starts
+exists, `agents start` and `agents up` do these for each agent before its CLI starts
 (ADR-0064):
 
 1. `dcf-registry resolve`, `--as` the entry's `registry-path`, else for
-   `COMPONENT_REGISTRY_WHOAMI`. Once per path in one run (`agents up` with several agents).
-2. `dcf-registry handover <cli> <name> <folder>` (`--as` the `registry-path`, participant 1.4.0),
-   which asks the adapter's `supports` for `skills` and, when listed, calls
+   `COMPONENT_REGISTRY_WHOAMI`. Once per path in one run (`agents up` with several agents), and
+   again when another path's resolve came in between (participant 1.3.0).
+2. `dcf-registry handover <cli> <name> <folder>` (`--as` the `registry-path` and `--skills-mode`,
+   participant 1.4.0), which asks the adapter's `supports` for `skills` and, when listed, calls
    `agent-adapter-<cli> skills <name> <folder>` with that path's resolved skills folder in
    `COMPONENT_REGISTRY_SKILLS`.
+3. (participant 1.3.0, component-registry 1.6.0) the agent's **definition**: `resolve` is handed
+   the listed agents' names and CLIs (`COMPONENT_REGISTRY_AGENTS`, `name:cli`; a layer's
+   `model.<cli>` is the model for agents of that CLI), and the resolved view's
+   `agents/<name>/` is read when the view is for the agent's path. Its `model` reaches the adapter
+   in `AGENT_MODEL` (the adapter contract, below), and the adapter uses it in place of a model the
+   CLI arguments choose; its `skills` replace the entry's `skills`. The registry wins for these two
+   fields (the Operator's ruling of 2026-11-21), the list fills what it leaves unset, and it sets
+   nothing else (not the identity, lease, folder, `args`, `definition` or any permission). One line says
+   what was used and from which layers; `agents check` shows it, `agents list --json` adds
+   `"model"`.
 
-The key `registry-skills: split | shared | off` (participant 1.4.0, ADR-0068) says how the CLI keeps
+The key `registry-skills: split | shared | off` (participant 1.4.0, ADR-0074) says how the CLI keeps
 the agent's skills; without it `COMPONENT_REGISTRY_SKILLS_MODE` (task variable, `.env`,
 `.devcontainer/.env`, environment), else `split`. `split`: what every agent's view has alike is
 shared, the rest is the agent's own; `shared`: its whole view shared, the latest start wins; `off`:
@@ -375,7 +386,7 @@ skills.
 `agents up` (participant 1.4.0) first forgets (`dcf-registry forget`) every agent of this
 repository the registry handed skills to that is no longer in the list.
 
-Both steps together wait at most `COMPONENT_REGISTRY_START_WAIT` seconds per agent (default 15; a
+Resolve and the hand-over together wait at most `COMPONENT_REGISTRY_START_WAIT` seconds per agent (default 15; a
 whole number, a bad value means 15), a layer fetch that hangs and the wait for another resolve's
 lock included: each runs under `timeout`, which stops the whole process group (a git fetch too),
 and the lock wait is capped to what is left. Past the limit the CLI starts with the last good
@@ -386,9 +397,9 @@ It never blocks a start (NFR-12). Each case is one line, and the agent starts wi
 has: no layer list (`the component registry has no layer list`), a failed resolve (the reason, for
 example no who-you-are path), a CLI whose adapter has no `skills` verb (`takes no resolved
 skills`), a hand-over that fails. Without `dcf-registry` nothing is run or said. Each path keeps
-its own resolved view (component-registry 1.7.0), and a CLI whose adapter keeps an agent's own skills
+its own resolved view (component-registry 1.8.0), and a CLI whose adapter keeps an agent's own skills
 apart (Claude Code from claude-code 1.14.0: an added directory per agent) gives two agents with
-different `registry-path`s each their own skills ([ADR-0068](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/adr/0068-each-agent-reads-the-skills-its-registry-path-resolves-through-an-added-directory-and-the-personal-folder-keeps-what-every-agent-shares.md)).
+different `registry-path`s each their own skills ([ADR-0074](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/adr/0074-each-agent-reads-the-skills-its-registry-path-resolves-through-an-added-directory-and-the-personal-folder-keeps-what-every-agent-shares.md)).
 
 ## The adapter contract
 
@@ -421,7 +432,7 @@ agent-adapter-<cli> <verb> <name> <folder>, optional (exit 3 or missing: skipped
                                folder; create the skills folder even when empty; idempotent. Called
                                by dcf-registry handover only when supports lists it; exit 3 or not
                                listed: the CLI keeps its plain skills, said in one line.
-                               (ADR-0068) COMPONENT_REGISTRY_PATH names the path of that view; where
+                               (ADR-0074) COMPONENT_REGISTRY_PATH names the path of that view; where
                                a CLI can, it keeps each agent's skills apart and has the agent's
                                sessions read them; COMPONENT_REGISTRY_FORGET=1 (no
                                COMPONENT_REGISTRY_SKILLS) drops the agent's own copies
@@ -432,6 +443,11 @@ agent-adapter-<cli> supports   the verbs it supports, one per line
 Exit: 0 done, 1 failed, 2 bad use, 3 not supported by this CLI.
 Environment (2.1): AGENT_SESSION_NAME is the rendered session name on every call about the agent
 (an adapter that can name a session uses it, else the handle) and empty on the others (Session names).
+Environment (participant 1.3.0): AGENT_MODEL is the model of the agent's definition in the component
+registry on every call about the agent, empty on the others and without a definition. An adapter
+that can choose a model passes it on the verbs that start a session, in place of a model the CLI
+arguments choose; one that does not read it starts the CLI on its own default (no supports
+capability: a variable cannot answer exit 3). claude-code 1.13.0 and copilot 0.2.0 pass it as --model.
 ```
 
 `<folder>` is absolute. A session is the agent's when its folder is the agent's and its name is
@@ -535,7 +551,7 @@ the background (...)`).
 - `AGENTS_LEASE_WAIT` (default 20 s) bounds the wait for a start in progress; a container start
   with several residents waits at most that per agent held `starting`.
 - Agents of one CLI with different `registry-path`s keep their own skills only where the CLI's
-  adapter keeps them apart (Claude Code from claude-code 1.14.0, ADR-0068). A session not started
+  adapter keeps them apart (Claude Code from claude-code 1.14.0, ADR-0074). A session not started
   through `agents` reads only the skills every agent's view has alike, and in Claude Code a project
   skill of the same name beats an agent's own copy (the registry's runs as `/registry:<name>`).
 - The start hook waits for `dcf-registry resolve` and the hand-over for at most

@@ -8,14 +8,15 @@
     copies/<layer>/<n>/   layer copies
         | dcf-registry resolve, for COMPONENT_REGISTRY_WHOAMI or --as an agent's path
         v
-    view -> views/<stamp>/   the latest resolved view: skills/<name>/, meta/
-    paths/<path> -> ...      (1.7.0) the latest view of each who-you-are path
-    handovers.tsv            (1.7.0) who was handed which path's skills
+    view -> views/<stamp>/   the resolved view: skills/<name>/, agents/<name>/, meta/
+    paths/<path> -> ...      (1.8.0) the latest view of each who-you-are path
+    handovers.tsv            (1.8.0) who was handed which path's skills
         | dcf-registry handover <cli> <agent> <folder> --as <path>: agent-adapter-<cli> skills
         |   (at an agent's start, by the participant component; or /registry-refresh)
         v
   the CLI's own skills folders (Claude Code: $CLAUDE_CONFIG_DIR/skills for what every agent
   shares, and each agent's own folder read through --add-dir; marked owned)
+  agents/<name>/ (1.6.0): read by the participant component at the agent's start (model, skills)
 
   dcf-registry explain <path> [--uses] [--color auto|always|never]   read-only
 ```
@@ -55,10 +56,13 @@ base layer ships the utility skills `/registry-refresh`, `/registry-explain`, `/
 Release 1.2.0 adds the `http` source (and, with cloud-folder 1.4.0, the `cloud-folder` source).
 Release 1.3.0 adds the layer key `heading: false` (stack a layer's text without a heading) and
 writes a skill's `name` and `description` values into its `SKILL.md` front matter.
-Release 1.7.0 keeps a view per who-you-are path, so agents with different `registry-path`s each
-get their own skills (ADR-0068, below).
-It resolves **skills** only. Not yet: the `db` source; a layer list naming it is read, and
-`resolve` says that kind is not in this release.
+Release 1.5.0 adds the `db` source (`sqlite` and `postgres`).
+Release 1.6.0 adds the second component kind, **agent definitions** (`agents/<name>`: `model` and
+`skills`, read by the participant component at the agent's start; below).
+It resolves **skills** and **agent definitions**; prompts and settings are not in this release (a
+section for them is reported and not resolved).
+Release 1.8.0 keeps a view per who-you-are path, so agents with different `registry-path`s each
+get their own skills (ADR-0074, below).
 
 ## What it installs
 
@@ -66,16 +70,16 @@ Nothing is downloaded at build; there is nothing to verify (an `http` layer is r
 work; no python3, no jq):
 
 - `dcf-registry` (`/usr/local/bin`): `resolve`, `explain`, `version`, and (1.1.0) `handover`,
-  `refresh`, `remember`, `layer-list`, and (1.7.0) `forget`, `handovers`.
+  `refresh`, `remember`, `layer-list`, and (1.8.0) `forget`, `handovers`.
 - `/usr/local/share/component-registry-feature/base/`: the built-in base layer, the utility skills.
-- `registry-source-git` and `registry-source-path`: the two **registry sources** of this release.
+- `registry-source-git`, `registry-source-path`, `registry-source-http` and (1.5.0) `registry-source-db`: the **registry sources** of this release.
 - `component-registry-setup`: the `postStartCommand`.
 - `dcf-persist`, the collection's helper behind every setup script.
 - `/usr/local/share/component-registry-feature/` with the version and the `registryFile` option.
 - The Feature Taskfile (`installTaskfile`).
 
 `resolve` needs `flock` (util-linux, in every Debian and Ubuntu image); a `git` source needs git,
-which this Feature does not install (the base image, or the `git` Feature).
+which this Feature does not install (the base image, or the `git` Feature); a `db` source needs `sqlite3` or `psql`, which it does not install either (see the `db` source).
 
 ## Options
 
@@ -93,7 +97,8 @@ Settings are plain variables (NFR-6), each from the task variable, then the root
 | `COMPONENT_REGISTRY_FILE` | the option | The layer list. |
 | `COMPONENT_REGISTRY_STATE_DIR` | `/var/lib/devcontainer-features/component-registry` (`containerEnv`) | The state folder. |
 | `COMPONENT_REGISTRY_LOCK_WAIT` | `120` | Seconds a `resolve` waits for another one to finish. |
-| `COMPONENT_REGISTRY_SKILLS_MODE` | `split` | (1.7.0, ADR-0068) How a CLI keeps an agent's skills, for every agent whose agents list entry has no `registry-skills`: `split` (shared plus the agent's own), `shared` (the whole view shared, the latest hand-over wins), `off` (nothing handed over). `handover --skills-mode` beats it. |
+| `COMPONENT_REGISTRY_AGENTS` | the current view's names | 1.6.0: agents, comma-separated `name` or `name:cli` items, whose definitions `resolve` makes even when only a pattern names them, the effective model picked for the CLI. The participant component sets it to the listed agents; a person seldom does. Empty clears the names. |
+| `COMPONENT_REGISTRY_SKILLS_MODE` | `split` | (1.8.0, ADR-0074) How a CLI keeps an agent's skills, for every agent whose agents list entry has no `registry-skills`: `split` (shared plus the agent's own), `shared` (the whole view shared, the latest hand-over wins), `off` (nothing handed over). `handover --skills-mode` beats it. |
 
 ## The layer list
 
@@ -138,7 +143,7 @@ Only this YAML subset is read: comments, plain and quoted values, block entries 
 | `path` | `path` (repository-relative or absolute); `required` | the folder's own permissions |
 | `http` | `url` (one `.reg` file); `allow-insecure`; `required` | `auth`: `type` `bearer`, `header` (`header` names it) or `basic` (`user`), and `secret`, a `dcf-secret` name; none (the default without a secret) reads an open endpoint |
 | `cloud-folder` | `remote` (a folder under the cloud folder); `required` | the cloud folder's own set-up (cloud-folder Feature 1.4.0 or later installs the source) |
-| `db` | a later release | |
+| `db` | `driver` (`sqlite`, `postgres`); `path` or `host`, `port`, `database`, `user`, `sslmode`; one of `table`, `query`; `required` | `auth.secret`, a `dcf-secret` name, the postgres password; sqlite: the file's own permissions |
 
 ### The `http` source
 
@@ -169,6 +174,66 @@ URL and how to log in.
 - { kind: http, url: "https://registry.example.invalid/x.reg", auth: { type: header, header: X-Api-Key, secret: registry/x } }
 ```
 
+### The `db` source (1.5.0)
+
+`registry-source-db` reads the rows a table or a query returns and renders them into one
+`<layer>.reg` file in the layer copy. Review and release are the database owner's; the layer list
+pins only what to read and how to log in.
+
+```yaml
+- { kind: db, driver: sqlite, path: .registry/layer.db, table: registry_rows }   # path: repository-relative or absolute
+- kind: db
+  driver: postgres
+  host: db.example.invalid
+  port: 5432                  # default 5432
+  database: registry
+  user: reader
+  sslmode: verify-full        # disable, allow, prefer (default), require, verify-ca, verify-full
+  query: "SELECT section, key, type, data, locked FROM registry_rows WHERE layer = 'corp'"
+  auth: { secret: registry/db }   # the password, a dcf-secret name
+```
+
+- **The row contract.** `table: <name>` (`name` or `schema.name`) reads
+  `SELECT section, key, type, data, locked FROM <name> ORDER BY section, key`; `query: <select>`
+  is one `SELECT` (or `WITH`) statement whose result has the columns named `section`, `key`,
+  `type`, `data`, `locked`, in the order it returns them (it may not hold a semicolon; quote it in
+  the layer list when it holds a comma or a colon). Exactly one of `table` and `query`.
+
+  | Column | Holds | Becomes |
+  | --- | --- | --- |
+  | `section` | a section path as in a `.reg` file (`skills/web`, `/Corp/skills/*`, no brackets) | `[section]`, written once per run of equal values |
+  | `key` | letters, digits, `.`, `_`, `-` | the entry's key |
+  | `type` | `value`, `list`, `text` or `ref` | the entry's type |
+  | `data` | the entry's data, as in a `.reg` file | `key:type = data`; a `text` that is not one plain line (a newline, a leading `@`, edge blanks) goes to `text/<n>.txt` and reads `@file text/<n>.txt` |
+  | `locked` | `1`, `t`, `true`, `yes` locks the key; `0`, `f`, `false`, `no`, empty does not | a `lock <key>` line after the entry |
+
+  Rows come in the order the statement returns them (the table form: by section, then key), and
+  the later line wins a tie, as in a file. A `NULL` reads as empty.
+- **Bad rows are refused.** One row with an empty or unreadable section, a key with a space, a type
+  that is not one of the four, a `locked` that is not a flag, a line break in a non-`text` value,
+  data starting with `@` or an exclusion section (`!`) with an entry fails the fetch (exit 1) with
+  the row's number and the reason, and so does a result with no rows. Nothing is written; `resolve`
+  says it and uses the last good copy. A layer is all of its rows or none: a skipped row could be a
+  lock. (`@replace` is not in the contract: put it in a `path` or `git` layer.)
+- **Version.** `sha256:<hash>` of the rendered files, so `version` runs the query (cheaply: no
+  copy is kept) and `resolve` skips the layer when nothing changed. A database that is unreachable
+  or fails the query gives the last good copy.
+- **Drivers and clients.** `sqlite` takes `path` and reads it with `sqlite3 -readonly`; `postgres`
+  takes `host`, `database`, `user` (and `port`, `sslmode`, `auth.secret`) and runs `psql`; the
+  connection goes in `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGSSLMODE` (and a 10 s
+  `PGCONNECT_TIMEOUT`), the SQL on standard input, and the transaction is read-only. Any other
+  driver exits 3 and `resolve` says so. The clients are **not installed by this Feature** (the
+  same choice as `git` and `curl`: the base image or another Feature brings them, and a Feature
+  that pulled in a PostgreSQL client would add packages to every devhost that never uses a
+  database); without one the source exits 1 and says `apt-get install sqlite3` or
+  `apt-get install postgresql-client`, and `install.sh` prints a note when neither is present.
+- **Secret.** `auth.secret` is read with `dcf-secret` at each run and handed to `psql` as
+  `PGPASSWORD` in that child's environment only: never an argument, a file (`PGPASSFILE` is
+  `/dev/null`), the copy or a log; the client's first error line is all that is said (a test reads
+  every process's arguments while the client runs). Without `dcf-secret` on PATH the source says
+  so and goes on without a password. TLS is the `sslmode` the source pins; the password goes
+  over whatever that negotiates, so use `require` or stricter for a remote database.
+
 ### The `cloud-folder` source
 
 `registry-source-cloud-folder` (installed by the cloud-folder Feature, which owns the transport)
@@ -185,7 +250,8 @@ One or more `*.reg` files at the root of the layer's copy, read in name order, l
 
 ```
 [path]                    a section; [path] @replace replaces the component below it
-key:type = data           an entry; type is value, list, text or ref
+key:type = data           an entry; type is value, list, text or ref; a key is letters,
+                          digits, _ - and (1.6.0) . (model.claude)
 lock key                  a higher layer cannot change this key
 ; comment
 [!path]                   an exclusion: the sections above it in this file no longer apply
@@ -229,7 +295,7 @@ list using it is refused with its line. A listed layer adapts a utility skill li
 
 | Skill | Runs | Does |
 | --- | --- | --- |
-| `/registry-refresh` | `dcf-registry refresh --session "${CLAUDE_SESSION_ID}"` | (1.7.0) resolve now for the calling agent's own path and hand over to it alone (its session id, found in each adapter's `list`); an unknown or unsubstituted id refreshes every recorded hand-over, each path once; with no record, for the path the latest view was resolved for, to every CLI adapter on PATH. Claude Code picks the change up in the running session; a CLI that does not watch its skills folder needs its session restarted; a skill already used in a conversation keeps its old text until a new conversation |
+| `/registry-refresh` | `dcf-registry refresh --session "${CLAUDE_SESSION_ID}"` | (1.8.0) resolve now for the calling agent's own path and hand over to it alone (its session id, found in each adapter's `list`); an unknown or unsubstituted id refreshes every recorded hand-over, each path once; with no record, for the path the latest view was resolved for, to every CLI adapter on PATH. Claude Code picks the change up in the running session; a CLI that does not watch its skills folder needs its session restarted; a skill already used in a conversation keeps its old text until a new conversation |
 | `/registry-explain <path>` | `dcf-registry explain <path> [--uses] [--color auto|always|never]` | read-only, shown to the person |
 | `/registry-remember [skills/<name>] <line>` | `dcf-registry remember [--skill <name>] -- <line>` | appends `body:text = <line>` under `[skills/<name>]` (or `[skills/*]`, every skill) to `remembered.reg` in the folder of the layer marked `writable: true`, then refreshes. Refused, nothing written: no writable layer, two, a writable layer without a `path` source (a git or http layer changes through its owner's release), a folder that is not there or not writable, an empty line, a line starting with `@`. Only when the person asks (`disable-model-invocation`) |
 
@@ -251,10 +317,10 @@ the hand-over together get at most `COMPONENT_REGISTRY_START_WAIT` seconds there
 hanging fetch and a held lock included); past it the CLI starts with the last good skills already
 in its folder, said in one line. `/registry-refresh` keeps `COMPONENT_REGISTRY_LOCK_WAIT`.
 
-## A view per agent path (1.7.0)
+## A view per agent path (1.8.0)
 
 Agents with different `registry-path`s in one container each get the skills their path resolves
-([ADR-0068](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/adr/0068-each-agent-reads-the-skills-its-registry-path-resolves-through-an-added-directory-and-the-personal-folder-keeps-what-every-agent-shares.md),
+([ADR-0074](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/adr/0074-each-agent-reads-the-skills-its-registry-path-resolves-through-an-added-directory-and-the-personal-folder-keeps-what-every-agent-shares.md),
 it amends ADR-0064's "one per container").
 
 ```text
@@ -290,13 +356,61 @@ it amends ADR-0064's "one per container").
   agent's path, its skills mode and, from the adapter's read-only `skills-show`, its own folder,
   its own skills and the shared ones. The mode is the agents list's `registry-skills`
   (`handover --skills-mode`), else `COMPONENT_REGISTRY_SKILLS_MODE`, else `split`; `shared` puts an
-  agent's whole view in the shared folder as before 1.7.0 (the latest hand-over wins), `off` hands
+  agent's whole view in the shared folder as before 1.8.0 (the latest hand-over wins), `off` hands
   nothing over and forgets the agent. `refresh` repeats each agent's recorded mode.
 - **Where the CLI keeps them** is the adapter's (NFR-13). Claude Code (claude-code 1.14.0): what
   every agent's view has alike stays personal, the rest goes to an added directory per agent; see
   the claude-code notes.
 - **Disk.** A view per path in use (a few kilobytes each), and in Claude Code each agent's view
   kept twice at most.
+
+## Agent definitions (1.6.0)
+
+An agent definition adapts an agent of a repository's agents list (the participant component's
+`participants.yml` or `agents.yml`) from any layer: the model a department's agents run on, the
+skills a person's reviewer is said to use. It is the component `agents/<name>`, `<name>` the
+agent's handle, with two fields; the design is section 6.1 of the proposal.
+
+| Key | Type | Merge | Read by the participant as |
+| --- | --- | --- | --- |
+| `model` | `value` | the strongest line | `AGENT_MODEL`, handed to the CLI adapter on the calls about the agent; Claude Code's adapter (claude-code 1.13.0) and Copilot's (copilot 0.2.0) pass it as `--model`, in place of any `--model` in the agent's arguments. One word of letters, digits and `. _ : / @ [ ] -`, at most 100 characters. For the agent's own CLI (the list's `cli`) |
+| `model.<cli>` | `value` | the strongest line | the same, for agents of that CLI only (`model.claude`, `model.copilot`). It beats a plain `model` of the same layer and path; otherwise the usual order holds, so a higher layer's or a more specific path's plain `model` beats it. A suffix no listed agent has applies to none. A `lock model` holds every `model.<cli>` too |
+| `skills` | `list` | combined, `!item` removes | the agent's `skills` (shown by `agents check` and `agents list --json`, which the facilitator reads), replacing its list entry's `skills:`. An item is a skill name or `ref:[scope/]skills/<name>`; a ref is checked like any ref, so `explain skills/<name> --uses` lists the agents that name it. Remove an item as it was written (`!ref:skills/x` for `ref:skills/x`) |
+
+```
+[/Corp/agents/*]                       ; every agent, at /Corp and below
+model:value = sonnet
+model.copilot:value = gpt-5.4          ; but Copilot agents run gpt-5.4
+[/Corp/MyDepartment/agents/reviewer]
+model:value = opus
+skills:list = ref:skills/architecture-review
+```
+
+- **The registry wins** (the Operator's ruling of 2026-11-21). For the two fields it may set, a
+  registry value replaces the list's: its `skills` replace the entry's `skills:`, and its model
+  replaces a model chosen in the agent's arguments (its `args`, or the extra arguments of one
+  start; the adapter drops that flag and says so). The list fills only what the registry leaves
+  unset, and still says which agents exist. A failed resolve, or no registry, leaves an agent
+  exactly as the list says.
+- **What the registry never sets.** A line for any other key of an agent is skipped and reported
+  (`resolve` names it, `explain` shows why): `name`, `cli`, `kind`, `folder`, `lifecycle`,
+  `identity`, `lease`, `default`, `session-name`, `registry-path`, `attachment`, `args` and
+  `definition` (the last two could widen a permission), and every permission key
+  (`allowed-tools`, `disallowed-tools`, `permission*`), even in the lowest layer.
+- **Which agents.** A component exists when a section names it literally; a pattern such as
+  `[agents/*]` applies to those and to every name in `COMPONENT_REGISTRY_AGENTS`, which the
+  participant component sets to the listed agents and their CLIs (`name:cli` items) at each
+  start, so the effective model is picked for each agent's CLI (an agent without a CLI named gets
+  the plain `model`). The names are kept in the view
+  (`agent-names`), so a `resolve` without the variable and `/registry-refresh` keep them.
+- **At an agent's start** the participant component (participant 1.3.0) resolves for the agent's
+  path, as for skills, then reads `view/agents/<name>/`, only when the view's `whoami` is that
+  path; otherwise one line says the view is another path's and the agent starts without the
+  definition. One line names what it used and from which layers.
+- **Shown by** `dcf-registry explain agents/<name>` (every line, its layer and version, the
+  skipped ones and why, then the effective model for the agent's CLI with its key and layer) and by
+  `agents check` (`model gpt-5.4 (registry: corp, model.copilot)`, and the list's values it
+  replaced).
 
 ## The match rule
 
@@ -332,11 +446,13 @@ a reader sees the old view or the new one, never half of each:
 | Path | What it holds |
 | --- | --- |
 | `skills/<name>/` | `SKILL.md` and the skill's files: what a consumer copies |
-| `meta/skills/<name>/values/<key>` | each resolved value (a list one item per line; text as stacked) |
-| `meta/skills/<name>/keys.tsv` | key, type, one-line summary |
-| `meta/skills/<name>/provenance.tsv` | every line considered: state (`used`, `overridden`, `skipped`, `dropped`, `excluded`, `not-applying`), key, type, layer, rank, version, `source:file:line`, data, why; `-` for an empty field |
+| `agents/<name>/` | (1.6.0) an agent definition: `model` (one line, the effective model for its CLI), `cli` (the CLI it was resolved for), `skills` (one name per line), `from.tsv` (field, layer, `source:file:line`, key of each line used); what the participant component reads |
+| `meta/<kind>/<name>/values/<key>` | each resolved value (a list one item per line; text as stacked) |
+| `meta/<kind>/<name>/keys.tsv` | key, type, one-line summary |
+| `meta/<kind>/<name>/provenance.tsv` | every line considered: state (`used`, `overridden`, `skipped`, `dropped`, `excluded`, `not-applying`), key, type, layer, rank, version, `source:file:line`, data, why; `-` for an empty field |
 | `meta/refs.tsv` | every ref: from, key, target, its component and key, `ok` or `dangling`, why |
 | `meta/problems.tsv` | lines that could not be read |
+| `agent-names` | (1.6.0) the agents whose definitions were resolved for every pattern (`COMPONENT_REGISTRY_AGENTS`) |
 | `layers.tsv`, `whoami`, `resolved` | each source's version and state (`fetched`, `unchanged`, `offline`, `missing`), who it was resolved for, when |
 
 ## State
@@ -446,24 +562,29 @@ every skipped line with its reason, and `resolved N component(s) for <W>`.
 
 - `go-task` for the tasks; git in the image for `git` sources; `openbao` for `dcf-secret` (a
   source secret without it: the source says so and reads without one).
-- `claude-code` 1.12.0: its adapter's `skills` verb, and with `participants: true` the participant
+- `claude-code` 1.13.0: its adapter passes an agent definition's model as `--model`; 1.12.0: its
+  adapter's `skills` verb, and with `participants: true` the participant
   component, which resolves and hands over at every agent's start. Neither is required: without
   them `handover` and `refresh` say no adapter takes skills.
-- `cloud-folder` 1.4.0: its `cloud-folder` source. `curl` in the image for `http` sources.
+- `cloud-folder` 1.4.0: its `cloud-folder` source. `curl` in the image for `http` sources; `sqlite3` or `psql` for `db` sources.
 - Later releases: the launcher (a file share mount, `COMPONENT_REGISTRY_WHOAMI` from the
   workstation).
 
 ## Limits
 
-- Skills only; other kinds are reported and not resolved.
+- Skills and agent definitions; other kinds (prompts, settings) are reported and not resolved. An
+  agent definition has two fields, `model` and `skills`, and for them the registry beats the agents
+  list; a person who wants another model for one run sets it in their own layer.
+- An agent's `skills` from the registry are what it is said to use (`agents list --json`); they do
+  not limit which resolved skills its CLI receives (every resolved skill is handed over).
 - Agents with different who-you-are paths each keep their own skills only where the CLI's adapter
-  keeps them apart (Claude Code from claude-code 1.14.0, ADR-0068); another CLI reads the latest
+  keeps them apart (Claude Code from claude-code 1.14.0, ADR-0074); another CLI reads the latest
   hand-over. In Claude Code a session not started through `agents` reads only the skills every
   agent's view has alike, and a project skill of the same name beats an agent's own copy (the
   registry's then runs as `/registry:<name>`).
 - `remember` writes to a `path` source only, appends, and never edits or removes a line; to take
   one back, edit `remembered.reg` in your layer.
-- Sources `git` and `path` only. A `path` source's version is a fingerprint of names, sizes and
+- A `path` source's version is a fingerprint of names, sizes and
   modification times, so a change that keeps all three is not seen.
 - `*` and `**` are whole segments; there are no value filters.
 - The text heading is `## Layer <id>` or none (`heading: false`), per layer, never per line; a

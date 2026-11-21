@@ -7,7 +7,7 @@
 # replaced; an owned copy no longer resolved removed; a skill folder without the marker never
 # touched (a name clash said, the registry's copy not installed); never the repository's
 # .claude/skills; owner-only copies; bad use without COMPONENT_REGISTRY_SKILLS. Per agent (1.14.0,
-# ADR-0068): two agents of different paths split into personal and own folders, one path shared,
+# ADR-0074): two agents of different paths split into personal and own folders, one path shared,
 # a refresh that agrees again, a project clash said, forget, an agent whose folder is gone, two
 # hand-overs at once, --add-dir on new and start-bg (once, none without a folder); the line each
 # start prints, the duplicate rule, skills-show, the modes split, shared and off. No claude runs:
@@ -103,7 +103,7 @@ check 'a leftover temporary copy is removed' no "$([ -e "$S/.diagrams.new.999" ]
 out="$(PATH="$T/bin:/usr/bin:/bin" CLAUDE_CONFIG_DIR="$T/cfg" COMPONENT_REGISTRY_SKILLS="$T/nosuch" bash "$adapter" skills host "$T/repo" 2>&1)"; rc=$?
 check 'a folder that is not there: bad use (exit 2)' 2 "$rc"
 
-# ------------------------------------------------- per agent (claude-code 1.14.0, ADR-0068) ----
+# ------------------------------------------------- per agent (claude-code 1.14.0, ADR-0074) ----
 # Two agents of different registry paths: what their views share is personal, what differs goes to
 # each agent's own folder (read through --add-dir); one path shared by two agents: all personal.
 R="$T/pa"; mkdir -p "$R/cfg" "$R/fa" "$R/fb" "$R/fc/.claude/skills/review"
@@ -186,7 +186,7 @@ mkdir -p "$R/fz"
 (cd "$R/fz" && PATH="$T/bin:/usr/bin:/bin" CLAUDE_CONFIG_DIR="$R/cfg" bash "$adapter" new zed "$R/fz" >/dev/null 2>&1)
 check 'new: an agent never handed skills gets no --add-dir' 0 "$(grep -c -- '--add-dir' "$T/claude-calls")"
 
-# ------------------------------- transparency and control (claude-code 1.14.0, ADR-0068) ----
+# ------------------------------- transparency and control (claude-code 1.14.0, ADR-0074) ----
 AD="$R/cfg/registry-agents/$(key ana "$R/fa")/registry"
 newcall() { : > "$T/claude-calls"; (cd "$R/fa" && PATH="$T/bin:/usr/bin:/bin" CLAUDE_CONFIG_DIR="$R/cfg" bash "$adapter" "$@" 2>&1); }
 out="$(newcall new ana "$R/fa")"

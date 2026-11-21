@@ -70,6 +70,29 @@ An agent says a release is due and what it would publish; it never runs it. Unti
 Feature cannot be named in `installsAfter` or pulled by a consumer. The release workflow needs
 no write access: READMEs are committed, and the lint workflow checks they are current.
 
+**A Feature that installs a release asset** (the facilitator and its node bundle, ruling AC of
+[facilitator-node](../proposals/facilitator-node.md)) adds two manual workflows around the release, each
+started by the Operator:
+
+```mermaid
+flowchart TB
+  b["Topic branch: the application or bundles/facilitator/install.sh"] --> pr1["Pull request, required checks<br/>(the Feature tests build the bundle from source)"]
+  pr1 --> m1["Operator squash merges"]
+  m1 --> rb["release-bundle workflow<br/>manual, the Operator starts<br/>amd64 on ubuntu-latest, arm64 on ubuntu-24.04-arm"]
+  rb --> asset["Release facilitator-bundle-v version<br/>two tarballs, SHA256SUMS, build attestations"]
+  asset --> pr2["Pull request: task bundle:pin<br/>the digests into src/facilitator/digests.txt"]
+  pr2 --> m2["Operator squash merges"]
+  m2 --> rel["release workflow<br/>manual, the Operator starts"]
+  rel --> reg["feature-registry"]
+  m2 --> img["release-node-image workflow<br/>manual, the Operator starts<br/>refuses an asset that differs from the pin"]
+  img --> ghcr["ghcr.io facilitator-node: version<br/>amd64 and arm64, attested"]
+```
+
+`release-bundle` needs `contents: write`, `id-token: write` and `attestations: write`; `release-node-image`
+`packages: write` too; `release.yaml` keeps `contents: read` and `packages: write`. Sources:
+`.github/workflows/release-bundle.yaml`, `.github/workflows/release-node-image.yaml`, `src/facilitator/NOTES.md`
+("The bundle").
+
 ## 4. A con's job
 
 ```mermaid
@@ -135,6 +158,10 @@ with the agent's who-you-are path (its `registry-path`, else `COMPONENT_REGISTRY
 `dcf-registry handover`, which calls the CLI adapter's `skills` verb when `supports` lists it, and
 only then starts the CLI. `task component-registry:resolve` runs the resolve by hand;
 `/registry-refresh` runs resolve and the hand-over mid-session. No step ever blocks the start.
+From release 2 (proposal section 6.1; component-registry 1.6.0, participant 1.3.0) the resolve is
+handed the listed agents' names, and before the CLI starts the participant reads the agent's
+definition from the view (only when the view is for the agent's path): its model goes to the adapter
+in `AGENT_MODEL`, its skills replace the entry's; for those two fields the registry wins over the list.
 
 ```mermaid
 sequenceDiagram
@@ -146,7 +173,7 @@ sequenceDiagram
   alt no layer list
     R-->>person: one line, the agent starts with its plain skills
   end
-  person->>R: resolve, for registry-path, COMPONENT_REGISTRY_WHOAMI or --as
+  person->>R: resolve, for registry-path, COMPONENT_REGISTRY_WHOAMI or --as (COMPONENT_REGISTRY_AGENTS: the listed agents)
   R->>R: take the lock (flock)
   loop each layer, each source
     R->>S: version
@@ -171,12 +198,15 @@ sequenceDiagram
   R->>C: supports
   alt skills listed
     R->>C: skills, COMPONENT_REGISTRY_SKILLS = that path's view (lock held shared)
-    C->>C: copy, mark owned, remove owned copies no longer resolved; per agent (ADR-0068): what every agent's view shares personal, the rest in the agent's own folder (--add-dir)
+    C->>C: copy, mark owned, remove owned copies no longer resolved; per agent (ADR-0074): what every agent's view shares personal, the rest in the agent's own folder (--add-dir)
     R->>R: record the hand-over (handovers.tsv)
   else not listed or exit 3
     R-->>person: one line, the CLI keeps its plain skills
   end
-  person->>person: start the CLI
+  opt release 2: the view is for this agent's path
+    person->>person: read view/agents/<name>/: model, skills (they replace the list's)
+  end
+  person->>C: start, AGENT_MODEL = the definition's model (it replaces a model in the CLI args)
   Note over R,C: /registry-refresh: resolve and handover for the calling agent's own path (its session id), mid-session; with no agent, every recorded hand-over
 ```
 

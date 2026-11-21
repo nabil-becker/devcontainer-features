@@ -6,11 +6,11 @@ of the Feature and whether they must act (an option renamed, a task removed, a r
 The version in `devcontainer-feature.json` is bumped in the same change that adds its entry
 here; `task lint` fails when the entry is missing.
 
-## [1.7.0] - 2026-11-20
+## [1.8.0] - 2026-11-21
 
 ### Added
 
-- **A view per who-you-are path** (ADR-0068, backlog `agent-skills-folders`). `resolve` keeps the
+- **A view per who-you-are path** (ADR-0074, backlog `agent-skills-folders`). `resolve` keeps the
   latest view of every path (`paths/<path>` in the state folder) besides `view`, the latest of all;
   `handover <cli> <name> <folder> --as <path>` hands that path's view, and without `--as` the view
   of the who-you-are setting. `explain --as <path>` reads a path's own view. The one resolve lock
@@ -30,6 +30,52 @@ here; `task lint` fails when the entry is missing.
 
 Nothing to do. The adapter's `skills` verb also gets `COMPONENT_REGISTRY_PATH`; with claude-code
 1.14.0 agents of different paths keep their own skills.
+
+## [1.6.0] - 2026-11-20
+
+### Added
+
+- **Agent definitions** (`agents/<name>`, the second component kind; proposal section 6.1). Two
+  fields, each merged by its type: `model:value` (the model the agent's CLI runs on, one word; and
+  `model.<cli>:value`, the model for agents of that CLI only, which beats a plain `model` of the same
+  layer and path; a key may now hold `.`) and
+  `skills:list` (a skill name or `ref:skills/<name>`, checked as a ref, so `explain skills/<name>
+  --uses` lists the agents that name it). A line for any other key of an agent is skipped and
+  reported: the agents list owns the identity, the address, the lease, the folder, `args` and
+  `definition`, and an agent definition carries no permission key at all.
+- **The resolved view's `agents/<name>/`**: `model` (one line), `skills` (one name per line) and
+  `from.tsv` (field, layer, `source:file:line` of each line used), what the participant component
+  (participant 1.3.0) reads at the agent's start; `meta/agents/<name>/` as for skills.
+- **`COMPONENT_REGISTRY_AGENTS`** (comma-separated `name:cli` items, set by the participant
+  component): `resolve` resolves `agents/<name>` for each, so a pattern such as `[agents/*]` reaches an
+  agent no layer names, and writes the effective model for that agent's CLI (`from.tsv` names the
+  key it came from); the names are kept in the view (`agent-names`), so `/registry-refresh` keeps them.
+- `explain agents/<name>` closes with where the participant reads the definition and that its
+  values replace the agents list's (the registry wins for `model` and `skills`, the Operator's
+  ruling of 2026-11-21).
+
+Nothing to do for a layer list or a layer that holds skills only: they resolve as before. A
+section for `agents/...`, reported as "not in this release" until now, is resolved from this
+release.
+## [1.5.0] - 2026-11-20
+
+### Added
+
+- **The `db` source.** A layer can be the rows of a database: `kind: db` with `driver: sqlite`
+  (`path`) or `driver: postgres` (`host`, `port`, `database`, `user`, `sslmode`, and the password
+  as `auth.secret`, a `dcf-secret` name), and one of `table` or `query`, returning the columns
+  `section`, `key`, `type`, `data`, `locked`. The source (`registry-source-db`) renders them into a
+  `.reg` file in the layer copy (a multi-line `text` into a file read with `@file`); its version is
+  a hash of the rendered files; a bad row or an empty result fails the fetch with the reason, and
+  `resolve` keeps the last good copy. The database is opened read-only; the password reaches
+  `psql` in its environment only. Any other driver exits 3. The contract is in the Feature's notes.
+
+### Changed
+
+- A layer list naming `kind: db` is no longer reported as "not in this release".
+
+Needs `sqlite3` or `psql` in the image for the driver in use (this Feature does not install them;
+the source says how). Nothing to do for a layer list without a `db` source. Rebuild to get it.
 
 ## [1.4.0] - 2026-11-20
 

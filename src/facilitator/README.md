@@ -1,7 +1,7 @@
 
 # facilitator (conversations between agents of any vendor, on AGNTCY) (facilitator)
 
-The communication layer between agents of any vendor running in the devcontainer: an MCP server each participant's CLI starts (receive, reply, say, who) and a person's own Claude Code or Copilot session attaches to (say, mail, transcript, continue, who), one shared entry with the handle from FACILITATOR_HANDLE, deterministic routing by @handle with hop, budget and rate limits, every message a sign-packet packet in a register-engine conversation register, verified back to the human who began it. Runs on the AGNTCY Agent Directory (dirctl) and a SLIM node, on loopback, started as infrastructure; never starts, stops or configures a participant. Includes a local-model wrapper for any OpenAI-compatible endpoint and a turn hook line for Claude Code ('Facilitator: N new messages').
+The communication layer between agents of any vendor running in the devcontainer: an MCP server each participant's CLI starts (receive, reply, say, who) and a person's own Claude Code or Copilot session attaches to (say, mail, transcript, continue, who), one shared entry with the handle from FACILITATOR_HANDLE, deterministic routing by @handle with hop, budget and rate limits, every message a sign-packet packet in a register-engine conversation register, verified back to the human who began it. Installs the facilitator node bundle (its own CPython, dirctl, slimctl and the application, checksummed; the same bundle as the server image) and runs the AGNTCY Agent Directory and a SLIM node on loopback, started as infrastructure (mode node), or only the thin client (mode leaf); never starts, stops or configures a participant. Includes a local-model wrapper for any OpenAI-compatible endpoint and a turn hook line for Claude Code ('Facilitator: N new messages').
 
 ## Example Usage
 
@@ -17,8 +17,10 @@ The communication layer between agents of any vendor running in the devcontainer
 |-----|-----|-----|-----|
 | installTaskfile | Install this Feature's Taskfile into /usr/local/share/go-task/includes.d so its tasks appear under facilitator: in a root Taskfile that includes /usr/local/share/go-task/features.yml (the go-task Feature). | boolean | true |
 | backend | What carries the directory and delivery: agntcy (the AGNTCY Agent Directory and SLIM). lean (packet-relay) is refused in this version: not yet, slice 5. FACILITATOR_BACKEND overrides. | string | agntcy |
-| dirVersion | The AGNTCY Directory release (dirctl) to install, verified against the SHA-256 pinned in install.sh. latest means the version pinned here (1.9.1); another version needs its checksums added. | string | 1.9.1 |
-| slimVersion | The slimctl release (which carries the SLIM node: slimctl slim start) to install, verified against the SHA-256 pinned in install.sh. latest means the version pinned here (3.4.6). | string | 3.4.6 |
+| mode | node (the default): the whole bundle, and the Directory, the SLIM node and the facilitator's ssh-agent run here (autostart). leaf: the thin client only (facilitator mcp and what it needs; no slimctl): no daemon is started, infra up and node run are refused; it connects to a node over the network from slice N3. FACILITATOR_MODE. | string | node |
+| bundleVersion | The facilitator node bundle to install (a release asset of this repository, facilitator-bundle-v<version>), verified against the SHA-256 pinned in digests.txt. latest means the bundle this Feature version was made with (0.3.0). With no pin for it, the bundle is built from the Feature's own source, every upstream download checked against the SHA-256 pinned in bundle-build.sh. | string | 0.3.0 |
+| dirVersion | Deprecated in 0.3.0 (removed in 1.0.0): use bundleVersion. The bundle fixes dirctl's version (1.9.1); 1.9.1 or latest are accepted, with a deprecation line from install, version and check, and any other version is refused. | string | - |
+| slimVersion | Deprecated in 0.3.0 (removed in 1.0.0): use bundleVersion. The bundle fixes slimctl's version (3.4.6); 3.4.6 or latest are accepted, with a deprecation line from install, version and check, and any other version is refused. | string | - |
 | hopLimit | Hops since the message that began the chain (a person's later messages count too) before the conversation pauses; a person's continue resumes it. FACILITATOR_HOP_LIMIT. | string | 6 |
 | messageBudget | Messages a conversation may hold between two continue before participants' messages are held. FACILITATOR_MESSAGE_BUDGET. | string | 40 |
 | rateLimit | Messages a participant may write in a minute; one more is refused. FACILITATOR_RATE_LIMIT. | string | 10 |
@@ -26,8 +28,18 @@ The communication layer between agents of any vendor running in the devcontainer
 | staleSeconds | After this long without a receive a participant counts as not attached: its messages wait, and the sender is told. FACILITATOR_STALE_SECONDS. | string | 900 |
 | facilitatorBudget | Model calls the facilitator application may make per conversation. Read and shown; no model is called before slice 6. FACILITATOR_BUDGET. | string | 20 |
 | identity | Also run AGNTCY Identity (needs Docker). Refused in this version when true: not yet, slice 7. | boolean | false |
-| autostart | postStartCommand starts the infrastructure (facilitator infra up: the Directory, the SLIM node, the facilitator's ssh-agent), never fatally. Participants are never started. FACILITATOR_AUTOSTART. | boolean | true |
+| autostart | postStartCommand starts the infrastructure (facilitator infra up: the Directory, the SLIM node, the facilitator's ssh-agent), never fatally; nothing in mode leaf. Participants are never started. FACILITATOR_AUTOSTART. | boolean | true |
 | dirOnlineCheck | Check each pushed agent record against the online OASF schema server (schema.oasf.outshift.com); off, records are checked offline (the Directory's policy.operations: []). FACILITATOR_DIR_ONLINE_CHECK. | boolean | false |
+
+## Deprecated in 0.3.0: `dirVersion` and `slimVersion`
+
+The node bundle fixes the versions of `dirctl` (1.9.1) and `slimctl` (3.4.6), so the two options choose
+nothing any more. **Replaced by `bundleVersion`.** To move: delete `dirVersion` and `slimVersion` from your
+`devcontainer.json`, and set `bundleVersion` only if you need a bundle other than the one this Feature version
+was made with. Until then they keep working as before: the pinned version or `latest` is accepted (with one line
+`deprecated: use bundleVersion` from the install, `facilitator version` and `facilitator check`, on stderr), and
+any other version is refused, as it was for want of a checksum. They are removed in **1.0.0**, the next major,
+released only when no consumer's `devcontainer.json` names them.
 
 ## How it fits
 
@@ -44,6 +56,12 @@ The communication layer between agents of any vendor running in the devcontainer
         |  transport: SLIM (slim-bindings)     directory: AGNTCY Directory (dirctl)
         v
   infrastructure the Feature starts on loopback: dirctl daemon (8888, 5555, 8999, 8889), SLIM node (46357), ssh-agent
+
+  one node bundle per architecture, two installers:
+  bundles/facilitator/install.sh --(release-bundle, the Operator)--> facilitator-<v>-linux-<arch>.tar.gz + SHA256SUMS
+        |                                                                  |                       |
+        | copy: bundle-build.sh (source build, no pin yet)    this Feature (mode node | leaf)   the node image (a hub)
+        +-------------------------------------------------->  /opt/facilitator                 /opt/facilitator
 ```
 
 | Data | Where it lives | Storage tier |
@@ -54,6 +72,7 @@ The communication layer between agents of any vendor running in the devcontainer
 | What each person has read (the mail tool) | `mail/<handle>.json`, `mail/<handle>.notice` (mode 600) in the volume | 4 working set |
 | SLIM's secrets (basic-auth password, app secret) | OpenBao `facilitator/slim`; fallback `secrets/slim.json` (mode 600) | as the keys |
 | The Directory's records and node key | `dir/` in the volume | 4 working set |
+| The node bundle | `/opt/facilitator` in the image layer; the release asset on GitHub | none (rebuilt from the release; never in the volume) |
 
 Tiers are the four of ADR 0045: 1 git, 2 shared folder, 3 personal folder, 4 working set (rebuildable only).
 
@@ -95,24 +114,103 @@ it, how replies come back, routing, limits and the record.
 
 | Path | What |
 | --- | --- |
-| `/usr/local/bin/dirctl` | AGNTCY Directory v1.9.1 (CLI and daemon), the release asset, verified against the SHA-256 pinned in `install.sh` |
-| `/usr/local/bin/slimctl` | slimctl 3.4.6, which carries the SLIM node (`slimctl slim start`), from the gnu release tarball, verified the same way |
-| `/usr/local/lib/facilitator/venv/` | The Feature's own venv with `slim-bindings` 3.3.9 (it reports node 3.4.6): the manylinux wheel downloaded with the collection's download helper, checked against its pinned SHA-256, then installed with `pip --require-hashes --no-index` |
-| `/usr/local/lib/facilitator/` | The application (`facilitator/`), its own copies of register-engine's and sign-packet's libraries (ADR-0062: it installs alone), the `conversation` type (`types.d/facilitator.py`), the Directory's and SLIM's config templates (`agntcy/`), the options as installed (`options.env`) |
+| `/opt/facilitator/` | **The node bundle** (below): `bin/facilitator`, `bin/dirctl` (AGNTCY Directory 1.9.1, CLI and daemon), `bin/slimctl` (3.4.6, carries the SLIM node; not in mode `leaf`), `python/` (its own CPython 3.13.18), `lib/site-packages/` (`slim-bindings` 3.3.9, which reports node 3.4.6), `lib/facilitator/` (the application), `lib/registerengine/` and `lib/signpacket/` (its copies, ADR-0062), `lib/types.d/facilitator.py` (the `conversation` type), `lib/agntcy/` (the config templates), `MANIFEST.json` |
+| `/opt/facilitator/lib/options.env` | The options as installed |
+| `/usr/local/bin/facilitator`, `dirctl`, `slimctl` | Links into `/opt/facilitator/bin` (`slimctl` in mode `node` only) |
 | `/usr/local/lib/register-engine/types.d/facilitator.py` | The same type, for `register-engine verify --type conversation`, when the register-engine Feature is installed |
-| `/usr/local/bin/facilitator`, `facilitator-setup`, `facilitator-start` | The command (run isolated, `python -I`) and the post-create and post-start hooks |
+| `/usr/local/bin/facilitator-setup`, `facilitator-start` | The post-create and post-start hooks |
 | `/usr/local/share/go-task/includes.d/facilitator.yml` | The Taskfile (`installTaskfile`) |
 
-**How the downloads are verified.** Each download goes through the collection's download helper
-(`dcf_curl`, ADR-0034) and `sha256sum -c` against a SHA-256 pinned in `install.sh` per architecture
-(linux amd64 and arm64) before anything is installed; a mismatch fails the build. Where each hash came from
-(checked 2026-11-20): **dirctl** publishes no checksum file and no signature per asset; its pin is the
-GitHub release API's asset digest, which equals the subject of the release's SLSA provenance
-(`dirctl-v1.9.1.intoto.jsonl`; that provenance's own signature was not verified). **slimctl**: the release
-API's digest, for tarballs whose sigstore bundles were verified by identity (agntcy/slim's release-rust
-workflow) in the spike of 2026-11-19. **slim-bindings**: PyPI's SHA-256 for the wheel. No pip index is used,
-so no exception to ADR-0034 is needed. Python 3.11 or later, `python3-venv`, OpenSSH, curl and tar come from
-the distribution's apt when missing. glibc only (the pinned builds are gnu/manylinux).
+From the distribution's apt when missing: OpenSSH (the signer), curl, tar and gzip. **No Python from the
+system** since 0.3.0: the bundle carries its own. glibc only (the bundle's CPython, slimctl and wheel are the
+gnu/manylinux builds).
+
+## The bundle
+
+One built, checksummed **node bundle** per architecture (linux amd64 and arm64), the same bytes for this Feature
+and for the node image (ADR-0067, ruling Z1/C). It is built by one portable script,
+[`bundles/facilitator/install.sh`](../../bundles/facilitator/install.sh) (bash, curl, tar, gzip, sha256sum; never
+root), from this Feature's own source (the application and its copies of register-engine's and sign-packet's
+libraries, so the copy checks cover what the bundle carries):
+
+| In the bundle | From | Verified by |
+| --- | --- | --- |
+| `python/` | python-build-standalone 20261026, CPython 3.13.18 `install_only_stripped`, unchanged but for one `.pth` line naming `lib/site-packages` | its SHA-256, pinned in the script; the release's `SHA256SUMS`, the GitHub API digest and its GitHub build attestation (`gh attestation verify --repo astral-sh/python-build-standalone`) agreed on 2026-11-20 |
+| `bin/dirctl` | AGNTCY Directory v1.9.1 release asset | its SHA-256: the GitHub API digest, equal to the subject of the release's SLSA provenance (`dirctl-v1.9.1.intoto.jsonl`; that provenance's signature not verified); dirctl publishes no checksum file |
+| `bin/slimctl` | slimctl 3.4.6 gnu tarball | its SHA-256: the GitHub API digest, for a tarball whose sigstore bundle was verified by identity (agntcy/slim's release-rust workflow) in the spike of 2026-11-19 |
+| `lib/site-packages/slim_bindings` | slim-bindings 3.3.9 manylinux wheel | PyPI's SHA-256, then `pip --require-hashes --no-index` |
+
+Every download goes through the collection's download helper (`dcf_curl`, ADR-0034). `MANIFEST.json` records
+the bundle's version, architecture, source commit, and each piece's version, URL and SHA-256. The same inputs give
+the same bytes on one build host (sorted names, owner 0, times clamped to the source commit, `gzip -n`).
+
+**Where this Feature takes it from**, the first that applies:
+
+1. `bundle/facilitator-<v>-linux-<arch>.tar.gz` in the Feature's folder, staged by `task bundle:stage` for the
+   Feature tests (git-ignored);
+2. `FACILITATOR_ASSETS=<folder>` holding that file, for offline builds;
+3. the release `facilitator-bundle-v<bundleVersion>` of this repository, **when `digests.txt` pins the asset**:
+   downloaded and checked against the pin;
+4. otherwise the bundle is **built here from the Feature's own source** by `bundle-build.sh` (a byte-identical
+   copy of the script, `task bundle:check`), each upstream piece checked against the script's pins. This is how
+   0.3.0 installed, published before its bundle; since 0.3.1 `digests.txt` pins the release
+   `facilitator-bundle-v0.3.0`, so the bundle is downloaded and checked instead.
+
+A local file (1, 2) is checked against the pin when there is one, and refused when it differs; without a pin it is
+checked against the `SHA256SUMS` beside it and the install says it is unpinned. The bundle is never cached in the
+state volume: the Feature installs while the image is built, when no volume is mounted, so the cache is Docker's
+layer cache of the Feature's step (and `FACILITATOR_ASSETS` for offline builds).
+
+**Verify a bundle by hand:**
+
+```sh
+v=0.3.0; tag=facilitator-bundle-v$v
+gh release download $tag --repo nabil-becker/devcontainer-features --pattern 'SHA256SUMS' --pattern "facilitator-$v-linux-amd64.tar.gz"
+sha256sum -c --ignore-missing SHA256SUMS                       # the file against the release's sums
+grep "facilitator-$v-linux-amd64.tar.gz" src/facilitator/digests.txt   # the same digest as the Feature's pin
+gh attestation verify facilitator-$v-linux-amd64.tar.gz --repo nabil-becker/devcontainer-features   # built by release-bundle
+tar -xzOf facilitator-$v-linux-amd64.tar.gz facilitator/MANIFEST.json   # what is inside, and each piece's SHA-256
+```
+
+**The release sequence** (ruling AC; the Operator starts each workflow, an agent never does):
+
+1. A pull request changes the application or the bundle script and bumps the application version; it merges.
+2. The Operator runs **`release-bundle`** (Actions, on `main`): amd64 on `ubuntu-latest`, arm64 on
+   `ubuntu-24.04-arm`, each built natively and smoke-tested, then one release `facilitator-bundle-v<v>` with both
+   tarballs, one `SHA256SUMS` and a build attestation per tarball.
+3. A pull request pins it: `task bundle:pin -- <v>` checks each asset against `SHA256SUMS`, GitHub's digest and its
+   attestation, and appends the lines to `digests.txt`; the Feature's version and CHANGELOG move with it.
+4. The Operator merges it and runs the Feature **release**.
+5. The Operator runs **`release-node-image`**: the released assets, refused unless they match `digests.txt` on
+   `main`, become `ghcr.io/nabil-becker/facilitator-node:<v>` (amd64 and arm64) with an attestation.
+
+## The node image (a hub)
+
+A node with no developer, for an intranet hub, built from the same bundle
+([`bundles/facilitator/Dockerfile`](../../bundles/facilitator/Dockerfile)): `debian:trixie-slim` by digest, plus
+`ca-certificates`, `openssh-client` and `tini`; the bundle verified against its `SHA256SUMS` in a build stage and
+copied to `/opt/facilitator`; user `facilitator` (uid 10001), no login shell; state in the volume
+`/var/lib/devcontainer-features/facilitator` (the Feature's path, NFR-1); `/etc/facilitator/facilitator.yml` and
+`participants.yml` mounted read-only when wanted; `ENTRYPOINT tini -- facilitator node run`;
+`HEALTHCHECK facilitator infra status`; nothing exposed. `facilitator node run` starts the ssh-agent, the Directory
+and SLIM, stays in the foreground, stops all three on a signal and exits non-zero when one dies, so the
+container's restart policy supervises it. In 0.3.0 it runs **role standalone**: every port on loopback inside the
+container; the hub's networking and trust come with slice N3.
+
+The sample [`bundles/facilitator/compose.yml`](../../bundles/facilitator/compose.yml) runs the hub beside an
+OpenBao 2.7.2 (by digest) on an internal network that publishes nothing (ruling AI). OpenBao starts sealed:
+initialise it once and unseal it by hand after every start (ruling AB), from your own terminal:
+
+```sh
+docker compose -f bundles/facilitator/compose.yml up -d
+docker compose -f bundles/facilitator/compose.yml exec openbao bao operator init     # once; keep the shares
+docker compose -f bundles/facilitator/compose.yml exec openbao bao operator unseal   # after every start
+docker compose -f bundles/facilitator/compose.yml exec hub facilitator check
+```
+
+Locally: `task bundle:build`, `task bundle:image` (tags `facilitator-node:<v>-local`), `task test:facilitator-image`.
+Why not AGNTCY's own images or Helm charts (NFR-9): they run one daemon each, with no supervisor for the three
+processes a node needs and no bundle shared with this Feature (not checked against their latest releases).
 
 ## Using it in devcontainer.json
 
@@ -151,7 +249,7 @@ facilitator:
 ## Verify
 
 ```sh
-facilitator version          # facilitator 0.1.0 (backend agntcy; ...), dirctl 1.9.1, slimctl 3.4.6, slim-bindings 3.4.6
+facilitator version          # facilitator 0.3.0 (backend agntcy; mode node; ...), bundle 0.3.0 linux-amd64, dirctl 1.9.1, slimctl 3.4.6
 facilitator infra status     # agent, dir and slim healthy, every port on 127.0.0.1
 facilitator check            # one line per part; exit 0 when ready
 ```
@@ -222,8 +320,10 @@ minute, which a person's messages are not counted against) are unchanged.
 | --- | --- | --- |
 | `installTaskfile` | `true` | The Taskfile, as every Feature. |
 | `backend` | `agntcy` | What carries the directory and delivery. `lean` (packet-relay) is refused in this version: "not yet: slice 5". `FACILITATOR_BACKEND`. |
-| `dirVersion` | `1.9.1` | The Directory release; `latest` means the pinned 1.9.1. Another version needs its two checksums added to `install.sh`. |
-| `slimVersion` | `3.4.6` | The slimctl release (the SLIM node); `latest` means the pinned 3.4.6 (3.5.0 has an image but no release yet, ruling G). |
+| `mode` | `node` | `node`: the whole bundle; the Directory, the SLIM node and the ssh-agent run here (`autostart`). `leaf`: **the thin client only**, for a machine that runs no node: the bundle without `slimctl`, no daemon at container start, `infra up` and `node run` refused, `check` ready without them. A leaf connects to a node over the network from slice N3 (`facilitator mcp --node`); in 0.3.0 it installs and answers MCP but has no node to reach. `FACILITATOR_MODE`. |
+| `bundleVersion` | `0.3.0` | The node bundle (the release `facilitator-bundle-v<version>`), checked against `digests.txt`; `latest` means the bundle this Feature version was made with. With no pin, the bundle is built from the Feature's own source (above). |
+| `dirVersion` | empty | **Deprecated in 0.3.0** (above): `1.9.1` or `latest` accepted with a notice, anything else refused. |
+| `slimVersion` | empty | **Deprecated in 0.3.0** (above): `3.4.6` or `latest` accepted with a notice, anything else refused. |
 | `hopLimit` | `6` | Hops since the message that began the chain (a person's later messages count too) before the conversation pauses. `FACILITATOR_HOP_LIMIT`. |
 | `messageBudget` | `40` | Messages between two `continue`; past it participants' messages are kept and held. `FACILITATOR_MESSAGE_BUDGET`. |
 | `rateLimit` | `10` | Messages a participant may write in a minute; one more is refused, not written. `FACILITATOR_RATE_LIMIT`. |
@@ -231,7 +331,7 @@ minute, which a person's messages are not counted against) are unchanged.
 | `staleSeconds` | `900` | Without a `receive` for this long a participant counts as not attached. `FACILITATOR_STALE_SECONDS`. |
 | `facilitatorBudget` | `20` | Model calls per conversation for the AI facilitator; read and shown, unused before slice 6. `FACILITATOR_BUDGET`. |
 | `identity` | `false` | AGNTCY Identity (needs Docker); `true` is refused: "not yet: slice 7". |
-| `autostart` | `true` | `postStartCommand` runs `facilitator infra up`, never fatally. Turn off to start it by hand. `FACILITATOR_AUTOSTART`. |
+| `autostart` | `true` | `postStartCommand` runs `facilitator infra up`, never fatally; nothing in mode `leaf`. Turn off to start it by hand. `FACILITATOR_AUTOSTART`. |
 | `dirOnlineCheck` | `false` | Check each pushed record against the online OASF schema server; off, the Directory checks nothing (`policy.operations: []`, ruling F). |
 
 **Settings are plain variables too** (NFR-6), resolved: the command line, the repository's `.env`,
@@ -298,7 +398,8 @@ mistake, not an attacker.
 | `facilitator:snippet` | `facilitator snippet <handle>` | The one shared `claude mcp add` command (or MCP entry), the `FACILITATOR_HANDLE` and `FACILITATOR_TOKEN` lines, the persona sentence; for a person, the turn hook and the Copilot note. |
 | (a harness, or the person's CLI, runs it) | `facilitator mcp [--as <handle>]` | The MCP server a CLI starts; the handle from `FACILITATOR_HANDLE` when `--as` is absent (exit 2, naming both, when neither is set). |
 | (a harness runs it) | `facilitator model --as <h> --endpoint <url> --model <m> --definition <file>` | The local-model wrapper. |
-| (`postStartCommand`) | `facilitator-start` | Tokens made again; `infra up` when `autostart`. |
+| (`postStartCommand`) | `facilitator-start` | Tokens made again; `infra up` when `autostart`; nothing in mode `leaf`. |
+| (the node image's entrypoint; no task) | `facilitator node run` | The node in the foreground: setup, then the ssh-agent, the Directory and SLIM; a signal stops all three (exit 0), one dying stops the rest (exit 1). In a devcontainer use `infra up` instead. Refused in mode `leaf`. |
 
 Removed in 0.2.0: `chat`, `send` and `continue` (a person's `continue` is the MCP tool, so no process
 without the person's token can continue a conversation).
@@ -356,11 +457,14 @@ each delivery in its route.
   the entry), and its `agent-adapter-copilot run-once` is the pump's route.
 - **register-engine**: optional; with it, `register-engine verify <store> --register <id> --type conversation`
   reads a conversation too. This Feature carries its own copy of the engine and of sign-packet's library.
-- **go-task**: the Taskfile. Needs Python 3.11 and OpenSSH, installed with apt when missing.
+- **go-task**: the Taskfile. Needs OpenSSH, installed with apt when missing; no system Python (the bundle has its own).
 
 ## Limits
 
-- One container: participants, the Directory and SLIM are on loopback; across containers is a later item.
+- One container: participants, the Directory and SLIM are on loopback; across containers is slice N3. A leaf
+  (`mode: leaf`) installs but has no node to reach before then; the node image runs role standalone.
+- The arm64 bundle is built (a cross build) and checked here, but runs only on the arm64 runner of
+  `release-bundle`; nothing on arm64 runs in CI's Feature tests.
 - `agntcy` only; `lean` (packet-relay) is slice 5, and there is **no silent fallback**: when the
   Directory or SLIM cannot start, `check` says why.
 - No model in the facilitator (slice 6): a group message addressed to no one goes to the `fallback`
@@ -399,11 +503,16 @@ infrastructure and adds what they leave out.
 
 ## Version and upgrade
 
-Pinned: dirctl 1.9.1, slimctl 3.4.6, slim-bindings 3.3.9 (node and bindings move together). An upgrade
-of the Feature replaces the library and the binaries; the volume (conversations, keys, tokens, the
-Directory's data) is kept. A new AGNTCY version is a new Feature version with its checksums added; the
-Directory config template follows the pinned dirctl's `daemon config init`. 0.x: the MCP tools, the
-packet fields and the CLI verbs may still change before 1.0.
+Pinned, in the bundle: CPython 3.13.18, dirctl 1.9.1, slimctl 3.4.6, slim-bindings 3.3.9 (node and bindings move
+together). An upgrade of the Feature replaces `/opt/facilitator` whole; the volume (conversations, keys, tokens,
+the Directory's data) is kept. A new AGNTCY or CPython version is a new bundle (the script's pins), released by
+`release-bundle` and pinned in `digests.txt`. 0.x: the MCP tools, the packet fields and the CLI verbs may still
+change before 1.0.
+
+**From 0.2.0 to 0.3.0:** rebuild the container. The tree moves from `/usr/local/lib/facilitator` to
+`/opt/facilitator` (the commands stay on `PATH`); the Feature no longer installs Python from apt; drop
+`dirVersion` and `slimVersion` (deprecated). A Directory that refused to start after a container was removed
+("daemon already running") now starts: its stale `daemon.pid` is removed.
 
 **From 0.1.0 to 0.2.0:** `chat`, `send` and `continue` are removed from the command line and the Taskfile
 (talk from your own Claude Code session, above); `facilitator register you` again (or `--all`) to make
@@ -421,11 +530,57 @@ person's messages now count as hops.
 | `facilitator/mcp.py`, `model.py`, `transcript.py`, `cli.py` | the MCP server, the model wrapper, the transcript, the command |
 | `types.d/facilitator.py` | the `conversation` register type |
 | `registerengine/`, `signpacket/` | copies of `src/register-engine` and `src/sign-packet` (`task registerengine:check`, `task signpacket:check`) |
+| `bundle-build.sh` | the copy of `bundles/facilitator/install.sh` (`task bundle:check`) |
+| `digests.txt` | the SHA-256 of each released bundle asset, one line each (`task bundle:pin`) |
 
-Tests: `test/facilitator/unit/` (`task test:facilitator-unit`, part of `task lint`) and
+Tests: `test/facilitator/unit/` (`task test:facilitator-unit`, part of `task lint`; `test_feature.py` builds a
+skeleton bundle and installs it), `test/facilitator/node_image.sh` (`task test:facilitator-image`) and
 `test/facilitator/integration/jester_flow.py` (`task test:facilitator-integration`; the `jester_flow` scenario).
 
 ## Changes
+
+### [0.3.1] - 2026-11-21
+
+#### Changed
+
+- The Feature now installs the published node bundle `facilitator-bundle-v0.3.0` (amd64 and arm64), pinned
+  in `digests.txt` after checking its SHA256SUMS, GitHub's recorded digest and its build attestation. 0.3.0
+  was published before the bundle, so it built the bundle from source during every install (about 250 MB of
+  downloads); 0.3.1 downloads the one verified bundle instead. Nothing to change in your configuration;
+  rebuild the container to pick it up.
+
+### [0.3.0] - 2026-11-20
+
+The facilitator becomes a node bundle (slice N2 of the facilitator-node proposal, ADR-0067): one built,
+checksummed bundle per architecture that both this Feature and a new node image install. Rebuild the container.
+
+#### Added
+
+- **The node bundle** at `/opt/facilitator`: the application, its own CPython 3.13.18 (python-build-standalone),
+  `dirctl`, `slimctl`, `slim-bindings` and a `MANIFEST.json`, built by `bundles/facilitator/install.sh`. The Feature
+  installs the release `facilitator-bundle-v<version>` when `digests.txt` pins it, and otherwise builds the same
+  bundle from its own source (every upstream piece checked against its pinned SHA-256). No Python is taken from
+  the system any more.
+- Option **`bundleVersion`** (default `0.3.0`; `latest` is the bundle this Feature version was made with).
+- Option **`mode`**: `node` (the default, as before) or `leaf`, the thin client only: no `slimctl`, no daemon
+  started, `infra up` and `node run` refused, `check` ready without them. A leaf reaches a node over the network
+  from slice N3.
+- `facilitator node run`: the node in the foreground, the node image's entrypoint (a signal stops it, a part that
+  dies stops the rest with exit 1).
+- `facilitator version` and `check` name the mode and the bundle.
+- The node image (`bundles/facilitator/Dockerfile`, a hub: debian slim, user `facilitator`, `tini`, state in the
+  volume) and a sample `compose.yml` with OpenBao beside it; the manual workflows `release-bundle` and
+  `release-node-image`, which the Operator starts.
+
+#### Deprecated
+
+- **`dirVersion` and `slimVersion`**: use `bundleVersion`. The bundle fixes dirctl 1.9.1 and slimctl 3.4.6; those
+  versions or `latest` still work, with a `deprecated: use bundleVersion` line from the install, `version` and
+  `check`; removed in 1.0.0. Delete them from your `devcontainer.json`.
+
+#### Fixed
+
+- The Directory starts after a container was removed: a stale `daemon.pid` is removed before it starts.
 
 ### [0.2.0] - 2026-11-20
 
@@ -468,28 +623,6 @@ essentially making it just accessible through the MCP").
 - `facilitator send` and the task `facilitator:send`.
 - `facilitator continue`: the MCP tool `continue` of a person's session replaces it, so continuing needs
   the person's token.
-
-### [0.1.0] - 2026-11-20
-
-#### Added
-
-- The facilitator, first version, on AGNTCY (ADR-0061, slice 3 of the facilitator proposal): conversations
-  between agents of any vendor in one devcontainer, by `@handle`, with a hop limit, a message budget and a
-  rate limit, every message a signed packet in a register-engine `conversation` register, and
-  `facilitator verify` walking each message back to the human who began the chain.
-- The MCP server `facilitator mcp --as <handle>` (tools `receive`, `reply`, `say`, `who`), authenticated by a
-  participant token; the local-model wrapper `facilitator model`; `facilitator chat`, `send` and
-  `transcript --json`; `facilitator snippet` for attaching a Claude Code participant.
-- The infrastructure on loopback, started by `facilitator infra up` and by `autostart`: the AGNTCY Directory
-  (dirctl 1.9.1) and a SLIM node (slimctl 3.4.6), each pinned by SHA-256; slim-bindings 3.3.9 in the
-  Feature's own venv.
-- Keys in OpenBao when it is ready; otherwise, in mode-600 files in the volume. This fallback stays for the 0.x
-  versions and is removed at 1.0, when a key will only ever be in OpenBao.
-- Every `@handle` in a message is delivered, each once, as the proposal's routing rule 1 says: "@jester tell
-  @domain-expert-one a joke" goes to both (the Operator's ruling of 2026-11-20). The hop count bounds the chain.
-- The participant token reaches `facilitator mcp` through the agent's environment, set by its harness, never in
-  the CLI's MCP entry, because tokens are made again at each start.
-- Version 0.1.0 rather than 1.0.0: the MCP tools, the packet fields and the verbs may change before 1.0.
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/facilitator/CHANGELOG.md).
 

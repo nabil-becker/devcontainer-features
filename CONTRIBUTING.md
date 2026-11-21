@@ -343,6 +343,22 @@ go-task registry (see the go-task Feature's notes).
 - Sourced test helpers need `# shellcheck disable=SC1091`; single-quoted
   `bash -c` bodies need `# shellcheck disable=SC2016`.
 
+### The Docker cache in this devhost
+
+The devhost keeps no Docker cache. Its docker-in-docker daemon (the
+`/var/lib/docker` volume) is used only for `task test`, and a cache there once
+filled the host drive. So:
+
+- Every start of the devhost empties the daemon (`.devcontainer/dind-clean.sh`,
+  run by `postStartCommand`): images, containers, volumes and the build cache.
+  It skips with one line when no daemon answers (wslc).
+- `task test`, `task test:global` and `task test:devhost:docker` do the same after each run, pass or fail.
+- All three refuse to start with less than 20 GB free where `/var/lib/docker`
+  lives (`.devcontainer/dind-guard.sh`). `FORCE=1 task test` overrides.
+- The build cache is not capped with a BuildKit setting: the Feature starts
+  dockerd before any script of this repo runs, so a `daemon.json` written
+  later would need a daemon restart. Pruning after each run does the job.
+
 ### `NOTES.md`
 
 Requirement NFR-8 (`docs/principles/non-functional-requirements.md`) says

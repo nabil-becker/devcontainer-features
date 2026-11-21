@@ -565,6 +565,16 @@ type = "concept"
 term = "registry-path"
 summary = "The agents list key giving one agent its who-you-are path for the start hook."
 
+[agent-definition]
+type = "concept"
+term = "Agent definition"
+summary = "A component registry entry agents/<name> setting an agent's model and skills; the registry wins over the agents list for those two fields, and no identity, lease or permission key can be set."
+
+[layer-namespace]
+type = "concept"
+term = "Layer namespace"
+summary = "A name on a registry layer that prefixes every component it brings; layers sharing a namespace merge with each other, and different namespaces never mix (ADR-0073)."
+
 [own-skills-folder]
 type = "concept"
 term = "Own skills folder"
@@ -1296,6 +1306,26 @@ summary = "The facilitator nodes that trust each other; each node has its own me
 type = "mechanism"
 term = "Trust level"
 summary = "How far a facilitator node trusts a client or peer: local, private or public; MCP over HTTP clients are public by default."
+
+[node-bundle]
+type = "product"
+term = "Node bundle"
+summary = "The built, checksummed package of one facilitator release and architecture, with its own Python, dirctl and slimctl; the Feature and the server image install from it."
+
+[thin-client]
+type = "product"
+term = "Thin client"
+summary = "The stdio MCP server facilitator mcp: it starts no daemon and talks only to a node."
+
+[join-token]
+type = "mechanism"
+term = "Join token"
+summary = "A single-use, 15-minute token a person makes so that a node or leaf client can join a private trust domain."
+
+[facilitator-mode]
+type = "mechanism"
+term = "Facilitator mode"
+summary = "The Feature option mode: node or leaf; leaf installs only the bundle and the thin client and signs with its own key."
 
 [deprecation]
 type = "mechanism"
