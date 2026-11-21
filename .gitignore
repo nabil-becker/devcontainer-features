@@ -21,3 +21,8 @@ __pycache__/
 
 # Pester -CI output (task test:bootstrap, the Lint workflow)
 testResults.xml
+
+# The facilitator node bundle: built locally (task bundle:build) and staged into the Feature for its tests
+# (task bundle:stage); a released bundle is a release asset, never a file in git.
+/dist/
+/src/facilitator/bundle/

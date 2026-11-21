@@ -28,6 +28,37 @@ here; `task lint` fails when the entry is missing.
 Nothing to do for a layer list or a layer that holds skills only: they resolve as before. A
 section for `agents/...`, reported as "not in this release" until now, is resolved from this
 release.
+## [1.5.0] - 2026-11-20
+
+### Added
+
+- **The `db` source.** A layer can be the rows of a database: `kind: db` with `driver: sqlite`
+  (`path`) or `driver: postgres` (`host`, `port`, `database`, `user`, `sslmode`, and the password
+  as `auth.secret`, a `dcf-secret` name), and one of `table` or `query`, returning the columns
+  `section`, `key`, `type`, `data`, `locked`. The source (`registry-source-db`) renders them into a
+  `.reg` file in the layer copy (a multi-line `text` into a file read with `@file`); its version is
+  a hash of the rendered files; a bad row or an empty result fails the fetch with the reason, and
+  `resolve` keeps the last good copy. The database is opened read-only; the password reaches
+  `psql` in its environment only. Any other driver exits 3. The contract is in the Feature's notes.
+
+### Changed
+
+- A layer list naming `kind: db` is no longer reported as "not in this release".
+
+Needs `sqlite3` or `psql` in the image for the driver in use (this Feature does not install them;
+the source says how). Nothing to do for a layer list without a `db` source. Rebuild to get it.
+
+## [1.4.0] - 2026-11-20
+
+### Added
+
+- **`dcf-registry explain --color auto|always|never`.** `explain` paints each resolved line by the
+  layer it came from, with a legend at the top (layer id and colour name), and shows skipped lines
+  and dangling refs dim and struck through. Six colours of the Okabe-Ito set, chosen to stay
+  distinguishable with the usual colour-vision deficiencies; the layer id is on every line, so
+  colour is never the only signal. The default, `auto`, colours only when stdout is a terminal and
+  `NO_COLOR` is unset; `always` colours regardless (also over `NO_COLOR`); `never` does not. Without
+  colour the output is byte for byte that of 1.3.0, so scripts keep working. Nothing to act on.
 
 ## [1.3.0] - 2026-11-20
 

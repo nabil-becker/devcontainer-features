@@ -70,6 +70,29 @@ An agent says a release is due and what it would publish; it never runs it. Unti
 Feature cannot be named in `installsAfter` or pulled by a consumer. The release workflow needs
 no write access: READMEs are committed, and the lint workflow checks they are current.
 
+**A Feature that installs a release asset** (the facilitator and its node bundle, ruling AC of
+[facilitator-node](../proposals/facilitator-node.md)) adds two manual workflows around the release, each
+started by the Operator:
+
+```mermaid
+flowchart TB
+  b["Topic branch: the application or bundles/facilitator/install.sh"] --> pr1["Pull request, required checks<br/>(the Feature tests build the bundle from source)"]
+  pr1 --> m1["Operator squash merges"]
+  m1 --> rb["release-bundle workflow<br/>manual, the Operator starts<br/>amd64 on ubuntu-latest, arm64 on ubuntu-24.04-arm"]
+  rb --> asset["Release facilitator-bundle-v version<br/>two tarballs, SHA256SUMS, build attestations"]
+  asset --> pr2["Pull request: task bundle:pin<br/>the digests into src/facilitator/digests.txt"]
+  pr2 --> m2["Operator squash merges"]
+  m2 --> rel["release workflow<br/>manual, the Operator starts"]
+  rel --> reg["feature-registry"]
+  m2 --> img["release-node-image workflow<br/>manual, the Operator starts<br/>refuses an asset that differs from the pin"]
+  img --> ghcr["ghcr.io facilitator-node: version<br/>amd64 and arm64, attested"]
+```
+
+`release-bundle` needs `contents: write`, `id-token: write` and `attestations: write`; `release-node-image`
+`packages: write` too; `release.yaml` keeps `contents: read` and `packages: write`. Sources:
+`.github/workflows/release-bundle.yaml`, `.github/workflows/release-node-image.yaml`, `src/facilitator/NOTES.md`
+("The bundle").
+
 ## 4. A con's job
 
 ```mermaid

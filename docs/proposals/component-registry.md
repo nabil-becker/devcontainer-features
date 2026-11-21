@@ -235,7 +235,7 @@ exit codes: 0 done, 1 failed, 2 bad use, 3 not supported (the Feature falls back
 | `http` | component-registry | `url` (a `.reg` file or an archive) | `auth`: bearer, header or basic; secret through `dcf-secret`; none for an open endpoint |
 | `path` | component-registry | `path` (a file share is mounted on the host by the launcher, `DCF_HOST_*`) | the folder's own permissions |
 | `cloud-folder` | cloud-folder | `remote` | its existing rclone set-up |
-| `db` | a later release | connection and query | `dcf-secret` |
+| `db` | component-registry (1.5.0) | `driver` (`sqlite` or `postgres`); `path`, or `host`, `port`, `database`, `user`, `sslmode`; one of `table` or `query` returning `(section, key, type, data, locked)` | `auth.secret` (the postgres password) through `dcf-secret`, into the client's environment only |
 
 Review and release are the owner's, before the source; the registry reads what is there.
 
@@ -244,7 +244,7 @@ Review and release are the owner's, before the source; the registry reads what i
 | Verb | Task (NFR-2) | Does |
 |---|---|---|
 | `dcf-registry resolve [--as <path>]` | `registry:resolve` | fetch each layer (`version` first, so an unchanged layer is skipped), merge (section 3.3), write the resolved view to a temporary folder and swap it in, hand each kind to its consumer, remove copies it owns that no layer still names; idempotent (NFR-5) |
-| `dcf-registry explain <path> [--uses]` | `registry:explain` | read-only: every line of a resolved component with the layer it came from and the version that layer was read at; skipped lines and why; refs that point at nothing; `--uses` lists what refers to the path |
+| `dcf-registry explain <path> [--uses] [--color auto\|always\|never]` | `registry:explain` | read-only: every line of a resolved component with the layer it came from and the version that layer was read at; skipped lines and why; refs that point at nothing; `--uses` lists what refers to the path; `--color` (1.4.0) paints each line by its layer with a legend, in six colours chosen for colour-vision deficiencies and with the layer id always printed, skipped lines and dangling refs dim and struck through; `auto` colours only on a terminal without `NO_COLOR`, and without colour the text is unchanged |
 
 A lock file in the state folder serialises two `resolve` runs.
 
@@ -553,8 +553,9 @@ classDiagram
    decides what consumers of the devhost Feature get: the template `devhost-init` copies made the
    base layer only, or consumers adding the component-registry Feature and a layer list naming the
    devhost layer.
-5. **Later releases**: the `db` source; prompts and settings as component kinds. Agent definitions
-   are built (section 6.1: `model` and `skills`, the agents list winning).
+5. **The `db` source**: *built* (component-registry 1.5.0; sqlite and postgres through the `sqlite3` and `psql` CLIs on PATH, the row contract in the Feature's NOTES).
+6. **Later releases**: prompts and settings as component kinds. Agent definitions are built
+   (section 6.1, component-registry 1.6.0: `model` and `skills`, the agents list winning).
 
 ## 13. Relation to other work
 

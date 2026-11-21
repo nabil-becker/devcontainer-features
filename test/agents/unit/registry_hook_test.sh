@@ -77,6 +77,8 @@ repo="$T/repo"; mkdir -p "$repo/.devcontainer" "$T/layer"
 export SESS_A="$T/sess-a" CALLS_A="$T/calls-a" CALLS_B="$T/calls-b" T_SKILL="$T/skill-seen" MODELS_A="$T/models-a" MODELS_B="$T/models-b"
 export AGENTS_SHARE_DIR="$T/agshare" AGENTS_STATE_DIR="$T/state" AGENTS_START_ID=start-1 AGENTS_SETTLE_INTERVAL=0 AGENTS_SETTLE_TIMEOUT=0
 export COMPONENT_REGISTRY_STATE_DIR="$T/regstate" COMPONENT_REGISTRY_SHARE_DIR="$T/share"
+# the test isolation rule: anything that can reach handover never touches the real Claude Code config
+export CLAUDE_CONFIG_DIR="$T/claude-config"; mkdir -p "$CLAUDE_CONFIG_DIR"
 unset AGENTS_FILE AGENTS_FILE_TASK_VAR AGENTS_TTY CLAUDE_CODE_CHILD_SESSION AGENTS_SESSION_NAME AGENTS_SESSION_NAME_TASK_VAR AGENT_SESSION_NAME DCF_HOST_MACHINE
 unset COMPONENT_REGISTRY_WHOAMI COMPONENT_REGISTRY_FILE COMPONENT_REGISTRY_WHOAMI_TASK_VAR COMPONENT_REGISTRY_FILE_TASK_VAR
 cat > "$T/layer/a.reg" <<'EOF'

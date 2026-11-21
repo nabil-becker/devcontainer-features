@@ -1,13 +1,14 @@
 #!/usr/bin/env -S python3 -I
-"""The facilitator command. Installed, its first line names the Feature's venv (slim-bindings is there) and
-the library is /usr/local/lib/facilitator; in the source tree the library is the folder above this one.
+"""The facilitator command. In the node bundle its first line names the bundle's own interpreter
+(/opt/facilitator/python/bin/python3, which finds slim-bindings in lib/site-packages) and the library is the
+bundle's lib/; in the source tree the library is the folder above this one.
 Isolated (-I): nothing in the caller's environment or working folder stands in for the code that signs,
 checks and routes, and register-engine reads its types folder only from an isolated process."""
 import sys
 from pathlib import Path
 
 here = Path(__file__).resolve().parents[1]
-lib = here if (here / "facilitator" / "__init__.py").is_file() else here / "lib" / "facilitator"
+lib = here if (here / "facilitator" / "__init__.py").is_file() else here / "lib"
 sys.path[:0] = [str(lib)]
 from facilitator.cli import main  # noqa: E402
 

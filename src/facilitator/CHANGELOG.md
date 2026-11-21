@@ -6,6 +6,39 @@ of the Feature and whether they must act (an option renamed, a task removed, a r
 The version in `devcontainer-feature.json` is bumped in the same change that adds its entry
 here; `task lint` fails when the entry is missing.
 
+## [0.3.0] - 2026-11-20
+
+The facilitator becomes a node bundle (slice N2 of the facilitator-node proposal, ADR-0067): one built,
+checksummed bundle per architecture that both this Feature and a new node image install. Rebuild the container.
+
+### Added
+
+- **The node bundle** at `/opt/facilitator`: the application, its own CPython 3.13.18 (python-build-standalone),
+  `dirctl`, `slimctl`, `slim-bindings` and a `MANIFEST.json`, built by `bundles/facilitator/install.sh`. The Feature
+  installs the release `facilitator-bundle-v<version>` when `digests.txt` pins it, and otherwise builds the same
+  bundle from its own source (every upstream piece checked against its pinned SHA-256). No Python is taken from
+  the system any more.
+- Option **`bundleVersion`** (default `0.3.0`; `latest` is the bundle this Feature version was made with).
+- Option **`mode`**: `node` (the default, as before) or `leaf`, the thin client only: no `slimctl`, no daemon
+  started, `infra up` and `node run` refused, `check` ready without them. A leaf reaches a node over the network
+  from slice N3.
+- `facilitator node run`: the node in the foreground, the node image's entrypoint (a signal stops it, a part that
+  dies stops the rest with exit 1).
+- `facilitator version` and `check` name the mode and the bundle.
+- The node image (`bundles/facilitator/Dockerfile`, a hub: debian slim, user `facilitator`, `tini`, state in the
+  volume) and a sample `compose.yml` with OpenBao beside it; the manual workflows `release-bundle` and
+  `release-node-image`, which the Operator starts.
+
+### Deprecated
+
+- **`dirVersion` and `slimVersion`**: use `bundleVersion`. The bundle fixes dirctl 1.9.1 and slimctl 3.4.6; those
+  versions or `latest` still work, with a `deprecated: use bundleVersion` line from the install, `version` and
+  `check`; removed in 1.0.0. Delete them from your `devcontainer.json`.
+
+### Fixed
+
+- The Directory starts after a container was removed: a stale `daemon.pid` is removed before it starts.
+
 ## [0.2.0] - 2026-11-20
 
 The facilitator is reached only through MCP (the Operator's ruling of 2026-11-20: "remove the chat,

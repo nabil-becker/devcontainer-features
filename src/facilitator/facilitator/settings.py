@@ -33,8 +33,11 @@ DEFAULTS = {
     "FACILITATOR_KEYS": "auto",
     "FACILITATOR_DIRCTL": "dirctl",
     "FACILITATOR_SLIMCTL": "slimctl",
+    "FACILITATOR_MODE": "node",
+    "FACILITATOR_DEPRECATED": "",
 }
 BACKENDS = ("agntcy", "lean")
+MODES = ("node", "leaf")
 
 
 class SettingsError(ValueError):
@@ -124,6 +127,18 @@ class Settings:
             raise SettingsError("FACILITATOR_BACKEND=lean: not yet: slice 5 (the lean hatch on packet-relay); "
                                 f"this version runs agntcy only (set from {self.sources['FACILITATOR_BACKEND']})")
         return b
+
+    def mode(self) -> str:
+        """node (the default: the Directory, SLIM and the ssh-agent run here) or leaf (the thin client only:
+        no daemon is started here; the Feature's option mode)."""
+        m = self.values["FACILITATOR_MODE"]
+        if m not in MODES:
+            raise SettingsError(f"FACILITATOR_MODE={m!r} (from {self.sources['FACILITATOR_MODE']}): node or leaf")
+        return m
+
+    def deprecated(self) -> list[str]:
+        """The deprecated Feature options set at install (options.env FACILITATOR_DEPRECATED)."""
+        return self.values["FACILITATOR_DEPRECATED"].split()
 
 
 def load(cli: dict[str, str] | None = None, start: Path | None = None, environ: dict[str, str] | None = None) -> Settings:

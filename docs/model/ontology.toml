@@ -1292,6 +1292,26 @@ type = "mechanism"
 term = "Trust level"
 summary = "How far a facilitator node trusts a client or peer: local, private or public; MCP over HTTP clients are public by default."
 
+[node-bundle]
+type = "product"
+term = "Node bundle"
+summary = "The built, checksummed package of one facilitator release and architecture, with its own Python, dirctl and slimctl; the Feature and the server image install from it."
+
+[thin-client]
+type = "product"
+term = "Thin client"
+summary = "The stdio MCP server facilitator mcp: it starts no daemon and talks only to a node."
+
+[join-token]
+type = "mechanism"
+term = "Join token"
+summary = "A single-use, 15-minute token a person makes so that a node or leaf client can join a private trust domain."
+
+[facilitator-mode]
+type = "mechanism"
+term = "Facilitator mode"
+summary = "The Feature option mode: node or leaf; leaf installs only the bundle and the thin client and signs with its own key."
+
 [deprecation]
 type = "mechanism"
 term = "Deprecation"

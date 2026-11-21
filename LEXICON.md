@@ -72,6 +72,17 @@ The domain words of the project itself are not here; they live with the project'
   (ADR-0067; not built yet).
 - **Trust level**: how far a facilitator node trusts a client or peer: local, private or public. A
   client that arrives over MCP over HTTP is public unless marked trusted (ADR-0067; not built yet).
+- **Node bundle**: the built, checksummed package of one facilitator release for one architecture
+  (the application, its venv and own Python interpreter, `dirctl`, `slimctl`); the Feature and the
+  server image both install from it, and the option `bundleVersion` picks it (ADR-0067). Not the SPIFFE
+  trust bundle, which is a trust domain's CA certificates (ADR-0069; not built yet).
+- **Thin client**: the stdio MCP server `facilitator mcp`: it starts no daemon and talks only to a node,
+  the same container's or another machine's (ADR-0067, ADR-0068; not built yet).
+- **Join token**: the single-use, 15-minute token a person makes on the issuing side so that a node or
+  leaf client can join a private trust domain; not the claim token of ADR-0052 (ADR-0067; not built yet).
+- **Facilitator mode**: the Feature option `mode: node | leaf`: `node` (the default) installs and runs a
+  node; `leaf` installs only the bundle and the thin client, starts no daemon, and signs with its own
+  key (ADR-0068; not built yet).
 - **Deprecation**: how a Feature or option goes away: announced in a minor release (a one-line
   notice from `version` and `check`, the NOTES, and a "Deprecated" heading in the CHANGELOG, behaviour
   unchanged) and removed only in the next major (CONTRIBUTING.md).
