@@ -153,7 +153,8 @@ the same bytes on one build host (sorted names, owner 0, times clamped to the so
    downloaded and checked against the pin;
 4. otherwise the bundle is **built here from the Feature's own source** by `bundle-build.sh` (a byte-identical
    copy of the script, `task bundle:check`), each upstream piece checked against the script's pins. This is how
-   0.3.0 installs until the first `release-bundle` run is pinned.
+   0.3.0 installed, published before its bundle; since 0.3.1 `digests.txt` pins the release
+   `facilitator-bundle-v0.3.0`, so the bundle is downloaded and checked instead.
 
 A local file (1, 2) is checked against the pin when there is one, and refused when it differs; without a pin it is
 checked against the `SHA256SUMS` beside it and the install says it is unpinned. The bundle is never cached in the
@@ -538,6 +539,16 @@ skeleton bundle and installs it), `test/facilitator/node_image.sh` (`task test:f
 
 ## Changes
 
+### [0.3.1] - 2026-11-21
+
+#### Changed
+
+- The Feature now installs the published node bundle `facilitator-bundle-v0.3.0` (amd64 and arm64), pinned
+  in `digests.txt` after checking its SHA256SUMS, GitHub's recorded digest and its build attestation. 0.3.0
+  was published before the bundle, so it built the bundle from source during every install (about 250 MB of
+  downloads); 0.3.1 downloads the one verified bundle instead. Nothing to change in your configuration;
+  rebuild the container to pick it up.
+
 ### [0.3.0] - 2026-11-20
 
 The facilitator becomes a node bundle (slice N2 of the facilitator-node proposal, ADR-0067): one built,
@@ -612,28 +623,6 @@ essentially making it just accessible through the MCP").
 - `facilitator send` and the task `facilitator:send`.
 - `facilitator continue`: the MCP tool `continue` of a person's session replaces it, so continuing needs
   the person's token.
-
-### [0.1.0] - 2026-11-20
-
-#### Added
-
-- The facilitator, first version, on AGNTCY (ADR-0061, slice 3 of the facilitator proposal): conversations
-  between agents of any vendor in one devcontainer, by `@handle`, with a hop limit, a message budget and a
-  rate limit, every message a signed packet in a register-engine `conversation` register, and
-  `facilitator verify` walking each message back to the human who began the chain.
-- The MCP server `facilitator mcp --as <handle>` (tools `receive`, `reply`, `say`, `who`), authenticated by a
-  participant token; the local-model wrapper `facilitator model`; `facilitator chat`, `send` and
-  `transcript --json`; `facilitator snippet` for attaching a Claude Code participant.
-- The infrastructure on loopback, started by `facilitator infra up` and by `autostart`: the AGNTCY Directory
-  (dirctl 1.9.1) and a SLIM node (slimctl 3.4.6), each pinned by SHA-256; slim-bindings 3.3.9 in the
-  Feature's own venv.
-- Keys in OpenBao when it is ready; otherwise, in mode-600 files in the volume. This fallback stays for the 0.x
-  versions and is removed at 1.0, when a key will only ever be in OpenBao.
-- Every `@handle` in a message is delivered, each once, as the proposal's routing rule 1 says: "@jester tell
-  @domain-expert-one a joke" goes to both (the Operator's ruling of 2026-11-20). The hop count bounds the chain.
-- The participant token reaches `facilitator mcp` through the agent's environment, set by its harness, never in
-  the CLI's MCP entry, because tokens are made again at each start.
-- Version 0.1.0 rather than 1.0.0: the MCP tools, the packet fields and the verbs may change before 1.0.
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/facilitator/CHANGELOG.md).
 

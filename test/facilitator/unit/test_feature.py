@@ -10,17 +10,27 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import helpers  # noqa: E402
 
-import json  # noqa: E402
+import atexit  # noqa: E402
+import json
+import re  # noqa: E402
 import os  # noqa: E402
 import shutil  # noqa: E402
 import subprocess  # noqa: E402
 import tarfile  # noqa: E402
 import tempfile  # noqa: E402
 
-INSTALL = helpers.SRC / "install.sh"
+# The tests install skeleton bundles they build themselves, so they run the Feature from a copy whose
+# digests.txt holds no pins: the real pins (for the published bundle) would refuse every skeleton.
+_UNPINNED = Path(tempfile.mkdtemp(prefix="fac-feature-"))
+atexit.register(shutil.rmtree, _UNPINNED, True)
+shutil.copytree(helpers.SRC, _UNPINNED, dirs_exist_ok=True, ignore=shutil.ignore_patterns("__pycache__", "bundle"))
+(_UNPINNED / "digests.txt").write_text(
+    "".join(line for line in (helpers.SRC / "digests.txt").read_text().splitlines(True) if line.startswith("#")))
+INSTALL = _UNPINNED / "install.sh"
 BUILDER = helpers.ROOT / "bundles" / "facilitator" / "install.sh"
 ARCH = "arm64" if os.uname().machine in ("aarch64", "arm64") else "amd64"
-VERSION = json.load(open(helpers.SRC / "devcontainer-feature.json"))["version"]
+# The bundle follows the application's version, not the Feature's (ruling CE): Feature 0.3.1 installs bundle 0.3.0.
+VERSION = re.search(r'^__version__ = "([^"]+)"', (helpers.SRC / "facilitator" / "__init__.py").read_text(), re.M).group(1)
 ASSET = f"facilitator-{VERSION}-linux-{ARCH}.tar.gz"
 
 

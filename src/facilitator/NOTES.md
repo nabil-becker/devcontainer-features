@@ -120,7 +120,8 @@ the same bytes on one build host (sorted names, owner 0, times clamped to the so
    downloaded and checked against the pin;
 4. otherwise the bundle is **built here from the Feature's own source** by `bundle-build.sh` (a byte-identical
    copy of the script, `task bundle:check`), each upstream piece checked against the script's pins. This is how
-   0.3.0 installs until the first `release-bundle` run is pinned.
+   0.3.0 installed, published before its bundle; since 0.3.1 `digests.txt` pins the release
+   `facilitator-bundle-v0.3.0`, so the bundle is downloaded and checked instead.
 
 A local file (1, 2) is checked against the pin when there is one, and refused when it differs; without a pin it is
 checked against the `SHA256SUMS` beside it and the install says it is unpinned. The bundle is never cached in the
