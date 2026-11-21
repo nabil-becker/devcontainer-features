@@ -394,6 +394,10 @@ The domain words of the project itself are not here; they live with the project'
   is never touched.
 - **registry-path**: the agents list key that gives one agent its who-you-are path for the start
   hook, overriding `COMPONENT_REGISTRY_WHOAMI`.
+- **Agent definition**: a component registry entry at `agents/<name>` that sets two fields for the
+  agent of that name, `model` (a value) and `skills` (a list of skill names or refs); the agents list
+  stays the source of which agents exist and wins for every field it states, the registry only
+  fills what the list leaves open, and no identity, lease or permission key can be set from it.
 
 ## Secrets
 
