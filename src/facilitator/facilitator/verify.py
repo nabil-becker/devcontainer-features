@@ -65,8 +65,12 @@ class Walker:
             who = ""
             if self.fac.net.active:
                 b = self.fac.net.binding(e.key)
-                who = (f"  {b[1]} spiffe://{self.fac.net.cards()[b[0]]['card']['domain']}/node/{b[0]} ({b[2]})"
-                       if b else f"  this node ({self.fac.mesh.node_id})")
+                if b:
+                    card = self.fac.net.cards(history=True)[b[0]]
+                    who = (f"  {b[1]} spiffe://{card['card']['domain']}/node/{b[0]} ({b[2]}"
+                           + (", revoked since; signed before" if card.get("revoked") else "") + ")")
+                else:
+                    who = f"  this node ({self.fac.mesh.node_id})"
             lines.append(f"{c}/{mid}  hops {m['hops']}  from {m['from']}  signed by {e.key[:28]}...{who}  entry {m['entry'][:12]}")
             for r in m.get("refs", []):
                 if "message_id" in r and not self.not_copied(c, r["thread"]):

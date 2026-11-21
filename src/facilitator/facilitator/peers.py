@@ -759,12 +759,14 @@ class Daemon:
         while not self.stop:
             if self.mesh.role == "hub" and self.mesh.node.get("join"):
                 live = identity.live_tokens(self.store)
-                if live and self.join_server is None:
+                if live:
+                    self.join_until = time.time() + 30      # stays open 30 s after the last token is used or expires
+                if (live or time.time() < getattr(self, "join_until", 0)) and self.join_server is None:
                     try:
                         self.open_join()
                     except (OSError, IdentityError, ssl.SSLError) as e:
                         self.err(f"the join endpoint did not open: {e}")
-                elif not live and self.join_server is not None:
+                elif not live and time.time() >= getattr(self, "join_until", 0) and self.join_server is not None:
                     self.close_join()
             self.write_status()
             await asyncio.sleep(1)

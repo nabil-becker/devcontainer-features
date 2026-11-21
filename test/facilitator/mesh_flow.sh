@@ -240,8 +240,10 @@ else no "node invite or the join endpoint"; fi
 if out="$(fx spoke-a node join --token "$tok_a" 2>&1)"; then ok "spoke-a joined: ${out#facilitator: }"; else no "spoke-a join: $out"; fi
 # with no token live the join endpoint is closed; with another one live it is open, and the used one is refused
 tok_b="$(docker exec "$p-hub" facilitator node invite 2>/dev/null)"
+wait_for 15 docker exec "$p-spoke-b" bash -c 'exec 3<>/dev/tcp/hub.corp.test/46359' || true
 if out="$(fx spoke-b node join --token "$tok_a" 2>&1)"; then no "a used token joined spoke-b"
-else case "$out" in *"single use"*) ok "the used token refused for spoke-b (single use)" ;; *) no "spoke-b with a used token: $out" ;; esac; fi
+else case "$out" in *"single use"*) ok "the used token refused for spoke-b (single use)" ;;
+  *) no "spoke-b with a used token: $out"; docker exec "$p-hub" tail -20 /var/lib/devcontainer-features/facilitator/logs/peers.log ;; esac; fi
 if out="$(fx spoke-b node join --token "$tok_b" 2>&1)"; then ok "spoke-b joined with its own token"; else no "spoke-b join: $out"; fi
 if grep -q 'role: spoke' "$tmp/spoke-a/mesh.yml" && grep -q 'hub: "hub.corp.test:46358"\|hub: hub.corp.test:46358' "$tmp/spoke-a/mesh.yml"; then
   ok "node join wrote the hub into spoke-a's mesh.yml"; else no "spoke-a's mesh.yml: $(cat "$tmp/spoke-a/mesh.yml")"; fi
