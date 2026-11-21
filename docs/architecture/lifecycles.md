@@ -223,3 +223,20 @@ stateDiagram-v2
   [*] --> not_installed: a skill of that name without the mark is there (never touched)
   not_installed --> owned: that skill is gone at a later handover
 ```
+
+## A node in a hub's domain (facilitator 0.4.0)
+
+The public path (a join request a person approves) is slice N5 and is refused until then.
+
+```mermaid
+stateDiagram-v2
+  [*] --> Invited: node invite (a join token, 15 min)
+  Invited --> Expired: unused for 15 minutes
+  Invited --> Member: node join (token used once; certificate issued, roster entry)
+  Member --> Member: certificate renewed at half life (24 h)
+  Member --> Lapsed: OpenBao sealed past the certificate's life
+  Lapsed --> Member: unsealed by hand, renewed
+  Member --> Revoked: node revoke (no renewal; lock two refuses it; its card kept for its history)
+  Revoked --> [*]
+  Expired --> [*]
+```
