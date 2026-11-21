@@ -58,7 +58,7 @@ flowchart LR
   cli-adapter["CLI adapter: skills verb"]
   launcher["Launcher: share mount, whoami"]
   master-of-secrets["OpenBao: source secrets"]
-  external-sources["Layer sources: git, path; later http, cloud folder"]
+  external-sources["Layer sources: git, path, http, cloud folder, db"]
   external-sources -->|fetched by| component-registry
   master-of-secrets -->|gives secrets to| component-registry
   launcher -.->|later: mounts shares, sets whoami for| component-registry

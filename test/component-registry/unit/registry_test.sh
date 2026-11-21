@@ -34,6 +34,9 @@ for f in dcf-registry registry-source-git registry-source-path component-registr
   cp "$src/$f.sh" "$bin/$f"; chmod +x "$bin/$f"
 done
 export PATH="$bin:$PATH" COMPONENT_REGISTRY_SHARE_DIR="$T/share"
+# refresh and remember hand over to every adapter on PATH, and a devhost with the Feature
+# installed has a real one: keep it away from the real Claude config folder.
+export CLAUDE_CONFIG_DIR="$T/claude-config"; mkdir -p "$CLAUDE_CONFIG_DIR"
 unset COMPONENT_REGISTRY_WHOAMI COMPONENT_REGISTRY_FILE COMPONENT_REGISTRY_WHOAMI_TASK_VAR COMPONENT_REGISTRY_FILE_TASK_VAR
 export GIT_CONFIG_GLOBAL="$T/gitconfig" GIT_CONFIG_NOSYSTEM=1
 git config --global user.email test@example.invalid; git config --global user.name test
@@ -372,7 +375,11 @@ check "a required layer never fetched: exit 1" 1 "$rc"
 contains "a required layer never fetched: said" "$out" "layer corp source 1 (path) is required and has never been fetched"
 check "a required layer never fetched: no view is made" no "$([ -e "$(V)" ] && echo yes || echo no)"
 printf 'layers:\n  - id: corp\n    at: /Corp\n    sources:\n      - { kind: http, url: "https://registry.example.invalid/l.reg", required: true }\n' > .devcontainer/registry.yml
-out="$(dcf-registry resolve --as /Corp 2>&1)"; rc=$?
+# A devhost with the Feature installed has a registry-source-http on PATH; leave out
+# every PATH folder that holds one, so this case does not depend on the machine.
+nohttp=""; IFS=: read -ra dirs <<< "$PATH"
+for d in "${dirs[@]}"; do [ -x "$d/registry-source-http" ] || nohttp="${nohttp:+$nohttp:}$d"; done
+out="$(PATH="$nohttp" dcf-registry resolve --as /Corp 2>&1)"; rc=$?
 check "a required http source with no registry-source-http on PATH: exit 1" 1 "$rc"
 contains "an http source with no command says so" "$out" "no registry-source-http on PATH"
 

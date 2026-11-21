@@ -85,7 +85,7 @@ check "a cloud-folder source with url and no remote: exit 2" 2 $rc
 contains "... says remote is needed" "$out" "a cloud-folder source needs remote"
 printf 'layers:\n  - id: mine\n    at: /Corp\n    sources:\n      - { kind: db, url: x }\n' > .devcontainer/registry.yml
 out="$(dcf-registry resolve --as /Corp 2>&1)"
-contains "db still says it is not in this release" "$out" "kind db is not in this release"
+contains "a db source with no driver says driver is needed" "$out" "a db source needs driver"
 
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

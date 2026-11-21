@@ -350,7 +350,7 @@ from its own source at image build, with the same upstream pins.
 
 ## 7. The component registry
 
-Built in slices 1 to 3 (component-registry 1.2.0, claude-code 1.12.0, cloud-folder 1.4.0): sources `git`, `path`, `http` (one `.reg` file, auth settings only) and `cloud-folder`,
+Built in slices 1 to 3 (component-registry 1.2.0, claude-code 1.12.0, cloud-folder 1.4.0): sources `git`, `path`, `http` (one `.reg` file, auth settings only), `cloud-folder` and, from component-registry 1.5.0, `db` (`sqlite`, `postgres`),
 the view in the Feature's volume, the hand-over to the CLI's skills folder through the adapter's
 `skills` verb, and `/registry-remember` appending to the person's own writable layer.
 
@@ -380,6 +380,7 @@ flowchart LR
 
 - Who you are (`COMPONENT_REGISTRY_WHOAMI`) comes from `.env` or the launcher, never a committed file.
 - An `http` source's secret goes to curl on standard input only, and is refused over plain `http://` unless the source says `allow-insecure: true`; with a secret redirects are not followed. No manifest or signature is required: review is the endpoint owner's.
+- A `db` source's password goes to `psql` in its own environment only (never an argument or a log), the database is opened read-only, and one bad row or an empty result fails the fetch so `resolve` keeps the last good copy.
 - A layer copy and the view are as sensitive as their most sensitive layer (a person's own layer may hold health facts): owner-only, never committed. `explain` prints to the terminal only.
 - The CLI's skills folder (Claude Code: `$CLAUDE_CONFIG_DIR/skills`, the claude-code volume) gets owner-only copies, each marked owned by the registry; never the repository's `.claude/skills`.
 - `/registry-remember` writes only to the layer marked `writable: true`, and only to a folder (a `path` source): the person's own layer, wherever they keep it.

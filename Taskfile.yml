@@ -40,7 +40,7 @@ tasks:
       - task --list
 
   test:
-    desc: 'Run `devcontainer features test` for one Feature (FEATURE=go-task) or all of them. IMAGE overrides the base image for the auto-generated test; SCENARIOS=false skips scenarios.json. Needs a Docker daemon (CI, or Docker Desktop on the workstation). Linux/macOS only (the CLI shells out to chmod/bash on the host).'
+    desc: 'Run `devcontainer features test` for one Feature (FEATURE=go-task) or all of them. IMAGE overrides the base image for the auto-generated test; SCENARIOS=false skips scenarios.json. Needs a Docker daemon (CI, or Docker Desktop on the workstation). Linux/macOS only (the CLI shells out to chmod/bash on the host). Refuses to start with under 20 GB free where /var/lib/docker lives (FORCE=1 overrides), and afterwards, pass or fail, prunes everything in the docker-in-docker daemon (images, containers, volumes, build cache), which is used only for tests here.'
     platforms: [linux, darwin]
     vars:
       FEATURE: '{{.FEATURE | default ""}}'
@@ -49,18 +49,22 @@ tasks:
       - sh: docker info >/dev/null 2>&1
         msg: 'no Docker daemon here; Feature tests run in CI on every PR, or locally with Docker Desktop on the workstation'
     cmds:
+      - bash {{.ROOT_DIR}}/.devcontainer/dind-guard.sh
+      - defer: bash {{.ROOT_DIR}}/.devcontainer/dind-clean.sh
       - task: devcontainer:cli
         vars:
           SUBCOMMAND: features
           ARGS: 'test -p "{{.ROOT_DIR}}" -i {{.TEST_IMAGE}} --skip-duplicated{{if .FEATURE}} -f {{.FEATURE}}{{end}}{{if ne .SCENARIOS "true"}} --skip-scenarios{{end}} {{.CLI_ARGS}}'
 
   test:global:
-    desc: 'Run only test/_global scenarios (Features combined). Needs a Docker daemon (CI, or Docker Desktop on the workstation). Linux/macOS only, like test.'
+    desc: 'Run only test/_global scenarios (Features combined). Needs a Docker daemon (CI, or Docker Desktop on the workstation). Linux/macOS only, like test. Same free-space guard (FORCE=1 overrides) and the same prune of the whole docker-in-docker daemon afterwards, pass or fail.'
     platforms: [linux, darwin]
     preconditions:
       - sh: docker info >/dev/null 2>&1
         msg: 'no Docker daemon here; Feature tests run in CI on every PR, or locally with Docker Desktop on the workstation'
     cmds:
+      - bash {{.ROOT_DIR}}/.devcontainer/dind-guard.sh
+      - defer: bash {{.ROOT_DIR}}/.devcontainer/dind-clean.sh
       - task: devcontainer:cli
         vars:
           SUBCOMMAND: features
@@ -123,6 +127,7 @@ tasks:
       - task: test:build-lock
       - task: test:bootstrap-dir
       - task: test:host-mounts
+      - task: test:dind-clean
       - task: test:ssh-key-import
       - task: test:ssh-agent-unit
       - task: test:openbao-unit
@@ -222,10 +227,11 @@ tasks:
       - bash test/audio/unit/relay_test.sh
 
   test:component-registry-unit:
-    desc: 'Docker-free tests of the component-registry Feature (src/component-registry, the dcf-registry command and its git, path and http registry sources) on fixture layers: the proposal''s worked example (docs/proposals/component-registry.md section 3.3) to the letter; the layer list (the YAML subset, { } maps, unknown keys refused with file:line, git and path sources checked, the registryFile option and COMPONENT_REGISTRY_FILE); COMPONENT_REGISTRY_WHOAMI required with how to set it, from .env, the task variable or --as; the .reg grammar and match rule (scope and component, * and **, specificity and its tie-breaks, ! exclusion, lock, @replace and a lock surviving it, a type clash, list !item and ref: items, @file, files = @dir overlays, a permission key from the lowest layer only, a kind not in this release, unreadable lines reported); sources (a path fingerprint, a local git repository at a branch, an annotated tag and a commit, a secret read with a stub dcf-secret, offline fallback to the last good copy, a changed pin fetched again, a required layer never fetched, an http source in http_test.sh: a local python3 server, each auth type, the insecure refusal, ETag, Last-Modified and body-hash versions, a 404 and a timeout falling back to the last good copy, an archive refused, redirects, the secret never in output or any process list); resolve (unchanged layers skipped, removed layers'' copies deleted, the view swapped in, owner-only modes, idempotent, two concurrent runs); explain (layer and version per line, skipped lines and why, dangling refs, --uses); 1.1.0: the built-in base layer (the three utility skills at rank 0, shown by explain, stacked on by a listed layer, its id reserved), layer-list, handover (to an adapter that takes skills, one without the verb never called, none, a failing one), refresh (for the view''s path, --as, a failing resolve hands nothing over), remember (appended to the writable path layer for every skill or one, refreshed, refused with nothing written: no or two writable layers, a git layer, a missing folder, an empty line, a line starting with @); 1.3.0: heading: false (stacked with no heading, a blank line kept after the front matter, explain still naming each line''s layer, a bad value refused) and front matter values (name and description from the strongest value, a front matter made when there is none, a multi-line key replaced whole, a permission key never set from a higher layer); the setup script and the Feature Taskfile. Part of lint. Needs git; python3 and curl for the http source (skipped without); task for the Taskfile part.'
+    desc: 'Docker-free tests of the component-registry Feature (src/component-registry, the dcf-registry command and its git, path, http and db registry sources) on fixture layers: the proposal''s worked example (docs/proposals/component-registry.md section 3.3) to the letter; the layer list (the YAML subset, { } maps, unknown keys refused with file:line, git and path sources checked, the registryFile option and COMPONENT_REGISTRY_FILE); COMPONENT_REGISTRY_WHOAMI required with how to set it, from .env, the task variable or --as; the .reg grammar and match rule (scope and component, * and **, specificity and its tie-breaks, ! exclusion, lock, @replace and a lock surviving it, a type clash, list !item and ref: items, @file, files = @dir overlays, a permission key from the lowest layer only, a kind not in this release, unreadable lines reported); sources (a path fingerprint, a local git repository at a branch, an annotated tag and a commit, a secret read with a stub dcf-secret, offline fallback to the last good copy, a changed pin fetched again, a required layer never fetched, an http source in http_test.sh: a local python3 server, each auth type, the insecure refusal, ETag, Last-Modified and body-hash versions, a 404 and a timeout falling back to the last good copy, an archive refused, redirects, the secret never in output or any process list; a db source in db_test.sh: a real SQLite file through a sqlite3 shim and a stub psql, the connection keys, the password in the client''s environment only, query errors, an empty result, each bad row refused with its reason, text in a file, the version hash, an unsupported driver, a missing client, a gone database falling back to the last good copy); resolve (unchanged layers skipped, removed layers'' copies deleted, the view swapped in, owner-only modes, idempotent, two concurrent runs); explain (layer and version per line, skipped lines and why, dangling refs, --uses); 1.1.0: the built-in base layer (the three utility skills at rank 0, shown by explain, stacked on by a listed layer, its id reserved), layer-list, handover (to an adapter that takes skills, one without the verb never called, none, a failing one), refresh (for the view''s path, --as, a failing resolve hands nothing over), remember (appended to the writable path layer for every skill or one, refreshed, refused with nothing written: no or two writable layers, a git layer, a missing folder, an empty line, a line starting with @); 1.3.0: heading: false (stacked with no heading, a blank line kept after the front matter, explain still naming each line''s layer, a bad value refused) and front matter values (name and description from the strongest value, a front matter made when there is none, a multi-line key replaced whole, a permission key never set from a higher layer); the setup script and the Feature Taskfile. Part of lint. Needs git; python3 and curl for the http source (skipped without); task for the Taskfile part.'
     cmds:
       - bash test/component-registry/unit/registry_test.sh
       - bash test/component-registry/unit/http_test.sh
+      - bash test/component-registry/unit/db_test.sh
 
   test:registry-first-use:
     desc: 'Docker-free test of the component registry''s first real use (slice 4 of docs/proposals/component-registry.md, test/component-registry/unit/first_use_test.sh): the real dcf-registry resolves the real layer list (.devcontainer/registry.yml: the devhost Feature''s generic layer, local-features/devhost/share/registry, pointed at its source folder; this repository''s layer, .devcontainer/registry/repo) into a temp state folder, and the resolved skills/architecture-review/SKILL.md must equal the committed .claude/skills/architecture-review/SKILL.md byte for byte (both layers say heading: false, component-registry 1.3.0, so no `## Layer <id>` line is written); the devhost template copy equals the committed skill; the generic layer alone resolves to a usable skill naming nothing of this repository. Part of lint.'
@@ -315,6 +321,11 @@ tasks:
     cmds:
       - bash test/bootstrap/host_type_test.sh
 
+  test:dind-clean:
+    desc: 'Docker-free bash tests of .devcontainer/dind-clean.sh (prunes the docker-in-docker daemon, skips with one line when no daemon answers) and dind-guard.sh (refuses under 20 GB free, FORCE=1 overrides), with docker and df stubbed; part of lint.'
+    cmds:
+      - bash test/devcontainer/dind_clean_test.sh
+
   test:host-mounts:
     desc: 'Docker-free bash tests of the host mounts the bash twin (src/devcontainer-cli/devcontainer-cli.sh) adds to `up`: the --mount argument per host type (linux, macos, windows-wsl-docker), the source folder created, a mount skipped when the repository''s devcontainer.json already declares its target (JSONC comments, trailing commas, object form, --config), HOST_MOUNTS=false, none for build/exec/read-configuration, the SSH agent socket mount per host type and SSH_AGENT_MODE=key, the cloud folder (DCF_HOST_CLOUD_FOLDER at the fixed /mnt/cloud-folder-host, a Windows path passed as is, a missing folder skipped and never created), FUSE on request (the grant''s three variables, refused with a warning on a wslc engine), and what `host` lists; a stub devcontainer records its arguments; part of lint. The PowerShell twin is in test:bootstrap.'
     cmds:
@@ -386,12 +397,14 @@ tasks:
         platforms: [linux, darwin]
 
   test:devhost:docker:
-    desc: 'Run the devhost Feature''s Docker tests (test/devhost: defaults and the non_root scenario) for local-features/devhost, which is not under src/ and so is outside `task test`, CI and the global scenarios. Copies it and its tests into a temporary project folder shaped like a collection (src/devhost, test/devhost) and runs `devcontainer features test` there. IMAGE overrides the base image. Needs a Docker daemon and the devcontainer CLI. Linux/macOS only.'
+    desc: 'Run the devhost Feature''s Docker tests (test/devhost: defaults and the non_root scenario) for local-features/devhost, which is not under src/ and so is outside `task test`, CI and the global scenarios. Copies it and its tests into a temporary project folder shaped like a collection (src/devhost, test/devhost) and runs `devcontainer features test` there. IMAGE overrides the base image. Needs a Docker daemon and the devcontainer CLI. Linux/macOS only. Same free-space guard (FORCE=1 overrides) and the same prune of the whole docker-in-docker daemon afterwards, pass or fail.'
     platforms: [linux, darwin]
     preconditions:
       - sh: docker info >/dev/null 2>&1
         msg: 'no Docker daemon here; the devhost Docker tests run only where Docker does'
     cmds:
+      - bash {{.ROOT_DIR}}/.devcontainer/dind-guard.sh
+      - defer: bash {{.ROOT_DIR}}/.devcontainer/dind-clean.sh
       - cmd: |
           tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
           mkdir -p "$tmp/src" "$tmp/test"
