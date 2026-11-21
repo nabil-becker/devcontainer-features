@@ -91,7 +91,7 @@ Settings are plain variables (NFR-6), each from the task variable, then the root
 | `COMPONENT_REGISTRY_FILE` | the option | The layer list. |
 | `COMPONENT_REGISTRY_STATE_DIR` | `/var/lib/devcontainer-features/component-registry` (`containerEnv`) | The state folder. |
 | `COMPONENT_REGISTRY_LOCK_WAIT` | `120` | Seconds a `resolve` waits for another one to finish. |
-| `COMPONENT_REGISTRY_AGENTS` | the current view's names | 1.6.0: agent names, comma-separated, whose definitions `resolve` makes even when only a pattern names them. The participant component sets it to the listed agents; a person seldom does. Empty clears the names. |
+| `COMPONENT_REGISTRY_AGENTS` | the current view's names | 1.6.0: agents, comma-separated `name` or `name:cli` items, whose definitions `resolve` makes even when only a pattern names them, the effective model picked for the CLI. The participant component sets it to the listed agents; a person seldom does. Empty clears the names. |
 
 ## The layer list
 
@@ -243,7 +243,8 @@ One or more `*.reg` files at the root of the layer's copy, read in name order, l
 
 ```
 [path]                    a section; [path] @replace replaces the component below it
-key:type = data           an entry; type is value, list, text or ref
+key:type = data           an entry; type is value, list, text or ref; a key is letters,
+                          digits, _ - and (1.6.0) . (model.claude)
 lock key                  a higher layer cannot change this key
 ; comment
 [!path]                   an exclusion: the sections above it in this file no longer apply
@@ -318,12 +319,14 @@ agent's handle, with two fields; the design is section 6.1 of the proposal.
 
 | Key | Type | Merge | Read by the participant as |
 | --- | --- | --- | --- |
-| `model` | `value` | the strongest line | `AGENT_MODEL`, handed to the CLI adapter on the calls about the agent; Claude Code's adapter (claude-code 1.13.0) passes it as `--model`, in place of any `--model` in the agent's arguments. One word of letters, digits and `. _ : / @ [ ] -`, at most 100 characters |
+| `model` | `value` | the strongest line | `AGENT_MODEL`, handed to the CLI adapter on the calls about the agent; Claude Code's adapter (claude-code 1.13.0) and Copilot's (copilot 0.2.0) pass it as `--model`, in place of any `--model` in the agent's arguments. One word of letters, digits and `. _ : / @ [ ] -`, at most 100 characters. For the agent's own CLI (the list's `cli`) |
+| `model.<cli>` | `value` | the strongest line | the same, for agents of that CLI only (`model.claude`, `model.copilot`). It beats a plain `model` of the same layer and path; otherwise the usual order holds, so a higher layer's or a more specific path's plain `model` beats it. A suffix no listed agent has applies to none. A `lock model` holds every `model.<cli>` too |
 | `skills` | `list` | combined, `!item` removes | the agent's `skills` (shown by `agents check` and `agents list --json`, which the facilitator reads), replacing its list entry's `skills:`. An item is a skill name or `ref:[scope/]skills/<name>`; a ref is checked like any ref, so `explain skills/<name> --uses` lists the agents that name it. Remove an item as it was written (`!ref:skills/x` for `ref:skills/x`) |
 
 ```
 [/Corp/agents/*]                       ; every agent, at /Corp and below
 model:value = sonnet
+model.copilot:value = gpt-5.4          ; but Copilot agents run gpt-5.4
 [/Corp/MyDepartment/agents/reviewer]
 model:value = opus
 skills:list = ref:skills/architecture-review
@@ -342,15 +345,18 @@ skills:list = ref:skills/architecture-review
   (`allowed-tools`, `disallowed-tools`, `permission*`), even in the lowest layer.
 - **Which agents.** A component exists when a section names it literally; a pattern such as
   `[agents/*]` applies to those and to every name in `COMPONENT_REGISTRY_AGENTS`, which the
-  participant component sets to the listed agents at each start. The names are kept in the view
+  participant component sets to the listed agents and their CLIs (`name:cli` items) at each
+  start, so the effective model is picked for each agent's CLI (an agent without a CLI named gets
+  the plain `model`). The names are kept in the view
   (`agent-names`), so a `resolve` without the variable and `/registry-refresh` keep them.
 - **At an agent's start** the participant component (participant 1.3.0) resolves for the agent's
   path, as for skills, then reads `view/agents/<name>/`, only when the view's `whoami` is that
   path; otherwise one line says the view is another path's and the agent starts without the
   definition. One line names what it used and from which layers.
 - **Shown by** `dcf-registry explain agents/<name>` (every line, its layer and version, the
-  skipped ones and why) and by `agents check` (`model opus (registry: dept)`, or the registry's
-  skills not used because the list sets its own).
+  skipped ones and why, then the effective model for the agent's CLI with its key and layer) and by
+  `agents check` (`model gpt-5.4 (registry: corp, model.copilot)`, and the list's values it
+  replaced).
 
 ## The match rule
 
@@ -386,7 +392,7 @@ a reader sees the old view or the new one, never half of each:
 | Path | What it holds |
 | --- | --- |
 | `skills/<name>/` | `SKILL.md` and the skill's files: what a consumer copies |
-| `agents/<name>/` | (1.6.0) an agent definition: `model` (one line), `skills` (one name per line), `from.tsv` (field, layer, `source:file:line` of each line used); what the participant component reads |
+| `agents/<name>/` | (1.6.0) an agent definition: `model` (one line, the effective model for its CLI), `cli` (the CLI it was resolved for), `skills` (one name per line), `from.tsv` (field, layer, `source:file:line`, key of each line used); what the participant component reads |
 | `meta/<kind>/<name>/values/<key>` | each resolved value (a list one item per line; text as stacked) |
 | `meta/<kind>/<name>/keys.tsv` | key, type, one-line summary |
 | `meta/<kind>/<name>/provenance.tsv` | every line considered: state (`used`, `overridden`, `skipped`, `dropped`, `excluded`, `not-applying`), key, type, layer, rank, version, `source:file:line`, data, why; `-` for an empty field |

@@ -87,8 +87,9 @@
 # skills already in its folder, said in one line.
 #
 # Agent definitions (participant 1.3.0, component-registry 1.6.0). resolve is handed the listed
-# agents' names (COMPONENT_REGISTRY_AGENTS), and after it the agent's definition is read from the
-# resolved view's agents/<name>/, only when the view is for the agent's path: its model reaches the
+# agents' names and CLIs (COMPONENT_REGISTRY_AGENTS, name:cli), and after it the agent's definition
+# is read from the resolved view's agents/<name>/, only when the view is for the agent's path and
+# its CLI (a model.<cli> key beats a plain model at the same layer and path): its model reaches the
 # adapter in AGENT_MODEL (empty on every other call, as AGENT_SESSION_NAME), and the adapter puts
 # it in place of any model the CLI args choose; its skills replace the entry's skills: key. The
 # registry wins for the two fields it may set (the Operator's ruling of 2026-11-21); the list fills
@@ -1066,7 +1067,7 @@ registry_step() {
   local j
   command -v dcf-registry >/dev/null 2>&1 || return 0
   REG_NOLIST='' REG_AGENTS=''
-  for ((j = 1; j <= N; j++)); do REG_AGENTS="${REG_AGENTS:+$REG_AGENTS,}${NAME[j]}"; done
+  for ((j = 1; j <= N; j++)); do REG_AGENTS="${REG_AGENTS:+$REG_AGENTS,}${NAME[j]}:${CLI[j]}"; done
   registry_resolve_handover "$1"
   [ -n "$REG_NOLIST" ] || registry_fields "$1" say
   return 0
@@ -1153,10 +1154,17 @@ registry_fields() {
     [ -z "$say" ] || echo "$nm: the component registry's resolved view is for ${who:-no path}, not ${want:-the unset COMPONENT_REGISTRY_WHOAMI}; starting without its agent definition."
     return 0
   fi
+  if [ -f "$d/cli" ] && [ "$(head -n 1 "$d/cli")" != "${CLI[i]}" ]; then
+    RNOTE[i]="its definition is not read: it was resolved for cli $(head -n 1 "$d/cli"), the list now says ${CLI[i]} (the next start resolves again)"
+    [ -z "$say" ] || echo "$nm: the component registry resolved its definition for another CLI; starting without it."
+    return 0
+  fi
   m="$(head -n 1 "$d/model" 2>/dev/null | tr -d '\r')"
   if [ -n "$m" ]; then
     if [ "${#m}" -le 100 ] && [[ "$m" =~ $re ]]; then
-      RMODEL[i]="$m"; lay="$(registry_layers "$d" model)"; RFROM[i]="model $m (registry: ${lay:-?})"
+      RMODEL[i]="$m"; lay="$(registry_layers "$d" model)"
+      local mkey; mkey="$(awk -F'\t' '$1 == "model" && $4 != "" && $4 != "model" { print $4; exit }' "$d/from.tsv" 2>/dev/null)"
+      RFROM[i]="model $m (registry: ${lay:-?}${mkey:+, $mkey})"
       # a model the list's args (or this start's extra args) choose is replaced by the adapter
       local a prev='' given=''
       args_of "$i"

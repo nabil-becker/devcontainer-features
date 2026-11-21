@@ -282,18 +282,20 @@ A skill already used in a conversation keeps its old text until it is used in a 
 
 ### 6.1 Agent definitions (release 2)
 
-*Built (2026-11-20): `component-registry` 1.6.0, participant 1.3.0, `claude-code` 1.13.0.* Decision
+*Built (2026-11-20, the Operator's rulings of 2026-11-21 applied): `component-registry` 1.6.0,
+participant 1.3.0, `claude-code` 1.13.0, `copilot` 0.2.0.* Decision
 14 left agent definitions for later; this is the smallest form that makes the layering useful: an
 organization, a department or a person choosing the model an agent runs on and the skills it is
 said to use, without editing any repository's agents list.
 
 **What it is in the tree.** A component `agents/<name>`, where `<name>` is the agent's handle in
 the agents list (one segment). Its keys are fields, each merged by its type (section 3.3), and
-only two are read:
+only these are read (a key may hold `.` from 1.6.0, for the CLI suffix):
 
 | Key | Type | Merge | What it does |
 |---|---|---|---|
-| `model` | `value` | the strongest line | the model the agent's CLI runs on: one word of letters, digits and `. _ : / @ [ ] -`, at most 100 characters |
+| `model` | `value` | the strongest line | the model the agent's own CLI (the agents list's `cli`) runs on: one word of letters, digits and `. _ : / @ [ ] -`, at most 100 characters |
+| `model.<cli>` | `value` | the strongest line | the same, for agents of that CLI only (`model.claude`, `model.copilot`); a suffix no listed agent has applies to none (a CLI not installed yet is fine) |
 | `skills` | `list` | combined, `!item` removes | the skills the agent is said to use (what `agents list --json` shows the facilitator): a skill name or `ref:skills/<name>` (a ref is checked like any ref, so `explain skills/<name> --uses` lists the agents that name it) |
 
 ```
@@ -312,10 +314,26 @@ skills:list = !ref:skills/diagrams
 For `W = /Corp/MyDepartment/team/me`, `agents/reviewer` resolves to `model` `opus` and `skills`
 `architecture-review`; every other agent to `model` `sonnet`.
 
+**A model per CLI** (the Operator's ruling of 2026-11-21, option 2 of three: a plain key per agent,
+a key per CLI, or a model name mapped per CLI). One agent runs one CLI, but a department's
+`[agents/*]` reaches agents of several CLIs, whose model names differ. So the effective model of an
+agent is the strongest of its `model` line and its `model.<its cli>` line, in the usual order
+(higher layer, then the more specific path, then fewer wildcards); only on a tie there does the
+suffixed key win, and then the later line. A higher layer's plain `model` therefore beats a lower
+layer's `model.claude`. A `lock model` holds every `model.<cli>` too. `resolve` writes the effective
+model into the view for each agent's CLI (the participant names the CLIs, below), and `from.tsv`
+records the key it came from.
+
+```
+[/Corp/agents/*]
+model:value = sonnet
+model.copilot:value = gpt-5.4        ; Copilot agents: gpt-5.4; every other agent: sonnet
+```
+
 **Which agents.** A component exists when a section names it literally, as for skills; a pattern
 (`[agents/*]`) applies to those. So that a department's `[agents/*]` reaches the agents of a
 repository that no layer names, the participant hands `resolve` the names of the listed agents
-(the variable `COMPONENT_REGISTRY_AGENTS`, comma-separated); `resolve` resolves `agents/<name>`
+and their CLIs (the variable `COMPONENT_REGISTRY_AGENTS`, comma-separated `name:cli` items); `resolve` resolves `agents/<name>`
 for each of them too, and keeps the names in the view, so `/registry-refresh` keeps them. An
 older `dcf-registry` ignores the variable.
 
@@ -356,16 +374,18 @@ beats the list.
 view is another path's and the agent starts without registry fields). The view is
 machine-readable: `model` (one line), `skills` (one name per line) and `from.tsv` (field, layer,
 `source:file:line` of each line used). The model reaches the adapter in the environment variable
-`AGENT_MODEL` on every call about that agent, as `AGENT_SESSION_NAME` does (ADR-0041), empty on
+`AGENT_MODEL` (the effective model for its CLI) on every call about that agent, as `AGENT_SESSION_NAME` does (ADR-0041), empty on
 every other call; an adapter that does not read it starts its CLI on the CLI's own default model
 (NFR-12; no `supports` capability, a variable cannot answer exit 3). Claude Code's adapter
-(`claude-code` 1.13.0) passes `--model` on `start-bg`, `new` and `resume` in place of any
+(`claude-code` 1.13.0) passes `--model` on `start-bg`, `new` and `resume`, and Copilot's
+(`copilot` 0.2.0, Copilot CLI 1.0.114's `--model <model>`) on `new` and `resume`, in place of any
 `--model` in the arguments; a woken session keeps the options it was saved with (a wake is always
 bare). A failed or slow resolve, or no layer list, leaves the agent as the list says.
 
 **How it shows.** `dcf-registry explain agents/<name>` shows an agent definition like any
 component: each field with every line, its layer and version, the skipped lines and why (a field
-the registry never sets, a model that is not one word). `agents check` shows the fields that came
+the registry never sets, a model that is not one word), and closes with the effective model for
+the agent's CLI and the key and layer it came from. `agents check` shows the fields that came
 from the registry and from which layers (`model opus (registry: dept)`), and names the list's
 values it replaced (`replacing --model haiku in its args`, `replacing the list's skills [x]`).
 

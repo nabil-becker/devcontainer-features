@@ -31,6 +31,10 @@
 #                entry of that name, so it is idempotent. Needs no login. With no facilitator on PATH
 #                it registers nothing and says so (exit 0). Not a verb of the contract yet (the
 #                contract's own `attach` opens a running session); other targets exit 2.
+#   AGENT_MODEL (0.2.0): new and resume run with --model <it>, in place of any --model in the args
+#     (the component registry's agent definition wins, handed over by the participant component;
+#     Copilot CLI 1.0.114 `copilot --help`: "--model <model>  Set the AI model to use (use 'auto'
+#     to let Copilot pick automatically)"); run-once is left as its caller sends it
 #   agent-adapter-copilot supports   the verbs above that work, one per line
 # Exit: 0 done, 1 failed, 2 bad use, 3 not supported.
 #
@@ -89,6 +93,30 @@ case "${AGENT_SESSION_NAME-}" in
   *) SNAME="$AGENT_SESSION_NAME" ;;
 esac
 [ -d "$FOLDER" ] || die 1 "$NAME: folder $FOLDER does not exist"
+# The model (0.2.0): AGENT_MODEL, the model of the agent's definition in the component registry
+# (participant 1.3.0), is passed as --model on new and resume, in place of any --model the args hold
+# (the registry wins, the Operator's ruling of 2026-11-21; one line says what it replaced). A value
+# that is not one word is left out with a note and the args are used as they are.
+if [ -n "${AGENT_MODEL-}" ]; then
+  case "$verb" in new | resume)
+    model_re='^[][A-Za-z0-9._:/@-]+$'
+    if [ "${#AGENT_MODEL}" -gt 100 ] || ! [[ "$AGENT_MODEL" =~ $model_re ]]; then
+      note "$NAME: AGENT_MODEL is not one word; starting without it."
+    else
+      model_args=() model_was='' skip=0
+      for a in "$@"; do
+        if [ "$skip" -eq 1 ]; then model_was="$a"; skip=0; continue; fi
+        case "$a" in
+          --model) skip=1 ;;
+          --model=*) model_was="${a#--model=}" ;;
+          *) model_args+=("$a") ;;
+        esac
+      done
+      [ -z "$model_was" ] || note "$NAME: the component registry's model $AGENT_MODEL replaces --model $model_was from the args."
+      set -- --model "$AGENT_MODEL" ${model_args[@]+"${model_args[@]}"}
+    fi ;;
+  esac
+fi
 
 case "$verb" in
   hint)

@@ -11,7 +11,9 @@ here; `task lint` fails when the entry is missing.
 ### Added
 
 - **Agent definitions** (`agents/<name>`, the second component kind; proposal section 6.1). Two
-  fields, each merged by its type: `model:value` (the model the agent's CLI runs on, one word) and
+  fields, each merged by its type: `model:value` (the model the agent's CLI runs on, one word; and
+  `model.<cli>:value`, the model for agents of that CLI only, which beats a plain `model` of the same
+  layer and path; a key may now hold `.`) and
   `skills:list` (a skill name or `ref:skills/<name>`, checked as a ref, so `explain skills/<name>
   --uses` lists the agents that name it). A line for any other key of an agent is skipped and
   reported: the agents list owns the identity, the address, the lease, the folder, `args` and
@@ -19,9 +21,10 @@ here; `task lint` fails when the entry is missing.
 - **The resolved view's `agents/<name>/`**: `model` (one line), `skills` (one name per line) and
   `from.tsv` (field, layer, `source:file:line` of each line used), what the participant component
   (participant 1.3.0) reads at the agent's start; `meta/agents/<name>/` as for skills.
-- **`COMPONENT_REGISTRY_AGENTS`** (comma-separated agent names, set by the participant component):
-  `resolve` resolves `agents/<name>` for each, so a pattern such as `[agents/*]` reaches an agent no
-  layer names; the names are kept in the view (`agent-names`), so `/registry-refresh` keeps them.
+- **`COMPONENT_REGISTRY_AGENTS`** (comma-separated `name:cli` items, set by the participant
+  component): `resolve` resolves `agents/<name>` for each, so a pattern such as `[agents/*]` reaches an
+  agent no layer names, and writes the effective model for that agent's CLI (`from.tsv` names the
+  key it came from); the names are kept in the view (`agent-names`), so `/registry-refresh` keeps them.
 - `explain agents/<name>` closes with where the participant reads the definition and that its
   values replace the agents list's (the registry wins for `model` and `skills`, the Operator's
   ruling of 2026-11-21).

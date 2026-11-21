@@ -661,7 +661,7 @@ contains "agents: a permission key is skipped even in the lowest layer" "$out" "
 contains "agents: a model of two words is skipped" "$out" "agents/reviewer:model: a model is one word"
 contains "agents: model of another type is skipped" "$out" "model is one value: model:value = <model>"
 contains "agents: skills of another type is skipped" "$out" "skills is a list"
-contains "agents: an unknown field is skipped" "$out" "agents/reviewer:color: not an agent definition field (model, skills)"
+contains "agents: an unknown field is skipped" "$out" "agents/reviewer:color: not an agent definition field (model, model.<cli>, skills)"
 contains "agents: a skills item that names no skill is reported" "$out" "item 'bad/one' names no skill"
 check "agents: a ref item is checked like any ref" ok "$(awk -F'\t' '$1 == "agents/reviewer" && $3 == "skills/review" { print $6; exit }' "$(V)/meta/refs.tsv")"
 contains "agents: explain --uses lists the agent that names a skill" "$(dcf-registry explain skills/review --uses)" "agents/reviewer:skills -> skills/review"
@@ -679,6 +679,52 @@ check "agents: an empty COMPONENT_REGISTRY_AGENTS clears them" no "$([ -e "$(V)/
 check "agents: an agent a section names literally is still resolved" opus "$(cat "$(V)/agents/reviewer/model" 2>/dev/null)"
 out="$(dcf-registry resolve --as /Corp/Finance/x 2>&1)"
 check "agents: another path gets only the lines that apply to it (corp's pattern, not dept's opus)" sonnet "$(cat "$(V)/agents/reviewer/model" 2>/dev/null)"
+
+# model.<cli> (the Operator's ruling of 2026-11-21): a model for agents of one CLI; it beats a plain
+# model at the same layer and path, and loses to a higher layer's or a more specific path's plain one
+new_case agentcli
+ma="$(layer corp)"; mb="$(layer dept)"
+cat > "$ma/a.reg" <<'EOF'
+[/Corp/agents/*]
+model:value = sonnet
+model.copilot:value = gpt-5.4
+model.nosuchcli:value = whatever
+[/Corp/agents/ops]
+model.claude:value = haiku
+[/Corp/agents/rev]
+model.claude:value = opus
+lock model
+EOF
+cat > "$mb/b.reg" <<'EOF'
+[/Corp/agents/ops]
+model:value = big-dept
+[/Corp/agents/rev]
+model.claude:value = dept-tries
+EOF
+path_list "corp:/Corp:$ma" "dept:/Corp/MyDepartment:$mb"
+out="$(COMPONENT_REGISTRY_AGENTS=host:claude,pair:copilot,odd:codex,ops:claude,rev:claude,bare dcf-registry resolve --as "$W" 2>&1)"; rc=$?
+check "model.<cli>: resolve succeeds" 0 "$rc"
+check "model.<cli>: a claude agent under [agents/*] gets the plain model" sonnet "$(cat "$(V)/agents/host/model" 2>/dev/null)"
+check "model.<cli>: a copilot agent under [agents/*] gets model.copilot (same layer and path: the suffix wins)" gpt-5.4 "$(cat "$(V)/agents/pair/model" 2>/dev/null)"
+check "model.<cli>: a CLI with no suffixed key gets the plain model" sonnet "$(cat "$(V)/agents/odd/model" 2>/dev/null)"
+check "model.<cli>: an agent with no CLI named gets the plain model" sonnet "$(cat "$(V)/agents/bare/model" 2>/dev/null)"
+check "model.<cli>: a higher layer's plain model beats a lower layer's suffixed one" big-dept "$(cat "$(V)/agents/ops/model" 2>/dev/null)"
+check "model.<cli>: the view records the CLI it resolved for" copilot "$(cat "$(V)/agents/pair/cli" 2>/dev/null)"
+contains "model.<cli>: from.tsv names the key the model came from" "$(cat "$(V)/agents/pair/from.tsv")" "$(printf 'model\tcorp\t1:a.reg:3\tmodel.copilot')"
+contains "model.<cli>: from.tsv names the plain key when it wins" "$(cat "$(V)/agents/ops/from.tsv")" "$(printf 'model\tdept\t1:b.reg:2\tmodel')"
+check "model.<cli>: a lock on model holds model.<cli> in a higher layer" opus "$(cat "$(V)/agents/rev/model" 2>/dev/null)"
+contains "model.<cli>: the locked line is reported" "$out" "a lock on model holds every model.<cli>"
+contains "model.<cli>: explain shows the effective model, its key and layer" "$(dcf-registry explain agents/pair)" "Effective model for its CLI, copilot: gpt-5.4 (model.copilot from corp at 1:a.reg:3)"
+lacks "model.<cli>: an unknown suffix is no problem" "$out" "nosuchcli"
+: > "$mb/b.reg"
+cat > "$ma/a.reg" <<'EOF'
+[/Corp/agents/*]
+model.copilot:value = gpt-5.4
+[/Corp/MyDepartment/agents/*]
+model:value = deeper-same-layer
+EOF
+out="$(COMPONENT_REGISTRY_AGENTS=pair:copilot dcf-registry resolve --as "$W" 2>&1)"
+check "model.<cli>: a more specific path's plain model beats a less specific suffixed one (same layer)" deeper-same-layer "$(cat "$(V)/agents/pair/model" 2>/dev/null)"
 
 echo "component-registry unit: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

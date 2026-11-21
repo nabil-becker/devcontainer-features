@@ -14,13 +14,14 @@ copy. Backward compatible within a major (NFR-5): `agents.yml` and `AGENTS_FILE`
 ### Added
 
 - **Agent definitions from the component registry** (component-registry 1.6.0). At an agent's
-  start, `resolve` is handed the listed agents' names (`COMPONENT_REGISTRY_AGENTS`), and after it the
+  start, `resolve` is handed the listed agents' names and CLIs (`COMPONENT_REGISTRY_AGENTS`, so a
+  layer's `model.<cli>` reaches the agents of that CLI), and after it the
   agent's definition is read from the resolved view's `agents/<name>/`, only when the view was
   resolved for the agent's path (its `registry-path`, else `COMPONENT_REGISTRY_WHOAMI`). Its
   **model** reaches the CLI adapter in the new environment variable `AGENT_MODEL` on every call
   about the agent (empty on every other call, as `AGENT_SESSION_NAME`); an adapter that does not
-  read it starts its CLI on the CLI's own default (claude-code 1.13.0 passes `--model`, in place of
-  any `--model` in the agent's arguments). Its **skills** replace the list entry's `skills:`. The
+  read it starts its CLI on the CLI's own default (claude-code 1.13.0 and copilot 0.2.0 pass
+  `--model`, in place of any `--model` in the agent's arguments). Its **skills** replace the list entry's `skills:`. The
   registry wins for these two fields (the Operator's ruling of 2026-11-21); the list fills what the
   registry leaves unset, and the registry sets nothing else. One line at the start says what was
   used, from which layers and what it replaced; `agents check` shows it per agent (or why the

@@ -63,11 +63,12 @@
 # meta/refs.tsv, meta/problems.tsv, layers.tsv, whoami and agent-names.
 #
 # Agent definitions (1.6.0): an agents/<name> component holds two fields, model:value and
-# skills:list; a line for any other key is skipped and reported (the agents list owns the rest,
-# and an agent definition carries no permission). resolve also resolves agents/<name> for every
-# name in COMPONENT_REGISTRY_AGENTS (comma-separated; the participant sets it to the listed
-# agents), so a pattern such as [agents/*] reaches them; without it the current view's names are
-# kept.
+# skills:list, and model.<cli>:value, a model for agents of that CLI only; a line for any other key
+# is skipped and reported (the agents list owns the rest, and an agent definition carries no
+# permission). resolve also resolves agents/<name> for every name in COMPONENT_REGISTRY_AGENTS
+# (comma-separated name:cli items; the participant sets it to the listed agents and their CLIs), so
+# a pattern such as [agents/*] reaches them and the effective model is picked for each agent's CLI;
+# without it the current view's names are kept.
 #
 # The built-in base layer (1.1.0): the Feature's own utility skills (registry-refresh,
 # registry-explain, registry-remember), read from $SHARE_DIR/base, are layer rank 0 with the id
@@ -598,8 +599,8 @@ function parse(file,   ln, nr, t, loc, p, hdr, dir) {
       }
       continue
     }
-    if (t ~ /^lock[ \t]+[A-Za-z0-9_-]+$/) { entry(t, loc); continue }
-    if (t ~ /^[A-Za-z0-9_-]+:[A-Za-z]+[ \t]*=/) {
+    if (t ~ /^lock[ \t]+[A-Za-z0-9_.-]+$/) { entry(t, loc); continue }
+    if (t ~ /^[A-Za-z0-9_.-]+:[A-Za-z]+[ \t]*=/) {
       p = t; sub(/[ \t]*=.*$/, "", p); sub(/^[^:]*:/, "", p)
       if (p !~ /^(value|list|text|ref)$/) { problem(loc, "type '" p "' is none of value, list, text, ref"); continue }
       entry(t, loc); continue
@@ -625,27 +626,42 @@ function setfm(fm, key, val,   ln, nl, x, o, done, skip) {
   return o
 }
 function isperm(k) { return k == "allowed-tools" || k == "disallowed-tools" || k ~ /^permission/ }
+# ismodel(k) (1.6.0): model, or model.<cli> (the model for agents of that CLI only)
+function ismodel(k) { return k == "model" || k ~ /^model\.[A-Za-z0-9_-]+$/ }
 # agentwhy(key, type, data) (1.6.0): why a line of an agent definition is skipped, "" when it is a
-# field. Only model (one value) and skills (a list); the agents list owns every other field, and an
-# agent definition never carries a permission (rule 3 alone would keep the lowest layer's, which is
-# not the repository).
+# field. Only model and model.<cli> (one value each) and skills (a list); the agents list owns every
+# other field, and an agent definition never carries a permission (rule 3 alone would keep the
+# lowest layer's, which is not the repository).
 function agentwhy(k, t, d) {
   if (index(" name cli kind folder lifecycle identity lease default session-name registry-path attachment args definition ", " " k " "))
     return "the agents list owns " k "; the registry never sets it for an agent" (k == "args" || k == "definition" ? "; it could widen a permission" : "")
   if (isperm(k)) return "an agent definition carries no permission key"
-  if (k != "model" && k != "skills") return "not an agent definition field (model, skills)"
-  if (k == "model" && t != "value") return "model is one value: model:value = <model>"
+  if (!ismodel(k) && k != "skills") return "not an agent definition field (model, model.<cli>, skills)"
+  if (ismodel(k) && t != "value") return k " is one value: " k ":value = <model>"
   if (k == "skills" && t != "list") return "skills is a list: skills:list = <name>, ref:skills/<name>"
-  if (k == "model" && (length(d) > 100 || d !~ /^[][A-Za-z0-9._:\/@-]+$/)) return "a model is one word of letters, digits and . _ : / @ [ ] - (at most 100)"
+  if (ismodel(k) && (length(d) > 100 || d !~ /^[][A-Za-z0-9._:\/@-]+$/)) return "a model is one word of letters, digits and . _ : / @ [ ] - (at most 100)"
   return ""
 }
-# agentout(c, n) (1.6.0): the agent definition's machine-readable view, VIEW/agents/<name>/: model
-# (one line), skills (one name per line; a ref:[scope/]skills/<name>[:key] item gives its name) and
-# from.tsv (field, layer, source:file:line of each line used)
-function agentout(c, n, cand,   dir, a, i, x, nit, it, items, out, seen) {
+# agentout(c, n, cand, cs) (1.6.0): the agent definition's machine-readable view,
+# VIEW/agents/<name>/: model (one line: the effective model for the agent's CLI), cli (the CLI it was
+# resolved for, when the participant named it), skills (one name per line; a
+# ref:[scope/]skills/<name>[:key] item gives its name) and from.tsv (field, layer, source:file:line,
+# key of each line used). The effective model: the strongest of the model line and the
+# model.<the agent's cli> line by layer, then specificity, then fewer wildcards; on a tie there the
+# suffixed key wins, then the later line.
+function agentout(c, n, cand, cs,   dir, a, i, x, nit, it, items, out, seen, cli, mk, best, bbase, bsuf, base, suf) {
   dir = VIEW "/" c
   system("mkdir -p " q(dir))
-  if (("model" in RES) && KT["model"] == "value" && RES["model"] != "") { print RES["model"] > (dir "/model"); close(dir "/model") }
+  cli = (c in ACLI) ? ACLI[c] : ""
+  if (cli != "") { print cli > (dir "/cli"); close(dir "/cli") }
+  best = 0; bbase = -1; bsuf = -1
+  for (a = 1; a <= n; a++) {
+    i = cand[a]; mk = Lkey[i]
+    if (Llock[i] || ST[i] != "used" || KT[mk] != "value" || !(mk == "model" || (cli != "" && mk == "model." cli))) continue
+    base = int(cs[a] / 1000000); suf = (mk != "model")
+    if (base > bbase || (base == bbase && (suf > bsuf || (suf == bsuf && Lord[i] > Lord[best])))) { best = i; bbase = base; bsuf = suf }
+  }
+  if (best && Ldata[best] != "") { print Ldata[best] > (dir "/model"); close(dir "/model") }
   if (("skills" in RES) && KT["skills"] == "list" && RES["skills"] != "") {
     nit = split(RES["skills"], items, "\n"); out = ""; split("", seen)
     for (x = 1; x <= nit; x++) {
@@ -658,9 +674,10 @@ function agentout(c, n, cand,   dir, a, i, x, nit, it, items, out, seen) {
     if (out != "") { printf "%s", out > (dir "/skills"); close(dir "/skills") }
   }
   printf "" > (dir "/from.tsv")
+  if (best && Ldata[best] != "") print "model\t" Llayer[best] "\t" Lloc[best] "\t" Lkey[best] >> (dir "/from.tsv")
   for (a = 1; a <= n; a++) {
     i = cand[a]
-    if ((Lkey[i] == "model" || Lkey[i] == "skills") && !Llock[i] && ST[i] == "used") print Lkey[i] "\t" Llayer[i] "\t" Lloc[i] >> (dir "/from.tsv")
+    if (Lkey[i] == "skills" && !Llock[i] && ST[i] == "used") print "skills\t" Llayer[i] "\t" Lloc[i] "\tskills" >> (dir "/from.tsv")
   }
   close(dir "/from.tsv")
 }
@@ -749,6 +766,7 @@ function resolve(c,   i, j, n, d, x, y, cand, cs, lowrank, rmax, rloc, rlay, k, 
     if (rmax >= 0 && cs[a] < rmax && !((k in LOCKR) && Lrank[i] <= LOCKR[k])) { ST[i] = "dropped"; WHY[i] = "dropped by @replace in " rlay " at " rloc; continue }
     if (c ~ /^agents\// && (AWHY = agentwhy(k, Ltype[i], Ldata[i])) != "") { ST[i] = "skipped"; WHY[i] = AWHY; continue }
     if (isperm(k) && Lrank[i] > lowrank) { ST[i] = "skipped"; WHY[i] = "a permission key is taken from the component's lowest layer only (rank " lowrank ")"; continue }
+    if (c ~ /^agents\// && k ~ /^model\./ && ("model" in LOCKR) && Lrank[i] > LOCKR["model"]) { ST[i] = "skipped"; WHY[i] = "locked by " Llayer[LOCKI["model"]] " at " Lloc[LOCKI["model"]] " (a lock on model holds every model.<cli>)"; continue }
     if ((k in LOCKR) && Lrank[i] > LOCKR[k]) { ST[i] = "skipped"; WHY[i] = "locked by " Llayer[LOCKI[k]] " at " Lloc[LOCKI[k]]; continue }
     if (!(k in KT)) { KT[k] = Ltype[i]; KTI[k] = i; KORDER[++nkeys] = k }
     if (Ltype[i] != KT[k]) { ST[i] = "skipped"; WHY[i] = "type clash: " k " is " KT[k] ", fixed by " Llayer[KTI[k]] " at " Lloc[KTI[k]]; continue }
@@ -866,7 +884,7 @@ function resolve(c,   i, j, n, d, x, y, cand, cs, lowrank, rmax, rloc, rlay, k, 
     print k "\t" KT[k] "\t" out >> (base "/keys.tsv")
   }
   close(base "/keys.tsv")
-  if (c ~ /^agents\//) agentout(c, n, cand)
+  if (c ~ /^agents\//) agentout(c, n, cand, cs)
   printf "N\t%s\n", c
 }
 BEGIN {
@@ -896,7 +914,11 @@ END {
   }
   # agents the participant asked for (1.6.0): resolved even when only a pattern names them
   na = split(AGENTNAMES, an, " ")
-  for (x = 1; x <= na; x++) { c = "agents/" an[x]; if (!(c in SEEN)) { SEEN[c] = 1; COMP[++nc] = c } }
+  for (x = 1; x <= na; x++) {
+    p = index(an[x], ":"); c = "agents/" (p ? substr(an[x], 1, p - 1) : an[x])
+    if (p) ACLI[c] = substr(an[x], p + 1)
+    if (!(c in SEEN)) { SEEN[c] = 1; COMP[++nc] = c }
+  }
   for (a = 2; a <= nc; a++) { t = COMP[a]; for (b = a - 1; b >= 1 && COMP[b] > t; b--) COMP[b + 1] = COMP[b]; COMP[b + 1] = t }
   for (x = 1; x <= nc; x++) resolve(COMP[x])
   # refs: each with its target, ok or dangling
@@ -1010,8 +1032,8 @@ cmd_resolve() {
   fi
   : > "$stage/agent-names"
   for nm in $names; do
-    if [[ "$nm" =~ ^[A-Za-z0-9_-]+$ ]]; then grep -qx -- "$nm" "$stage/agent-names" || printf '%s\n' "$nm" >> "$stage/agent-names"
-    else warn "COMPONENT_REGISTRY_AGENTS: '$nm' is not an agent name (letters, digits, - and _); left out"; fi
+    if [[ "$nm" =~ ^[A-Za-z0-9_-]+(:[A-Za-z0-9_-]+)?$ ]]; then grep -q -- "^${nm%%:*}\(:\|\$\)" "$stage/agent-names" || printf '%s\n' "$nm" >> "$stage/agent-names"
+    else warn "COMPONENT_REGISTRY_AGENTS: '$nm' is not an agent name, or name:cli (letters, digits, - and _); left out"; fi
   done
   date -u +%Y-%m-%dT%H:%M:%SZ > "$stage/resolved"
   # The layers that stack their text without a heading (heading: false), space-separated.
@@ -1153,6 +1175,9 @@ cmd_explain() {
   fi
   case "$NP_COMP" in agents/*)
     printf '\nAgent definition (1.6.0): the participant reads model and skills from %s/%s/ at the agent'"'"'s start.\n' "$VIEW" "$NP_COMP"
+    if [ -f "$VIEW/$NP_COMP/model" ]; then
+      awk -F'\t' -v m="$(head -n 1 "$VIEW/$NP_COMP/model")" -v cli="$(cat "$VIEW/$NP_COMP/cli" 2>/dev/null)" '$1 == "model" { printf "Effective model%s: %s (%s from %s at %s)\n", (cli == "" ? "" : " for its CLI, " cli), m, $4, $2, $3 }' "$VIEW/$NP_COMP/from.tsv"
+    fi
     echo "The registry wins: its skills replace the agents list's, and its model a model chosen in the agent's CLI arguments." ;;
   esac
   return 0

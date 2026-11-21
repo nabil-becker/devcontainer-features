@@ -259,7 +259,7 @@ EOF
 reset
 run 1 start host
 check 'definition: the agent starts (exit 0)' 0 "$RC"
-check 'definition: resolve is handed the listed agents' 'host,rev,pair,od' "$(sed -n 's/^AGENTS=//p' "$T/reg-env" 2>/dev/null | head -n 1)"
+check 'definition: resolve is handed the listed agents and their CLIs' 'host:fakea,rev:fakea,pair:fakeb,od:fakea' "$(sed -n 's/^AGENTS=//p' "$T/reg-env" 2>/dev/null | head -n 1)"
 check 'definition: the pattern model reaches start-bg in AGENT_MODEL' 'start-bg|sonnet' "$(grep '^start-bg' "$MODELS_A")"
 check 'definition: AGENT_MODEL is empty on list' 'list|' "$(grep '^list' "$MODELS_A" | head -n 1)"
 contains 'definition: one line names the model and its layer' "$OUT" "host: the component registry's agent definition: model sonnet (registry: corp)."
@@ -289,6 +289,17 @@ run 1 up
 check 'definition, up with a path again after another: resolved again' 3 "$(grep -c '^resolve' "$T/reg-calls")"
 check 'definition, up with a path again after another: each its own model' 'start-bg|sonnet start-bg|opus start-bg|sonnet' "$(grep '^start-bg' "$MODELS_A" | tr '\n' ' ' | sed 's/ $//')"
 cp "$T/agents.keep" "$repo/.devcontainer/agents.yml"
+# model.<cli> under [agents/*]: each agent gets the model for its own CLI
+cp "$T/layer/agents.reg" "$T/agents.reg.keep"
+printf '[/Corp/agents/*]\nmodel.fakeb:value = b-model\n' >> "$T/layer/agents.reg"
+reset
+TTY=1 run 1 start pair
+check 'definition, model.<cli>: the fakeb agent gets model.fakeb' 'new|b-model' "$(grep '^new' "$MODELS_B")"
+contains 'definition, model.<cli>: the start line names the key' "$OUT" 'model b-model (registry: corp, model.fakeb)'
+reset
+run 1 start host
+check 'definition, model.<cli>: the fakea agent keeps the plain model' 'start-bg|sonnet' "$(grep '^start-bg' "$MODELS_A")"
+cp "$T/agents.reg.keep" "$T/layer/agents.reg"
 # a CLI whose adapter does not read AGENT_MODEL (fakeb) starts as before
 reset
 TTY=1 run 1 start pair
