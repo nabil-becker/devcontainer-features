@@ -9,6 +9,31 @@ change here, add the entry below, run `task components:sync`, and bump every Fea
 copy. Backward compatible within a major (NFR-5): `agents.yml` and `AGENTS_FILE` stay (as aliases of
 `participants.yml` and `PARTICIPANTS_FILE` from 1.1.0) until the next major.
 
+## [1.3.0] - 2026-11-20
+
+### Added
+
+- **Agent definitions from the component registry** (component-registry 1.6.0). At an agent's
+  start, `resolve` is handed the listed agents' names (`COMPONENT_REGISTRY_AGENTS`), and after it the
+  agent's definition is read from the resolved view's `agents/<name>/`, only when the view was
+  resolved for the agent's path (its `registry-path`, else `COMPONENT_REGISTRY_WHOAMI`). Its
+  **model** reaches the CLI adapter in the new environment variable `AGENT_MODEL` on every call
+  about the agent (empty on every other call, as `AGENT_SESSION_NAME`); an adapter that does not
+  read it starts its CLI on the CLI's own default (claude-code 1.13.0 passes `--model`, unless the
+  agent's arguments choose one). Its **skills** are the agent's when the list entry has no `skills:`
+  key. The list wins for every field it states. One line at the start says what was used and from
+  which layers; `agents check` shows it per agent (or why the definition was not read), and
+  `agents list --json` gains `"model"` when a definition sets one.
+
+### Fixed
+
+- `agents up` with agents of two registry paths, the first path again after the second: that agent
+  was handed the second path's skills (the path counted as resolved in the run). It is resolved
+  again when another path's resolve came in between.
+
+Nothing to do: without the `component-registry` Feature, or with a layer list that defines no
+agents, nothing changes.
+
 ## [1.2.0] - 2026-11-20
 
 ### Added

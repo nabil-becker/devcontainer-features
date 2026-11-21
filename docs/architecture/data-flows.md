@@ -383,6 +383,7 @@ flowchart LR
 - A `db` source's password goes to `psql` in its own environment only (never an argument or a log), the database is opened read-only, and one bad row or an empty result fails the fetch so `resolve` keeps the last good copy.
 - A layer copy and the view are as sensitive as their most sensitive layer (a person's own layer may hold health facts): owner-only, never committed. `explain` prints to the terminal only.
 - The CLI's skills folder (Claude Code: `$CLAUDE_CONFIG_DIR/skills`, the claude-code volume) gets owner-only copies, each marked owned by the registry; never the repository's `.claude/skills`.
+- Agent definitions (release 2, component-registry 1.6.0): the view's `agents/<name>/` (a model and skill names) is read by the participant component at the agent's start; the model reaches the CLI adapter only as the environment variable `AGENT_MODEL` of that call, never written elsewhere. An agent definition carries no permission, identity, lease or folder.
 - `/registry-remember` writes only to the layer marked `writable: true`, and only to a folder (a `path` source): the person's own layer, wherever they keep it.
 - In this repository (slice 4) two `path` layers feed the resolve: the devhost Feature's folder in the image (`/usr/local/share/devhost/registry`) and the committed `.devcontainer/registry/repo`; both public, both `required`, so a missing one leaves the last view and never hands over half a skill.
 

@@ -6,6 +6,15 @@ of the Feature and whether they must act (an option renamed, a task removed, a r
 The version in `devcontainer-feature.json` is bumped in the same change that adds its entry
 here; `task lint` fails when the entry is missing.
 
+## [0.2.0] - 2026-11-20
+
+### Added
+
+- With `participants: true`, the participant component 1.3.0: agent definitions from the component
+  registry at an agent's start. `agent-adapter-copilot` does not read the new `AGENT_MODEL` yet, so a
+  Copilot agent starts on Copilot CLI's own default model (the contract's fallback); its skills from
+  the registry are shown when its list entry has none.
+
 ## [0.1.0] - 2026-11-20
 
 ### Added

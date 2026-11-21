@@ -51,6 +51,8 @@
 #   agent-adapter-claude list       name<TAB>session id<TAB>state<TAB>folder, newest first
 #   agent-adapter-claude supports   the verbs above, one per line
 # Exit: 0 done, 1 failed, 2 bad use, 3 not supported.
+# AGENT_MODEL (1.13.0): start-bg, new and resume add --model <it> unless the args hold --model (the
+# component registry's agent definition, handed over by the participant component); wake stays bare.
 #
 # Identity by name and folder, action by id: a session is the agent's when its cwd is the
 # folder and its name is one the agent's session has had (the handle, the session name now, the
@@ -1147,6 +1149,21 @@ if [ "$rc_out" -eq 0 ] && [ "$rc_has" -eq 0 ]; then
   case "$verb" in start-bg | wake | attach | new) remote_control_on && rc_args+=(--remote-control) ;; esac
 fi
 set -- "${rc_args[@]}"
+# The model (1.13.0): AGENT_MODEL is the model of the agent's definition in the component registry
+# (participant 1.3.0). start-bg, new and resume pass it as --model, unless the args already hold
+# --model (the agents list, or the extra args of one start, win). A wake stays bare (its saved
+# options), and a value that is not one word is left out with a note.
+if [ -n "${AGENT_MODEL-}" ]; then
+  case "$verb" in start-bg | new | resume)
+    model_re='^[][A-Za-z0-9._:/@-]+$' model_has=0
+    for a in "$@"; do case "$a" in --model | --model=*) model_has=1 ;; esac; done
+    if [ "${#AGENT_MODEL}" -gt 100 ] || ! [[ "$AGENT_MODEL" =~ $model_re ]]; then
+      note "$NAME: AGENT_MODEL is not one word; starting without it."
+    elif [ "$model_has" -eq 0 ]; then
+      set -- --model "$AGENT_MODEL" "$@"
+    fi ;;
+  esac
+fi
 
 case "$verb" in
   skills) skills_handover; exit $? ;;

@@ -286,6 +286,15 @@ the line "manage the environment, not the CLI" (NFR-13); `trust` answers exit 3 
 
 ## Changes
 
+### [0.2.0] - 2026-11-20
+
+#### Added
+
+- With `participants: true`, the participant component 1.3.0: agent definitions from the component
+  registry at an agent's start. `agent-adapter-copilot` does not read the new `AGENT_MODEL` yet, so a
+  Copilot agent starts on Copilot CLI's own default model (the contract's fallback); its skills from
+  the registry are shown when its list entry has none.
+
 ### [0.1.0] - 2026-11-20
 
 #### Added
