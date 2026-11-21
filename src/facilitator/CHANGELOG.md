@@ -6,6 +6,16 @@ of the Feature and whether they must act (an option renamed, a task removed, a r
 The version in `devcontainer-feature.json` is bumped in the same change that adds its entry
 here; `task lint` fails when the entry is missing.
 
+## [0.3.1] - 2026-11-21
+
+### Changed
+
+- The Feature now installs the published node bundle `facilitator-bundle-v0.3.0` (amd64 and arm64), pinned
+  in `digests.txt` after checking its SHA256SUMS, GitHub's recorded digest and its build attestation. 0.3.0
+  was published before the bundle, so it built the bundle from source during every install (about 250 MB of
+  downloads); 0.3.1 downloads the one verified bundle instead. Nothing to change in your configuration;
+  rebuild the container to pick it up.
+
 ## [0.3.0] - 2026-11-20
 
 The facilitator becomes a node bundle (slice N2 of the facilitator-node proposal, ADR-0067): one built,
