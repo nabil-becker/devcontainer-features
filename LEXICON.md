@@ -411,6 +411,10 @@ The domain words of the project itself are not here; they live with the project'
   fields the registry wins over the agents list (the list fills only what the registry leaves
   unset), the list stays the source of which agents exist, and no identity, lease or permission key
   can be set from it.
+- **Layer namespace**: a name set as `namespace: <name>` on a registry layer; every component the
+  layer brings gets it as a prefix (`acme:arch-review`). Layers that share a namespace merge with
+  each other as any layers do; different namespaces never mix, so a namespaced layer cannot stack
+  onto, override or lock anything outside its namespace (ADR-0073).
 
 ## Secrets
 
