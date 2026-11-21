@@ -366,9 +366,10 @@ exists, `agents start` and `agents up` do these for each agent before its CLI st
 3. (participant 1.3.0, component-registry 1.6.0) the agent's **definition**: `resolve` is handed
    the listed agents' names (`COMPONENT_REGISTRY_AGENTS`), and the resolved view's
    `agents/<name>/` is read when the view is for the agent's path. Its `model` reaches the adapter
-   in `AGENT_MODEL` (the adapter contract, below); its `skills` become the entry's `skills` when
-   the entry has none. The list wins for every field it states, and the registry sets nothing
-   else (not the identity, lease, folder, `args`, `definition` or any permission). One line says
+   in `AGENT_MODEL` (the adapter contract, below), and the adapter uses it in place of a model the
+   CLI arguments choose; its `skills` replace the entry's `skills`. The registry wins for these two
+   fields (the Operator's ruling of 2026-11-21), the list fills what it leaves unset, and it sets
+   nothing else (not the identity, lease, folder, `args`, `definition` or any permission). One line says
    what was used and from which layers; `agents check` shows it, `agents list --json` adds
    `"model"`.
 
@@ -427,8 +428,8 @@ Environment (2.1): AGENT_SESSION_NAME is the rendered session name on every call
 (an adapter that can name a session uses it, else the handle) and empty on the others (Session names).
 Environment (participant 1.3.0): AGENT_MODEL is the model of the agent's definition in the component
 registry on every call about the agent, empty on the others and without a definition. An adapter
-that can choose a model passes it on the verbs that start a session, unless the CLI arguments
-already choose one; one that does not read it starts the CLI on its own default (no supports
+that can choose a model passes it on the verbs that start a session, in place of a model the CLI
+arguments choose; one that does not read it starts the CLI on its own default (no supports
 capability: a variable cannot answer exit 3). claude-code 1.13.0 passes it as --model.
 ```
 

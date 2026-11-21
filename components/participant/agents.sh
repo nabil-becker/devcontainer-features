@@ -89,10 +89,11 @@
 # Agent definitions (participant 1.3.0, component-registry 1.6.0). resolve is handed the listed
 # agents' names (COMPONENT_REGISTRY_AGENTS), and after it the agent's definition is read from the
 # resolved view's agents/<name>/, only when the view is for the agent's path: its model reaches the
-# adapter in AGENT_MODEL (empty on every other call, as AGENT_SESSION_NAME), and the adapter keeps
-# a model the CLI args choose; its skills are the agent's when the entry has no skills: key. The
-# list wins for every field it states; the registry never sets anything else. `check` shows what
-# came from the registry.
+# adapter in AGENT_MODEL (empty on every other call, as AGENT_SESSION_NAME), and the adapter puts
+# it in place of any model the CLI args choose; its skills replace the entry's skills: key. The
+# registry wins for the two fields it may set (the Operator's ruling of 2026-11-21); the list fills
+# what the registry leaves unset, and the registry never sets anything else. `check` shows what
+# came from the registry and what it replaced.
 #
 # Exit: 0 done, 1 failed, 2 bad use (unknown agent, bad list, refused), 3 the CLI cannot.
 set -uo pipefail
@@ -353,7 +354,7 @@ load_list() {
     die 2 "no agent list at $AF_ABS (from $AF_SOURCE); write one (see the agents Feature notes) (.devcontainer/participants.yml is the name to use) or set PARTICIPANTS_FILE (or AGENTS_FILE) to its path relative to $ROOT."
   fi
   out="$(awk "$PARSER" "$AF_ABS")"; rc=$?
-  N=0 ATTACH=() DESCR=() SKILLS=() NAME=() CLI=() KIND=() FOLDER=() ARGS=() LINE=() HASARGS=() LIFE=() IDENT=() LEASE=() DEF=() DFLT=() SNKEY=() SNSET=() SNLINE=() SNAME=() REGPATH=() SKSRC=() RMODEL=() RFROM=() RNOTE=()
+  N=0 ATTACH=() DESCR=() SKILLS=() NAME=() CLI=() KIND=() FOLDER=() ARGS=() LINE=() HASARGS=() LIFE=() IDENT=() LEASE=() DEF=() DFLT=() SNKEY=() SNSET=() SNLINE=() SNAME=() REGPATH=() SKSRC=() LSKILLS=() RMODEL=() RFROM=() RNOTE=()
   resolve_template
   while IFS=$'\t' read -r rec a b c; do
     case "$rec" in
@@ -369,7 +370,8 @@ load_list() {
       A) HASARGS[a]=1 ;;
       T) ;;
       S) SKSRC[a]=list
-         if [ -n "${SKILLS[a]:-}" ]; then SKILLS[a]="${SKILLS[a]}"$'\x1f'"$b"; else SKILLS[a]="$b"; fi ;;
+         if [ -n "${SKILLS[a]:-}" ]; then SKILLS[a]="${SKILLS[a]}"$'\x1f'"$b"; else SKILLS[a]="$b"; fi
+         LSKILLS[a]="${SKILLS[a]}" ;;
       G) if [ -n "${ARGS[a]:-}" ]; then ARGS[a]="${ARGS[a]}"$'\x1f'"$b"; else ARGS[a]="$b"; fi ;;
       W) warn "$AF:$a: $b" ;;
       E) die 2 "$AF:$a: $b" ;;
@@ -1123,9 +1125,10 @@ registry_resolve_handover() {
 # registry_fields <i> [say] (participant 1.3.0, component-registry 1.6.0): the agent definition the
 # component registry resolved for entry i, read from the resolved view's agents/<name>/ (model,
 # skills, from.tsv) only when the view was resolved for the agent's path (its registry-path, else
-# COMPONENT_REGISTRY_WHOAMI). The list wins: its own skills: are kept, and the adapter keeps a model
-# the CLI args choose (AGENT_MODEL is only what the registry offers). Fills RMODEL, RFROM (what
-# check prints) and RNOTE (why nothing was read); with say, one line at the start. Read-only.
+# COMPONENT_REGISTRY_WHOAMI). The registry wins: its skills replace the entry's skills:, and the
+# adapter puts AGENT_MODEL in place of a model the CLI args choose; the list's own values stand only
+# where the registry sets none. Fills RMODEL, RFROM (what check prints) and RNOTE (why nothing was
+# read); with say, one line at the start. Read-only.
 registry_layers() { # <definition folder> <field>: the layers its lines came from, comma-separated
   awk -F'\t' -v f="$2" '$1 == f && !s[$2]++ { printf "%s%s", (n++ ? ", " : ""), $2 }' "$1/from.tsv" 2>/dev/null
 }
@@ -1137,7 +1140,8 @@ registry_want() { # <i>: RW, the path entry i is resolved for (its registry-path
 registry_fields() {
   local i="$1" say="${2:-}" nm="${NAME[$1]}" view d who want m sk lay re='^[][A-Za-z0-9._:/@-]+$'
   RMODEL[i]='' RFROM[i]='' RNOTE[i]=''
-  [ "${SKSRC[i]:-}" != registry ] || { SKILLS[i]=''; SKSRC[i]=''; }
+  # the entry's own skills back first (a definition read before may have replaced them)
+  SKILLS[i]="${LSKILLS[i]:-}"; if [ -n "${LSKILLS[i]:-}" ]; then SKSRC[i]=list; else SKSRC[i]=''; fi
   command -v dcf-registry >/dev/null 2>&1 || return 0
   view="$(registry_view)"
   d="$view/agents/$nm"
@@ -1153,6 +1157,14 @@ registry_fields() {
   if [ -n "$m" ]; then
     if [ "${#m}" -le 100 ] && [[ "$m" =~ $re ]]; then
       RMODEL[i]="$m"; lay="$(registry_layers "$d" model)"; RFROM[i]="model $m (registry: ${lay:-?})"
+      # a model the list's args (or this start's extra args) choose is replaced by the adapter
+      local a prev='' given=''
+      args_of "$i"
+      for a in ${CLIARGS[@]+"${CLIARGS[@]}"} ${PASS[@]+"${PASS[@]}"}; do
+        case "$a" in --model=*) given="${a#--model=}" ;; *) [ "$prev" != --model ] || given="$a" ;; esac
+        prev="$a"
+      done
+      [ -z "$given" ] || RFROM[i]="${RFROM[i]}, replacing --model $given in its args"
     else
       warn "$nm: the registry's model '$m' is not one word; left out."
     fi
@@ -1160,12 +1172,9 @@ registry_fields() {
   sk="$(grep -E '^[A-Za-z0-9._-]+$' "$d/skills" 2>/dev/null | tr '\n' '\037')"; sk="${sk%$'\x1f'}"
   if [ -n "$sk" ]; then
     lay="$(registry_layers "$d" skills)"
-    if [ "${SKSRC[i]:-}" = list ]; then
-      RFROM[i]="${RFROM[i]:+${RFROM[i]}, }the registry's skills [${sk//$'\x1f'/, }] not used (the list sets skills)"
-    else
-      SKILLS[i]="$sk" SKSRC[i]=registry
-      RFROM[i]="${RFROM[i]:+${RFROM[i]}, }skills [${sk//$'\x1f'/, }] (registry: ${lay:-?})"
-    fi
+    RFROM[i]="${RFROM[i]:+${RFROM[i]}, }skills [${sk//$'\x1f'/, }] (registry: ${lay:-?})"
+    [ -z "${LSKILLS[i]:-}" ] || RFROM[i]="${RFROM[i]}, replacing the list's skills [${LSKILLS[i]//$'\x1f'/, }]"
+    SKILLS[i]="$sk" SKSRC[i]=registry
   fi
   [ -z "$say" ] || [ -z "${RFROM[i]}" ] || echo "$nm: the component registry's agent definition: ${RFROM[i]}."
   return 0

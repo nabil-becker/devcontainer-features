@@ -161,7 +161,7 @@ only then starts the CLI. `task component-registry:resolve` runs the resolve by 
 From release 2 (proposal section 6.1; component-registry 1.6.0, participant 1.3.0) the resolve is
 handed the listed agents' names, and before the CLI starts the participant reads the agent's
 definition from the view (only when the view is for the agent's path): its model goes to the adapter
-in `AGENT_MODEL`, its skills become the entry's when the list has none; the agents list wins.
+in `AGENT_MODEL`, its skills replace the entry's; for those two fields the registry wins over the list.
 
 ```mermaid
 sequenceDiagram
@@ -203,9 +203,9 @@ sequenceDiagram
     R-->>person: one line, the CLI keeps its plain skills
   end
   opt release 2: the view is for this agent's path
-    person->>person: read view/agents/<name>/: model, skills (the list's own fields win)
+    person->>person: read view/agents/<name>/: model, skills (they replace the list's)
   end
-  person->>C: start, AGENT_MODEL = the definition's model (the CLI args' own model wins)
+  person->>C: start, AGENT_MODEL = the definition's model (it replaces a model in the CLI args)
   Note over R,C: /registry-refresh runs resolve and handover to every adapter, mid-session
 ```
 

@@ -568,7 +568,7 @@ summary = "The agents list key giving one agent its who-you-are path for the sta
 [agent-definition]
 type = "concept"
 term = "Agent definition"
-summary = "A component registry entry agents/<name> setting an agent's model and skills; the agents list wins and no identity, lease or permission key can be set."
+summary = "A component registry entry agents/<name> setting an agent's model and skills; the registry wins over the agents list for those two fields, and no identity, lease or permission key can be set."
 
 [key-mode]
 type = "mechanism"

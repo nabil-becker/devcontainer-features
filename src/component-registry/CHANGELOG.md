@@ -22,8 +22,9 @@ here; `task lint` fails when the entry is missing.
 - **`COMPONENT_REGISTRY_AGENTS`** (comma-separated agent names, set by the participant component):
   `resolve` resolves `agents/<name>` for each, so a pattern such as `[agents/*]` reaches an agent no
   layer names; the names are kept in the view (`agent-names`), so `/registry-refresh` keeps them.
-- `explain agents/<name>` closes with where the participant reads the definition and that the
-  agents list wins.
+- `explain agents/<name>` closes with where the participant reads the definition and that its
+  values replace the agents list's (the registry wins for `model` and `skills`, the Operator's
+  ruling of 2026-11-21).
 
 Nothing to do for a layer list or a layer that holds skills only: they resolve as before. A
 section for `agents/...`, reported as "not in this release" until now, is resolved from this

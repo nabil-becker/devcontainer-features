@@ -1153,7 +1153,7 @@ cmd_explain() {
   fi
   case "$NP_COMP" in agents/*)
     printf '\nAgent definition (1.6.0): the participant reads model and skills from %s/%s/ at the agent'"'"'s start.\n' "$VIEW" "$NP_COMP"
-    echo "The agents list wins: its own skills, and a model chosen in the agent's CLI arguments, are kept." ;;
+    echo "The registry wins: its skills replace the agents list's, and its model a model chosen in the agent's CLI arguments." ;;
   esac
   return 0
 }

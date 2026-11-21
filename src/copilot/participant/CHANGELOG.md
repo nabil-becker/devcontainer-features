@@ -19,11 +19,12 @@ copy. Backward compatible within a major (NFR-5): `agents.yml` and `AGENTS_FILE`
   resolved for the agent's path (its `registry-path`, else `COMPONENT_REGISTRY_WHOAMI`). Its
   **model** reaches the CLI adapter in the new environment variable `AGENT_MODEL` on every call
   about the agent (empty on every other call, as `AGENT_SESSION_NAME`); an adapter that does not
-  read it starts its CLI on the CLI's own default (claude-code 1.13.0 passes `--model`, unless the
-  agent's arguments choose one). Its **skills** are the agent's when the list entry has no `skills:`
-  key. The list wins for every field it states. One line at the start says what was used and from
-  which layers; `agents check` shows it per agent (or why the definition was not read), and
-  `agents list --json` gains `"model"` when a definition sets one.
+  read it starts its CLI on the CLI's own default (claude-code 1.13.0 passes `--model`, in place of
+  any `--model` in the agent's arguments). Its **skills** replace the list entry's `skills:`. The
+  registry wins for these two fields (the Operator's ruling of 2026-11-21); the list fills what the
+  registry leaves unset, and the registry sets nothing else. One line at the start says what was
+  used, from which layers and what it replaced; `agents check` shows it per agent (or why the
+  definition was not read), and `agents list --json` gains `"model"` when a definition sets one.
 
 ### Fixed
 

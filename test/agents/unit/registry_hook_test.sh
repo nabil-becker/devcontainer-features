@@ -14,8 +14,8 @@
 # COMPONENT_REGISTRY_START_WAIT): the fast path, a hanging layer source stopped at the limit, a lock
 # held by another resolve, a bad value; agent definitions (participant 1.3.0, component-registry
 # 1.6.0): resolve handed the listed agents, the model in AGENT_MODEL on the calls about the agent
-# only, each path its own model in agents up, an adapter that ignores it, the registry's skills when
-# the entry has none and the list's when it has, nothing read without a layer list or the registry,
+# only, each path its own model in agents up, an adapter that ignores it, the registry's skills and
+# model replacing the list's (the Operator's ruling of 2026-11-21), the list's where it sets none, nothing read without a layer list or the registry,
 # check and list --json, and fake views (a bracketed model, one that is not a word, a skill name
 # that is not one, a view for another path). Part of `task lint` (`task test:agents-registry`).
 set -u
@@ -246,8 +246,8 @@ check 'start limit, a bad value: the default applies, handed over' 1 "$(skills_c
 
 # ------------------------------- agent definitions (participant 1.3.0, component-registry 1.6.0) ----
 # The registry's agents/<name>: its model reaches the adapter in AGENT_MODEL on the calls about the
-# agent (empty on the others); its skills are the agent's when the list entry has none; the list
-# wins; read only when the view is for the agent's path; check and list --json show it.
+# agent (empty on the others); its skills replace the list entry's (the registry wins for both); read
+# only when the view is for the agent's path; check and list --json show it.
 cat > "$T/layer/agents.reg" <<'EOF'
 [/Corp/agents/*]
 model:value = sonnet
@@ -266,7 +266,7 @@ contains 'definition: one line names the model and its layer' "$OUT" "host: the 
 reset
 run 1 start rev
 check 'definition: the agent'"'"'s own path gets its own model' 'start-bg|opus' "$(grep '^start-bg' "$MODELS_A")"
-contains 'definition: skills from the registry when the entry has none' "$OUT" 'skills [demo, plan] (registry: corp)'
+contains 'definition: skills from the registry' "$OUT" 'skills [demo, plan] (registry: corp)'
 run 1 check
 check 'definition: check exits 0' 0 "$RC"
 contains 'definition: check shows the model from the registry' "$OUT" 'rev: cli fakea, resident, stateful (identity rev, lease container), folder ., args: none, registry path /Corp/review, model opus (registry: corp), skills [demo, plan] (registry: corp)'
@@ -294,14 +294,21 @@ reset
 TTY=1 run 1 start pair
 check 'definition, fakeb: starts (exit 0)' 0 "$RC"
 check 'definition, fakeb: given the model, which it may ignore' 'new|sonnet' "$(grep '^new' "$MODELS_B")"
-# the list wins: its own skills are kept
+# the registry wins (the Operator's ruling of 2026-11-21): its skills replace the list's, and its
+# model replaces a --model in the list's args (the adapter swaps it; check says so)
 cp "$repo/.devcontainer/agents.yml" "$T/agents.keep"
-printf 'agents:\n  - name: rev\n    cli: fakea\n    kind: resident\n    registry-path: /Corp/review\n    skills: [mine]\n' > "$repo/.devcontainer/agents.yml"
+printf 'agents:\n  - name: rev\n    cli: fakea\n    kind: resident\n    registry-path: /Corp/review\n    skills: [mine]\n    args: [--model, haiku]\n  - name: host\n    cli: fakea\n    kind: resident\n    skills: [kept]\n' > "$repo/.devcontainer/agents.yml"
 reset
 run 1 start rev
-contains 'definition, list skills: the list wins, said' "$OUT" "the registry's skills [demo, plan] not used (the list sets skills)"
+contains 'definition, list skills: the registry replaces them, said' "$OUT" "skills [demo, plan] (registry: corp), replacing the list's skills [mine]"
+contains 'definition, list args --model: the replacement is said' "$OUT" 'model opus (registry: corp), replacing --model haiku in its args'
+check 'definition, list args --model: AGENT_MODEL is still the registry'"'"'s' 'start-bg|opus' "$(grep '^start-bg' "$MODELS_A")"
 run 1 list --json
-contains 'definition, list skills: list --json keeps the list'"'"'s skills' "$OUT" '"skills":["mine"]'
+contains 'definition, list skills: list --json shows the registry'"'"'s skills' "$OUT" '"skills":["demo","plan"]'
+lacks 'definition, list skills: list --json drops the replaced ones' "$(printf '%s' "$OUT" | sed 's/},{/}\n{/g' | grep '"name":"rev"')" '"mine"'
+contains 'definition, the list fills what the registry leaves unset (host has no registry skills)' "$OUT" '"skills":["kept"]'
+run 1 check
+contains 'definition, check: the replaced skills and model are named' "$OUT" "replacing the list's skills [mine]"
 cp "$T/agents.keep" "$repo/.devcontainer/agents.yml"
 # no layer list: nothing read, AGENT_MODEL empty
 reset; mv "$repo/.devcontainer/registry.yml" "$T/registry.keep"

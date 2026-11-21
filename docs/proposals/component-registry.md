@@ -328,22 +328,27 @@ permission key (`allowed-tools`, `disallowed-tools`, `permission*`). Rule 3 (per
 lowest layer only) is not enough for an agent, since the lowest layer is not the repository; an
 agent definition carries no permission key at all.
 
-**Precedence: the agents list wins.** The committed agents list stays the source of which agents
-exist and of every field it states; the registry fills only what the list leaves open:
+**Precedence: the registry wins** (the Operator's ruling of 2026-11-21, which reversed the first
+draft's "the agents list wins": "It's not our responsibility to manage that"). The committed agents
+list stays the source of which agents exist and of every field the registry may never set; for the
+two fields it may set, a registry value replaces the list's, and the list fills only what the
+registry leaves unset:
 
-- `skills`: the list entry's `skills:` wins; the registry's are used only when the entry has none.
-- `model`: the list has no model key; a model chosen in the agent's CLI arguments (the list's
-  `args`, or the extra arguments of one start) wins over the registry's. Which flag chooses the
-  model is a CLI fact, so the adapter decides (NFR-13): the participant hands the registry's
-  model to the adapter, and the adapter passes it only when the arguments choose none.
+- `skills`: the registry's skills replace the list entry's `skills:`; the entry's stand only when
+  the registry resolves none for the agent.
+- `model`: the list has no model key; the registry's model replaces any model chosen in the
+  agent's CLI arguments, the list's `args` and the extra arguments of one start alike (one rule,
+  no exception to explain). Which flag chooses the model is a CLI fact, so the adapter does the
+  replacing (NFR-13): the participant hands the registry's model over in `AGENT_MODEL`, and the
+  adapter drops the arguments' own model flag and passes the registry's, saying in one line what it
+  replaced. A person who wants another model for an agent sets it in their own layer, the top one.
 
-The reverse (the registry over the list) was weighed and not chosen: a layer outside the
-repository would change a reviewed, committed decision without a trace in the repository, and an
-organization's broad `[agents/*]` would override a repository's choice for one agent, since a
-higher layer beats specificity (rule 2). With the list winning, a resolve that fails or a
-registry that is absent never changes what a repository already runs. What it costs: an
-organization cannot force a model on a repository that names one (a lock does not beat the
-list); the open question below.
+The first draft argued the reverse: a layer outside the repository changes a committed decision
+without a trace in the repository. The Operator ruled that managing which model or skills an
+agent gets is the layers' owners' business, not the repository's; `agents check` and the start
+line name every value the registry replaced, which is the trace. A resolve that fails, or no
+registry, still leaves an agent as the list says. Locks need no special rule: the registry already
+beats the list.
 
 **How the participant reads it.** At an agent's start (section 6), after `resolve` for the agent's
 `registry-path` (else `COMPONENT_REGISTRY_WHOAMI`), the participant reads the resolved view's
@@ -354,19 +359,15 @@ machine-readable: `model` (one line), `skills` (one name per line) and `from.tsv
 `AGENT_MODEL` on every call about that agent, as `AGENT_SESSION_NAME` does (ADR-0041), empty on
 every other call; an adapter that does not read it starts its CLI on the CLI's own default model
 (NFR-12; no `supports` capability, a variable cannot answer exit 3). Claude Code's adapter
-(`claude-code` 1.13.0) passes `--model` on `start-bg`, `new` and `resume` unless the arguments
-hold `--model`; a woken session keeps the options it was saved with (a wake is always bare). A
-failed or slow resolve, or no layer list, leaves the agent as the list says.
+(`claude-code` 1.13.0) passes `--model` on `start-bg`, `new` and `resume` in place of any
+`--model` in the arguments; a woken session keeps the options it was saved with (a wake is always
+bare). A failed or slow resolve, or no layer list, leaves the agent as the list says.
 
 **How it shows.** `dcf-registry explain agents/<name>` shows an agent definition like any
 component: each field with every line, its layer and version, the skipped lines and why (a field
 the registry never sets, a model that is not one word). `agents check` shows the fields that came
-from the registry and from which layers (`model opus (registry: dept)`), and says when the list's
-own value wins.
-
-**Open question for the Operator.** Should a locked registry value beat the agents list (an
-organization forcing an approved model)? This release says no: the list wins for every field it
-states, and a lock orders layers only.
+from the registry and from which layers (`model opus (registry: dept)`), and names the list's
+values it replaced (`replacing --model haiku in its args`, `replacing the list's skills [x]`).
 
 ## 7. Why not the CLI's own distribution (NFR-9)
 
@@ -555,7 +556,7 @@ classDiagram
    devhost layer.
 5. **The `db` source**: *built* (component-registry 1.5.0; sqlite and postgres through the `sqlite3` and `psql` CLIs on PATH, the row contract in the Feature's NOTES).
 6. **Later releases**: prompts and settings as component kinds. Agent definitions are built
-   (section 6.1, component-registry 1.6.0: `model` and `skills`, the agents list winning).
+   (section 6.1, component-registry 1.6.0: `model` and `skills`, the registry winning).
 
 ## 13. Relation to other work
 
@@ -572,8 +573,8 @@ classDiagram
 
 None for release 1. The review's questions were ruled on 2026-11-19 (section 2: decisions 3, 10, 14; ADR-0063
 back to proposed), and the per-agent who-you-are override sits in the agents list entry
-(section 3.1). Release 2 (section 6.1) leaves one for the Operator: whether a locked registry value
-should beat the agents list.
+(section 3.1). Release 2 (section 6.1): the precedence was ruled on 2026-11-21 (the registry wins),
+which also settles whether a lock beats the list.
 
 ## Architecture review (2026-11-19)
 

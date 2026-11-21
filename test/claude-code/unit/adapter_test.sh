@@ -7,7 +7,7 @@
 # never the name; a stopped session is woken with --bg --resume <full session id>, never -c;
 # resume refuses a running session; stop keeps the newest unless --extras, never rm;
 # start-bg and new tag the session with --name (AGENT_SESSION_NAME, else the handle), and start-bg,
-# new and resume add --model from AGENT_MODEL unless the args choose one (1.13.0). A fake `claude` keeps sessions in a table,
+# new and resume run with --model from AGENT_MODEL in place of any --model in the args (1.13.0). A fake `claude` keeps sessions in a table,
 # renders them as `claude agents --json` does and records every other call with its folder.
 # Part of `task lint` (`task test:claude-unit`). ADAPTER_SH points the test at another copy.
 set -u
@@ -1173,18 +1173,22 @@ check 'names: the history keeps the last five names before the current one, newe
 
 # ------------------------------------------------------------ the model (1.13.0) ----
 # AGENT_MODEL (the component registry's agent definition, from the participant component): start-bg,
-# new and resume add --model <it> unless the args hold --model; a wake stays bare; a value that is
-# not one word is left out with a note.
+# new and resume run with --model <it>, in place of any --model in the args (the registry wins), said
+# in one line; a wake stays bare; a value that is not one word is left out with a note.
 adm() { local m="$1"; shift; (cd "$T" && PATH="$bin:$PATH" AGENT_MODEL="$m" agent-adapter-claude "$@" 2>&1); }
 rm -f "$records"; rm -rf "$CLAUDE_CONFIG_DIR/jobs"; table
 out="$(adm opus start-bg host "$repo")"
 check 'model: start-bg adds --model from AGENT_MODEL' "$repo|--bg|--name|host|--model|opus;" "$(calls)"
 rm -f "$records"; table
-out="$(adm opus start-bg host "$repo" -- --model sonnet)"
-check 'model: a --model in the args wins' "$repo|--bg|--name|host|--model|sonnet;" "$(calls)"
+out="$(adm opus start-bg host "$repo" -- --model sonnet --effort high)"
+check 'model: AGENT_MODEL replaces a --model in the args, the other args kept' "$repo|--bg|--name|host|--model|opus|--effort|high;" "$(calls)"
+contains 'model: the replaced --model is said' "$out" 'model opus replaces --model sonnet from the args'
 rm -f "$records"; table
 out="$(adm opus start-bg host "$repo" -- --model=haiku)"
-check 'model: a --model= in the args wins' "$repo|--bg|--name|host|--model=haiku;" "$(calls)"
+check 'model: AGENT_MODEL replaces a --model= in the args' "$repo|--bg|--name|host|--model|opus;" "$(calls)"
+rm -f "$records"; table
+out="$(adm 'two words' start-bg host "$repo" -- --model sonnet)"
+check 'model: a bad AGENT_MODEL leaves the args'"'"' --model as it is' "$repo|--bg|--name|host|--model|sonnet;" "$(calls)"
 rm -f "$records"; table
 out="$(adm 'claude-opus-4-5[1m]' new host "$repo")"
 contains 'model: new adds --model' "$(calls)" "|--model|claude-opus-4-5[1m];"
