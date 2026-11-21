@@ -1408,3 +1408,10 @@ What slice N3 found where a ruling could not be built as written, and the Operat
   certificates (C: weakens lock one for every node). It adds the join endpoint to ADR-0071's list of ports.
   After the join, the certificate (24 h, renewed at half life) and the two locks carry the trust, and each node
   restricts the other only through its own `mesh.yml` (`trust`, `expose`, `limits`) and, on a hub, `node revoke`.
+- **H2, Directory peering: option A, ruled 2026-11-21.** dirctl 1.9.1 has no switch for mDNS, and in the tests
+  three daemons found each other on one network segment (ruling SP5 could not be built as written). Directory
+  peering is off by default (`node.directory.peering: false`): nothing of the Directory leaves loopback, and nodes
+  learn each other's agents from the signed cards. Peering on needs `node.directory.firewall` (`auto` drops UDP
+  5353 with iptables, `external` when a person firewalls it); a hub then opens OCI and libp2p, a spoke syncs the
+  hub's records by registry. An upstream issue asks for an mDNS switch (and notes the anonymous OCI push).
+  Rejected: peering on by default (B). It amends ADR-0071 decision 4.
