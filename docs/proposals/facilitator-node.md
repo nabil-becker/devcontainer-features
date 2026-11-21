@@ -1395,3 +1395,16 @@ section 16 does not list.
   OASF badges? Recommended: drop it, and deprecate the `identity` option in 0.3.0.
 - **D1 to D10.** The review agrees with each reading taken in section 15, except D4's attribution
   (finding 2).
+
+## Rulings on slice N3 (2026-11-21)
+
+What slice N3 found where a ruling could not be built as written, and the Operator's ruling on each.
+
+- **H1, a new spoke's first certificate: option A, ruled 2026-11-21.** A spoke has no certificate before it
+  joins, so lock one keeps it off SLIM. The hub opens an HTTPS join endpoint (`node.join`) only while a join
+  token is live, and closes it 30 s after the last token is used or expires; the token (single use, 15 minutes)
+  protects the hub, and the trust bundle's hash in it protects the spoke. Rejected: carrying the certificate by
+  hand (B: no port, but `bao` and key files copied to every spoke) and a SLIM listener without client
+  certificates (C: weakens lock one for every node). It adds the join endpoint to ADR-0071's list of ports.
+  After the join, the certificate (24 h, renewed at half life) and the two locks carry the trust, and each node
+  restricts the other only through its own `mesh.yml` (`trust`, `expose`, `limits`) and, on a hub, `node revoke`.
