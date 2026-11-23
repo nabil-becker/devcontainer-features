@@ -1480,7 +1480,8 @@ What slice N4 found where a ruling could not be built as written, and the Operat
   a file. A short test proves an agent-signed certificate is accepted by SLIM before it is built.
 - **K4, the built-in root: option A.** The hub (or its agent) generates the root, and
   `facilitator node issuer export-root` lets a person take it offline later. Rejected: always bringing your own (B).
-- **K2, when: straight after N5a.** The slice "hub on Kubernetes" (backlog `hub-on-kubernetes`): a kustomize
-  base (a StatefulSet with a volume, `mesh.yml` in a ConfigMap, a Service for SLIM and the join endpoint), a
-  Rancher Desktop overlay, the `openbao:pki:*` tasks for when OpenBao is used, and a test in a throwaway cluster.
+- **K2, when: straight after N5a.** The slice "hub on Kubernetes" (backlog `hub-on-kubernetes`): **a Helm chart**
+  (the Operator, 2026-11-23: a chart, not a kustomize base): a StatefulSet with a volume, `mesh.yml` from the
+  chart's values, a Service for SLIM and the join endpoint, the issuer tier chosen in values; a values file
+  for Rancher Desktop, the `openbao:pki:*` tasks for when OpenBao is used, and a test in a throwaway cluster.
   K1 (where the hub's OpenBao comes from) is moot under K3: the built-in issuer by default.
