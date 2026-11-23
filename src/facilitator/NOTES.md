@@ -18,6 +18,14 @@
   limits or exposure is never believed); the sender applies the same rules as a courtesy. `expose` says how far an agent may
   be reached; `limits` per level bound hops, budget, rate, size, copy and approval.
 
+- **Who can use a node locally.** A process becomes a participant only when (1) it is listed in `participants.yml` (a
+  reviewed repository change; only listed handles get a token, made at container start) and (2) its MCP entry carries its
+  handle and token (`FACILITATOR_HANDLE`, `FACILITATOR_TOKEN`; the claude-code `participants` option wires listed agents
+  only). Without both, `facilitator mcp` refuses it. The HTTP endpoint is off by default and needs a person-made bearer
+  token plus approval. Caveat: every participant runs as the same Linux user in the container, so a process that is
+  malicious on purpose can read another's token file; the container is the trust boundary (run an untrusted agent in its
+  own node and let it in at private or public); per-agent Linux users (backlog `per-identity-users`) close it.
+
 Detail: [A hub and its spokes](#a-hub-and-its-spokes-slice-n3), [Identity, and the two locks](#identity-and-the-two-locks),
 [Peer to peer and the public level](#peer-to-peer-and-the-public-level-slice-n5a); the proposal's
 [section 5](../../docs/proposals/facilitator-node.md#5-identity-spiffe-for-nodes-agntcy-identity-for-agent-badges) and its
