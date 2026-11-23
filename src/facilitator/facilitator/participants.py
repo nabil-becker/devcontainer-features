@@ -48,11 +48,40 @@ class Participant:
                 "description": self.description, "skills": list(self.skills), "definition": self.definition}
 
 
+HTTP_KEYS = ("enabled", "listen", "url", "tls_cert", "tls_key", "behind_proxy", "allowed_hosts", "allowed_origins",
+             "issuers")
+
+
+@dataclass
+class HttpConfig:
+    """`facilitator.http:` of facilitator.yml (slice N4, ADR-0070, ADR-0071): the MCP endpoint over HTTP. Off unless
+    `listen` is set (a port opens only when configured); `enabled: false` is the kill switch."""
+    enabled: bool = True
+    listen: str | None = None
+    url: str | None = None                    # the address clients use (https://host:port); default from listen
+    tls_cert: str | None = None
+    tls_key: str | None = None
+    behind_proxy: bool = False
+    allowed_hosts: list[str] = field(default_factory=list)
+    allowed_origins: list[str] = field(default_factory=list)
+    issuers: list[str] = field(default_factory=list)      # OAuth issuers: slice N5, refused now
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.listen)
+
+    @property
+    def active(self) -> bool:
+        return self.configured and self.enabled
+
+
 @dataclass
 class FacilitatorConfig:
     humans: list[str] = field(default_factory=lambda: ["you"])
     fallback: str | None = None
     model: dict | None = None
+    http: HttpConfig = field(default_factory=HttpConfig)
+    http_errors: list[str] = field(default_factory=list)
 
 
 def _text(v) -> str:
@@ -170,9 +199,58 @@ def parse_facilitator(text: str, where: str, names: list[str]) -> tuple[Facilita
         elif k == "model":
             cfg.model = v if isinstance(v, dict) else {"value": v}
             warnings.append(f"{where}: model: is read and not used in this version (the AI facilitator is slice 6)")
+        elif k == "http":
+            _parse_http(cfg, v, where)
         else:
             warnings.append(f"{where}: unknown key facilitator.{k} (ignored)")
     return cfg, warnings
+
+
+def _bool(v, what: str, where: str):
+    if isinstance(v, bool):
+        return v
+    if str(v).lower() in ("true", "yes", "on", "false", "no", "off"):
+        return str(v).lower() in ("true", "yes", "on")
+    raise ListError(f"{where}: {what}: true or false")
+
+
+def _list(v) -> list[str]:
+    return [str(x) for x in (v if isinstance(v, list) else [v] if v not in (None, "") else [])]
+
+
+def _parse_http(cfg: FacilitatorConfig, v, where: str) -> None:
+    """facilitator.http: problems go to cfg.http_errors (check refuses; the endpoint does not open), not an
+    exception: a mistake here must not stop the node's other parts."""
+    err = cfg.http_errors
+    if not isinstance(v, dict):
+        err.append(f"{where}: facilitator.http: a map (listen, tls_cert, tls_key, behind_proxy, ...)")
+        return
+    h = cfg.http
+    for k, x in v.items():
+        try:
+            if k not in HTTP_KEYS:
+                err.append(f"{where}: facilitator.http.{k}: unknown; http has {', '.join(HTTP_KEYS)}")
+            elif k in ("enabled", "behind_proxy"):
+                setattr(h, k, _bool(x, f"facilitator.http.{k}", where))
+            elif k in ("listen", "url", "tls_cert", "tls_key"):
+                setattr(h, k, str(x) if x not in (None, "") else None)
+            elif k in ("allowed_hosts", "allowed_origins"):
+                setattr(h, k, _list(x))
+            elif k == "issuers":
+                h.issuers = _list(x)
+                if h.issuers:
+                    err.append(f"{where}: facilitator.http.issuers: not yet: slice N5 (OAuth for cloud AIs; this version "
+                               "serves CLIs with static bearer tokens)")
+        except ListError as e:
+            err.append(str(e))
+    if h.listen:
+        from .mesh import MeshError, parse_addr
+        try:
+            parse_addr(h.listen)
+        except MeshError as e:
+            err.append(f"{where}: facilitator.http.listen: {e}")
+    if bool(h.tls_cert) != bool(h.tls_key):
+        err.append(f"{where}: facilitator.http: tls_cert and tls_key go together")
 
 
 def load(settings) -> tuple[list[Participant], FacilitatorConfig, list[str], Path]:

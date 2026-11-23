@@ -11,7 +11,8 @@ facilitator's own engine copy and into the register-engine Feature's types folde
 
 Kinds:
     thread    {thread, kind: group|direct, members[], humans[], title?}     by facilitator; the first entry after the roster
-    message   {thread, message_id, parts[], root, hops, reply_to?, mentions?, to?, refs?}   by a member
+    message   {thread, message_id, parts[], root, hops, reply_to?, mentions?, to?, refs?, via?}   by a member
+              (via: the node signed for an HTTP client, slice N4)
     route     {thread, message_id, rule, to[], tasks[{task, assignee}], held[{principal, reason}]}   by facilitator
     status    {task, state, text?}               by the task's assignee: working, completed (A2A task states)
     notice    {thread, code, text, refs?}        by facilitator: why something was held, paused or dropped
@@ -39,7 +40,10 @@ FACILITATOR = "facilitator"
 STATES = ("submitted", "working", "input_required", "completed", "failed", "canceled", "rejected")
 SET_STATES = STATES[1:]          # submitted is the route's; the assignee moves it on
 RULES = ("mention", "all", "direct", "asker", "fallback", "broadcast", "continue", "none")
-NOTICES = ("stale", "hop-limit", "budget", "unknown-handle", "not-member", "paused", "resumed", "rate")
+NOTICES = ("stale", "hop-limit", "budget", "unknown-handle", "not-member", "paused", "resumed", "rate",
+           "approval", "approved", "denied")      # the last three: a first-contact message held, and a person's answer (slice N4)
+VIA_TRANSPORTS = ("http",)
+VIA_AUTHS = ("bearer", "oauth")
 MAX_TEXT = 32768
 
 
@@ -91,9 +95,22 @@ def _parts(parts) -> None:
           f"message.parts: {{kind: text, text}} with 1 to {MAX_TEXT} characters")
 
 
+def _via(d: dict) -> None:
+    """`via` (ADR-0068, ADR-0070): the node signed this packet on behalf of an HTTP client."""
+    if "via" not in d:
+        return
+    v = d["via"]
+    _need(isinstance(v, dict) and set(v) <= {"transport", "auth", "client", "issuer"}
+          and v.get("transport") in VIA_TRANSPORTS and v.get("auth") in VIA_AUTHS
+          and isinstance(v.get("client"), str) and ID_RE.fullmatch(v["client"])
+          and ("issuer" not in v or (isinstance(v["issuer"], str) and 0 < len(v["issuer"]) <= 200)),
+          "via: {transport: http, auth: bearer|oauth, client, issuer?}")
+
+
 def _message(d: dict) -> None:
-    _need(set(d) <= {"thread", "message_id", "parts", "root", "hops", "reply_to", "mentions", "to", "refs"},
+    _need(set(d) <= {"thread", "message_id", "parts", "root", "hops", "reply_to", "mentions", "to", "refs", "via"},
           "message: unknown field")
+    _via(d)
     _id(d, "thread", "message")
     _id(d, "message_id", "message")
     _parts(d.get("parts"))
@@ -127,7 +144,8 @@ def _route(d: dict) -> None:
 
 
 def _status(d: dict) -> None:
-    _need(set(d) <= {"task", "state", "text"}, "status: unknown field")
+    _need(set(d) <= {"task", "state", "text", "via"}, "status: unknown field")
+    _via(d)
     _id(d, "task", "status")
     _need(d.get("state") in SET_STATES, f"status.state: one of {', '.join(SET_STATES)}")
     _need("text" not in d or (isinstance(d["text"], str) and 0 < len(d["text"]) <= 2000), "status.text")

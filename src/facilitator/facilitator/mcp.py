@@ -7,13 +7,14 @@ the person's side from the Operator's MCP-only ruling of 2026-11-20). An agent g
     say     {text, conversation?, to?} a turn in another conversation (an id, or "new" with to)
     who     {}                         the handles, whether each is attached, your conversations
 
-A person (a human of facilitator.yml, registered) gets five, none of which blocks:
+A person (a human of facilitator.yml, registered) gets six, none of which blocks:
 
     say        {text, conversation?, to?}   start a conversation ("new", or none: with the handles named) or
                                             write in one of yours (it answers its last message: one hop more)
     mail       {limit?}                     the unread messages of your conversations, then marked read
     transcript {conversation, limit?}       a conversation of yours, its last `limit` messages
     continue   {conversation}               a paused conversation runs another hop limit (the only reset)
+    approve    {client}                     an HTTP client's first contact: its held messages are delivered (slice N4)
     who        {}
 
 The tools offered follow the handle's kind in the roster; a tool of the other kind is refused. The
@@ -45,6 +46,7 @@ def persona(handle: str, human: bool = False) -> str:
                 "or when a line 'Facilitator: N new messages' appears, and show the person what came in. Never "
                 "answer an agent on your own: say only what the person asked you to say, since every message "
                 "counts as a hop. When a conversation is paused, tell the person; call continue only when they "
+                "ask. When mail says an HTTP client waits for approval, tell the person and call approve only when they "
                 "ask. Use transcript to read a conversation and who to see the handles; never invent one.")
     return (f"You are @{handle} in the facilitator's conversations with other agents and people. Loop: call the "
             "receive tool; when it returns a message, answer it with reply (start your text with @handle, or pass "
@@ -103,6 +105,11 @@ HUMAN_TOOLS = [
                                         "may; it is the only thing that resets the hops.",
      "inputSchema": {"type": "object", "properties": {"conversation": {"type": "string"}},
                      "required": ["conversation"], "additionalProperties": False}},
+    {"name": "approve", "description": "Approve an HTTP client the node signs for (first contact, level public): its "
+                                       "held messages are delivered. mail names the clients that wait. Only a person "
+                                       "may; an HTTP client never can.",
+     "inputSchema": {"type": "object", "properties": {"client": {"type": "string"}},
+                     "required": ["client"], "additionalProperties": False}},
     TOOLS[3],
 ]
 
@@ -130,6 +137,9 @@ def mail_text(r: dict) -> str:
     rest = [c for c in r["paused"] if c not in {m["conversation"] for m in r["messages"]}]
     if rest:
         out += f"\npaused, nothing new: {', '.join(rest)}"
+    for a in r.get("approvals", []):
+        out += (f"\nHTTP client {a['client']} waits for your approval ({a['held']} message(s) held in "
+                f"{', '.join(a['conversations'])}; {a['id']}): the approve tool, or facilitator http approve {a['client']}")
     return out
 
 
@@ -189,7 +199,7 @@ class Server:
             s = self.get_session()
             if name in ("receive", "reply") and s.human:
                 return text(f"{name} is an agent's tool; a person reads with mail and writes with say", err=True)
-            if name in ("mail", "transcript", "continue") and not s.human:
+            if name in ("mail", "transcript", "continue", "approve") and not s.human:
                 return text(f"{name} is refused: only a person (a human of facilitator.yml) may call it; "
                             f"@{self.handle} is an agent", err=True)
             if name == "mail":
@@ -217,6 +227,15 @@ class Server:
                     r = s.continue_(conv)
                 return text(f"continued {conv}: {r['message_id']} delivered to "
                             f"{', '.join('@' + h for h in r['to']) or 'nobody'}.", r)
+            if name == "approve":
+                client = args.get("client")
+                if not isinstance(client, str) or not client:
+                    return text("approve needs a client (mail names the ones that wait)", err=True)
+                with self.tool_lock:
+                    r = s.approve(client)
+                n = sum(1 for x in r["released"] if x["delivered"])
+                return text(f"approved {client}: {n} held message(s) delivered"
+                            + (f", {len(r['released']) - n} not (see the transcript)" if len(r["released"]) != n else "") + ".", r)
             if name == "receive":
                 wait = args.get("wait_seconds", self.wait_default)
                 if not isinstance(wait, int) or isinstance(wait, bool) or not 0 <= wait <= MAX_WAIT:

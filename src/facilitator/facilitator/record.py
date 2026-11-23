@@ -133,9 +133,18 @@ class Record:
 
     # ------------------------------------------------------------ writing
 
+    def via(self, principal: str) -> dict | None:
+        """`data.via` (ADR-0068, ADR-0070): the node signs for an HTTP client, and says so in every packet it signs
+        on that client's behalf. None for everyone else."""
+        if principal != FACILITATOR and self.state.roster().get(principal, {}).get("kind") == "http":
+            return {"transport": "http", "auth": "bearer", "client": principal}
+        return None
+
     def add(self, conv: str, principal: str, kind: str, data: dict) -> str:
         if principal != FACILITATOR:
             self.ensure_member_key(conv, principal)
+        if kind in ("message", "status") and "via" not in data and (v := self.via(principal)):
+            data = {**data, "via": v}
         try:
             i = adapters.add(self.store(conv), self.signer.signing_path(principal), self.as_principal(conv, principal), kind, data,
                              self.anchors_for(conv), checked=self.checked, register=conv, kinds=self.kinds)

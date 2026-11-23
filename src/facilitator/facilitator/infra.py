@@ -29,6 +29,7 @@ ONLINE_POLICY = ('[{"provider": "oasf", "op": ["push", "autosync", "index"], "na
                  '"schema_url": "https://schema.oasf.outshift.com"}]')
 COMPONENTS = ("agent", "dir", "slim")
 MESH_COMPONENTS = COMPONENTS + ("peers",)
+ALL_COMPONENTS = MESH_COMPONENTS + ("http",)
 
 
 class InfraError(RuntimeError):
@@ -123,8 +124,21 @@ class Infra:
         m = self.mesh
         return m is not None and (m.role == "hub" or (m.role == "spoke" and bool(m.node.get("hub"))))
 
+    def http_on(self) -> bool:
+        """The `http` part (slice N4) runs only when facilitator.http.listen is set, HTTP is enabled and the node may use it
+        (ADR-0071: a port beyond loopback opens only by explicit configuration)."""
+        f = self.fac
+        if f is None:
+            return False
+        try:
+            cfg = f.participants()[1].http
+        except Exception:                      # noqa: BLE001 - a broken participant list is check's to report
+            return False
+        return cfg.active and f.http_ready()[0]
+
     def components(self) -> tuple:
-        return MESH_COMPONENTS if self.meshed() else COMPONENTS
+        base = MESH_COMPONENTS if self.meshed() else COMPONENTS
+        return base + ("http",) if self.http_on() else base
 
     def binary(self, c: str) -> str | None:
         name = self.s["FACILITATOR_DIRCTL"] if c == "dir" else self.s["FACILITATOR_SLIMCTL"]
@@ -347,7 +361,7 @@ class Infra:
             return None
 
     def needle(self, c: str) -> str:
-        return {"agent": "ssh-agent", "dir": "daemon start", "slim": "slim start", "peers": "node peers"}[c]
+        return {"agent": "ssh-agent", "dir": "daemon start", "slim": "slim start", "peers": "node peers", "http": "http serve"}[c]
 
     def running(self, c: str) -> bool:
         if c == "agent":
@@ -358,6 +372,21 @@ class Infra:
     def healthy(self, c: str) -> bool:
         if c == "agent":
             return self.signer.agent_alive()
+        if c == "http":
+            if not self.running(c):
+                return False
+            try:
+                st = json.loads((self.state.home / "http" / "status.json").read_text())
+                host, port = mesh_mod.parse_addr(st["listen"])
+            except (OSError, ValueError, KeyError, mesh_mod.MeshError):
+                return False
+            if st.get("pid") != self.pid(c):
+                return False
+            try:
+                with socket.create_connection(("127.0.0.1" if host in ("0.0.0.0", "::") else host.strip("[]"), port), timeout=0.5):
+                    return True
+            except OSError:
+                return False
         if c == "peers":
             if not self.running(c):
                 return False
@@ -392,6 +421,8 @@ class Infra:
             return "running"
         if c == "peers":
             return self.up_peers()
+        if c == "http":
+            return self.up_http()
         binary = self.binary(c)
         if not binary:
             raise InfraError(f"{c}: {'dirctl' if c == 'dir' else 'slimctl'} is not installed (the Feature's install put it "
@@ -467,6 +498,22 @@ class Infra:
         self.pidfile("peers").write_text(f"{p.pid}\n")
         return self._wait("peers", "started", 30)
 
+    def up_http(self) -> str:
+        """The MCP endpoint over HTTP (`facilitator http serve`): a background process like the others."""
+        import sys
+        lib_bin = LIB / "bin" / "facilitator"
+        cmd = lib_bin if lib_bin.is_file() else LIB.parent / "bin" / "facilitator"
+        self.state.ensure()
+        log = open(self.state.logs / "http.log", "ab")
+        try:
+            p = subprocess.Popen([sys.executable, "-I", str(cmd), "http", "serve"], stdin=subprocess.DEVNULL, stdout=log,
+                                 stderr=subprocess.STDOUT, cwd=str(self.state.home), start_new_session=True,
+                                 env={k: v for k, v in os.environ.items() if not k.startswith("DIRECTORY_")})
+        finally:
+            log.close()
+        self.pidfile("http").write_text(f"{p.pid}\n")
+        return self._wait("http", "started", 30)
+
     @staticmethod
     def _port_var(c: str, name: str) -> str:
         return {"api": "FACILITATOR_DIR_PORT", "oci": "FACILITATOR_DIR_OCI_PORT", "p2p": "FACILITATOR_DIR_P2P_PORT",
@@ -505,7 +552,7 @@ class Infra:
 
     def logs(self, c: str | None, lines: int = 40) -> str:
         out = []
-        for name in ([c] if c else ["dir", "slim"] + (["peers"] if "peers" in self.components() else [])):
+        for name in ([c] if c else ["dir", "slim"] + [x for x in ("peers", "http") if x in self.components()]):
             f = self.state.logs / f"{name}.log"
             try:
                 tail = f.read_bytes().decode(errors="replace").splitlines()[-lines:]

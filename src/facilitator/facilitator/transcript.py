@@ -12,6 +12,15 @@ def hms(at: str) -> str:
     return at[11:19]
 
 
+def via_text(v: dict | None) -> str:
+    """` (via HTTP, authenticated by bearer token, client X)`: the node vouches that this authenticated client wrote it."""
+    if not v:
+        return ""
+    auth = {"bearer": "bearer token", "oauth": "OAuth"}.get(v.get("auth"), v.get("auth"))
+    return f" (via {v.get('transport', '?').upper()}, authenticated by {auth}, client {v.get('client')}" \
+           + (f", issuer {v['issuer']}" if v.get("issuer") else "") + ")"
+
+
 def events(proj: dict, led) -> list[tuple[str, str]]:
     """(entry id, one line) for each message, route and notice, in the register's order."""
     out = []
@@ -23,7 +32,7 @@ def events(proj: dict, led) -> list[tuple[str, str]]:
         if i in msgs_by_entry:
             m = msgs_by_entry[i]
             hop = f" [{m['hops']} hop{'s' if m['hops'] != 1 else ''}]" if m["hops"] else ""
-            out.append((i, f"{hms(m['at'])} @{m['from']}{hop}: {m['text']}"))
+            out.append((i, f"{hms(m['at'])} @{m['from']}{hop}{via_text(m.get('via'))}: {m['text']}"))
         elif i in routes_by_entry:
             r = routes_by_entry[i]
             held = {h["principal"]: h["reason"] for h in r["held"]}
@@ -49,6 +58,7 @@ def transcript(fac, conv: str, limit: int | None = None) -> dict:
         m = proj["messages"][mid]
         msgs.append({"message_id": mid, "from": m["from"], "at": m["at"], "text": m["text"], "hops": m["hops"],
                      "root": m["root"], "reply_to": m.get("reply_to"), "refs": m.get("refs", []), "entry": m["entry"],
+                     "via": m.get("via"),
                      "routes": [{"rule": r["rule"], "to": r["to"], "held": r["held"],
                                  "tasks": [{**t, "state": proj["tasks"][t["task"]]["state"]} for t in r["tasks"]]}
                                 for r in proj["routes"].get(mid, [])]})
