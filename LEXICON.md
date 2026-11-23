@@ -549,3 +549,25 @@ renamed. Each project is a tree growing in its own ground.
 | the series of iterations | lineage |
 | iterations 1 and 2 (before any package existed) | first life, before seeds |
 | this repository | the first seed-bearing tree |
+- **Node role**: what a facilitator node is in a mesh, set in its `mesh.yml`: `standalone` (the default,
+  one node on loopback), `spoke` (joins a hub with `facilitator node join`) or `hub` (issues join tokens
+  with `facilitator node invite`, a person's command that an agent's job refuses). Slice N3 builds these
+  three; the preset `open` is refused until slice N5 (ADR-0067).
+- **Two locks**: how a node keeps trust levels apart: lock 1 is one SLIM listener per trust level, each
+  with its own CA bundle; lock 2 is the facilitator checking every signed packet's SPIFFE ID against
+  the `trust` and `expose` sections of `mesh.yml` and refusing the rest, even when lock 1 let it through
+  (ADR-0069).
+- **Node card**: the document a facilitator node signs with its certificate key, holding its certificate,
+  its facilitator key and the keys of the participants it exposes; lock 2 looks a packet's SPIFFE ID up
+  from its signer's key in the admitted cards, and nodes learn each other's agents from cards when
+  Directory peering is off (ADR-0074).
+- **Peers part**: the fourth part of a node's infrastructure, beside the Directory, SLIM and the
+  facilitator itself: it gets the node's certificate, sends the hello to the hub and exchanges cards and
+  rosters (slice N3).
+- **Join endpoint**: the HTTPS port a hub opens only while a join token is live, plus 30 seconds after
+  the last one, so that a spoke without a certificate can join; the spoke checks the trust-bundle hash
+  in the token before it trusts the hub (ADR-0074).
+- **Qualified handle**: `handle.node`, for example `@b1.spoke-b`, naming one agent when several nodes
+  share a handle; a bare handle works only when it names exactly one reachable agent (ADR-0074).
+- **Shared handle**: a handle announced by agents on two or more nodes of a mesh; `check` lists them and
+  they are reached by qualified handle (ADR-0074).
