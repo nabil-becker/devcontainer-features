@@ -29,7 +29,7 @@
 | Layer copies, the resolved view, the lock file | named volume at `/var/lib/devcontainer-features/component-registry`, owner-only | 4 working set |
 | Resolved skills handed to a CLI | the CLI's skills folders (Claude Code: `$CLAUDE_CONFIG_DIR/skills` and, per agent, `$CLAUDE_CONFIG_DIR/registry-agents/`, the claude-code volume), owner-only | 4 working set |
 | Hand-over records (`handovers.tsv`: CLI, agent, folder, path) | the state volume, owner-only | 4 working set |
-| Remembered lines (`/registry-remember`) | `remembered.layer` in the writable layer's folder | the person's choice (their own layer's source) |
+| Remembered lines (`/registry-remember`, deprecated: edit your layer; removed in 2.0.0) | `remembered.layer` in the writable layer's folder | the person's choice (their own layer's source) |
 | The utility skills (built-in base layer) | `/usr/local/share/component-registry-feature/base`, in the image | none (the Feature) |
 | Source secrets | OpenBao, read with `dcf-secret` | OpenBao's |
 
@@ -123,7 +123,7 @@ layers:
     at: /Corp/MyDepartment/team/me
     sources:
       - { kind: path, path: .registry-mine }   # git-ignored in this repository
-    writable: true              # /registry-remember appends here (one layer, a path source)
+    writable: true              # deprecated (removed in 2.0.0): /registry-remember appends here; edit the layer instead
     heading: false              # 1.3.0: its text stacks with no "## Layer mine" line
   - id: acme-community
     at: /
@@ -305,7 +305,7 @@ list using it is refused with its line. A listed layer adapts a utility skill li
 | --- | --- | --- |
 | `/registry-refresh` | `dcf-registry refresh --session "${CLAUDE_SESSION_ID}"` | (1.8.0) resolve now for the calling agent's own path and hand over to it alone (its session id, found in each adapter's `list`); an unknown or unsubstituted id refreshes every recorded hand-over, each path once; with no record, for the path the latest view was resolved for, to every CLI adapter on PATH. Claude Code picks the change up in the running session; a CLI that does not watch its skills folder needs its session restarted; a skill already used in a conversation keeps its old text until a new conversation |
 | `/registry-explain <path>` | `dcf-registry explain <path> [--uses] [--color auto|always|never]` | read-only, shown to the person |
-| `/registry-remember [skills/<name>] <line>` | `dcf-registry remember [--skill <name>] -- <line>` | appends `body:text = <line>` under `[skills/<name>]` (or `[skills/*]`, every skill) to `remembered.layer` in the folder of the layer marked `writable: true`, then refreshes. Refused, nothing written: no writable layer, two, a writable layer without a `path` source (a git or http layer changes through its owner's release), a folder that is not there or not writable, an empty line, a line starting with `@`. Only when the person asks (`disable-model-invocation`) |
+| `/registry-remember [skills/<name>] <line>` (deprecated in 1.10.0, removed in 2.0.0: the registry does not write layers, edit your layer) | `dcf-registry remember [--skill <name>] -- <line>` | prints a deprecation line, then appends `body:text = <line>` under `[skills/<name>]` (or `[skills/*]`, every skill) to `remembered.layer` in the folder of the layer marked `writable: true`, then refreshes. Refused, nothing written: no writable layer, two, a writable layer without a `path` source (a git or http layer changes through its owner's release), a folder that is not there or not writable, an empty line, a line starting with `@`. Only when the person asks (`disable-model-invocation`) |
 
 ## Handing skills to a CLI (1.1.0)
 
@@ -728,7 +728,8 @@ every skipped line with its reason, and `resolved N component(s) for <W>`.
   agent's view has alike, and a project skill of the same name beats an agent's own copy (the
   registry's then runs as `/registry:<name>`).
 - `remember` writes to a `path` source only, appends, and never edits or removes a line; to take
-  one back, edit `remembered.layer` in your layer.
+  one back, edit `remembered.layer` in your layer. `remember` and `writable` are deprecated (1.10.0):
+  the registry does not write layers, so edit your layer; both are removed in 2.0.0.
 - A `path` source's version is a fingerprint of names, sizes and
   modification times, so a change that keeps all three is not seen.
 - `*` and `**` are whole segments; there are no value filters.
@@ -739,7 +740,7 @@ every skipped line with its reason, and `resolved N component(s) for <W>`.
 - A namespaced agent definition matches no agent of the agents list (1.7.0); an agents-list
   agent cannot opt into one. A namespace's skills are adapted through a layer listed in that
   namespace; `remember --skill` takes no namespaced name (writing is out of the registry's scope,
-  the Operator's ruling of 2026-11-23: `writable` and `remember` are to be deprecated later).
+  the Operator's ruling of 2026-11-23: `writable` and `remember` are deprecated in 1.10.0 and removed in 2.0.0).
 
 ## Why it exists
 

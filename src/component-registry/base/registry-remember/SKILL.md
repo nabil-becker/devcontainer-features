@@ -1,11 +1,15 @@
 ---
 name: registry-remember
-description: "Remember one line in the person's own registry layer (the layer marked writable) and refresh, so every skill, or one skill, carries it from now on (dcf-registry remember). Only when the person asks to remember something in the registry."
+description: "DEPRECATED (removed in 2.0.0): the registry does not write layers; edit your own layer instead. Still works: remember one line in the person's own registry layer (the layer marked writable) and refresh, so every skill, or one skill, carries it from now on (dcf-registry remember). Only when the person asks to remember something in the registry."
 argument-hint: "[skills/<name>] <line>"
 disable-model-invocation: true
 ---
 
-# Remember a line in your own layer
+# Remember a line in your own layer (deprecated)
+
+This skill is deprecated and removed in 2.0.0: the registry does not write layers. Tell the person
+that, and that the alternative is to edit their own layer (a line under `[skills/<name>]` as
+`body:text = <line>`). It still works for now.
 
 The person gave: `$ARGUMENTS`
 

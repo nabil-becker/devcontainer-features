@@ -1064,5 +1064,18 @@ check "remember: appends to an existing remembered.reg (no split)" "remembered.r
 contains "remember: the line is in remembered.reg" "$(cat "$lm/remembered.reg")" "body:text = second"
 contains "remember: prints the deprecation line" "$out" "rename to .layer; .reg is removed in 2.0.0"
 
+# release 1.10.0: writable and remember are deprecated (still work)
+new_case deprecated
+lm="$(layer mine)"
+printf 'layers:\n  - id: mine\n    at: /Corp/me\n    writable: true\n    sources:\n      - { kind: path, path: "%s" }\n' "$lm" > .devcontainer/registry.yml
+check "remember: prints its deprecation line" "yes" "$(PATH="$abin:$PATH" dcf-registry remember -- "dep check" 2>&1 | grep -qF 'remember is deprecated: the registry does not write layers; edit your layer; removed in 2.0.0' && echo yes)"
+check "remember: still writes" "yes" "$(grep -qF 'body:text = dep check' "$lm/remembered.layer" && echo yes)"
+out="$(dcf-registry resolve --as /Corp/me 2>&1)"
+contains "writable: resolve prints one deprecation line for the layer" "$out" "layer mine: writable is deprecated: the registry does not write layers; edit the layer; removed in 2.0.0"
+check "writable: one line per writable layer" 1 "$(grep -c 'writable is deprecated' <<< "$out")"
+new_case nowritable
+l="$(layer a)"; printf '[skills/x]\nk:value = v\n' > "$l/a.layer"; path_list "a:/Corp:$l"
+lacks "no writable: no deprecation line" "$(dcf-registry resolve --as "$W" 2>&1)" "writable is deprecated"
+
 echo "component-registry unit: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

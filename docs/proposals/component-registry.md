@@ -119,7 +119,7 @@ layers:
     at: /Corp/MyDepartment/team/me
     sources:
       - { kind: path, path: .registry-mine }    # git-ignored in this repository, the person's choice
-    writable: true                               # /registry-remember appends here
+    writable: true                               # deprecated in 1.10.0, removed in 2.0.0: /registry-remember appends here
     heading: false                               # (1.3.0) its text stacks without "## Layer mine"
   - id: acme-community
     at: /
@@ -301,7 +301,7 @@ Utility skills, shipped by the Feature in its own base layer:
 |---|---|
 | `/registry-refresh` | `resolve` now; Claude picks up changed skill files in the running session; another CLI gets the files and a note that it needs a restart |
 | `/registry-explain <path>` | `explain`, shown to the person |
-| `/registry-remember <line>` | appends a line to the layer marked `writable` (the person's own), then refreshes |
+| `/registry-remember <line>` (deprecated in 1.10.0, removed in 2.0.0: the registry does not write layers) | appends a line to the layer marked `writable` (the person's own), then refreshes |
 
 A skill already used in a conversation keeps its old text until it is used in a new conversation;
 `/registry-refresh` says so.

@@ -49,7 +49,7 @@ A registry for agentic components, shaped like the Windows Registry (ADR-0063). 
 | Layer copies, the resolved view, the lock file | named volume at `/var/lib/devcontainer-features/component-registry`, owner-only | 4 working set |
 | Resolved skills handed to a CLI | the CLI's skills folders (Claude Code: `$CLAUDE_CONFIG_DIR/skills` and, per agent, `$CLAUDE_CONFIG_DIR/registry-agents/`, the claude-code volume), owner-only | 4 working set |
 | Hand-over records (`handovers.tsv`: CLI, agent, folder, path) | the state volume, owner-only | 4 working set |
-| Remembered lines (`/registry-remember`) | `remembered.layer` in the writable layer's folder | the person's choice (their own layer's source) |
+| Remembered lines (`/registry-remember`, deprecated: edit your layer; removed in 2.0.0) | `remembered.layer` in the writable layer's folder | the person's choice (their own layer's source) |
 | The utility skills (built-in base layer) | `/usr/local/share/component-registry-feature/base`, in the image | none (the Feature) |
 | Source secrets | OpenBao, read with `dcf-secret` | OpenBao's |
 
@@ -143,7 +143,7 @@ layers:
     at: /Corp/MyDepartment/team/me
     sources:
       - { kind: path, path: .registry-mine }   # git-ignored in this repository
-    writable: true              # /registry-remember appends here (one layer, a path source)
+    writable: true              # deprecated (removed in 2.0.0): /registry-remember appends here; edit the layer instead
     heading: false              # 1.3.0: its text stacks with no "## Layer mine" line
   - id: acme-community
     at: /
@@ -325,7 +325,7 @@ list using it is refused with its line. A listed layer adapts a utility skill li
 | --- | --- | --- |
 | `/registry-refresh` | `dcf-registry refresh --session "${CLAUDE_SESSION_ID}"` | (1.8.0) resolve now for the calling agent's own path and hand over to it alone (its session id, found in each adapter's `list`); an unknown or unsubstituted id refreshes every recorded hand-over, each path once; with no record, for the path the latest view was resolved for, to every CLI adapter on PATH. Claude Code picks the change up in the running session; a CLI that does not watch its skills folder needs its session restarted; a skill already used in a conversation keeps its old text until a new conversation |
 | `/registry-explain <path>` | `dcf-registry explain <path> [--uses] [--color auto|always|never]` | read-only, shown to the person |
-| `/registry-remember [skills/<name>] <line>` | `dcf-registry remember [--skill <name>] -- <line>` | appends `body:text = <line>` under `[skills/<name>]` (or `[skills/*]`, every skill) to `remembered.layer` in the folder of the layer marked `writable: true`, then refreshes. Refused, nothing written: no writable layer, two, a writable layer without a `path` source (a git or http layer changes through its owner's release), a folder that is not there or not writable, an empty line, a line starting with `@`. Only when the person asks (`disable-model-invocation`) |
+| `/registry-remember [skills/<name>] <line>` (deprecated in 1.10.0, removed in 2.0.0: the registry does not write layers, edit your layer) | `dcf-registry remember [--skill <name>] -- <line>` | prints a deprecation line, then appends `body:text = <line>` under `[skills/<name>]` (or `[skills/*]`, every skill) to `remembered.layer` in the folder of the layer marked `writable: true`, then refreshes. Refused, nothing written: no writable layer, two, a writable layer without a `path` source (a git or http layer changes through its owner's release), a folder that is not there or not writable, an empty line, a line starting with `@`. Only when the person asks (`disable-model-invocation`) |
 
 ## Handing skills to a CLI (1.1.0)
 
@@ -748,7 +748,8 @@ every skipped line with its reason, and `resolved N component(s) for <W>`.
   agent's view has alike, and a project skill of the same name beats an agent's own copy (the
   registry's then runs as `/registry:<name>`).
 - `remember` writes to a `path` source only, appends, and never edits or removes a line; to take
-  one back, edit `remembered.layer` in your layer.
+  one back, edit `remembered.layer` in your layer. `remember` and `writable` are deprecated (1.10.0):
+  the registry does not write layers, so edit your layer; both are removed in 2.0.0.
 - A `path` source's version is a fingerprint of names, sizes and
   modification times, so a change that keeps all three is not seen.
 - `*` and `**` are whole segments; there are no value filters.
@@ -759,7 +760,7 @@ every skipped line with its reason, and `resolved N component(s) for <W>`.
 - A namespaced agent definition matches no agent of the agents list (1.7.0); an agents-list
   agent cannot opt into one. A namespace's skills are adapted through a layer listed in that
   namespace; `remember --skill` takes no namespaced name (writing is out of the registry's scope,
-  the Operator's ruling of 2026-11-23: `writable` and `remember` are to be deprecated later).
+  the Operator's ruling of 2026-11-23: `writable` and `remember` are deprecated in 1.10.0 and removed in 2.0.0).
 
 ## Why it exists
 
@@ -775,6 +776,16 @@ Pin the major in the Feature reference (`component-registry:1`); a rebuild picks
 else; the `.layer` grammar and the layer list keys only grow within 1.x.
 
 ## Changes
+
+### [1.10.0] - 2026-11-23
+
+#### Deprecated
+
+- The registry does not write layers (the Operator's ruling of 2026-11-23): if a change is needed,
+  edit the layer. Still accepted in 1.x, removed in 2.0.0 together with `.reg`:
+  - `writable: true` on a layer: `resolve` prints one deprecation line per such layer.
+  - `dcf-registry remember` and the built-in `/registry-remember` skill: a deprecation line before
+    writing; behaviour otherwise unchanged. Action: edit your own layer instead.
 
 ### [1.9.0] - 2026-11-23
 
@@ -816,52 +827,6 @@ else; the `.layer` grammar and the layer list keys only grow within 1.x.
 
 Nothing to do. The adapter's `skills` verb also gets `COMPONENT_REGISTRY_PATH`; with claude-code
 1.14.0 agents of different paths keep their own skills.
-
-### [1.7.0] - 2026-11-21
-
-#### Added
-
-- **Layer namespaces** (ADR-0073, decision 4): `namespace: <name>` on a layer in the layer list
-  prefixes every component the layer brings (`skills/acme:arch-review`, `agents/acme:reviewer`).
-  Layers that share a namespace merge with each other as layers do (order, specificity, locks,
-  `@replace`, types, permission keys from the namespace's lowest layer); different namespaces
-  never mix, and the un-namespaced layers (the Operator's own) never reach a namespaced component,
-  nor it theirs. A name is lower-case letters and digits in words joined by one `-`, at most 40;
-  anything else, and the reserved `component-registry` and `anthropic-skills`, is refused with
-  `file:line`.
-- A namespaced skill lands in the view, and in a CLI's skills folder, as `skills/<ns>--<name>/`,
-  its `SKILL.md` named the same whatever its text says (a `:` is no skill folder name for the
-  adapters, and Claude Code keeps the `:` for the prefixes it makes); one whose folder name an
-  un-namespaced skill already has is not resolved and is reported. `meta/namespaced.tsv` maps the
-  registry name to it; `handover` says which skills went by their folder name.
-- **Explicit references** (the Operator's ruling of 2026-11-21): a ref, a list `ref:` item or an
-  agent's `skills` item without a prefix names the referrer's own namespace; `<ns>:<name>` names
-  namespace `<ns>` from any layer, including one namespace to another. Nothing names the
-  un-namespaced set from inside a namespace.
-- **Missing dependencies**: a reference whose target is not in the view is reported by `resolve`
-  (the referrer, its layer, the target), shown by `explain` and `explain --uses`, and does not
-  stop `resolve`. `meta/refs.tsv` gains the state `missing` (a malformed ref stays `dangling`) and
-  two columns, the referrer's layer and the alias used.
-- **Aliases**: `aliases: { <name>: <namespace> }` on a layer; inside it, a reference to `<name>:`
-  resolves to `<namespace>:` first. One hop; an alias naming itself, the layer's own namespace,
-  another alias of the layer or a reserved name is refused with `file:line`. `layers.tsv` gains
-  an eleventh column, `aliases`.
-- A namespaced agent definition (`agents/<ns>:<name>/` in the view) matches no agent of the
-  agents list; a plain-listed layer's agent definitions override as before (the Operator's ruling
-  of 2026-11-23). The Operator's own agent names a namespaced skill as `<ns>:<name>` in its
-  `skills`, written to the view as `<ns>--<name>`.
-- `explain` shows each layer's namespace, a namespace line with the hand-over name, and
-  `[namespace <ns>]` on every line of a namespaced component; it takes `kind/<ns>:<name>[:key]`
-  or the folder name; a "References" part lists each reference as written and as resolved, then
-  the missing dependencies; `--uses` shows a namespaced or aliased ref's resolved target.
-
-#### Changed
-
-- `layers.tsv` gains a tenth column, `namespace` (`-` for none). In an agent definition's
-  `skills`, a plain item `<a>:<b>` (a lower-case `<a>`) now names the namespaced skill `a:b`; it
-  was read as the skill `a` before. A ref to a target that is not there is reported as a
-  `missing dependency:` line instead of `dangling ref:`. Otherwise a layer list without a
-  namespace resolves exactly as in 1.6.0. `writable` and `remember` are unchanged.
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/component-registry/CHANGELOG.md).
 
