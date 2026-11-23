@@ -233,6 +233,25 @@ stateDiagram-v2
   not_installed --> owned: that skill is gone at a later handover
 ```
 
+## An HTTP client of a node (facilitator 0.5.0, slice N4)
+
+A person's acts move a client between states; an agent's job cannot (`http token`, `approve`, `deny`, `revoke` refuse
+there). At level public a client's first message waits in `Enrolled`; mapped private there is no approval and the
+client is `Approved` at once for this purpose.
+
+```mermaid
+stateDiagram-v2
+  [*] --> Enrolled: http token (shown once; only the hash is kept; at most 20 wait)
+  Enrolled --> Approved: approve (the held messages under 7 days are delivered)
+  Enrolled --> Denied: deny (the token no longer works; held messages are not delivered)
+  Approved --> Approved: calls within the approval ttl (30 d at public)
+  Approved --> Enrolled: the approval expires (the next message is held again)
+  Approved --> Revoked: revoke (at once)
+  Enrolled --> Revoked: revoke
+  Denied --> [*]
+  Revoked --> [*]
+```
+
 ## A node in a hub's domain (facilitator 0.4.0)
 
 The public path (a join request a person approves) is slice N5 and is refused until then.

@@ -48,13 +48,25 @@ tasks:
     dir: '{{.USER_WORKING_DIR}}'
     cmds: ['facilitator node status']
 
+  http-token:
+    desc: 'Make a bearer token for an HTTP client of this node (slice N4): -- <client> [--label <note>] [--as <person>]. Prints the token once (only its SHA-256 is kept) and how to add it to Claude Code and Copilot CLI. A person''s act: refused inside an agent''s job. Needs facilitator.http.listen in facilitator.yml and a preset above solo in mesh.yml.'
+    interactive: true
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['facilitator http token {{.CLI_ARGS}}']
+
+  http:
+    desc: 'The HTTP clients of this node: -- list (the default; no secret shown) | audit (the hash chain of enrolments, approvals, denials and revocations) | approve <client> (first contact: its held messages are delivered) | deny <client> | revoke <client> (its token stops working at once). approve, deny and revoke are a person''s acts, refused inside an agent''s job.'
+    interactive: true
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['facilitator http {{.CLI_ARGS | default "list"}}']
+
   setup:
     desc: 'Re-run the post-create setup: the state folder in the volume and the facilitator''s own key (idempotent, never fatal).'
     dir: '{{.USER_WORKING_DIR}}'
     cmds: ['facilitator-setup']
 
   infra:
-    desc: 'The infrastructure the Feature owns: -- up | down | status | logs [agent|dir|slim|peers]. On loopback, unless mesh.yml makes the node a hub (a SLIM listener per level) or a joined spoke (a link to its hub, and the peers part). up is idempotent; nothing is restarted on a crash (status says so). Participants are never started.'
+    desc: 'The infrastructure the Feature owns: -- up | down | status | logs [agent|dir|slim|peers|http]. On loopback, unless mesh.yml makes the node a hub (a SLIM listener per level) or a joined spoke (a link to its hub, and the peers part). up is idempotent; nothing is restarted on a crash (status says so). Participants are never started.'
     dir: '{{.USER_WORKING_DIR}}'
     cmds: ['facilitator infra {{.CLI_ARGS | default "status"}}']
 

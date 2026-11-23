@@ -256,3 +256,30 @@ sequenceDiagram
   H->>H: lock two on the card
   H-->>S: roster: every admitted card, the revoked nodes
 ```
+
+## 9. An HTTP client enrols and its first contact is approved (facilitator 0.5.0, slice N4)
+
+A person makes the token (never an agent's job); the CLI keeps it in its own config. The first message is written and
+held; a person sees it in `mail` and approves. Bearer tokens only: the OAuth enrolment of cloud AIs is slice N5.
+
+```mermaid
+sequenceDiagram
+  participant P as person
+  participant N as node (http part, application)
+  participant C as Claude Code or Copilot CLI
+  participant A as public agent
+  P->>N: facilitator http token claude-laptop
+  N-->>P: the token, once (only its SHA-256 is kept); the audit line
+  P->>C: claude mcp add --transport http ... --header "Authorization: Bearer ..."
+  C->>N: POST /mcp: who
+  N-->>C: only the agents exposed public
+  C->>N: say "@jester ..."
+  N->>N: reach rule, limits; the message written with via, held (first contact)
+  N-->>C: held: a person must approve
+  P->>N: mail names the client that waits; approve (the MCP tool or facilitator http approve)
+  N->>N: an approved notice; the held message dispatched
+  N->>A: delivered
+  A->>N: reply
+  C->>N: receive (at most 25 s)
+  N-->>C: the answer; every packet of the client says via http
+```

@@ -91,6 +91,11 @@ def _versions(fac) -> dict:
         out["slim-bindings"] = slim_bindings.get_version()
     except Exception:                          # noqa: BLE001
         out["slim-bindings"] = "missing"
+    try:
+        from importlib import metadata
+        out["mcp"] = metadata.version("mcp")
+    except Exception:                          # noqa: BLE001
+        out["mcp"] = "missing"
     return out
 
 
@@ -103,7 +108,7 @@ def cmd_version(a) -> int:
                 f"{v.get('register-engine')}, sign-packet {v.get('sign-packet')})\n"
                 f"bundle       : {v['bundle']}\n"
                 f"dirctl       : {v['dirctl']}\nslimctl      : {v['slimctl']}\nslim-bindings: {v['slim-bindings']} "
-                f"(the node version it speaks)\npython       : {v['python']}\nlibrary      : {v['library']}")
+                f"(the node version it speaks)\nmcp          : {v['mcp']} (the http module's library)\npython       : {v['python']}\nlibrary      : {v['library']}")
     return 0
 
 
@@ -260,6 +265,12 @@ def cmd_check(a) -> int:
         part(*p_)
     for p_ in http_parts(fac):
         part(*p_)
+    try:
+        want_http = fac.participants()[1].http.active
+    except ListError:
+        want_http = False
+    part("mcp", v["mcp"] != "missing" or not want_http, v["mcp"] if v["mcp"] != "missing" else
+         "not installed (the node bundle carries it; needed only when facilitator.http.listen is set)", needed=want_http)
     inf = fac.infra()
     for row in ([] if leaf else inf.status()):
         why = "healthy" if row["healthy"] else "not running: facilitator infra up"

@@ -107,3 +107,22 @@ flowchart LR
   node-bundle -.->|installed by| facilitator-node
   node-bundle -.->|installed by| facilitator
 ```
+
+## The facilitator endpoint over HTTP (slice N4, ADR-0070)
+
+Built in `facilitator` 0.5.0: only when `facilitator.http.listen` is set, a node serves its MCP tools to CLIs with a
+static bearer token a person made; the node signs for the client and the client is mapped through
+`http.<home domain>` (public unless `mesh.yml` maps it private).
+
+```mermaid
+flowchart LR
+  operator["Operator"]
+  facilitator["facilitator Feature: a node with the http part"]
+  mesh["mesh.yml of each node"]
+  trust-level["Trust level"]
+  external-http-cli["Claude Code or Copilot CLI (bearer token)"]
+  external-http-cli -->|MCP over HTTP, TLS beyond loopback| facilitator
+  operator -->|http token, approve, revoke| facilitator
+  mesh -->|http.home-domain trust, expose public, approval and limits| facilitator
+  facilitator -->|maps an HTTP client to| trust-level
+```
