@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | accepted |
+| **Status** | accepted (amended by [ADR 0074](0074-a-spoke-joins-through-a-join-endpoint-agents-are-bound-to-their-node-by-signed-cards-and-a-handle-can-be-qualified-by-its-node.md): decisions 4 and 5) |
 | **Date** | 2026-11-20 |
 | **Deciders** | the Operator; proposed by the host |
 
@@ -81,3 +81,4 @@ Rejected by the spike: SLIM never checks the SPIFFE ID or the trust domain.
 | Date | Change |
 |---|---|
 | 2026-11-20 | First draft, accepted on the Operator's rulings AB, SP1 and SP2 of the same day. |
+- 2026-11-23: decisions 4 and 5 amended by ADR 0074 (rulings on slice N3).
