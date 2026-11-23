@@ -5,20 +5,19 @@
 # listed in .devcontainer/registry.yml. This test runs the real dcf-registry on the real layer list
 # (the devhost layer's installed path, /usr/local/share/devhost/registry, pointed at its source
 # folder) into a temp state folder and compares the resolved skills/architecture-review/SKILL.md
-# with the committed .claude/skills/architecture-review/SKILL.md.
+# with the devhost template copy (templates/claude/skills/architecture-review/SKILL.md) that
+# `devhost-init` plants in a repository without the registry; this repository commits no copy of its own.
 #
 # The comparison is byte for byte: both layers say heading: false (component-registry 1.3.0), so
 # text stacking adds no "## Layer <id>" line, and a change to either layer or to the committed skill
-# that is not made in both fails here.
-# Also: the devhost template copy equals the committed skill (no guard kept them identical), and the
-# generic layer alone resolves to a usable skill that names nothing of this repository.
+# that is not made in the template copy too fails here (the drift guard of architecture-skill-switch-over).
+# Also: the generic layer alone resolves to a usable skill that names nothing of this repository.
 # Part of `task lint` (`task test:registry-first-use`).
 set -u
 
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/../../.." && pwd)"
 src="$root/src/component-registry"
-skill="$root/.claude/skills/architecture-review/SKILL.md"
 template="$root/local-features/devhost/share/python/templates/claude/skills/architecture-review/SKILL.md"
 base_src="$root/local-features/devhost/share/registry"
 installed=/usr/local/share/devhost/registry
@@ -54,10 +53,9 @@ resolved="$T/state/view/skills/architecture-review/SKILL.md"
 check "the resolved skill is there" yes "$([ -f "$resolved" ] && echo yes || echo no)"
 
 check "no layer heading is written (heading: false on both layers)" 0 "$(grep -c '^## Layer ' "$resolved")"
-if cmp -s "$resolved" "$skill"; then same=yes; else same=no; diff -u "$skill" "$resolved" | head -40; fi
-check "the resolved skill equals the committed skill byte for byte" yes "$same"
-if cmp -s "$template" "$skill"; then tsame=yes; else tsame=no; fi
-check "the devhost template copy equals the committed skill" yes "$tsame"
+if cmp -s "$resolved" "$template"; then same=yes; else same=no; diff -u "$template" "$resolved" | head -40; fi
+check "the resolved skill equals the devhost template copy byte for byte" yes "$same"
+check "this repository commits no copy of the skill (the registry resolves it)" no "$([ -e "$root/.claude/skills/architecture-review" ] && echo yes || echo no)"
 
 # The generic layer alone: a skill a consumer without this repository's rules can use.
 mkdir -p "$T/alone/.devcontainer"; cd "$T/alone" || exit 1

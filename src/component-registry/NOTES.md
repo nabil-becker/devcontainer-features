@@ -645,7 +645,7 @@ what 1.3.0 changed for it:
 - **A relative link breaks.** The resolved copy lives in the CLI's skills folder, so a link such
   as `../../../PROCESS.md` points nowhere; the base layer names files as plain paths.
 
-### Switch-over (proposed, not done)
+### Switch-over (this repository done; consumers: `devhost-init` skips the copy)
 
 Today both the committed skill (`.claude/skills/architecture-review/`, project scope) and the
 resolved one (Claude Code's personal skills folder, handed over at the agent's start) exist; the
@@ -661,7 +661,8 @@ to the committed one byte for byte. Switching over (the Operator: it waits) woul
   component-registry Feature and a `registry.yml` naming the devhost layer (plus their own layer
   for their rules) and `devhost-init` stops copying it. Each consumer's
   `DEVCONTAINER_CONTRIBUTION.md` would say which.
-- **Nothing a reader sees**: the resolved skill already equals the committed one byte for byte.
+- **Done (`architecture-skill-switch-over`, `devhost` 1.18.0)**: this repository's committed copy is deleted. The devhost Feature does not depend on component-registry, so `devhost-init` keeps planting the template for a repository whose `.devcontainer/registry.yml` does not name `/usr/local/share/devhost/registry`, skips it when it does, and never deletes a planted copy (it prints one line suggesting removal). `task test:registry-first-use` keeps the template and the resolved skill byte-equal.
+- **Nothing a reader sees**: the resolved skill equalled the committed one byte for byte.
 
 ## Use it
 
