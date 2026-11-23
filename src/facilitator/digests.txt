@@ -5,3 +5,5 @@
 # release-bundle run (task bundle:pin -- <version>).
 0fc248666c92c7f78648f2e3379a6f84e00fe95fa72e10edd5630eb5fcb2e8f1  facilitator-0.3.0-linux-amd64.tar.gz
 69e7b006ccd6012159adda32966e1f68b7f7d2eed34023caa15524b897b84402  facilitator-0.3.0-linux-arm64.tar.gz
+3aa0cadb3c1175c5013e7580ff552711af534b6854b6a0d47d7033fcea42a057  facilitator-0.4.0-linux-amd64.tar.gz
+276c6df4a44e6734385ce76fd7cb9a2c1f8e712ec0ff70d9a77d6b384a115e9e  facilitator-0.4.0-linux-arm64.tar.gz

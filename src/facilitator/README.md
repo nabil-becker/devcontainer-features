@@ -841,8 +841,8 @@ Nothing changes without a `mesh.yml`: a node stays standalone with every port on
   `bundles/facilitator/hub/mesh.yml`) beside OpenBao and a spoke, publishing nothing. A hub whose OpenBao is sealed runs
   on loopback until its certificate is issued.
 - In a mesh, a node's participants have SLIM names of their own (`agntcy/facilitator-<node>/<handle>`).
-- `bundleVersion` defaults to `0.4.0`, not released yet: the Feature builds the bundle from its own source until
-  `release-bundle` runs and `digests.txt` pins it.
+- `bundleVersion` defaults to `0.4.0`: the Feature installs the published node bundle `facilitator-bundle-v0.4.0`
+  (amd64 and arm64), pinned by SHA-256 in `digests.txt`.
 
 ### [0.3.1] - 2026-11-21
 
