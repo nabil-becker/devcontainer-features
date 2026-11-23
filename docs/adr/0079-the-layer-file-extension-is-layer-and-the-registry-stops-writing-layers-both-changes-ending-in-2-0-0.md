@@ -1,4 +1,4 @@
-# ADR-0078: The layer file extension is `.layer`, and the registry stops writing layers, both changes ending in 2.0.0
+# ADR-0079: The layer file extension is `.layer`, and the registry stops writing layers, both changes ending in 2.0.0
 
 | | |
 |---|---|

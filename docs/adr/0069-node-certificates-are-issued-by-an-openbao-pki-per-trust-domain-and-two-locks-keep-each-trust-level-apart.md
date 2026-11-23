@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | accepted (amended by [ADR 0075](0075-a-spoke-joins-through-a-join-endpoint-agents-are-bound-to-their-node-by-signed-cards-and-a-handle-can-be-qualified-by-its-node.md): decisions 4 and 5) |
+| **Status** | accepted (amended by [ADR 0075](0075-a-spoke-joins-through-a-join-endpoint-agents-are-bound-to-their-node-by-signed-cards-and-a-handle-can-be-qualified-by-its-node.md): decisions 4 and 5; decision 1 by [ADR 0078](0078-a-node-issues-certificates-itself-by-default-with-the-ca-key-in-openbao-else-an-ssh-agent-else-a-file.md): a built-in issuer by default) |
 | **Date** | 2026-11-20 |
 | **Deciders** | the Operator; proposed by the host |
 
@@ -82,3 +82,4 @@ Rejected by the spike: SLIM never checks the SPIFFE ID or the trust domain.
 |---|---|
 | 2026-11-20 | First draft, accepted on the Operator's rulings AB, SP1 and SP2 of the same day. |
 - 2026-11-23: decisions 4 and 5 amended by ADR 0075 (rulings on slice N3).
+- 2026-11-23: decision 1 amended by ADR 0078 (a node issues certificates itself by default).

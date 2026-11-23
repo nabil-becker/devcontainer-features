@@ -599,3 +599,7 @@ renamed. Each project is a tree growing in its own ground.
   `approval_ttl` (ADR-0076).
 - **Via**: the `data.via` field on every message and status an HTTP client's turn produces, naming the
   client the node vouches for; `verify` accepts a chain root that carries it (ADR-0076).
+- **Node issuer**: what signs a trust domain's node certificates. By default the node itself (the
+  built-in issuer, no OpenBao); where its CA key lives is the first configured of an OpenBao PKI, an
+  ssh-agent (ed25519 key chosen by fingerprint) or, as a last resort, a file in the node's volume
+  (ADR-0078).
