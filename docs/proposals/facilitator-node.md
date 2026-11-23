@@ -1434,3 +1434,34 @@ What slice N3 found where a ruling could not be built as written, and the Operat
   same handle and both stay reachable. A bare handle still works when it names one agent; when it names several,
   the facilitator refuses it and lists the qualified names. Rejected: refusing the second claim, so that neither
   is reachable until one is renamed (A, as first built).
+
+## Rulings on slice N4 (2026-11-23)
+
+What slice N4 found where a ruling could not be built as written, and the Operator's ruling on each.
+
+- **HC1, an HTTP client starting a conversation: option A, ruled 2026-11-23 ("let's start with A": the
+  starting point, to revisit with use).** An HTTP client's `say` begins a chain (hop 0) that no person wrote;
+  the node signs it on the client's behalf and marks it `via` http, and `verify` accepts such a root. It is
+  bounded by first-contact approval by a person, the public limits (rate 3 a minute across the client's
+  conversations, 2 hops, budget 10), and the reach rule (only agents exposed `public`); `continue` stays a
+  person's. Rejected: the client may only reply (B: it could never begin, so it could not talk at all) and a
+  person approves every conversation it starts (C: a person in every loop). It refines ADR-0066 and ADR-0070
+  decision 4.
+- **HC2, public under the `team` preset: option A, ruled 2026-11-23.** `team`'s ceiling is private, but an HTTP
+  client is public until `mesh.yml` trusts `http.<home domain>` as private. Under `team`, `expose: public` marks
+  the agents this node's own HTTP clients may reach; public from other nodes stays slice N5, and `trust` may map
+  `http.<home domain>` only to private or public. Refused under `solo`. Rejected: a new preset between `team`
+  and `open` (B; the names are revisited when N5 defines `open`) and no public under `team`, HTTP clients mapped
+  to private (C: any token holder would get private reach).
+- **HC3, the audit of tokens and approvals: option A, ruled 2026-11-23.** There is no register for enrolment
+  outside a conversation, so `token`, `approve`, `deny` and `revoke` are lines in `http/audit.jsonl`, each
+  carrying the hash of the one before (a cut or an edit shows; a whole rewrite would not); the approval and
+  denial are also signed `notice` packets in the conversations they concern. Slice N5 adds a signed audit
+  register type and replays the log into it. Rejected: the signed register in N4 (B: delays the slice).
+- **HC4, how long an approval lasts: option A, ruled 2026-11-23.** A person approves a client (its token) once;
+  the approval lasts `approval_ttl` (30 days at public), across every conversation the client starts, until it
+  expires or the token is revoked. Rejected: an approval per conversation (B: a person in every new
+  conversation).
+- **HC5, the `mcp` wheels in the bundle: option A, ruled 2026-11-23.** The bundle grows by about 40 MB; its
+  `install.sh` keeps the 28 `mcp` wheels per architecture pinned by SHA-256 and URL (`--require-hashes`), and a
+  task refreshes that table before the next `mcp` upgrade. Rejected: refreshing it by hand (B).

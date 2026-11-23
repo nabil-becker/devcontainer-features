@@ -6,6 +6,47 @@ of the Feature and whether they must act (an option renamed, a task removed, a r
 The version in `devcontainer-feature.json` is bumped in the same change that adds its entry
 here; `task lint` fails when the entry is missing.
 
+## [0.5.0] - 2026-11-23
+
+MCP over HTTP for CLIs (slice N4 of the facilitator-node proposal; ADR-0070, ADR-0071, ADR-0068). Nothing changes unless
+`facilitator.http.listen` is set in `facilitator.yml`: no port opens and no client exists. Rebuild the container.
+
+### Added
+
+- **The endpoint** (`facilitator http serve`, the `http` part of `infra up`): the node's MCP tools over Streamable HTTP, on
+  the `mcp` library 2.3.0, for Claude Code and GitHub Copilot CLI with a static `Authorization: Bearer` token (both run
+  for real in `task test:facilitator-http`). Off unless `facilitator.http.listen` is set; refused under `preset: solo`;
+  beyond loopback it needs TLS (`http.tls_cert`, `http.tls_key`) or `http.behind_proxy: true`, and `http.url` or
+  `http.allowed_hosts`; `http.enabled: false` is the kill switch. `check` says why it refuses; `http.issuers` (OAuth for
+  cloud AIs) is refused: slice N5.
+- **Clients and tokens:** `facilitator http token <client>` (a person's act, refused inside an agent's job: the token is
+  shown once and only its SHA-256 is kept), `list`, `approve`, `deny`, `revoke`, `audit`; a person's MCP session gains the
+  `approve` tool. At most 20 clients may wait for approval. Every enrolment, approval, denial and revocation is a line of
+  a hash-chained audit log.
+- **The node signs for an HTTP client** (ADR-0068): every message and task state it makes carries `data.via`
+  (`{transport: http, auth: bearer, client}`); `transcript` shows it and `verify` checks it and accepts a chain that begins
+  with such a client. A client is **never a person**: `who`, `say`, `reply`, `receive`, `mail` and a read-only
+  `transcript`; never `continue` or `approve`.
+- **The single-node public rules** (ruling AH): a client maps through `http.<home domain>`, **public** unless `mesh.yml`
+  maps it to private; it sees only agents exposed `public` (an unreachable agent reads as one that does not exist); its
+  first message is held until a person approves it (`limits.public.approval: first-contact`, a held message is dropped
+  after 7 days, an approval lasts 30 days); the public limits (rate 3 a minute across all its conversations, hops 2,
+  budget 10, `max_packet` 16 KiB). `mesh.yml` accepts `expose: public` under `team`, `trust: http.<home domain>`, and the
+  limit keys `approval`, `approval_ttl` and `http_receive_wait`.
+- **Abuse limits at the edge:** 10 failed authentications in a minute block the address for 10 minutes, 20 open requests
+  per address, a 64 KiB body, Host and Origin checks, a `receive` that blocks at most `http_receive_wait` (25 s at public)
+  and 2 at a time per client.
+- `check` shows the endpoint, the clients' level and the audit chain, and the `mcp` library; `explain` prints the public
+  level's limits; `version` prints `mcp`. The bundle carries `mcp` 2.3.0 and 27 dependency wheels, each pinned by SHA-256
+  (about 40 MB more).
+
+### Changed
+
+- The conversation type accepts the optional `via` field on a message and a status, and the notice codes `approval`,
+  `approved` and `denied`. A conversation with a `via` does not load on a 0.4.0 node.
+- `bundleVersion` defaults to `0.5.0` (unreleased: until `release-bundle` runs and `digests.txt` pins it, the Feature builds
+  the bundle from its own source).
+
 ## [0.4.0] - 2026-11-21
 
 Hub and spoke with local and private trust (slice N3 of the facilitator-node proposal; ADR-0067 to ADR-0071).

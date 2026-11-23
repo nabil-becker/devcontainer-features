@@ -8,7 +8,7 @@ hop limit was not delivered unless a human continued it; every `ref` names a mes
 Exit 0 a good chain, 1 a break, 2 bad usage (NFR-11's exit codes)."""
 from __future__ import annotations
 
-from . import guard
+from . import guard, router
 from .record import RecordError
 
 
@@ -71,6 +71,14 @@ class Walker:
                            + (", revoked since; signed before" if card.get("revoked") else "") + ")")
                 else:
                     who = f"  this node ({self.fac.mesh.node_id})"
+            via = m.get("via")
+            if via:
+                who += (f"  via {via.get('transport')} ({via.get('auth')}, client {via.get('client')}): this node signed on "
+                        "the client's behalf")
+                if via.get("client") != router.split(m["from"])[0]:
+                    self.problems.append(f"{c}/{mid}: via names the client {via.get('client')}, but the message is by {m['from']}")
+            elif self.fac.is_http(router.split(m["from"])[0]):
+                self.problems.append(f"{c}/{mid}: by the HTTP client {m['from']}, and it carries no via")
             lines.append(f"{c}/{mid}  hops {m['hops']}  from {m['from']}  signed by {e.key[:28]}...{who}  entry {m['entry'][:12]}")
             for r in m.get("refs", []):
                 if "message_id" in r and not self.not_copied(c, r["thread"]):
@@ -82,7 +90,10 @@ class Walker:
             if m["hops"] > top and any(r["tasks"] for r in routes):
                 self.problems.append(f"{c}/{mid}: delivered at {m['hops']} hops, past the limit {top}, with no continue")
             if m["hops"] == 0:
-                if m["from"] not in proj["thread"]["humans"]:
+                if via and via.get("transport") == "http":
+                    lines.append(f"{c}/{mid}  the chain begins with an HTTP client the node vouches for ({via.get('client')}); "
+                                 "a person approved it (or the level needs no approval)")
+                elif m["from"] not in proj["thread"]["humans"]:
                     self.problems.append(f"{c}/{mid}: the root is by {m['from']}, not by a human of the conversation")
                 if m["root"] != mid:
                     self.problems.append(f"{c}/{mid}: a root that names another root")

@@ -1,7 +1,7 @@
 
 # facilitator (conversations between agents of any vendor, on AGNTCY) (facilitator)
 
-The communication layer between agents of any vendor running in the devcontainer: an MCP server each participant's CLI starts (receive, reply, say, who) and a person's own Claude Code or Copilot session attaches to (say, mail, transcript, continue, who), one shared entry with the handle from FACILITATOR_HANDLE, deterministic routing by @handle with hop, budget and rate limits, every message a sign-packet packet in a register-engine conversation register, verified back to the human who began it. Installs the facilitator node bundle (its own CPython, dirctl, slimctl and the application, checksummed; the same bundle as the server image) and runs the AGNTCY Agent Directory and a SLIM node on loopback, started as infrastructure (mode node), or only the thin client (mode leaf); never starts, stops or configures a participant. A node is standalone (nothing open) unless its mesh.yml (FACILITATOR_MESH_FILE) makes it a hub or a spoke: nodes link over SLIM with mutual TLS, certificates from an OpenBao PKI per trust domain, a listener per trust level and the application's SPIFFE ID check (local and private trust; join tokens, revoke). Includes a local-model wrapper for any OpenAI-compatible endpoint and a turn hook line for Claude Code ('Facilitator: N new messages').
+The communication layer between agents of any vendor running in the devcontainer: an MCP server each participant's CLI starts (receive, reply, say, who) and a person's own Claude Code or Copilot session attaches to (say, mail, transcript, continue, who), one shared entry with the handle from FACILITATOR_HANDLE, deterministic routing by @handle with hop, budget and rate limits, every message a sign-packet packet in a register-engine conversation register, verified back to the human who began it. Installs the facilitator node bundle (its own CPython, dirctl, slimctl and the application, checksummed; the same bundle as the server image) and runs the AGNTCY Agent Directory and a SLIM node on loopback, started as infrastructure (mode node), or only the thin client (mode leaf); never starts, stops or configures a participant. A node is standalone (nothing open) unless its mesh.yml (FACILITATOR_MESH_FILE) makes it a hub or a spoke: nodes link over SLIM with mutual TLS, certificates from an OpenBao PKI per trust domain, a listener per trust level and the application's SPIFFE ID check (local and private trust; join tokens, revoke). Serves its MCP tools over HTTP to CLIs with static bearer tokens (facilitator.http.listen in facilitator.yml; off by default, refused under the preset solo; a person creates and approves each client; the node signs for it and every packet says so) and includes a local-model wrapper for any OpenAI-compatible endpoint and a turn hook line for Claude Code ('Facilitator: N new messages').
 
 ## Example Usage
 
@@ -18,7 +18,7 @@ The communication layer between agents of any vendor running in the devcontainer
 | installTaskfile | Install this Feature's Taskfile into /usr/local/share/go-task/includes.d so its tasks appear under facilitator: in a root Taskfile that includes /usr/local/share/go-task/features.yml (the go-task Feature). | boolean | true |
 | backend | What carries the directory and delivery: agntcy (the AGNTCY Agent Directory and SLIM). lean (packet-relay) is refused in this version: not yet, slice 5. FACILITATOR_BACKEND overrides. | string | agntcy |
 | mode | node (the default): the whole bundle, and the Directory, the SLIM node and the facilitator's ssh-agent run here (autostart). leaf: the thin client only (facilitator mcp and what it needs; no slimctl): no daemon is started, infra up and node run are refused; a leaf reaching a node over the network is not built yet (slice N3 built hubs and spokes). FACILITATOR_MODE. | string | node |
-| bundleVersion | The facilitator node bundle to install (a release asset of this repository, facilitator-bundle-v<version>), verified against the SHA-256 pinned in digests.txt. latest means the bundle this Feature version was made with (0.4.0). With no pin for it, the bundle is built from the Feature's own source, every upstream download checked against the SHA-256 pinned in bundle-build.sh. | string | 0.4.0 |
+| bundleVersion | The facilitator node bundle to install (a release asset of this repository, facilitator-bundle-v<version>), verified against the SHA-256 pinned in digests.txt. latest means the bundle this Feature version was made with (0.5.0). With no pin for it, the bundle is built from the Feature's own source, every upstream download checked against the SHA-256 pinned in bundle-build.sh. | string | 0.5.0 |
 | dirVersion | Deprecated in 0.3.0 (removed in 1.0.0): use bundleVersion. The bundle fixes dirctl's version (1.9.1); 1.9.1 or latest are accepted, with a deprecation line from install, version and check, and any other version is refused. | string | - |
 | slimVersion | Deprecated in 0.3.0 (removed in 1.0.0): use bundleVersion. The bundle fixes slimctl's version (3.4.6); 3.4.6 or latest are accepted, with a deprecation line from install, version and check, and any other version is refused. | string | - |
 | hopLimit | Hops since the message that began the chain (a person's later messages count too) before the conversation pauses; a person's continue resumes it. The default of the local and private trust levels; mesh.yml limits override it per level. FACILITATOR_HOP_LIMIT. | string | 6 |
@@ -221,8 +221,8 @@ processes a node needs and no bundle shared with this Feature (not checked again
 
 From 0.4.0 a node can be a **hub** (an intranet node other nodes link to) or a **spoke** (a node that links to one
 hub), beside the default **standalone** (0.3.0's behaviour, nothing open). Two levels of trust are built: **local**
-(this machine, unrestricted) and **private** (an intranet domain). Public trust, approving a stranger's node,
-MCP over HTTP and peer-to-peer meshes are slices N4 and N5, and are refused by name until then
+(this machine, unrestricted) and **private** (an intranet domain). Public trust across nodes, approving a stranger's node,
+cloud AIs and peer-to-peer meshes are slice N5 (MCP over HTTP for CLIs is slice N4, below), and are refused by name until then
 ([proposal facilitator-node](../../docs/proposals/facilitator-node.md), ADR-0067 to ADR-0071).
 
 ```
@@ -441,6 +441,122 @@ anonymous push. So:
 | A wrong `server_name` or CA | the dialer's SLIM log says `not valid for name` or `UnknownIssuer`; `check` names it |
 | An invalid `mesh.yml` | the node runs standalone (fail narrow); `check` lists the findings |
 
+## MCP over HTTP for CLIs (slice N4)
+
+From 0.5.0 a node can serve its MCP tools over HTTP (Streamable HTTP), so a CLI that cannot start `facilitator mcp` here
+reaches the node with a **static bearer token**: Claude Code (`claude mcp add --transport http`) and GitHub Copilot CLI
+(`copilot mcp add --transport http`), both run for real against this endpoint (test/facilitator/http_flow.sh).
+**Cloud AIs (OAuth 2.1, a public HTTPS address) are slice N5**: `http.issuers` is refused by name until then. The
+endpoint is the `mcp` Python library 2.3.0 (MIT; 28 hash-pinned wheels in the bundle) on uvicorn; an install without the
+bundle needs it importable only when the endpoint is on ([proposal](../../docs/proposals/facilitator-node.md) section 11;
+ADR-0070, ADR-0071, ADR-0068).
+
+```
+ Claude Code / Copilot CLI                         the node (infra part `http`)
+   POST /mcp   Authorization: Bearer <client>.<secret>
+   ------------------------------------------------>  gate: back-off, 20 open requests per address, 64 KiB, /mcp only
+                                                      library: Host and Origin (DNS rebinding), the token (a hash, constant time)
+                                                      HttpSession of that client: who, say, reply, receive, mail, transcript
+                                                      reach rule (the client's level), first-contact hold, limits
+                                                      signer: the node signs for the client; every packet has data.via
+```
+
+### Settings: `facilitator.http` in `.devcontainer/facilitator.yml`
+
+Off unless `listen` is set (ADR-0071: a port opens only when configured), refused under `preset: solo`, and a mistake in
+this section never stops the node's other parts: the endpoint does not open and `check` says why.
+
+```yaml
+facilitator:
+  humans: [you]            # the people who approve first contacts; must name one (or check refuses approval: first-contact)
+  http:
+    listen: 127.0.0.1:8765     # host:port; unset = no endpoint, nothing open
+    enabled: true              # false removes the listener (the kill switch) and keeps the clients
+    url: https://node.corp.example:8443   # the address clients use; needed beyond loopback (the Host check)
+    tls_cert: /etc/facilitator/tls/cert.pem   # TLS is required beyond loopback ...
+    tls_key: /etc/facilitator/tls/key.pem
+    behind_proxy: false        # ... or true when a reverse proxy ends TLS (then only the proxy may reach the node)
+    allowed_hosts: []          # extra Host header values
+    allowed_origins: []        # Origin header values allowed (CLIs send none; a browser's is refused unless listed)
+    # issuers: [...]           # OAuth issuers: not yet, slice N5
+```
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `http.listen` | unset | The address to open. Beyond loopback it needs `tls_cert` and `tls_key`, or `behind_proxy: true`, and `url` or `allowed_hosts`. |
+| `http.enabled` | `true` | `false`: the listener is gone, the clients and their audit stay. |
+| `http.url` | from `listen` | What the clients dial (also the protected-resource metadata's name). |
+| `http.tls_cert`, `http.tls_key` | unset | PEM files; both or neither. Mode 600 for the key. |
+| `http.behind_proxy` | `false` | A proxy ends TLS; uvicorn then trusts the proxy's `X-Forwarded-For` for the per-address limits, so only the proxy may reach the port. |
+| `http.allowed_hosts`, `http.allowed_origins` | none | Host and Origin values accepted besides the derived ones. |
+| `http.issuers` | none | Refused: slice N5. |
+
+`mesh.yml` gains, for this slice (the single-node public rules, ruling AH):
+
+- `trust: { http.<home domain>: private }` maps the node's own HTTP clients (the domain `http.<node id>.local`) to
+  **private**; unlisted they are **public**. Never local.
+- `expose: { <handle>: public }` is allowed under `team`: public means reachable by this node's HTTP clients only.
+  Under `solo` it is refused. An agent is never public unless a file says so.
+- `limits.<level>`: `approval` (`none`, or `first-contact`; default `first-contact` at public), `approval_ttl` (`none`, or
+  a duration such as `30d`, the default at public), `http_receive_wait` (the longest a `receive` blocks; 300s, 60s, 25s).
+  The public defaults of hops 2, budget 10, rate 3 and `max_packet` 16KiB apply to a client's conversations.
+
+### Tokens, approval and revocation (a person's acts)
+
+```
+facilitator http token <client> [--label ..]   # prints the token once; only its SHA-256 is kept; refused inside an agent's job
+facilitator http list | audit                  # the clients (no secret), the audit chain
+facilitator http approve <client>              # first contact: its held messages are delivered (also the person's MCP tool approve)
+facilitator http deny <client> | revoke <client>   # the token stops working at once
+```
+
+A **token** is `<client>.<secret>` (the secret is 256 random bits). It is a person's act: `token`, `approve`, `deny` and
+`revoke` refuse to run inside an agent's job (`CLAUDECODE`, `DEVHOST_JOB_CHILD`, `FACILITATOR_HANDLE`, or the variables
+`FACILITATOR_AGENT_JOB_VARS` names). At most 20 clients may be enrolled and not yet approved. The approver is the person
+acting (`--as`, a human of `facilitator.yml`, default the first): on a node with no person attached, the hub's own
+`humans:` list, which `check` requires to name one while a level asks for first contact.
+
+- **First contact (level public).** A client's messages are **written and held** (`held: approval`, a notice in the
+  conversation) until a person approves the client. A person's `mail` and the turn hook line name the clients that wait;
+  `approve` (the MCP tool, or `facilitator http approve`) records an `approved` notice in each conversation and delivers.
+  A message held more than **7 days** is not delivered (ruling BG). An approval lasts `approval_ttl` (30 days at public).
+  Mapped to private there is no approval.
+- **Audit.** Every enrolment, approval, denial and revocation is a line of `http/audit.jsonl`, each carrying the hash of
+  the line before it (`facilitator http audit` checks the chain). It is **not** a signed register (see Limits); the
+  approval and denial are also signed notices in the conversations they concern.
+- Revocation closes the client's future calls at once and discards its token's hash; what it wrote stays in the record.
+
+### What an HTTP client is, and sees
+
+- **Never a person.** It is offered `who`, `say`, `reply`, `receive`, `mail` and a read-only `transcript`, never
+  `continue` or `approve`: only a person's local session resets the hop count (ADR-0066).
+- **Signed for by the node** (ADR-0068): the roster entry is kind `http`, its key is held by the node (OpenBao, or the
+  0.1.0 fallback file), and every message and task state it makes carries `data.via` =
+  `{transport: http, auth: bearer, client}`. `transcript` says "(via HTTP, authenticated by bearer token, client X)";
+  `verify` names each such hop, checks that `via` is present and names the writer, and accepts a chain that **begins**
+  with an HTTP client (its first message is a root, hop 0, which the node vouches for; see Limits). The client's
+  SPIFFE ID is `spiffe://http.<home domain>/node/<id>/http/<client>`.
+- **The reach rule.** A public client sees and messages only agents exposed `public`; the others are not listed, and a
+  message to one reads exactly like a message to a handle that does not exist ("is no participant"). It never sees
+  another HTTP client, a person (unless exposed), or another node's agents.
+- **Limits.** The level's rate is counted **for the client across all its conversations** (3 a minute at public), then
+  hops 2, budget 10 per conversation and `max_packet` 16 KiB (refused before anything is written). Over HTTP a
+  `receive` blocks at most `http_receive_wait` (25 s at public) and a client may have 2 at a time.
+- **Abuse limits at the edge** (proposal 11.3): 10 failed authentications from an address in a minute block it for 10
+  minutes (even with the right token; the answer has no detail); 20 open requests per address; a 64 KiB body; only
+  `/mcp` and the well-known metadata answer; Host and Origin are checked.
+
+### Connecting the CLIs
+
+```
+facilitator http token claude-laptop                       # the token, once
+claude mcp add --transport http facilitator http://127.0.0.1:8765/mcp --header "Authorization: Bearer <token>"
+copilot mcp add --transport http facilitator http://127.0.0.1:8765/mcp --header "Authorization: Bearer <token>"
+```
+
+Both put the header in their own config file (Claude Code's `.claude.json` or `.mcp.json`, Copilot's
+`mcp-config.json`): treat that file as a secret. A token has no expiry; revoke it with `facilitator http revoke`.
+
 ## Using it in devcontainer.json
 
 ```jsonc
@@ -586,7 +702,7 @@ Directory's data, `node.key` included), `slim/` (its rendered config), `secrets/
 (pidfiles, the ssh-agent's socket), `logs/`, and in a mesh `mesh/`: `certs/<domain>/` (the node's key, mode 600,
 its certificate and the domain's trust bundle), `cards/` (the other nodes' admitted cards), `convs/` (which node
 each member of a shared conversation is on), `outbox/`, `refused.log` (lock two's refusals), `status.json` (the
-peers part), on a hub `roster.json` and `invites.json` (join tokens, hashed), `secret` (the mesh's SLIM app secret).
+peers part), on a hub `roster.json` and `invites.json` (join tokens, hashed), `secret` (the mesh's SLIM app secret). With the endpoint over HTTP, `http/`: `clients.json` (each client's state and the SHA-256 of its token, mode 600; never a token), `audit.jsonl` (the hash-chained log) and `status.json` (the `http` part's pid and address).
 **Conversations are working data**: lost with the volume,
 never committed (D12); a tier-2 mirror is a later item.
 
@@ -629,8 +745,10 @@ mistake, not an attacker.
 | `facilitator:node-approve` | `facilitator node approve` | Not yet: slice N5 (a public node joins by key and a person's approval). |
 | `facilitator:node-status` | `facilitator node status` | The peers part, the admitted cards, a hub's roster, the last refusals (JSON). |
 | (no task) | `facilitator node bundle <domain> --file <pem>`, `node renew`, `node restore-roster`, `node peers` | A federated domain's trust bundle; renew this spoke's certificate now; a hub's roster back from OpenBao; the peers part in the foreground (`infra up` starts it). |
+| `facilitator:http-token` | `facilitator http token <client> [--label ..] [--as <person>]` | A bearer token for an HTTP client, shown once (only its hash is kept). A person's act: refused inside an agent's job. |
+| `facilitator:http` | `facilitator http list\|audit\|approve <client>\|deny <client>\|revoke <client>` | The clients (no secret), the audit chain, first-contact approval, the end of a client's token. `approve`, `deny` and `revoke` are a person's acts. `http serve` is what the `http` infra part runs. |
 | `facilitator:setup` | `facilitator-setup` | The state folder and the facilitator's key (idempotent, never fatal). |
-| `facilitator:infra` | `facilitator infra up\|down\|status\|logs [agent\|dir\|slim\|peers]` | The infrastructure; `up` is idempotent, nothing is restarted on a crash (`status` says so). |
+| `facilitator:infra` | `facilitator infra up\|down\|status\|logs [agent\|dir\|slim\|peers\|http]` | The infrastructure; `up` is idempotent, nothing is restarted on a crash (`status` says so). |
 | `facilitator:participants` | `facilitator participants` | The list and who is registered. |
 | `facilitator:register` | `facilitator register <handle>... \| --all` | Key, token, OASF record. |
 | `facilitator:status` | `facilitator status` | Who is attached; each conversation's messages, hops, budget, pause. Read only. |
@@ -667,7 +785,12 @@ A person's (none of them waits):
 | `mail` | `limit?` (1 to 200, default 20) | The unread messages of every conversation you are in, by conversation (the one with the oldest unread first), each in its order, with `from`, `hops`, whether it was addressed to you and whether it was held; then marked read. `more` counts what stays unread; paused conversations are named. `no new messages` when there are none. |
 | `transcript` | `conversation`, `limit?` (1 to 500, default 50) | A conversation you are in: its last `limit` messages with their routes and notices, and how many earlier ones are not shown. |
 | `continue` | `conversation` | A paused conversation runs another hop limit (and its budget is reset); its last held message is delivered. The only thing that resets the hops. |
+| `approve` | `client` | An HTTP client's first contact (slice N4): its held messages are delivered. `mail` names the clients that wait. |
 | `who` | none | As an agent's. |
+
+An **HTTP client's** (over `facilitator http serve`, never `human`; "MCP over HTTP for CLIs" above): `who` (only what its
+level reaches), `say` (begins a conversation, or writes in one of its own, answering its last message), `reply`, `receive` (at most `http_receive_wait`),
+`mail` and a read-only `transcript` that shows each packet's `via`. Never `continue` or `approve`.
 
 ### The record: the `conversation` register type
 
@@ -703,9 +826,17 @@ each delivery in its route.
 
 ## Limits
 
-- Hub and spoke with local and private trust only (slice N3): public trust, a node joining by key and approval, peer
-  to peer, MCP over HTTP and cloud AIs are slices N4 and N5. A leaf (`mode: leaf`) has no way to reach a node yet:
-  N3 built nodes, not leaf clients.
+- Hub and spoke with local and private trust across nodes (slice N3); MCP over HTTP serves CLIs with static bearer
+  tokens on one node (slice N4); public trust across nodes, a node joining by key and approval, peer to peer, OAuth and
+  cloud AIs are slice N5. The endpoint serves one node: a client reaches the agents of the node it dials only.
+- A bearer token has no expiry and no rotation but revoke and a new token; there is no per-token scope.
+- The audit of enrolments is a hash-chained log in the volume, not a signed register: a person with the volume can
+  rewrite it whole (a cut or an edit shows; a rewrite of the chain does not). A signed `audit` register type is a
+  backlog item; approvals and denials are also signed notices in the conversations.
+- An HTTP client that calls `say` begins a conversation (hop 0, the node vouches for it) where
+  an agent may not: it is the only non-person that starts a chain, bounded by the public limits, the reach rule and
+  the approval; `continue` stays a person's.
+- A leaf (`mode: leaf`) has no way to reach a node yet: N3 built nodes, not leaf clients.
 - Revocation is the certificate's 24 h lifetime plus lock two: SLIM checks no revocation list, and a renewed
   certificate or a changed bundle reaches the SLIM node only when it restarts (its `reload_interval` and
   `reload_client_ca_file` did nothing in 3.4.6 here); the peers part restarts it after a renewal.
@@ -753,10 +884,17 @@ infrastructure and adds what they leave out.
 ## Version and upgrade
 
 Pinned, in the bundle: CPython 3.13.18, dirctl 1.9.1, slimctl 3.4.6, slim-bindings 3.3.9 (node and bindings move
-together). An upgrade of the Feature replaces `/opt/facilitator` whole; the volume (conversations, keys, tokens,
+together), and `mcp` 2.3.0 with its 27 dependency wheels, each by SHA-256 (the table in `bundle-build.sh`). An upgrade of the Feature replaces `/opt/facilitator` whole; the volume (conversations, keys, tokens,
 the Directory's data) is kept. A new AGNTCY or CPython version is a new bundle (the script's pins), released by
 `release-bundle` and pinned in `digests.txt`. 0.x: the MCP tools, the packet fields and the CLI verbs may still
 change before 1.0.
+
+**From 0.4.0 to 0.5.0:** rebuild the container. Nothing changes unless `facilitator.http.listen` is set: no port opens
+and no client exists. `mesh.yml`'s `expose` now accepts `public` under `team`, and `limits` the keys `approval`,
+`approval_ttl` and `http_receive_wait`. The bundle is 0.5.0 (it adds `mcp` 2.3.0 and its wheels, about 40 MB;
+unreleased: until `release-bundle` runs and `digests.txt` pins it, the Feature builds it from its own source). The
+person's MCP session gains the `approve` tool; the conversation type gains the optional `via` field and three notice
+codes, so a 0.5.0 node's record does not load on a 0.4.0 node that meets a `via`.
 
 **From 0.3.x to 0.4.0:** rebuild the container. Nothing changes without a `mesh.yml`: the node stays standalone.
 The bundle is 0.4.0 (unreleased: until `release-bundle` runs and `digests.txt` pins it, the Feature builds it from its
@@ -782,6 +920,7 @@ person's messages now count as hops.
 | `facilitator/record.py`, `signer.py`, `verify.py` | the record over register-engine, keys and signing, `verify` |
 | `facilitator/transport.py`, `directory.py`, `infra.py` | SLIM, the Directory client, the infrastructure (the SLIM and Directory configs per role) |
 | `facilitator/mesh.py`, `identity.py`, `peers.py` | `mesh.yml` and lock two's decision; certificates, cards, join tokens and the OpenBao issuer; what crosses between nodes and the peers part |
+| `facilitator/clients.py`, `endpoint.py` | the HTTP clients (the table of hashed tokens, approval, the audit chain) and the endpoint over HTTP (the `mcp` library, the abuse gate, uvicorn), slice N4 |
 | `facilitator/mcp.py`, `model.py`, `transcript.py`, `cli.py` | the MCP server, the model wrapper, the transcript, the command |
 | `types.d/facilitator.py` | the `conversation` register type |
 | `registerengine/`, `signpacket/` | copies of `src/register-engine` and `src/sign-packet` (`task registerengine:check`, `task signpacket:check`) |
@@ -792,9 +931,52 @@ Tests: `test/facilitator/unit/` (`task test:facilitator-unit`, part of `task lin
 skeleton bundle and installs it; `test_mesh.py` the mesh's policy and lock two), `test/facilitator/node_image.sh`
 (`task test:facilitator-image`), `test/facilitator/mesh_flow.sh` (`task test:facilitator-mesh`: an OpenBao, a hub and
 two spokes) and
-`test/facilitator/integration/jester_flow.py` (`task test:facilitator-integration`; the `jester_flow` scenario).
+`test/facilitator/integration/jester_flow.py` (`task test:facilitator-integration`; the `jester_flow` scenario) and
+`test/facilitator/http_flow.sh` (`task test:facilitator-http`: the endpoint of a built bundle with Claude Code and Copilot
+CLI for real, and a leaf client otherwise; `test_http.py` and `test_http_endpoint.py` are its unit tests).
 
 ## Changes
+
+### [0.5.0] - 2026-11-23
+
+MCP over HTTP for CLIs (slice N4 of the facilitator-node proposal; ADR-0070, ADR-0071, ADR-0068). Nothing changes unless
+`facilitator.http.listen` is set in `facilitator.yml`: no port opens and no client exists. Rebuild the container.
+
+#### Added
+
+- **The endpoint** (`facilitator http serve`, the `http` part of `infra up`): the node's MCP tools over Streamable HTTP, on
+  the `mcp` library 2.3.0, for Claude Code and GitHub Copilot CLI with a static `Authorization: Bearer` token (both run
+  for real in `task test:facilitator-http`). Off unless `facilitator.http.listen` is set; refused under `preset: solo`;
+  beyond loopback it needs TLS (`http.tls_cert`, `http.tls_key`) or `http.behind_proxy: true`, and `http.url` or
+  `http.allowed_hosts`; `http.enabled: false` is the kill switch. `check` says why it refuses; `http.issuers` (OAuth for
+  cloud AIs) is refused: slice N5.
+- **Clients and tokens:** `facilitator http token <client>` (a person's act, refused inside an agent's job: the token is
+  shown once and only its SHA-256 is kept), `list`, `approve`, `deny`, `revoke`, `audit`; a person's MCP session gains the
+  `approve` tool. At most 20 clients may wait for approval. Every enrolment, approval, denial and revocation is a line of
+  a hash-chained audit log.
+- **The node signs for an HTTP client** (ADR-0068): every message and task state it makes carries `data.via`
+  (`{transport: http, auth: bearer, client}`); `transcript` shows it and `verify` checks it and accepts a chain that begins
+  with such a client. A client is **never a person**: `who`, `say`, `reply`, `receive`, `mail` and a read-only
+  `transcript`; never `continue` or `approve`.
+- **The single-node public rules** (ruling AH): a client maps through `http.<home domain>`, **public** unless `mesh.yml`
+  maps it to private; it sees only agents exposed `public` (an unreachable agent reads as one that does not exist); its
+  first message is held until a person approves it (`limits.public.approval: first-contact`, a held message is dropped
+  after 7 days, an approval lasts 30 days); the public limits (rate 3 a minute across all its conversations, hops 2,
+  budget 10, `max_packet` 16 KiB). `mesh.yml` accepts `expose: public` under `team`, `trust: http.<home domain>`, and the
+  limit keys `approval`, `approval_ttl` and `http_receive_wait`.
+- **Abuse limits at the edge:** 10 failed authentications in a minute block the address for 10 minutes, 20 open requests
+  per address, a 64 KiB body, Host and Origin checks, a `receive` that blocks at most `http_receive_wait` (25 s at public)
+  and 2 at a time per client.
+- `check` shows the endpoint, the clients' level and the audit chain, and the `mcp` library; `explain` prints the public
+  level's limits; `version` prints `mcp`. The bundle carries `mcp` 2.3.0 and 27 dependency wheels, each pinned by SHA-256
+  (about 40 MB more).
+
+#### Changed
+
+- The conversation type accepts the optional `via` field on a message and a status, and the notice codes `approval`,
+  `approved` and `denied`. A conversation with a `via` does not load on a 0.4.0 node.
+- `bundleVersion` defaults to `0.5.0` (unreleased: until `release-bundle` runs and `digests.txt` pins it, the Feature builds
+  the bundle from its own source).
 
 ### [0.4.0] - 2026-11-21
 
@@ -853,39 +1035,6 @@ Nothing changes without a `mesh.yml`: a node stays standalone with every port on
   was published before the bundle, so it built the bundle from source during every install (about 250 MB of
   downloads); 0.3.1 downloads the one verified bundle instead. Nothing to change in your configuration;
   rebuild the container to pick it up.
-
-### [0.3.0] - 2026-11-20
-
-The facilitator becomes a node bundle (slice N2 of the facilitator-node proposal, ADR-0067): one built,
-checksummed bundle per architecture that both this Feature and a new node image install. Rebuild the container.
-
-#### Added
-
-- **The node bundle** at `/opt/facilitator`: the application, its own CPython 3.13.18 (python-build-standalone),
-  `dirctl`, `slimctl`, `slim-bindings` and a `MANIFEST.json`, built by `bundles/facilitator/install.sh`. The Feature
-  installs the release `facilitator-bundle-v<version>` when `digests.txt` pins it, and otherwise builds the same
-  bundle from its own source (every upstream piece checked against its pinned SHA-256). No Python is taken from
-  the system any more.
-- Option **`bundleVersion`** (default `0.3.0`; `latest` is the bundle this Feature version was made with).
-- Option **`mode`**: `node` (the default, as before) or `leaf`, the thin client only: no `slimctl`, no daemon
-  started, `infra up` and `node run` refused, `check` ready without them. A leaf reaches a node over the network
-  from slice N3.
-- `facilitator node run`: the node in the foreground, the node image's entrypoint (a signal stops it, a part that
-  dies stops the rest with exit 1).
-- `facilitator version` and `check` name the mode and the bundle.
-- The node image (`bundles/facilitator/Dockerfile`, a hub: debian slim, user `facilitator`, `tini`, state in the
-  volume) and a sample `compose.yml` with OpenBao beside it; the manual workflows `release-bundle` and
-  `release-node-image`, which the Operator starts.
-
-#### Deprecated
-
-- **`dirVersion` and `slimVersion`**: use `bundleVersion`. The bundle fixes dirctl 1.9.1 and slimctl 3.4.6; those
-  versions or `latest` still work, with a `deprecated: use bundleVersion` line from the install, `version` and
-  `check`; removed in 1.0.0. Delete them from your `devcontainer.json`.
-
-#### Fixed
-
-- The Directory starts after a container was removed: a stale `daemon.pid` is removed before it starts.
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/facilitator/CHANGELOG.md).
 

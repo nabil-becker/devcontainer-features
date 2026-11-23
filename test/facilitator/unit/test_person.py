@@ -40,7 +40,7 @@ def test_person_tools_over_mcp_and_handle_from_the_environment():
         init = c.initialize()["result"]
         assert "mail" in init["instructions"] and "@you" in init["instructions"]
         tools = c.request("tools/list")["result"]["tools"]
-        assert [t["name"] for t in tools] == ["say", "mail", "transcript", "continue", "who"]
+        assert [t["name"] for t in tools] == ["say", "mail", "transcript", "continue", "approve", "who"]
         t0 = time.time()
         r = c.call("mail")
         assert time.time() - t0 < 5 and r["content"][0]["text"] == "no new messages", r   # never waits

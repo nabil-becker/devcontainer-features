@@ -55,14 +55,18 @@ TOP_KEYS = ("preset", "role", "node", "trust", "expose", "limits")
 NODE_KEYS = ("id", "name", "listen", "join", "issuer", "hub", "hub_name", "hub_node", "domain", "directory")
 ISSUER_KEYS = ("domain", "openbao", "mount", "role", "kv", "approle")
 DIRECTORY_KEYS = ("peering", "firewall", "open_oci")
-LIMIT_KEYS = ("hops", "budget", "rate", "copy", "svid_ttl", "max_packet")
+LIMIT_KEYS = ("hops", "budget", "rate", "copy", "approval", "approval_ttl", "svid_ttl", "max_packet", "http_receive_wait")
 COPIES = ("full", "member", "addressed")
+APPROVALS = ("none", "first-contact")
 # The defaults of each level (proposal 7, the limits table). hops, budget and rate of local and private come
 # from the Feature's options (ruling AD), which set them in Mesh.limit.
 DEFAULT_LIMITS = {
-    "local": {"hops": 6, "budget": 40, "rate": 10, "copy": "full", "svid_ttl": "24h", "max_packet": "1MiB"},
-    "private": {"hops": 6, "budget": 40, "rate": 10, "copy": "member", "svid_ttl": "24h", "max_packet": "256KiB"},
-    "public": {"hops": 2, "budget": 10, "rate": 3, "copy": "addressed", "svid_ttl": "1h", "max_packet": "16KiB"},
+    "local": {"hops": 6, "budget": 40, "rate": 10, "copy": "full", "approval": "none", "approval_ttl": "none",
+              "svid_ttl": "24h", "max_packet": "1MiB", "http_receive_wait": "300s"},
+    "private": {"hops": 6, "budget": 40, "rate": 10, "copy": "member", "approval": "none", "approval_ttl": "none",
+                "svid_ttl": "24h", "max_packet": "256KiB", "http_receive_wait": "60s"},
+    "public": {"hops": 2, "budget": 10, "rate": 3, "copy": "addressed", "approval": "first-contact", "approval_ttl": "30d",
+               "svid_ttl": "1h", "max_packet": "16KiB", "http_receive_wait": "25s"},
 }
 OPTION_LIMITS = {"hops": "FACILITATOR_HOP_LIMIT", "budget": "FACILITATOR_MESSAGE_BUDGET", "rate": "FACILITATOR_RATE_LIMIT"}
 DOMAIN_RE = re.compile(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*")
@@ -113,6 +117,8 @@ def reach_ok(caller_level: str, exposure: str) -> bool:
 
 
 def seconds(v) -> int:
+    if str(v).strip() == "none":
+        return 0
     m = DURATION_RE.fullmatch(str(v).strip())
     if not m:
         raise MeshError(f"{v!r}: a duration such as 30s, 15m, 24h or 7d")
@@ -187,6 +193,15 @@ class Mesh:
         return f"{self.node_id}.local"
 
     @property
+    def http_domain(self) -> str:
+        """The trust domain of this node's own HTTP clients (slice N4, ADR-0070 decision 5): `http.<home domain>`."""
+        return f"http.{self.home_domain}"
+
+    def http_level(self) -> str:
+        """The level a bearer-token client gets: public unless mesh.yml maps `http.<home domain>` to private."""
+        return self.trust.get(self.http_domain, "public")
+
+    @property
     def ceiling(self) -> str:
         return PRESETS.get(self.preset, "local")
 
@@ -204,6 +219,8 @@ class Mesh:
         """The level `trust` maps a domain to; the home domain is local; None for a domain not listed (refused)."""
         if domain == self.home_domain:
             return "local"
+        if domain == self.http_domain:
+            return self.http_level()
         return self.trust.get(domain)
 
     def exposure(self, handle: str) -> str:
@@ -337,6 +354,14 @@ def _check(m: Mesh, raw: dict, text: str) -> None:
             add("bad-value", f"trust: {d!r} is not a trust domain (a DNS-like name)", "trust", d)
         elif d == m.home_domain:
             add("home-domain", f"trust: {d} is this node's home domain, always local; it cannot be mapped", "trust", d)
+        elif d == m.http_domain:
+            if lv not in ("private", "public"):
+                add("bad-value", f"trust: {d}: {lv!r}: the node's HTTP clients are public (the default) or private "
+                                 "(an intranet CLI), never local", "trust", d)
+            elif m.preset == "solo":
+                add("above-ceiling", f"trust: {d}: HTTP clients are refused under the preset solo", "trust", d)
+            else:
+                m.trust[d] = lv
         elif lv == "public":
             add("not-yet", f"trust: {d}: public: not yet: slice N5", "trust", d)
         elif lv not in LEVELS:
@@ -352,11 +377,12 @@ def _check(m: Mesh, raw: dict, text: str) -> None:
     for k, lv in expose.items():
         if k != "*" and not HANDLE_RE.fullmatch(str(k)) and parse_id(str(k)) is None:
             add("bad-value", f"expose: {k!r} is neither a handle, a SPIFFE ID nor \"*\"", "expose", k)
-        elif lv == "public":
-            add("not-yet", f"expose: {k}: public: not yet: slices N4 and N5", "expose", k)
+        elif lv == "public" and m.preset == "solo":
+            add("above-ceiling", f"expose: {k}: public is above the preset solo's ceiling (local); public means reachable "
+                                 "by the node's HTTP clients, which need team", "expose", k)
         elif lv not in LEVELS:
             add("bad-value", f"expose: {k}: {lv!r} is not a level (local, private)", "expose", k)
-        elif ORDER[lv] > ORDER[m.ceiling]:
+        elif ORDER[lv] > ORDER[m.ceiling] and lv != "public":
             add("above-ceiling", f"expose: {k}: {lv} is above the preset {m.preset}'s ceiling ({m.ceiling})", "expose", k)
         else:
             m.expose[str(k)] = lv
@@ -384,6 +410,19 @@ def _check(m: Mesh, raw: dict, text: str) -> None:
                     if v == "addressed":
                         raise MeshError("addressed: not yet: slice N5")
                     good[k] = v
+                elif k == "approval":
+                    if v not in APPROVALS:
+                        raise MeshError(f"{v!r}: {', '.join(APPROVALS)}")
+                    good[k] = v
+                elif k == "approval_ttl":
+                    if str(v) != "none":
+                        seconds(v)
+                    good[k] = str(v)
+                elif k == "http_receive_wait":
+                    s = seconds(v)
+                    if not 1 <= s <= 3600:
+                        raise MeshError(f"{v!r}: between 1s and 1h")
+                    good[k] = str(v)
                 elif k == "svid_ttl":
                     s = seconds(v)
                     if not 300 <= s <= 7 * 86400:

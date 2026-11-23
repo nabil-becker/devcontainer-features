@@ -586,3 +586,13 @@ renamed. Each project is a tree growing in its own ground.
   share a handle; a bare handle works only when it names exactly one reachable agent (ADR-0075).
 - **Shared handle**: a handle announced by agents on two or more nodes of a mesh; `check` lists them and
   they are reached by qualified handle (ADR-0075).
+- **HTTP client**: a CLI that reaches a node over MCP over HTTP with a bearer token. The node signs for
+  it (roster kind `http`); it is never a person, so it has no `continue` or `approve`, and it is
+  public unless `mesh.yml` trusts `http.<home domain>` as private (ADR-0070, ADR-0076).
+- **Bearer token**: the secret a person makes with `facilitator http token <client>`, shaped
+  `<client>.<secret>`, shown once, of which the node keeps only the SHA-256 (ADR-0070).
+- **First-contact approval**: at the public level, an HTTP client's first message is held until a person
+  approves the client (`facilitator http approve` or the `approve` tool); the approval lasts
+  `approval_ttl` (ADR-0076).
+- **Via**: the `data.via` field on every message and status an HTTP client's turn produces, naming the
+  client the node vouches for; `verify` accepts a chain root that carries it (ADR-0076).

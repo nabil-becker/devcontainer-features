@@ -9,12 +9,15 @@ import json
 import time
 from dataclasses import dataclass, field
 
-from . import __version__, collector, directory, guard, mesh as mesh_mod, participants, router, transport
+from . import __version__, clients as clients_mod, collector, directory, guard, mesh as mesh_mod, participants, router, transport
 from .infra import Infra
 from .record import FACILITATOR, Record, RecordError, new_id
 from .settings import Settings
 from .signer import Signer
 from .state import State
+
+
+HELD_DAYS = 7            # a first-contact message nobody answers is held this long (ruling BG)
 
 
 class FacilitatorError(RuntimeError):
@@ -53,6 +56,7 @@ class Facilitator:
         self._record: Record | None = None
         self._list = None
         self._net = None
+        self.clients = clients_mod.Clients(self.state)
 
     # ------------------------------------------------------------ parts, made when first needed
 
@@ -77,6 +81,206 @@ class Facilitator:
         g = lambda k: self.mesh.limit(level, k, self.s)[0]      # noqa: E731
         return guard.Limits(g("hops"), g("budget"), g("rate"))
 
+    # ------------------------------------------------------------ HTTP clients (slice N4)
+
+    def is_http(self, handle: str) -> bool:
+        """Whether a handle is one of this node's HTTP clients (a roster entry of kind http)."""
+        return self.state.roster().get(handle, {}).get("kind") == "http"
+
+    def caller_level(self, handle: str) -> str:
+        """The level a caller reaches from: an HTTP client's is its domain's (http.<home domain>: public unless
+        mesh.yml maps it private); everything on this node is local."""
+        return self.mesh.http_level() if self.is_http(handle) else "local"
+
+    def visible(self, caller: str, handle: str) -> bool:
+        """The reach rule for one name: whether `caller` may see and message `handle`. A local caller sees all; an HTTP
+        client sees only what is exposed at its level or wider, never another HTTP client, never another node's."""
+        if not self.is_http(caller):
+            return True
+        if self.is_http(handle) or handle == FACILITATOR:
+            return False
+        return mesh_mod.reach_ok(self.caller_level(caller), self.mesh.exposure(handle))
+
+    def known_for(self, author: str) -> set[str]:
+        """The names the router may meet for a message of `author`: for an HTTP client only what it may see, so a
+        mention of an agent it cannot reach reads the same as one that does not exist."""
+        k = self.known() | set(self.humans())
+        if not self.is_http(author):
+            return k
+        return {h for h in k if self.visible(author, h)}
+
+    def http_precheck(self, handle: str, text: str) -> None:
+        """The abuse limits of an HTTP client, before anything is written (so a refusal leaves no empty conversation):
+        the level's max_packet, and its rate counted for the client across all its conversations (proposal 11.3: per
+        client, however many conversations or connections it opens)."""
+        if not self.is_http(handle):
+            return
+        level = self.mesh.http_level()
+        cap = mesh_mod.size(self.mesh.limit(level, "max_packet")[0])
+        n = len((text or "").encode())
+        if n > cap:
+            raise FacilitatorError(f"message too large: {n} bytes; the {level} level's max_packet is {cap}; "
+                                   "this message was not written")
+        rate = self.limits_for(level).rate_limit
+        now, count = time.time(), 0
+        for c in self.conversations_of(handle):
+            _, proj, _ = self.record.read(c)
+            count += sum(1 for m in proj["messages"].values() if m["from"] == handle and now - guard._t(m["at"]) < 60)
+        if count >= rate:
+            raise FacilitatorError(f"rate limit: {handle} wrote {count} messages in the last minute; the {level} level allows "
+                                   f"{rate} a minute for a client, counted across all its conversations; this one was not written")
+
+    def approval_gate(self, handle: str, now: float) -> guard.Verdict | None:
+        """First-contact approval (proposal 7, limits.<level>.approval): a Verdict that holds an HTTP client's message
+        until a person approves the client; None when no approval is needed or it stands."""
+        if not self.is_http(handle):
+            return None
+        level = self.mesh.http_level()
+        if self.mesh.limit(level, "approval")[0] != "first-contact":
+            return None
+        ttl = mesh_mod.seconds(self.mesh.limit(level, "approval_ttl")[0])
+        if self.clients.approved(handle, ttl, now):
+            return None
+        return guard.Verdict(False, "approval", f"first contact: {handle} is an HTTP client at level {level}; a person "
+                                                f"must approve it before its messages are delivered (facilitator http "
+                                                f"approve {handle}, or the approve tool of a person's session); held up to "
+                                                f"{HELD_DAYS} days")
+
+    def enrol_http(self, name: str, by: str, label: str = "") -> dict:
+        """A person's act: a client, its token (returned once) and the key the node signs with for it."""
+        ok, why = self.http_ready(for_tokens=True)
+        if not ok:
+            raise FacilitatorError("http token: " + why)
+        parts, cfg, _, _ = self.participants()
+        if name in [p.name for p in parts] or name in cfg.humans or name in ("facilitator", "all"):
+            raise FacilitatorError(f"{name} is already a participant or a person of this node: a client needs a name of its own")
+        ident = self.state.roster().get(name)
+        if ident and ident.get("kind") != "http":
+            raise FacilitatorError(f"{name} is already registered as a {ident.get('kind')}: a client needs a name of its own")
+        try:
+            token = self.clients.create(name, by, label)
+        except clients_mod.ClientError as e:
+            raise FacilitatorError(str(e)) from None
+        pub, where = self.signer.ensure_key(name)
+        self.state.set_identity(name, kind="http", key=pub, keystore=where,
+                                registered=dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+        level = self.mesh.http_level()
+        return {"client": name, "token": token, "level": level, "id": self.clients.spiffe_id(self.mesh, name),
+                "approval": self.mesh.limit(level, "approval")[0]}
+
+    def http_ready(self, for_tokens: bool = False) -> tuple[bool, str]:
+        """Whether the HTTP endpoint may be used on this node, and why not (ADR-0070 decision 8, ADR-0071)."""
+        try:
+            _, cfg, _, _ = self.participants()
+        except participants.ListError as e:
+            return False, str(e)
+        if not cfg.http.configured and not cfg.http_errors and not for_tokens:
+            return True, "off: facilitator.http.listen is not set"
+        if self.mesh_file.findings:
+            return False, "mesh.yml has findings, so the node runs standalone (fail narrow); fix them (facilitator check)"
+        if self.mesh.preset == "solo":
+            return False, ("HTTP is refused under the preset solo (mesh.yml, or none): set preset: team, which allows the "
+                           "level HTTP clients are mapped to")
+        if cfg.http_errors:
+            return False, "; ".join(cfg.http_errors)
+        h = cfg.http
+        lv = self.mesh.http_level()
+        if self.mesh.limit(lv, "approval")[0] == "first-contact" and not cfg.humans:
+            return False, ("approval: first-contact at level " + lv + " needs a person to approve, and facilitator.yml's "
+                           "humans names nobody")
+        if h.active:
+            host, _ = mesh_mod.parse_addr(h.listen)
+            if not mesh_mod.is_loopback(host) and not (h.tls_cert and h.tls_key) and not h.behind_proxy:
+                return False, (f"http.listen {h.listen} is beyond loopback: TLS is required (http.tls_cert and "
+                               "http.tls_key) or http.behind_proxy: true (a proxy ends TLS)")
+            if not mesh_mod.is_loopback(host) and not (h.url or h.allowed_hosts):
+                return False, (f"http.listen {h.listen} is beyond loopback: name the address clients use (http.url) or "
+                               "http.allowed_hosts, so the Host header can be checked (DNS rebinding)")
+        return True, "ok"
+
+    def approve_client(self, name: str, by: str) -> dict:
+        """A person approves an HTTP client: its held first-contact messages are delivered (BG: only those younger
+        than 7 days)."""
+        c = self.clients.get(name)
+        if c is None or not self.is_http(name):
+            raise FacilitatorError(f"no HTTP client {name} (facilitator http list)")
+        try:
+            self.clients.approve(name, by)
+        except clients_mod.ClientError as e:
+            raise FacilitatorError(str(e)) from None
+        return {"client": name, "approved_by": by, "released": self.release_held(name, by)}
+
+    def deny_client(self, name: str, by: str) -> dict:
+        return self._close_client(name, by, "deny")
+
+    def revoke_client(self, name: str, by: str) -> dict:
+        return self._close_client(name, by, "revoke")
+
+    def _close_client(self, name: str, by: str, what: str) -> dict:
+        if self.clients.get(name) is None:
+            raise FacilitatorError(f"no HTTP client {name} (facilitator http list)")
+        try:
+            getattr(self.clients, what)(name, by)
+        except clients_mod.ClientError as e:
+            raise FacilitatorError(str(e)) from None
+        held = 0
+        if what == "deny":
+            for c, mid in self.held_for_approval(name):
+                self.record.add(c, FACILITATOR, "notice", {"thread": c, "code": "denied", "text":
+                                f"{name} was denied by {by}; this message is not delivered",
+                                "refs": [{"thread": c, "message_id": mid}]})
+                held += 1
+        return {"client": name, "status": "denied" if what == "deny" else "revoked", "by": by, "dropped": held}
+
+    def held_for_approval(self, name: str) -> list[tuple[str, str]]:
+        """(conversation, message) of an HTTP client's messages held for approval and never delivered since."""
+        out = []
+        for c in self.conversations_of(name):
+            _, proj, _ = self.record.read(c)
+            for mid in proj["order"]:
+                m = proj["messages"][mid]
+                if m["from"] != name:
+                    continue
+                rs = proj["routes"].get(mid, [])
+                if rs and not any(r["tasks"] for r in rs) and rs[-1]["held"] and all(h["reason"] == "approval" for h in rs[-1]["held"]) \
+                        and not any(n.get("code") in ("denied",) and {"thread": c, "message_id": mid} in n.get("refs", [])
+                                    for n in proj["notices"]):
+                    out.append((c, mid))
+        return out
+
+    def release_held(self, name: str, by: str) -> list[dict]:
+        """After an approval: each held message of the client is delivered, with a notice in its conversation; one held
+        longer than HELD_DAYS is not (ruling BG)."""
+        out = []
+        now = time.time()
+        for c, mid in self.held_for_approval(name):
+            _, proj, _ = self.record.read(c)
+            age = now - clients_mod.parse_iso(proj["messages"][mid]["at"])
+            ref = [{"thread": c, "message_id": mid}]
+            if age > HELD_DAYS * 86400:
+                self.record.add(c, FACILITATOR, "notice", {"thread": c, "code": "approval", "text":
+                                f"{name} was approved by {by}, but this message was held more than {HELD_DAYS} days and is "
+                                "not delivered (ruling BG)", "refs": ref})
+                out.append({"conversation": c, "message_id": mid, "delivered": False})
+                continue
+            self.record.add(c, FACILITATOR, "notice", {"thread": c, "code": "approved", "text":
+                            f"{name} was approved by {by}; this message is delivered now", "refs": ref})
+            r = self.dispatch(c, mid)
+            out.append({"conversation": c, "message_id": mid, "delivered": r["delivered"], "to": r["to"]})
+        return out
+
+    def pending_approvals(self) -> list[dict]:
+        """The HTTP clients whose messages wait for a person: client, how many, where (a person's mail shows them)."""
+        out = []
+        for name, c in sorted(self.clients.all().items()):
+            if c["status"] not in ("enrolled", "approved") or not self.is_http(name):
+                continue
+            held = self.held_for_approval(name)
+            if held:
+                out.append({"client": name, "held": len(held), "conversations": sorted({x for x, _ in held}),
+                            "id": self.clients.spiffe_id(self.mesh, name)})
+        return out
+
     def remote(self) -> dict:
         """handle -> what another node's admitted card says of it (empty when standalone)."""
         return self.net.remote() if self.net.active else {}
@@ -84,7 +288,8 @@ class Facilitator:
     def level_of_message(self, proj: dict, mid: str, convs: dict | None = None) -> str:
         """A message's origin level (proposal 9): the widest level of the writers of its lineage, by reply_to
         and refs, as far as this node holds it. A writer's level is its card's, or local for this node's own."""
-        if not self.net.active:
+        http = any(i.get("kind") == "http" for i in self.state.roster().values())
+        if not self.net.active and not http:
             return "local"
         level, seen, todo = "local", set(), [(None, mid)]
         while todo:
@@ -100,7 +305,10 @@ class Facilitator:
             if m is None or (c, m_id) in seen:
                 continue
             seen.add((c, m_id))
-            level = mesh_mod.wider(level, self.net.level_of(m["from"], m.get("key")))
+            if self.is_http(m["from"]):
+                level = mesh_mod.wider(level, self.mesh.http_level())
+            elif self.net.active:
+                level = mesh_mod.wider(level, self.net.level_of(m["from"], m.get("key")))
             if m.get("reply_to"):
                 todo.append((c, m["reply_to"]))
             for r in m.get("refs", []):
@@ -195,7 +403,13 @@ class Facilitator:
     # ------------------------------------------------------------ conversations
 
     def new_conversation(self, creator: str, others: list[str], title: str | None = None) -> str:
-        others = [self.resolve_one(o) for o in others]
+        if self.is_http(creator):
+            # the reach rule: an unreachable name reads the same as one that does not exist (unlisted, unreachable)
+            for o in others:
+                if not self.visible(creator, o.lower().lstrip("@")) or o.lower().lstrip("@") not in self.known_for(creator):
+                    raise FacilitatorError(f"@{o} is no participant (who lists the handles)")
+        else:
+            others = [self.resolve_one(o) for o in others]
         members = [creator] + [o for o in dict.fromkeys(others) if o != creator]
         if len(members) < 2:
             raise FacilitatorError("a conversation needs at least one other member")
@@ -248,6 +462,11 @@ class Facilitator:
             raise FacilitatorError(f"{author} is not a member of {conv} (its members: {', '.join(th['members'])})")
         human = me in th["humans"]
         lim = self.limits_for(self.conv_level(th))
+        if self.is_http(author):
+            for mm in th["members"]:
+                if mm != me and not self.visible(author, router.split(mm)[0]):
+                    raise FacilitatorError(f"{mm} is no longer reachable from your level; this message was not written")
+            self.http_precheck(author, text)
         if not human and not guard.rate_ok(proj, me, lim, time.time()):
             raise FacilitatorError(f"rate limit: {author} wrote {lim.rate_limit} messages in the last minute; "
                                    "this one was not written")
@@ -277,10 +496,12 @@ class Facilitator:
         _, proj, _ = self.record.read(conv)
         th, m = proj["thread"], proj["messages"][mid]
         humans = set(th["humans"])
-        verdict = guard.check(proj, m["from"], m["from"] in humans, m["hops"], m["root"],
-                              self.limits_for(self.level_of_message(proj, mid)))
+        verdict = self.approval_gate(m["from"], time.time()) or guard.check(
+            proj, m["from"], m["from"] in humans, m["hops"], m["root"], self.limits_for(self.level_of_message(proj, mid)))
         dec = router.route(th, proj["messages"], m["from"], m["text"], m.get("to"), m.get("reply_to"),
-                           self.participants()[1].fallback, self.known() | humans, self.mesh.node_id, self.nodes())
+                           self.participants()[1].fallback,
+                           self.known_for(m["from"]) if self.is_http(m["from"]) else self.known() | humans,
+                           self.mesh.node_id, self.nodes())
         notices = list(dec.notices)
         tasks, held, live = [], [], []
         if not verdict.deliver:
@@ -298,7 +519,8 @@ class Facilitator:
                 if local is None:
                     continue                   # on another node: the replica carries the task; its node delivers it
                 if self.state.attached(local, self.stale, now):
-                    live.append(local)
+                    if not self.is_http(local):         # an HTTP client polls the record: there is no SLIM name to tell
+                        live.append(local)
                 else:
                     held.append({"principal": h, "reason": "stale"})
                     notices.append(("stale", f"`{h}` has not been attached since {_ago(self.state.last_seen(local))}; "
@@ -335,6 +557,9 @@ class Facilitator:
             for m in thread["members"]:
                 if self.local_of(m) is None and m in remote:
                     level = mesh_mod.wider(level, remote[m]["level"])
+        for m in thread["members"]:
+            if self.is_http(router.split(m)[0]):
+                level = mesh_mod.wider(level, self.mesh.http_level())
         return level
 
     def send(self, author: str, text: str, conv: str | None = None, to: list[str] | None = None,
@@ -348,6 +573,18 @@ class Facilitator:
             raise FacilitatorError(f"{author} is not a human of facilitator.yml (humans: {', '.join(self.humans())}); "
                                    "participants write through their MCP server")
         self.ensure_identity(author)
+        return self._begin_or_write(author, text, conv, to, tr)
+
+    def send_http(self, client: str, text: str, conv: str | None = None, to: list[str] | None = None, tr=None) -> dict:
+        """An HTTP client's `say` with no message received to answer: it begins a conversation (the node vouches for the
+        client with `via`; the message is a chain's root, hops 0, held until a person approves at level public) or writes
+        in one it is a member of. It never continues a paused one and never counts as a person."""
+        if not self.is_http(client):
+            raise FacilitatorError(f"{client} is not an HTTP client of this node")
+        return self._begin_or_write(client, text, conv, to, tr)
+
+    def _begin_or_write(self, author: str, text: str, conv: str | None, to: list[str] | None, tr=None) -> dict:
+        self.http_precheck(author, text)
         if not conv or conv == "new":
             named = [h for h in dict.fromkeys([*(to or []), *router.mentions(text, self.nodes())]) if h not in ("all", author)]
             if not named:
@@ -411,6 +648,7 @@ class Facilitator:
     def reply(self, handle: str, turn: Turn | None, text: str, to: list[str] | None = None, tr=None) -> dict:
         if turn is None:
             raise FacilitatorError("nothing to reply to: call receive first (or say, in a conversation you are in)")
+        self.http_precheck(handle, text)
         mid = self.write(turn.conv, handle, text, to, turn.message_id, turn.root, turn.root_thread, turn.hops + 1)
         self.finish(handle, turn)
         return self.dispatch(turn.conv, mid, tr)
@@ -418,6 +656,7 @@ class Facilitator:
     def say(self, handle: str, turn: Turn | None, conv: str | None, text: str, to: list[str] | None = None, tr=None) -> dict:
         if turn is None:
             raise FacilitatorError("a chain begins with a human: say needs a message you received (call receive first)")
+        self.http_precheck(handle, text)
         if not conv or conv == "new":
             named = [h for h in dict.fromkeys([*(to or []), *router.mentions(text, self.nodes())]) if h not in ("all", handle)]
             if not named:
@@ -448,6 +687,9 @@ class Facilitator:
         now = time.time()
         rows = []
         disp = self.net.display if self.net.active else (lambda h, n=None: h)
+        http = bool(handle) and self.is_http(handle)
+        vis = (lambda h: self.visible(handle, h)) if http else (lambda h: True)      # the reach rule: unlisted when unreachable
+        parts = [p for p in parts if vis(p.name)]
         for p in parts:
             r = recs.get(p.name, {})
             rows.append({"handle": disp(p.name), "kind": "agent", "cli": p.cli,
@@ -457,18 +699,18 @@ class Facilitator:
                          "last_seen": _ago(self.state.last_seen(p.name)), "in_directory": p.name in recs})
         listed = {p.name for p in parts}
         for h, ident in sorted(roster.items()):          # registered, and not in the list this process reads
-            if ident.get("kind") == "agent" and h not in listed:
+            if ident.get("kind") == "agent" and h not in listed and vis(h):
                 r = recs.get(h, {})
                 rows.append({"handle": disp(h), "kind": "agent", "description": r.get("description") or ident.get("description", ""),
                              "skills": [s.get("name") for s in r.get("skills", [])] or ident.get("skills", []),
                              "registered": True, "attached": self.state.attached(h, self.stale, now),
                              "last_seen": _ago(self.state.last_seen(h)), "in_directory": h in recs})
         humans = list(cfg.humans) + [h for h, i in sorted(roster.items()) if i.get("kind") == "human" and h not in cfg.humans]
-        for h in humans:
+        for h in [x for x in humans if vis(x)]:
             rows.append({"handle": disp(h), "kind": "human", "registered": h in roster})
         # participants of other nodes: only those their node exposes at least as wide as its domain's level (so a
         # local-only agent of another node is never listed here), through the hub's roster of cards
-        for q, r in sorted(self.remote().items()):
+        for q, r in sorted({} if http else self.remote().items()):
             rows.append({"handle": disp(r["handle"], r["node"]), "kind": r.get("kind", "agent"), "node": r["node"],
                          "level": r["level"], "qualified": q,
                          "description": r.get("description", ""), "skills": r.get("skills", []), "registered": True,
@@ -516,18 +758,19 @@ class Facilitator:
         marked read when `mark`; `more` says how many stay unread."""
         msgs, convs = self.unread(handle)
         out, rest = msgs[:limit], msgs[limit:]
+        approvals = self.pending_approvals() if handle in self.humans() else []
         if mark:
             read: dict[str, list[str]] = {}
             for m in out:
                 read.setdefault(m["conversation"], []).append(m["message_id"])
             self.state.mark_read(handle, read)
         return {"messages": out, "more": len(rest), "conversations": convs,
-                "paused": [c["conversation"] for c in convs if c["paused"]]}
+                "paused": [c["conversation"] for c in convs if c["paused"]], "approvals": approvals}
 
     def mail_notice(self, handle: str) -> str:
         """The turn hook's one line ('' when nothing is unread), read only. A fingerprint of the
         conversations and of what was read lets a turn with nothing new skip reading the record."""
-        fp = [self.state.conversations_stamp(), self.state.marks_stamp(handle)]
+        fp = [self.state.conversations_stamp(), self.state.marks_stamp(handle), self.clients.stamp()]
         cache = self.state.mail / f"{handle}.notice"
         try:
             c = json.loads(cache.read_text())
@@ -536,7 +779,7 @@ class Facilitator:
         except (OSError, ValueError):
             pass
         msgs, convs = self.unread(handle)
-        line = notice_line(msgs, convs)
+        line = notice_line(msgs, convs, self.pending_approvals() if handle in self.humans() else [])
         try:
             self.state.write_private(cache, json.dumps({"fp": fp, "line": line}) + "\n")
         except OSError:
@@ -544,8 +787,11 @@ class Facilitator:
         return line
 
 
-def notice_line(msgs: list[dict], convs: list[dict]) -> str:
+def notice_line(msgs: list[dict], convs: list[dict], approvals: list[dict] | None = None) -> str:
     if not msgs:
+        if approvals:
+            return ("Facilitator: " + ", ".join(f"HTTP client {a['client']} waits for approval ({a['held']} held)" for a in approvals)
+                    + " (the approve tool, or facilitator http approve)")
         return ""
     ids = list(dict.fromkeys(m["conversation"] for m in msgs))
     paused = [c["conversation"] for c in convs if c["paused"] and c["conversation"] in ids]
@@ -553,6 +799,8 @@ def notice_line(msgs: list[dict], convs: list[dict]) -> str:
     line = f"Facilitator: {n} new message{'s' if n != 1 else ''} in {', '.join(ids)}"
     if paused:
         line += f" ({', '.join(paused)} paused: continue it to let the agents go on)"
+    if approvals:
+        line += "; waiting for approval: " + ", ".join(a["client"] for a in approvals)
     return line
 
 
@@ -643,3 +891,46 @@ class Session:
         if conv not in self.fac.conversations_of(self.handle):
             raise FacilitatorError(f"you are not in {conv} (who lists your conversations)")
         return self.fac.continue_(self.handle, conv, self.tr)
+
+    def approve(self, client: str) -> dict:
+        """A person approves an HTTP client (first contact): its held messages are delivered."""
+        self._human_only("approve")
+        return self.fac.approve_client(client, self.handle)
+
+
+class HttpSession(Session):
+    """One HTTP client's attachment (slice N4, ADR-0070): the node signs for it, so there is no token to check here
+    (the endpoint authenticated the bearer token). Never `human`: it reads with `mail` and `transcript` (read only),
+    writes with `say` and `reply`, waits with `receive`, and sees `who` as its level allows; it has no `continue` and
+    no `approve`, which only a person's session has."""
+
+    def __init__(self, fac: Facilitator, handle: str, tr=None):
+        if not fac.is_http(handle):
+            raise FacilitatorError(f"{handle} is not an HTTP client of this node (facilitator http token)")
+        self.fac, self.handle, self.tr = fac, handle, tr
+        self.human = False
+        self.turn: Turn | None = None
+        self.received: list[dict] = []
+
+    def say(self, conv: str | None, text: str, to: list[str] | None = None) -> dict:
+        """Begins a conversation (a chain's root, hop 0, which the node vouches for) or writes in one, answering its last
+        message; never the lineage of a message received (that is `reply`)."""
+        return self.fac.send_http(self.handle, text, conv, to, self.tr)
+
+    def mail(self, limit: int = 20) -> dict:
+        r = self.fac.mail(self.handle, limit)
+        r["approvals"] = []
+        return r
+
+    def transcript(self, conv: str, limit: int | None = None) -> list[str]:
+        from .transcript import lines
+        if conv not in self.fac.conversations_of(self.handle):
+            raise FacilitatorError(f"you are not in {conv} (who lists your conversations)")
+        return lines(self.fac, conv, limit)
+
+    def continue_(self, conv: str) -> dict:
+        raise FacilitatorError("continue is a person's tool: an HTTP client is never a person, and only a person's local "
+                               "session resets the hop count (ADR-0066)")
+
+    def approve(self, client: str) -> dict:
+        raise FacilitatorError("approve is a person's tool: an HTTP client cannot approve anything (ADR-0070)")

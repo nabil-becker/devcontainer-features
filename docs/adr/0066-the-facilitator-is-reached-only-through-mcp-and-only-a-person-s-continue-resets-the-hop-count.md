@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | accepted |
+| **Status** | accepted (refined by [ADR 0076](0076-an-http-client-may-begin-a-conversation-under-a-persons-approval-and-public-under-team-reaches-only-a-nodes-own-http-clients.md)) |
 | **Date** | 2026-11-20 |
 | **Deciders** | the Operator; proposed by the host |
 
@@ -71,3 +71,4 @@ Only some CLIs have a turn hook, so it cannot be the contract; kept as a conveni
 |---|---|
 | 2026-11-20 | First draft, accepted on the Operator's rulings of the same day. |
 | 2026-11-20 | Numbered 0066: 0065 is the copilot pin (#207). |
+- 2026-11-23: refined by ADR 0076 (rulings on slice N4).

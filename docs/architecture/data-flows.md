@@ -240,6 +240,30 @@ flowchart LR
   b-peers -->|sync, idempotent| b-reg --> b-agent
 ```
 
+### 3c. An HTTP client reaches a node (facilitator 0.5.0, slice N4)
+
+A CLI that cannot start `facilitator mcp` here (Claude Code, Copilot CLI) calls the node's MCP tools over Streamable
+HTTP with a static bearer token a person made. The `http` part answers; the application treats the client as an
+ordinary participant of the level `http.<home domain>` maps to (public unless mesh.yml says private), and the node
+signs for it. OAuth for cloud AIs is slice N5.
+
+```mermaid
+flowchart LR
+  external-cli["Claude Code or Copilot CLI (bearer token)"] -->|HTTP or HTTPS, only when http.listen is set| gate["http part: back-off, 20 open requests per address, 64 KiB, /mcp only"]
+  gate --> lib["mcp library: Host and Origin, token hash check"]
+  lib --> session["HttpSession of that client: who, say, reply, receive, mail, transcript"]
+  session --> reach["reach rule (the client's level): public agents only"]
+  reach --> hold["first-contact hold until a person approves; public limits"]
+  hold --> signer["signer: the node's key for the client, data.via on every packet"]
+  signer --> register["register: the conversation, each packet with via"]
+  person["a person: approve, deny, revoke"] --> hold
+```
+
+- Nothing opens until `facilitator.http.listen` is set; beyond loopback TLS (or `behind_proxy`) is required. The token
+  is shown once and kept as a SHA-256 in `http/clients.json`; every enrolment, approval, denial and revocation is a line
+  of a hash-chained `http/audit.jsonl`.
+- Sources: `src/facilitator/NOTES.md` ("MCP over HTTP for CLIs"), `docs/proposals/facilitator-node.md` section 11, ADR-0070.
+
 ## 4. Secrets
 
 OpenBao keeps every secret the collection creates. `ssh-agent` only uses keys. The design is
@@ -431,6 +455,11 @@ flowchart LR
 Trust boundary added in 0.4.0: **the intranet** between facilitator nodes. Only the hub's SLIM listener (mutual TLS,
 one CA bundle per level), its join endpoint (while a join token is live) and, with `directory.peering`, its Directory's
 libp2p and OCI ports cross it; the Directory's API and gateway never do. A spoke opens nothing.
+
+Trust boundary added in 0.5.0: **the HTTP edge** of a node. Only when `facilitator.http.listen` is set does the node
+open one port, for the MCP endpoint: beyond loopback behind TLS (its own certificate, or a reverse proxy that ends it).
+What crosses it is a bearer token in the `Authorization` header (never a query string) and MCP calls; what it answers
+to a failed authentication carries no detail.
 
 ## Gaps seen while drawing
 

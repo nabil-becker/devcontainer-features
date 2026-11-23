@@ -11,11 +11,11 @@ import subprocess
 import sys
 import time
 
-from . import __version__, identity, mcp, mesh as mesh_mod, peers, settings as settings_mod
+from . import __version__, clients as clients_mod, identity, mcp, mesh as mesh_mod, peers, settings as settings_mod
 from .app import Facilitator, FacilitatorError, Session, _ago
 from .directory import DirectoryError
 from .identity import IdentityError
-from .infra import MESH_COMPONENTS, InfraError
+from .infra import ALL_COMPONENTS, InfraError
 from .participants import ListError
 from .record import FACILITATOR, RecordError
 from .settings import SettingsError
@@ -23,7 +23,7 @@ from .signer import SignerError, openbao_status
 from .transcript import TranscriptError
 
 ERRORS = (FacilitatorError, InfraError, ListError, RecordError, SettingsError, SignerError, DirectoryError,
-          TranscriptError, IdentityError, peers.PeersError, mesh_mod.MeshError)
+          TranscriptError, IdentityError, peers.PeersError, mesh_mod.MeshError, clients_mod.ClientError)
 AGENT_JOB_VARS = ("DEVHOST_JOB_CHILD", "CLAUDECODE", "FACILITATOR_HANDLE")
 
 
@@ -91,6 +91,11 @@ def _versions(fac) -> dict:
         out["slim-bindings"] = slim_bindings.get_version()
     except Exception:                          # noqa: BLE001
         out["slim-bindings"] = "missing"
+    try:
+        from importlib import metadata
+        out["mcp"] = metadata.version("mcp")
+    except Exception:                          # noqa: BLE001
+        out["mcp"] = "missing"
     return out
 
 
@@ -103,7 +108,7 @@ def cmd_version(a) -> int:
                 f"{v.get('register-engine')}, sign-packet {v.get('sign-packet')})\n"
                 f"bundle       : {v['bundle']}\n"
                 f"dirctl       : {v['dirctl']}\nslimctl      : {v['slimctl']}\nslim-bindings: {v['slim-bindings']} "
-                f"(the node version it speaks)\npython       : {v['python']}\nlibrary      : {v['library']}")
+                f"(the node version it speaks)\nmcp          : {v['mcp']} (the http module's library)\npython       : {v['python']}\nlibrary      : {v['library']}")
     return 0
 
 
@@ -192,6 +197,36 @@ def mesh_parts(fac) -> list[tuple]:
     return out
 
 
+def http_parts(fac) -> list[tuple]:
+    """check's lines for the MCP endpoint over HTTP (slice N4): off unless facilitator.http.listen is set; what refuses
+    it (the preset solo, TLS, no approver); the level HTTP clients get; the clients and the audit chain."""
+    out = []
+    try:
+        fcfg = fac.participants()[1]
+    except ListError:
+        return out
+    cfg = fcfg.http
+    ok, why = fac.http_ready()
+    if not cfg.configured and not fcfg.http_errors:
+        out.append(("http endpoint", True, "off (facilitator.http.listen is not set: nothing is open)", False))
+    else:
+        detail = (f"{cfg.listen}" + (" (disabled: http.enabled false)" if not cfg.enabled else "")
+                  + (" TLS" if cfg.tls_cert else " behind a proxy" if cfg.behind_proxy else " plain, loopback")) if ok \
+            else f"refused: {why}"
+        out.append(("http endpoint", ok, detail, cfg.active or bool(fcfg.http_errors)))
+    if cfg.configured or fac.clients.all():
+        lv = fac.mesh.http_level()
+        ap = fac.mesh.limit(lv, "approval")[0]
+        out.append(("http level", True, f"level {lv} (mesh.yml trust {fac.mesh.http_domain}; public unless mapped private), "
+                    f"approval {ap}", False))
+        table = fac.clients.all()
+        counts = {k: sum(1 for c in table.values() if c["status"] == k) for k in clients_mod.STATES}
+        okc, detail = fac.clients.audit_ok()
+        out.append(("http clients", okc, (", ".join(f"{n} {k}" for k, n in counts.items() if n) or "none yet")
+                    + f"; audit: {detail}", False))
+    return out
+
+
 def cmd_check(a) -> int:
     if a.paths:
         return lint(a)
@@ -228,6 +263,14 @@ def cmd_check(a) -> int:
     part("keys", True, f"OpenBao {st}" + ("; some keys are in the 0.1.0 fallback file (keys/FALLBACK)" if fb else ""))
     for p_ in mesh_parts(fac):
         part(*p_)
+    for p_ in http_parts(fac):
+        part(*p_)
+    try:
+        want_http = fac.participants()[1].http.active
+    except ListError:
+        want_http = False
+    part("mcp", v["mcp"] != "missing" or not want_http, v["mcp"] if v["mcp"] != "missing" else
+         "not installed (the node bundle carries it; needed only when facilitator.http.listen is set)", needed=want_http)
     inf = fac.infra()
     for row in ([] if leaf else inf.status()):
         why = "healthy" if row["healthy"] else "not running: facilitator infra up"
@@ -304,7 +347,7 @@ def cmd_explain(a) -> int:
         else:
             out.update({"handle": x, "node": m.node_id, "exposure": m.exposure(x),
                         "id": f"spiffe://{m.domain or m.home_domain}/node/{m.node_id}/agent/{x}"})
-    for lv in ("local", "private"):
+    for lv in ("local", "private", "public"):
         out.setdefault("limits", {})[lv] = {k: f"{v} ({src})" for k in mesh_mod.LIMIT_KEYS
                                             for v, src in [m.limit(lv, k, fac.s)]}
     _emit(a, out, "\n".join(f"{k}: {v}" for k, v in out.items() if k != "limits") + "\nlimits:\n" + "\n".join(
@@ -597,6 +640,83 @@ def cmd_register(a) -> int:
     return 0
 
 
+def _by(fac, a) -> str:
+    """The person acting: --as (a human of facilitator.yml), else the first of facilitator.yml's humans. On a node with
+    no person attached this is the hub's own humans list (ADR-0070 decision 6)."""
+    h = getattr(a, "as_", None)
+    humans = fac.humans()
+    if h:
+        if h not in humans:
+            raise FacilitatorError(f"{h} is not a human of facilitator.yml (humans: {', '.join(humans)})")
+        return h
+    if not humans:
+        raise FacilitatorError("facilitator.yml names no human to act for the node")
+    return humans[0]
+
+
+def cmd_http(a) -> int:
+    """facilitator http serve | token | list | approve | deny | revoke | audit (slice N4)."""
+    fac = _fac(a)
+    act = a.action
+    if act == "serve":
+        from .endpoint import Daemon, EndpointError
+        try:
+            return Daemon(fac).run()
+        except EndpointError as e:
+            raise FacilitatorError(f"http serve: {e}") from None
+        except ImportError as e:
+            raise FacilitatorError(f"http serve: the mcp library is not installed here ({e}); the node bundle carries it "
+                                   "(slice N4)") from None
+    if act == "list":
+        rows = [clients_mod.public_view(n, c) | {"id": fac.clients.spiffe_id(fac.mesh, n)}
+                for n, c in sorted(fac.clients.all().items())]
+        pend = {p["client"]: p["held"] for p in fac.pending_approvals()}
+        for r in rows:
+            r["held"] = pend.get(r["client"], 0)
+        _emit(a, rows, "\n".join(
+            f"facilitator: {r['client']:<20} {r['status']:<9} level {fac.mesh.http_level()}, created {r['created']}"
+            + (f", approved {r['approved_at']} by {r['approved_by']}" if r["approved_at"] else "")
+            + (f", {r['held']} message(s) wait for approval" if r["held"] else "") for r in rows) or "facilitator: no HTTP clients yet "
+            "(facilitator http token <client>)")
+        return 0
+    if act == "audit":
+        ok, detail = fac.clients.audit_ok()
+        log = fac.clients.audit_log()
+        _emit(a, {"ok": ok, "detail": detail, "events": log},
+              "\n".join(f"{e['at']} {e['event']:<9} {e['client']} by {e['by']}" for e in log) + f"\nfacilitator: audit: {detail}")
+        return 0 if ok else 1
+    refuse_in_agent_job(f"facilitator http {act}")
+    if not a.client:
+        raise SettingsError(f"http {act} <client>")
+    by = _by(fac, a)
+    if act == "token":
+        r = fac.enrol_http(a.client, by, a.label or "")
+        if getattr(a, "json", False):
+            print(json.dumps(r, indent=2, sort_keys=True))
+            return 0
+        print(r["token"])
+        cfg = fac.participants()[1].http
+        url = (cfg.url.rstrip("/") if cfg.url else f"{'https' if cfg.tls_cert else 'http'}://{cfg.listen or '<http.listen>'}") + "/mcp"
+        print(f"facilitator: the token of the HTTP client {r['client']} (shown once; only its hash is kept): level {r['level']}, "
+              f"approval {r['approval']}, {r['id']}. Claude Code: claude mcp add --transport http {r['client']} {url} --header "
+              f"\"Authorization: Bearer <token>\"; Copilot CLI: copilot mcp add --transport http ... with the same header "
+              f"(NOTES, 'MCP over HTTP'). {'Its first message waits for facilitator http approve ' + r['client'] + '.' if r['approval'] == 'first-contact' else ''}",
+              file=sys.stderr)
+        return 0
+    if act == "approve":
+        r = fac.approve_client(a.client, by)
+        _emit(a, r, f"facilitator: {a.client} approved by {by}: " + (", ".join(
+            f"{x['conversation']}/{x['message_id']} {'delivered' if x['delivered'] else 'not delivered'}" for x in r["released"])
+            or "no held message"))
+        return 0
+    if act in ("deny", "revoke"):
+        r = (fac.deny_client if act == "deny" else fac.revoke_client)(a.client, by)
+        _emit(a, r, f"facilitator: {a.client} {r['status']} by {by}: its token no longer works" + (
+            f"; {r['dropped']} held message(s) not delivered" if r["dropped"] else ""))
+        return 0
+    raise SettingsError(f"http {act}")
+
+
 def cmd_participants(a) -> int:
     fac = _fac(a)
     plist, cfg, warnings, path = fac.participants()
@@ -822,7 +942,7 @@ def main(argv: list[str] | None = None) -> int:
     command("start", cmd_start, "postStartCommand: setup, tokens made again, infra up when autostart (never fatal)", False)
     c = command("infra", cmd_infra, "the Directory, SLIM and the ssh-agent: up, down, status, logs")
     c.add_argument("action", choices=["up", "down", "status", "logs"])
-    c.add_argument("component", nargs="?", choices=MESH_COMPONENTS)
+    c.add_argument("component", nargs="?", choices=ALL_COMPONENTS)
     c.add_argument("--lines", type=int, default=40)
     c = command("register", cmd_register, "a participant's key, token and OASF record (a person's key and token)")
     c.add_argument("handles", nargs="*")
@@ -838,6 +958,13 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--file", help="bundle: a PEM file with the domain's CA certificates")
     c.add_argument("--token", help="join: the join token, or a file holding it")
     c.add_argument("--yes", action="store_true", help="revoke: do not ask to confirm")
+    c = command("http", cmd_http, "the MCP endpoint over HTTP (slice N4): serve (the infra part runs it), token <client> (a "
+                                  "person's act: a bearer token, shown once), list, approve <client>, deny <client>, "
+                                  "revoke <client>, audit")
+    c.add_argument("action", choices=["serve", "token", "list", "approve", "deny", "revoke", "audit"])
+    c.add_argument("client", nargs="?")
+    c.add_argument("--label", help="token: a note for the list")
+    c.add_argument("--as", dest="as_", help="the person acting (a human of facilitator.yml; default the first)")
     command("participants", cmd_participants, "the participant list and who is registered")
     command("status", cmd_status, "who is attached, and each conversation's hops, budget and pause")
     c = command("mail", cmd_mail, "a person's unread messages, read only (the MCP tool mail marks them read); "
