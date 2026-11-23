@@ -19,7 +19,11 @@
     // Local Features, staged by .devcontainer/stage-features.sh before the
     // build (the CLI only accepts local paths under .devcontainer/, hence ../).
     "../features/go-task": { "version": "3.54.0" },
-    "../features/devcontainer-cli": {}
+    "../features/devcontainer-cli": {},
+    // minijinja-cli, the template engine the component-registry unit tests render with (ADR-0077):
+    // installed by the Feature itself at the version and sha256 its install.sh pins, so the tests
+    // never download it in CI (the Operator's ruling of 2026-11-23 on PR #232).
+    "../features/component-registry": {}
   },
   "remoteUser": "vscode"
 }
