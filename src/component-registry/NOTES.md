@@ -627,9 +627,16 @@ participant start hook resolves it for `COMPONENT_REGISTRY_WHOAMI` (containerEnv
 default `/devcontainer-features/operator`; a person sets theirs in `.devcontainer/.env`) and hands
 the skills to Claude Code.
 
-**The equality check** (`task test:registry-first-use`, part of lint) resolves the real layer
-list and compares the resolved `skills/architecture-review/SKILL.md` with the committed
-`.claude/skills/architecture-review/SKILL.md`: **byte for byte equal**. What this use found, and
+**The shape check** (`task test:registry-first-use`, part of lint; since
+`architecture-skill-switch-over` this repository commits no copy to compare with) resolves the real
+layer list and asserts the shape of the resolved `skills/architecture-review/SKILL.md`: front matter
+with `name` and `description`; the devhost layer's method first; exactly one `## In this repository`
+section from the repository layer after it; no `## Layer ` heading line; `explain` attributes lines
+to both layers; and, as a drift guard, the devhost template copy that `devhost-init` plants where
+there is no registry equals the resolved skill. `heading: false` stays on both layers for
+readability (the repository layer has its own heading), no longer for byte equality with a committed
+skill (the template drift guard still compares bytes). Before the switch-over the check compared
+against the committed skill byte for byte, which is how it was proven equal. What this use found, and
 what 1.3.0 changed for it:
 
 - **A heading for every layer** (the first included) made byte equality impossible in 1.2.0;

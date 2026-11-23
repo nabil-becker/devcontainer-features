@@ -52,7 +52,19 @@ contains "resolve reports no skipped or unreadable line" "$out" "(0 line(s) skip
 resolved="$T/state/view/skills/architecture-review/SKILL.md"
 check "the resolved skill is there" yes "$([ -f "$resolved" ] && echo yes || echo no)"
 
-check "no layer heading is written (heading: false on both layers)" 0 "$(grep -c '^## Layer ' "$resolved")"
+# The shape of the resolved skill (this repository commits no copy; the registry is the only source).
+check "no layer heading is written (heading: false on both layers: the repo layer has its own heading)" 0 "$(grep -c '^## Layer ' "$resolved")"
+check "front matter opens and closes" "---/---" "$(sed -n 1p "$resolved")/$(sed -n 4,12p "$resolved" | grep -m1 '^---$')"
+contains "front matter has a name" "$(sed -n 2p "$resolved")" "name: architecture-review"
+contains "front matter has a description" "$(sed -n 3p "$resolved")" "description: "
+check "the devhost layer's method comes first" "$(sed -n '/^# /,$p' "$base_src/architecture-review/SKILL.md" | head -1)" "$(sed -n '/^# /p' "$resolved" | head -1)"
+check "exactly one '## In this repository' section" 1 "$(grep -c '^## In this repository$' "$resolved")"
+method_end="$(grep -n '^## In this repository$' "$resolved" | cut -d: -f1)"
+check "the method text precedes the repository section" "$(grep -c '^## Steps$' "$base_src/architecture-review/SKILL.md")" "$(head -n "$method_end" "$resolved" | grep -c '^## Steps$')"
+expl="$(dcf-registry explain skills/architecture-review --color never 2>&1)"
+contains "explain attributes lines to the devhost layer" "$expl" "devhost@"
+contains "explain attributes lines to this repository's layer" "$expl" "devcontainer-features@"
+# Drift guard: the template devhost-init plants where there is no registry equals what resolves here.
 if cmp -s "$resolved" "$template"; then same=yes; else same=no; diff -u "$template" "$resolved" | head -40; fi
 check "the resolved skill equals the devhost template copy byte for byte" yes "$same"
 check "this repository commits no copy of the skill (the registry resolves it)" no "$([ -e "$root/.claude/skills/architecture-review" ] && echo yes || echo no)"
