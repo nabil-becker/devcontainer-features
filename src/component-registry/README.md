@@ -647,9 +647,16 @@ participant start hook resolves it for `COMPONENT_REGISTRY_WHOAMI` (containerEnv
 default `/devcontainer-features/operator`; a person sets theirs in `.devcontainer/.env`) and hands
 the skills to Claude Code.
 
-**The equality check** (`task test:registry-first-use`, part of lint) resolves the real layer
-list and compares the resolved `skills/architecture-review/SKILL.md` with the committed
-`.claude/skills/architecture-review/SKILL.md`: **byte for byte equal**. What this use found, and
+**The shape check** (`task test:registry-first-use`, part of lint; since
+`architecture-skill-switch-over` this repository commits no copy to compare with) resolves the real
+layer list and asserts the shape of the resolved `skills/architecture-review/SKILL.md`: front matter
+with `name` and `description`; the devhost layer's method first; exactly one `## In this repository`
+section from the repository layer after it; no `## Layer ` heading line; `explain` attributes lines
+to both layers; and, as a drift guard, the devhost template copy that `devhost-init` plants where
+there is no registry equals the resolved skill. `heading: false` stays on both layers for
+readability (the repository layer has its own heading), no longer for byte equality with a committed
+skill (the template drift guard still compares bytes). Before the switch-over the check compared
+against the committed skill byte for byte, which is how it was proven equal. What this use found, and
 what 1.3.0 changed for it:
 
 - **A heading for every layer** (the first included) made byte equality impossible in 1.2.0;
@@ -665,7 +672,7 @@ what 1.3.0 changed for it:
 - **A relative link breaks.** The resolved copy lives in the CLI's skills folder, so a link such
   as `../../../PROCESS.md` points nowhere; the base layer names files as plain paths.
 
-### Switch-over (proposed, not done)
+### Switch-over (this repository done; consumers: `devhost-init` skips the copy)
 
 Today both the committed skill (`.claude/skills/architecture-review/`, project scope) and the
 resolved one (Claude Code's personal skills folder, handed over at the agent's start) exist; the
@@ -681,7 +688,8 @@ to the committed one byte for byte. Switching over (the Operator: it waits) woul
   component-registry Feature and a `registry.yml` naming the devhost layer (plus their own layer
   for their rules) and `devhost-init` stops copying it. Each consumer's
   `DEVCONTAINER_CONTRIBUTION.md` would say which.
-- **Nothing a reader sees**: the resolved skill already equals the committed one byte for byte.
+- **Done (`architecture-skill-switch-over`, `devhost` 1.18.0)**: this repository's committed copy is deleted. The devhost Feature does not depend on component-registry, so `devhost-init` keeps planting the template for a repository whose `.devcontainer/registry.yml` does not name `/usr/local/share/devhost/registry`, skips it when it does, and never deletes a planted copy (it prints one line suggesting removal). `task test:registry-first-use` keeps the template and the resolved skill byte-equal.
+- **Nothing a reader sees**: the resolved skill equalled the committed one byte for byte.
 
 ## Use it
 
