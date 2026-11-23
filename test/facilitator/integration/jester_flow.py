@@ -98,8 +98,8 @@ def main() -> int:
         pinit = person.initialize()
         expect("mail" in pinit["result"]["instructions"], "mcp: the person's session is told to read with mail")
         ptools = [t["name"] for t in person.request("tools/list")["result"]["tools"]]
-        expect(ptools == ["say", "mail", "transcript", "continue", "who"],
-               "mcp: the person (FACILITATOR_HANDLE=you, no --as) has say, mail, transcript, continue, who")
+        expect(ptools == ["say", "mail", "transcript", "continue", "approve", "who"],
+               "mcp: the person (FACILITATOR_HANDLE=you, no --as) has say, mail, transcript, continue, approve, who")
         t0m = time.time()
         empty = person.call("mail")
         expect(empty["content"][0]["text"] == "no new messages" and time.time() - t0m < 3, "mail: nothing yet, at once")
