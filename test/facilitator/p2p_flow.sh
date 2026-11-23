@@ -66,7 +66,7 @@ trust:
 expose:
   "*": local
   a1: private
-  pa: private
+  pa: public
   j1: public
   j2: public
 limits:
@@ -94,6 +94,8 @@ YAML
 done
 cat >"$tmp/pub/mesh.yml" <<'YAML'
 preset: open
+node:
+  id: pub-1
 expose:
   "*": local
   p1: public
@@ -172,8 +174,8 @@ docker exec -i "$p-pub" sh -c 'cat >/tmp/info.json' <<<"$info"
 wait_for 15 docker exec "$p-pub" bash -c 'exec 3<>/dev/tcp/a.mesh.test/46361' || true
 if out="$(fx pub node request /tmp/info.json 2>&1)"; then ok "pub-1 sent its key: ${out#facilitator: }"; else no "node request: $out"; fi
 rid="$(fx a node requests --json | jget 'd[0]["id"]')"
-if fx pub node collect 2>&1 | grep -q "is pending"; then ok "nothing is issued before a person acts (collect says pending)"; else no "collect before the approval"; fi
-if docker exec -e CLAUDECODE=1 "$p-a" facilitator node approve "$rid" --yes 2>&1 | grep -q "agent's job"; then ok "node approve is refused inside an agent's job"; else no "approve in an agent's job"; fi
+if [[ "$(fx pub node collect 2>&1 || true)" == *"is pending"* ]]; then ok "nothing is issued before a person acts (collect says pending)"; else no "collect before the approval"; fi
+if [[ "$(docker exec -e CLAUDECODE=1 "$p-a" facilitator node approve "$rid" --yes 2>&1 || true)" == *"agent's job"* ]]; then ok "node approve is refused inside an agent's job"; else no "approve in an agent's job"; fi
 if out="$(fx a node approve "$rid" --yes --as pa 2>&1)"; then ok "a person approved: ${out#facilitator: }"; else no "approve: $out"; fi
 if out="$(fx pub node collect 2>&1)"; then ok "pub-1 collected: ${out#facilitator: }"; else no "collect: $out"; fi
 docker restart "$p-pub" >/dev/null
@@ -194,8 +196,8 @@ if ! agent a answer j1 5 "should not arrive" | grep -q '"received": {'; then ok 
 if fx a http approve pp.pub-1 --as pa 2>&1 | grep -q approved; then ok "a person approved pp.pub-1 at first contact"; else no "first-contact approval"; fi
 r="$(agent a answer j1 60 "hello public node, j1 here")"
 if echo "$r" | grep -q 'hello from the public node'; then ok "after the approval j1 received it and answered"; else no "j1 after approval: $r"; fi
-sleep 4
-if agent pub mail pp | grep -q 'j1 here'; then ok "the answer reached pp on the public node (replicated: copy addressed)"; else no "pp did not get the answer"; fi
+mailed() { agent pub mail pp | grep -q 'j1 here'; }
+if wait_for 40 mailed; then ok "the answer reached pp on the public node (replicated: copy addressed)"; else no "pp did not get the answer"; fi
 for n in a pub; do
   if out="$(fx "$n" verify --conv "$pconv" 2>&1)"; then ok "verify on $n: ${out##*: }"; else no "verify on $n: $out"; fi
 done
