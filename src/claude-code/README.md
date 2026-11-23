@@ -306,8 +306,8 @@ one login and one Claude Code state ([ADR-0074](https://github.com/nabil-becker/
   sessions; the own copy stays runnable as `/registry:<name>`, and the start line names the clash.
   A plain `claude` started by hand (not through `agents`) gets no `--add-dir` and sees only the
   shared skills. Today's only real case of the first is `architecture-review` in this repository,
-  and only if agents with different paths disagree on it; the architecture-review switch-over
-  (backlog) removes the committed copy and with it the clash.
+  and only if agents with different paths disagree on it; the committed copy is gone
+  (architecture-skill-switch-over), and with it the clash here.
 - **Not chosen:** a `CLAUDE_CONFIG_DIR` per agent (separate logins, session lists and jobs), the
   `permissions.additionalDirectories` setting (file access only, it loads no skills), a plugin per
   agent (every skill renamed `/<plugin>:<skill>`). ADR-0074 has the comparison.
