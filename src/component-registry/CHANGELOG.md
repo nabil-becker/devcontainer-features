@@ -6,6 +6,36 @@ of the Feature and whether they must act (an option renamed, a task removed, a r
 The version in `devcontainer-feature.json` is bumped in the same change that adds its entry
 here; `task lint` fails when the entry is missing.
 
+## [1.11.0] - 2026-11-23
+
+### Added
+
+- **Vendor templates** (ADR-0077, backlog `templating-build`): each vendor's files are rendered
+  from Jinja templates by `minijinja-cli` at every hand-over; the merge (precedence, locks,
+  `explain`) is unchanged. A template is a file `templates/<vendor>/<file>.j2` in a layer, a
+  component of the new kind `template`, with a head saying `for:` (`skill` or `once`), `output:`
+  (the path written, itself templated) and optionally `lock: true`. The highest layer's template
+  wins whole; a lower layer's lock holds; a namespaced layer's templates are its own, render only
+  its skills and never replace the Operator's files. Any layer may replace a template, change one
+  block with `{% extends "<layer>/<file>.j2" %}`, or add its own.
+- The built-in base layer ships `templates/claude/SKILL.md.j2`, which reproduces every resolved
+  `SKILL.md` byte for byte: Claude Code gets exactly the files 1.10.0 gave until a layer
+  overrides it. A CLI with no template is handed the view's skills as before.
+- `dcf-registry render <vendor> <folder>` (task `component-registry:render`) previews what a
+  hand-over gets; `dcf-registry explain templates[/<vendor>[/<file>.j2]]` shows each candidate,
+  the winner and the base it extends. The view keeps the templates and `meta/templates.tsv`.
+- `minijinja-cli` 3.1.0 is installed (the static build for x86_64 or aarch64, through `dcf_curl`,
+  checked against a pinned sha256): the Feature's first download at build.
+
+### Changed
+
+- A template that does not render, or no `minijinja-cli`, fails the hand-over with the template's
+  layer and file named; the adapter is not called and the CLI keeps the skills it has. A template
+  head that cannot be read is skipped and reported by `resolve`, as an unreadable line is.
+
+Action: rebuild to get `minijinja-cli`. Nothing else; a view resolved before 1.11.0 is handed
+over as it is until the next `resolve`.
+
 ## [1.10.0] - 2026-11-23
 
 ### Deprecated

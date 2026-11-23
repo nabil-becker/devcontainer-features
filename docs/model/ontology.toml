@@ -600,6 +600,16 @@ type = "concept"
 term = "Hand-over record"
 summary = "The record dcf-registry keeps of which agent got which who-you-are path's view and own skills folder; agents no longer listed are forgotten."
 
+[vendor-template]
+type = "concept"
+term = "Vendor template"
+summary = "A minijinja-cli template that renders the resolved view into one kind of vendor file, replacing adapter shell; the merge is unchanged (ADR-0077)."
+
+[[relation]]
+subject = "vendor-template"
+predicate = "reads"
+object = "resolved-view"
+
 [key-mode]
 type = "mechanism"
 term = "Key mode"

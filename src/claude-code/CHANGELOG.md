@@ -8,6 +8,19 @@ here; `task lint` fails when the entry is missing.
 
 Entries from 1.0.0 to 1.9.7 were generated from the commit history (`.github/scripts/changelog.py backfill`) and the "Changes in x.y.z" sections that NOTES.md used to hold; most list commit subjects as written then; the newest of them is in wording for users.
 
+## [1.14.1] - 2026-11-23
+
+### Changed
+
+- **Resolved skills arrive rendered from templates** (ADR-0077, backlog `templating-build`). With
+  component-registry 1.11.0, `dcf-registry handover claude` renders the `claude` templates with
+  `minijinja-cli` and gives the `skills` verb the result instead of the view's own `skills/`. The
+  built-in base template reproduces each `SKILL.md` byte for byte, so nothing changes until a layer
+  replaces a template, changes one of its blocks or adds one (a file such as
+  `skills/<name>/checklist.md` then reaches Claude Code). A template that does not render fails
+  the hand-over before the verb runs: the skills already in place stay. The verb itself is
+  unchanged; nothing to do.
+
 ## [1.14.0] - 2026-11-21
 
 ### Added

@@ -28,6 +28,11 @@
 #                                               one path to every CLI adapter on PATH; --session the
 #                                               agent whose session that is (an adapter's list);
 #                                               else every recorded hand-over, each path resolved once
+#   dcf-registry render <vendor> <folder> [--as <path>]
+#                                               (1.11.0, ADR-0077) render that vendor's winning
+#                                               templates from the view into a new folder: what a
+#                                               hand-over to its CLI gets; explain templates/<vendor>
+#                                               says whose template won
 #   dcf-registry remember [--skill <name>] [--] <line>
 #                                               append the line to the layer marked writable: true
 #                                               (a path source), then refresh (/registry-remember)
@@ -1098,6 +1103,315 @@ END {
 }
 AWK
 
+# ---------------------------------------------------------------- templates ----
+# Vendor templates (1.11.0, ADR-0077): each vendor's files are rendered from Jinja templates by
+# minijinja-cli; the merge above is unchanged. A template is a file templates/<vendor>/<file>.j2 at
+# the root of a layer's copy (the built-in base layer ships templates/claude/SKILL.md.j2). It is a
+# component of the kind template, templates/<vendor>/<file>.j2 (templates/<vendor>/<ns>:<file>.j2 in
+# a namespaced layer), and it starts with a head, a Jinja comment:
+#   {#- for: skill                                    skill: once per resolved skill; once: one file
+#       output: skills/{{ skill.dir }}/SKILL.md        the path written, itself a template
+#       lock: true -#}                                 optional: no higher layer replaces it
+# Precedence is layer precedence (a layer's templates apply when its at is the who-you-are path or
+# an ancestor of it): the highest layer's template wins whole and never stacks with the one below;
+# the lowest layer that locks a template keeps it; a namespaced layer's templates compete only with
+# its namespace's. A template changes one block of a lower one with {% extends "<layer>/<file>.j2" %}
+# (the base: "component-registry/SKILL.md.j2"): each candidate is kept in the view at
+# templates/<own|ns/<ns>>/<vendor>/<layer>/<file>.j2, beside a link to every lower layer of its
+# group, so a template can extend only what is below it. resolve writes meta/templates.tsv (every
+# candidate: state, component, namespace, vendor, file, layer, rank, version, source:path, for,
+# output, lock, extends, why); a head that cannot be read is skipped and reported, as a line is.
+# Rendering is the hand-over's (render_view): a template only writes files.
+
+# TPL_HEAD: the head of one template file -> for, output, lock, extends, error ("-" for none)
+read -r -d '' TPL_HEAD <<'AWK'
+function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t\r]+$/, "", s); return s }
+{ ln[NR] = $0 }
+END {
+  f = ""; o = ""; lk = ""; ex = ""; err = ""; hend = 0
+  if (NR == 0 || ln[1] !~ /^\{#/) err = "no head: a template starts with {#- for: skill  output: <path> -#}"
+  else {
+    for (i = 1; i <= NR; i++) if (index(ln[i], "#}")) { hend = i; break }
+    if (!hend) err = "the head comment {# ... #} is not closed"
+  }
+  for (i = 1; !err && i <= hend; i++) {
+    t = ln[i]
+    if (i == 1) sub(/^\{#-?/, "", t)
+    if (i == hend) sub(/-?#\}.*$/, "", t)
+    t = trim(t)
+    if (t !~ /^(for|output|lock):/) continue
+    k = t; sub(/:.*$/, "", k); v = trim(substr(t, length(k) + 2))
+    if (k in seen) { err = "'" k ":' appears twice in the head"; break }
+    seen[k] = 1
+    if (v ~ /\t/) { err = "a tab in " k ":"; break }
+    if (k == "for") {
+      if (v == "agent") { err = "for: agent is not in this release (planned: agent definitions, ADR-0077 slice 2); for: skill or once"; break }
+      if (v != "skill" && v != "once") { err = "for: is skill or once, not '" v "'"; break }
+      f = v
+    } else if (k == "output") {
+      if (v == "") { err = "output: is empty"; break }
+      o = v
+    } else {
+      if (v != "true" && v != "false") { err = "lock: is true or false, not '" v "'"; break }
+      lk = v
+    }
+  }
+  if (!err && f == "") err = "the head has no for: (skill or once)"
+  if (!err && o == "") err = "the head has no output: (the path written)"
+  for (i = hend + 1; !err && i <= NR; i++) {
+    if (match(ln[i], /\{%-?[ \t]*extends[ \t]+["'][^"']+["']/)) {
+      ex = substr(ln[i], RSTART, RLENGTH); sub(/^[^"']*["']/, "", ex); sub(/["']$/, "", ex); break
+    }
+  }
+  printf "%s\t%s\t%s\t%s\t%s\n", (f == "" ? "-" : f), (o == "" ? "-" : o), (lk == "" ? "false" : lk), (ex == "" ? "-" : ex), (err == "" ? "-" : err)
+}
+AWK
+
+# TPL_MERGE: the candidate rows (group, vendor, file, strength, rank, source, layer, version, loc,
+# folder, for, output, lock, extends, error, applies), sorted, to the states of meta/templates.tsv
+# plus the folder: used (the winner), overridden (replaced whole by it, or extended), skipped (a
+# head error, or locked by a lower layer), not-applying (the layer's at is not W or an ancestor).
+read -r -d '' TPL_MERGE <<'AWK'
+BEGIN { FS = OFS = "\t" }
+function flush(   i, h, w, why, base) {
+  if (!n) return
+  h = 0; w = 0
+  for (i = 1; i <= n; i++) if (!h && A[i] == "yes" && E[i] == "-" && LK[i] == "true") h = i
+  for (i = 1; i <= n; i++) {
+    S[i] = "alive"; Y[i] = "-"
+    if (A[i] != "yes") { S[i] = "not-applying"; Y[i] = "the layer is at " AT[i] ", not the who-you-are path or an ancestor of it"; continue }
+    if (E[i] != "-") { S[i] = "skipped"; Y[i] = E[i]; continue }
+    if (h && i > h) { S[i] = "skipped"; Y[i] = "locked by " L[h] " at " LOC[h]; continue }
+    w = i
+  }
+  for (i = 1; i <= n; i++) {
+    if (S[i] != "alive") continue
+    if (i == w) { S[i] = "used"; Y[i] = (h == i ? "the winning template; locked for every higher layer" : "the winning template, the highest layer's") ; continue }
+    S[i] = "overridden"; Y[i] = "replaced whole by " L[w] " at " LOC[w]
+    base = X[w]; sub(/\/.*$/, "", base)
+    if (X[w] != "-" && base == L[i]) Y[i] = "extended by " L[w] " at " LOC[w] " ({% extends \"" X[w] "\" %})"
+  }
+  for (i = 1; i <= n; i++)
+    print S[i], (G == "-" ? "templates/" V "/" F : "templates/" V "/" G ":" F), G, V, F, L[i], R[i], VER[i], LOC[i], FOR[i], O[i], LK[i], X[i], Y[i], D[i]
+  n = 0
+}
+{
+  if ($1 != G || $2 != V || $3 != F) { flush(); G = $1; V = $2; F = $3 }
+  n++; R[n] = $5; L[n] = $7; VER[n] = $8; LOC[n] = $9; D[n] = $10; FOR[n] = $11; O[n] = $12
+  LK[n] = $13; X[n] = $14; E[n] = $15; A[n] = $16; AT[n] = $17
+}
+END { flush() }
+AWK
+
+tpl_applies() { [ "$1" = / ] || [ "$WHOAMI" = "$1" ] || [[ "$WHOAMI" == "$1"/* ]]; }
+
+# resolve_templates <stage>: the template components of every layer copy read in this resolve (TSRC:
+# rank, layer, at, source, version, folder, namespace) into <stage>/templates/ and
+# <stage>/meta/templates.tsv. Sets TPL_SKIPPED.
+resolve_templates() {
+  local stage="$1" rec rank id at m ver dir ns rel vendor file head fr out lk ex err ap gdir
+  local rows="$TMP/tpl.rows"
+  TPL_SKIPPED=0
+  : > "$rows"
+  for rec in "${TSRC[@]+"${TSRC[@]}"}"; do
+    IFS=$'\t' read -r rank id at m ver dir ns <<< "$rec"
+    [ -d "$dir/templates" ] || continue
+    ap=no; tpl_applies "$at" && ap=yes
+    while IFS= read -r rel; do
+      [ -n "$rel" ] || continue
+      vendor="${rel#templates/}"; file="${vendor#*/}"; vendor="${vendor%%/*}"
+      err='-'
+      if [ -L "$dir/$rel" ]; then err="a symlink is not read; put the template file itself in the layer"
+      elif ! [[ "$rel" =~ ^templates/[a-z0-9][a-z0-9-]*/[A-Za-z0-9_][A-Za-z0-9._-]*\.j2$ ]]; then
+        warn "skipped template $id $m:$rel: a template is templates/<vendor>/<file>.j2 (a vendor of lower-case letters, digits and -; a file of letters, digits, . _ -)"
+        TPL_SKIPPED=$((TPL_SKIPPED + 1)); continue
+      elif [ "$(wc -c < "$dir/$rel")" -gt 262144 ]; then err="larger than 256 KiB"
+      fi
+      fr='-' out='-' lk=false ex='-'
+      if [ "$err" = - ]; then
+        head="$(LC_ALL=C awk "$TPL_HEAD" "$dir/$rel")"
+        IFS=$'\t' read -r fr out lk ex err <<< "$head"
+      fi
+      printf '%s\t%s\t%s\t%010d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "${ns:--}" "$vendor" "$file" "$((rank * 1000 + m))" "$rank" "$m" "$id" "$ver" "$m:$rel" "$dir/$rel" \
+        "$fr" "$out" "$lk" "$ex" "$err" "$ap" "$at" >> "$rows"
+    done < <(cd "$dir" && find templates -mindepth 1 -maxdepth 3 \( -type f -o -type l \) | LC_ALL=C sort)
+  done
+  printf 'state\tcomponent\tnamespace\tvendor\tfile\tlayer\trank\tversion\tsource\tfor\toutput\tlock\textends\twhy\n' > "$stage/meta/templates.tsv"
+  [ -s "$rows" ] || return 0
+  local st comp g v f lay rk vr loc fo o l x why src
+  declare -A trank=()
+  while IFS=$'\t' read -r st comp g v f lay rk vr loc fo o l x why src; do
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$st" "$comp" "$g" "$v" "$f" "$lay" "$rk" "$vr" "$loc" "$fo" "$o" "$l" "$x" "$why" >> "$stage/meta/templates.tsv"
+    case "$st" in
+      skipped) TPL_SKIPPED=$((TPL_SKIPPED + 1)); warn "skipped template $lay $loc $comp: $why" ;;
+      used | overridden)
+        if [ "$g" = - ]; then gdir=own; else gdir="ns/$g"; fi
+        mkdir -p "$stage/templates/$gdir/$v/$lay"
+        cp "$src" "$stage/templates/$gdir/$v/$lay/$f"
+        trank["$gdir/$v/$lay"]="$rk" ;;
+    esac
+  done < <(LC_ALL=C sort -t $'\t' -k1,1 -k2,2 -k3,3 -k4,4 "$rows" | awk "$TPL_MERGE")
+  # each layer's folder links to the lower layers of its group: {% extends "<layer>/<file>.j2" %}
+  local a b
+  for a in "${!trank[@]}"; do
+    for b in "${!trank[@]}"; do
+      [ "${a%/*}" = "${b%/*}" ] && [ "${trank[$b]}" -lt "${trank[$a]}" ] || continue
+      ln -s "../${b##*/}" "$stage/templates/$a/${b##*/}"
+    done
+  done
+}
+
+# mj <args>: minijinja-cli as the registry runs it: no config file, no MINIJINJA_* setting from
+# the environment, no environment in the template, strict (an undefined name is an error), no
+# escaping, no trailing newline added, a fuel limit (a runaway loop stops).
+mj() {
+  local -a unset_mj=()
+  local x
+  for x in $(compgen -e); do case "$x" in MINIJINJA_*) unset_mj+=(-u "$x") ;; esac; done
+  env "${unset_mj[@]+"${unset_mj[@]}"}" minijinja-cli --config-file /dev/null --no-newline --strict \
+    --autoescape none --fuel "${COMPONENT_REGISTRY_TEMPLATE_FUEL:-5000000}" "$@"
+}
+
+# js <string>: the string as a JSON string (bytes kept; control characters escaped)
+js() {
+  local LC_ALL=C s="$1" i c
+  s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; s="${s//$'\n'/\\n}"; s="${s//$'\t'/\\t}"; s="${s//$'\r'/\\r}"
+  if [[ "$s" == *[$'\x01'-$'\x1f']* ]]; then
+    for ((i = 1; i < 32; i++)); do
+      printf -v c '%b' "\\x$(printf '%02x' "$i")"
+      s="${s//"$c"/$(printf '\\u%04x' "$i")}"
+    done
+  fi
+  printf '"%s"' "$s"
+}
+# jfile <file>: the file's bytes as a JSON string ("" when there is none)
+jfile() { local c=''; [ -f "$1" ] && { c="$(cat "$1"; printf x)"; c="${c%x}"; }; js "$c"; }
+
+# skill_json <view> <dir> <name> <ns>: the skill object of the context
+skill_json() {
+  local view="$1" d="$2" name="$3" ns="$4" LC_ALL=C text='' fm='' body rest pre k t s first=1 f
+  [ -f "$view/skills/$d/SKILL.md" ] && { text="$(cat "$view/skills/$d/SKILL.md"; printf x)"; text="${text%x}"; }
+  body="$text"
+  # front matter: the --- block and the blank lines after it, exactly as SKILL.md holds them, so
+  # front_matter + body is SKILL.md byte for byte
+  if [[ "$text" == $'---\n'* ]]; then
+    rest="${text:4}"
+    if [[ "$rest" == $'---\n'* ]]; then fm=$'---\n---\n'; body="${rest:4}"
+    elif [[ "$rest" == *$'\n---\n'* ]]; then pre="${rest%%$'\n---\n'*}"; fm=$'---\n'"$pre"$'\n---\n'; body="${rest:$((${#pre} + 5))}"
+    fi
+    if [ -n "$fm" ]; then while [[ "$body" == $'\n'* ]]; do fm+=$'\n'; body="${body:1}"; done; fi
+  fi
+  printf '{"name":%s,"dir":%s,"namespace":%s,"has_skill_md":%s,"text":%s,"front_matter":%s,"body":%s,"values":{' \
+    "$(js "$name")" "$(js "$d")" "$(js "$ns")" "$([ -f "$view/skills/$d/SKILL.md" ] && echo true || echo false)" \
+    "$(js "$text")" "$(js "$fm")" "$(js "$body")"
+  if [ -f "$view/meta/skills/$name/keys.tsv" ]; then
+    while IFS=$'\t' read -r k t _; do
+      [ -n "$k" ] && [ -f "$view/meta/skills/$name/values/$k" ] || continue
+      [ "$first" = 1 ] || printf ','
+      first=0
+      if [ "$t" = list ]; then
+        printf '%s:[' "$(js "$k")"; s=''
+        while IFS= read -r f; do printf '%s%s' "$s" "$(js "$f")"; s=','; done < "$view/meta/skills/$name/values/$k"
+        printf ']'
+      else
+        s="$(cat "$view/meta/skills/$name/values/$k"; printf x)"; s="${s%x}"; s="${s%$'\n'}"
+        printf '%s:%s' "$(js "$k")" "$(js "$s")"
+      fi
+    done < "$view/meta/skills/$name/keys.tsv"
+  fi
+  printf '},"files":['
+  s=''
+  while IFS= read -r f; do [ -n "$f" ] && { printf '%s%s' "$s" "$(js "$f")"; s=','; }; done \
+    < <(cd "$view/skills/$d" && find . -type f ! -path ./SKILL.md | sed 's|^\./||' | LC_ALL=C sort)
+  printf ']}'
+}
+
+# render_view <vendor> <view folder> <out>: the vendor's winning templates rendered from the view
+# into <out> (made anew). <out>/skills/<dir>/ starts with each skill's own files (from files =
+# @dir), never its SKILL.md; then each template writes its output, once per skill (for: skill; a
+# namespaced template only its namespace's skills, and only inside their folders) or once (for:
+# once). An output that renders empty is not written. Returns 0 rendered (RENDER_NOTE says what),
+# 4 the vendor has no template in the view (the hand-over gives the view's skills as they are), 1
+# failed (RENDER_ERR names the template, its layer and file, and minijinja's message).
+render_view() {
+  local v="$1" view="$2" out="$3" rows st comp g f lay rk vr loc fo o l x why gdir tpl safe
+  local d nm ns item ctx path n=0 nt=0 skills_json s msg
+  RENDER_ERR='' RENDER_NOTE=''
+  [ -f "$view/meta/templates.tsv" ] || return 4
+  rows="$(awk -F'\t' -v v="$v" 'NR > 1 && $1 == "used" && $4 == v { print ($3 == "-" ? 0 : 1) "\t" $0 }' "$view/meta/templates.tsv" | LC_ALL=C sort -t $'\t' -k1,1 -k3,3 | cut -f2-)"
+  [ -n "$rows" ] || return 4
+  if ! command -v minijinja-cli >/dev/null 2>&1; then
+    RENDER_ERR="minijinja-cli is not on PATH (component-registry 1.11.0 installs it; rebuild the container), so the $v templates cannot be rendered"
+    return 1
+  fi
+  rm -rf "$out"; mkdir -p "$out/skills" || { RENDER_ERR="cannot create $out"; return 1; }
+  ctx="$out.ctx"; mkdir -p "$ctx"
+  # the skills: their folder, registry name and namespace
+  local -a sd=() sn=() sns=()
+  declare -A regname=()
+  if [ -f "$view/meta/namespaced.tsv" ]; then
+    while IFS=$'\t' read -r comp g d; do [[ "$comp" == skills/* ]] && regname["${d#skills/}"]="${comp#skills/}"; done < "$view/meta/namespaced.tsv"
+  fi
+  for d in "$view"/skills/*/; do
+    [ -d "$d" ] || continue
+    d="${d%/}"; d="${d##*/}"
+    nm="${regname[$d]:-$d}" ns=''
+    [ -n "${regname[$d]:-}" ] && ns="${nm%%:*}"
+    sd+=("$d") sn+=("$nm") sns+=("$ns")
+    mkdir -p "$out/skills/$d"
+    cp -R "$view/skills/$d/." "$out/skills/$d/" && rm -f "$out/skills/$d/SKILL.md"
+  done
+  skills_json='['; s=''
+  for ((n = 0; n < ${#sd[@]}; n++)); do skills_json+="$s{\"name\":$(js "${sn[n]}"),\"dir\":$(js "${sd[n]}"),\"namespace\":$(js "${sns[n]}")}"; s=','; done
+  skills_json+=']'; n=0
+  declare -A claimed=()
+  while IFS=$'\t' read -r st comp g _ f lay rk vr loc fo o l x why; do
+    if [ "$g" = - ]; then gdir=own; else gdir="ns/$g"; fi
+    tpl="$view/templates/$gdir/$v/$lay/$f" safe="$view/templates/$gdir/$v"
+    nt=$((nt + 1))
+    local -a items=()
+    if [ "$fo" = once ]; then items=(-1)
+    else for ((s = 0; s < ${#sd[@]}; s++)); do { [ "$g" = - ] || [ "${sns[s]}" = "$g" ]; } && items+=("$s"); done
+    fi
+    for item in "${items[@]+"${items[@]}"}"; do
+      {
+        printf '{"vendor":%s,"whoami":%s,"template":{"component":%s,"layer":%s,"file":%s},"skills":%s' \
+          "$(js "$v")" "$(js "$(cat "$view/whoami" 2>/dev/null)")" "$(js "$comp")" "$(js "$lay")" "$(js "$f")" "$skills_json"
+        [ "$item" = -1 ] || printf ',"skill":%s' "$(skill_json "$view" "${sd[item]}" "${sn[item]}" "${sns[item]}")"
+        printf '}'
+      } > "$ctx/ctx.json"
+      if ! path="$(mj --no-include --template "$o" '' "$ctx/ctx.json" 2>"$ctx/err")"; then
+        RENDER_ERR="template $comp of layer $lay ($loc): its output: '$o' does not render: $(grep -m 1 . "$ctx/err")"; return 1
+      fi
+      if ! [[ "$path" =~ ^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$ ]] || [[ "/$path/" == */./* || "/$path/" == */../* ]] || [ "${#path}" -gt 255 ]; then
+        RENDER_ERR="template $comp of layer $lay ($loc): output '$path' is not a relative path of letters, digits, . _ - (no . or .. segment)"; return 1
+      fi
+      if [ "$g" != - ] && [[ "$path" != "skills/$g--"*/* ]]; then
+        warn "template $comp of layer $lay ($loc): a namespaced template writes only inside its namespace's skill folders (skills/$g--<name>/); $path not written"
+        continue
+      fi
+      if [ -n "${claimed[$path]:-}" ]; then
+        if [ "$g" = - ]; then RENDER_ERR="template $comp of layer $lay ($loc) and ${claimed[$path]} both write $path; one file has one template"; return 1; fi
+        warn "template $comp of layer $lay ($loc): $path is written by ${claimed[$path]}, which a namespace never replaces; not written"
+        continue
+      fi
+      if ! mj --safe-path "$safe" "$tpl" "$ctx/ctx.json" > "$ctx/out" 2>"$ctx/err"; then
+        msg="$(grep -v '^[[:space:]]*$' "$ctx/err" | head -n 3 | tr '\n' ' ')"
+        if [ "$item" = -1 ]; then x=''; else x=" for skill ${sd[item]}"; fi
+        RENDER_ERR="template $comp of layer $lay ($loc) does not render$x: ${msg% }"; return 1
+      fi
+      claimed[$path]="$comp of layer $lay"
+      [ -s "$ctx/out" ] || continue
+      if ! { mkdir -p "$out/$(dirname "$path")" && mv "$ctx/out" "$out/$path"; }; then RENDER_ERR="cannot write $out/$path"; return 1; fi
+      n=$((n + 1))
+    done
+  done <<< "$rows"
+  rm -rf "$ctx"
+  RENDER_NOTE="$n file(s) rendered from $nt template(s)"
+  return 0
+}
+
 # --------------------------------------------------------------------- verbs ----
 cmd_resolve() {
   local as='' n m k kind dir v rc failed=0 stamp stage keep id f line c layer loc key why st out
@@ -1132,8 +1446,10 @@ cmd_resolve() {
   printf 'rank\tlayer\tat\tsource\tkind\tversion\tstate\tfetched\tnote\tnamespace\taliases\n' > "$stage/layers.tsv"
   # The built-in base layer first (rank 0): the utility skills, read where the Feature installed
   # them, never fetched.
+  TSRC=()
   if [ -d "$BASE_DIR" ]; then
     v="$(cat "$SHARE_DIR/version" 2>/dev/null || echo unknown)"
+    TSRC+=("0"$'\t'"$BASE_ID"$'\t'"/"$'\t'"1"$'\t'"$v"$'\t'"$BASE_DIR"$'\t'"-")
     printf '0\t%s\t/\t1\tbuiltin\t%s\tbuiltin\t-\tthe Feature'"'"'s utility skills, %s\t-\t-\n' "$BASE_ID" "$v" "$BASE_DIR" >> "$stage/layers.tsv"
     while IFS= read -r f; do
       [ -n "$f" ] && printf '0\t%s\t/\t1\t%s\t%s\t%s\t-\n' "$BASE_ID" "$v" "$BASE_DIR" "$f" >> "$TMP/manifest"
@@ -1159,6 +1475,7 @@ cmd_resolve() {
       v="${L_AL[n]:-}"; v="${v% }"
       printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$n" "$id" "${L_AT[n]}" "$m" "$kind" "${SRC_VER:--}" "$SRC_STATE" "${SRC_AT:--}" "${SRC_NOTE:--}" "${L_NS[n]:--}" "${v:--}" | tr -d '\r' >> "$stage/layers.tsv"
       [ "$SRC_STATE" = missing ] && continue
+      TSRC+=("$n"$'\t'"$id"$'\t'"${L_AT[n]}"$'\t'"$m"$'\t'"$SRC_VER"$'\t'"$dir"$'\t'"${L_NS[n]:--}")
       oldreg=''
       while IFS= read -r f; do
         [ -n "$f" ] || continue
@@ -1230,6 +1547,9 @@ cmd_resolve() {
       missing) nmiss=$((nmiss + 1)); warn "missing dependency: $c:$key in layer ${rlay:--} -> $v${note:+ [$note]} ($why)" ;;
     esac
   done < "$stage/meta/refs.tsv"
+  # 1.11.0 (ADR-0077): the template components, kept in the view with their provenance
+  resolve_templates "$stage"
+  nskip=$((nskip + TPL_SKIPPED))
 
   # Swap in: `view` is a symlink replaced in one rename, so a reader sees the old or the new.
   ln -s "views/$stamp" "$STATE_DIR/view.new.$$"
@@ -1356,6 +1676,72 @@ lcolour() { printf '%s' "${EX_LAYER_COLOUR[$1]:-}"; }
 # pline <sgr> <text>: a whole line, painted.
 pline() { if [ -n "$1" ]; then paint "$1" "$2"; printf '\n'; else printf '%s\n' "$2"; fi; }
 
+# explain_templates <path> (1.11.0, ADR-0077): read-only. templates (or templates/<vendor>) lists
+# each template component and the layer whose template wins; templates/<vendor>/[<ns>:]<file>.j2
+# shows every candidate, lowest first, the winner and the base it extends.
+explain_templates() {
+  local p="${1#/}" who="$2" st comp g v f lay rk vr loc fo o l x why i=0 n id s w='' sgr
+  p="${p%/}"
+  [ -f "$VIEW/meta/templates.tsv" ] || die 1 "the view resolved for $who holds no templates (resolved before component-registry 1.11.0); run dcf-registry resolve"
+  if [[ "$p" != templates/*/* ]]; then
+    printf 'Templates (ADR-0077), resolved for %s at %s; the winner of each:\n' "$who" "$(cat "$VIEW/resolved")"
+    s="$(awk -F'\t' -v v="${p#templates}" 'NR > 1 && $1 == "used" && (v == "" || "/" $4 == v) { printf "  %s  %s (%s)  for: %s, output: %s%s%s\n", $2, $6, $9, $10, $11, ($12 == "true" ? ", locked" : ""), ($13 != "-" ? ", extends " $13 : "") }' "$VIEW/meta/templates.tsv")"
+    if [ -n "$s" ]; then printf '%s\n' "$s"; else echo "  none"; fi
+    return 0
+  fi
+  awk -F'\t' -v c="$p" 'NR > 1 && $2 == c { f = 1 } END { exit !f }' "$VIEW/meta/templates.tsv" ||
+    die 1 "no template $p in the view resolved for $who (dcf-registry explain templates lists them; a template is templates/<vendor>/<file>.j2 in a layer)"
+  if [ "$EX_COLOUR" -eq 1 ]; then
+    while IFS=$'\t' read -r n id _; do EX_LAYER_COLOUR[$id]="${EX_PALETTE[$((i % 6))]}"; i=$((i + 1)); done < <(awk -F'\t' 'NR > 1 { print $1 "\t" $2 }' "$VIEW/layers.tsv")
+  fi
+  printf '%s, resolved for %s at %s\n' "$p" "$who" "$(cat "$VIEW/resolved")"
+  case "${p##*/}" in *:*) s="${p##*/}"; s="${s%%:*}"; printf 'Namespace %s: only the layers with namespace: %s reach it; it renders that namespace'"'"'s skills only, inside their folders.\n' "$s" "$s" ;; esac
+  echo "Candidates (lowest first; the highest wins whole, a lock in a lower layer holds):"
+  while IFS=$'\t' read -r st comp g v f lay rk vr loc fo o l x why; do
+    [ "$comp" = "$p" ] || continue
+    printf -v s '  %-12s %s@%s %s  for: %s, output: %s%s%s  (%s)' "$st" "$lay" "$vr" "$loc" "$fo" "$o" "$([ "$l" = true ] && echo ', lock: true')" "$([ "$x" != - ] && echo ", extends $x")" "$why"
+    case "$st" in used) sgr="$(lcolour "$lay")" ;; *) sgr="$([ "$EX_COLOUR" -eq 1 ] && echo '2;9')" ;; esac
+    pline "$sgr" "$s"
+    [ "$st" = used ] && w="$lay"$'\t'"$loc"$'\t'"$x"$'\t'"$l"
+  done < "$VIEW/meta/templates.tsv"
+  if [ -z "$w" ]; then echo "No winner: no candidate could be used; a hand-over renders nothing for it."; return 0; fi
+  IFS=$'\t' read -r lay loc x l <<< "$w"
+  printf 'Winner: %s (%s)%s' "$lay" "$loc" "$([ "$l" = true ] && echo ', locked for every higher layer')"
+  if [ "$x" != - ]; then printf '; extends %s, the template of layer %s\n' "$x" "${x%%/*}"; else printf '; extends nothing (it replaces the templates below it whole)\n'; fi
+  return 0
+}
+
+# render <vendor> <folder> [--as <path>] (1.11.0, ADR-0077): what a hand-over to that vendor's CLI
+# would get, rendered into a new folder, read-only for the view; to preview a template.
+cmd_render() {
+  local as='' real
+  local -a pos=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --as) [ $# -ge 2 ] || die 2 "--as needs a path"; as="$2"; shift 2 ;;
+      --as=*) as="${1#--as=}"; shift ;;
+      -*) die 2 "render: unknown option '$1' (render <vendor> <folder> [--as <path>])" ;;
+      *) pos+=("$1"); shift ;;
+    esac
+  done
+  [ "${#pos[@]}" -eq 2 ] || die 2 "render needs a vendor and a folder: dcf-registry render <vendor> <folder> [--as <path>]"
+  [[ "${pos[0]}" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die 2 "render: '${pos[0]}' is not a vendor name (lower-case letters, digits and -)"
+  if [ -e "${pos[1]}" ] && [ -n "$(ls -A "${pos[1]}" 2>/dev/null)" ]; then die 2 "render: ${pos[1]} is not empty; name a new folder"; fi
+  resolve_settings
+  [ -d "$STATE_DIR" ] || die 1 "no state folder $STATE_DIR; run dcf-registry resolve first"
+  command -v flock >/dev/null 2>&1 || die 1 "flock (util-linux) is needed to read the view while no resolve swaps it"
+  exec 8>>"$STATE_DIR/resolve.lock"
+  flock -s -w "${COMPONENT_REGISTRY_LOCK_WAIT:-120}" 8 || die 1 "a resolve has held $STATE_DIR/resolve.lock for ${COMPONENT_REGISTRY_LOCK_WAIT:-120}s; try again"
+  view_for "$as"
+  real="$(readlink -f "$VIEW")"
+  render_view "${pos[0]}" "$real" "${pos[1]}"
+  case $? in
+    0) say "${pos[0]}: $RENDER_NOTE into ${pos[1]}, for $VPATH" ;;
+    4) say "${pos[0]}: no template in the view resolved for $VPATH; a hand-over gives that CLI the view's skills as they are"; return 3 ;;
+    *) rm -rf "${pos[1]}.ctx"; die 1 "${pos[0]}: $RENDER_ERR" ;;
+  esac
+}
+
 cmd_explain() {
   local path='' uses=0 as='' color=auto who st key type layer ver loc data why k t s i n id sgr
   while [ $# -gt 0 ]; do
@@ -1385,6 +1771,7 @@ cmd_explain() {
       die 1 "no view is resolved for $as (the latest is for $who); run dcf-registry resolve --as $as first (explain never resolves)"
     fi
   fi
+  case "${path#/}" in templates | templates/*) explain_templates "$path" "$who"; return $? ;; esac
   normalise "$path"
   [ -n "$NP_COMP" ] || die 2 "'$path' names no component (a path with a ${KINDS// /, } segment, like skills/diagrams)"
   if [ "$uses" -eq 1 ]; then
@@ -1546,7 +1933,22 @@ cmd_handover() {
   view_for "$as"
   real="$(readlink -f "$VIEW")"
   [ -d "$real/skills" ] || die 1 "the resolved view $real has no skills folder; run dcf-registry resolve"
-  COMPONENT_REGISTRY_SKILLS="$real/skills" COMPONENT_REGISTRY_PATH="$VPATH" COMPONENT_REGISTRY_SKILLS_MODE="$smode" "$AD" skills "$name" "$folder" </dev/null; rc=$?
+  # 1.11.0 (ADR-0077): the CLI's files are rendered from its templates (the base layer's, or a
+  # layer's that replaces or extends them); a CLI with no template gets the view's skills as they
+  # are. A template that does not render, or no minijinja-cli, fails the hand-over: the adapter is
+  # not called and the CLI keeps the files it has.
+  local src="$real/skills" rdir="$STATE_DIR/renders/$cli.$name.$$" rr
+  rm -rf "$rdir"; mkdir -p "$STATE_DIR/renders"
+  render_view "$cli" "$real" "$rdir"; rr=$?
+  case "$rr" in
+    0) src="$rdir/skills"; say "$cli: $RENDER_NOTE (dcf-registry explain templates/$cli says which layer's)" ;;
+    4) ;;
+    *) rm -rf "$rdir" "$rdir.ctx"; exec 8>&-
+       warn "$cli: $RENDER_ERR. Nothing was handed over; $name's CLI keeps the skills it has."
+       return 1 ;;
+  esac
+  COMPONENT_REGISTRY_SKILLS="$src" COMPONENT_REGISTRY_PATH="$VPATH" COMPONENT_REGISTRY_SKILLS_MODE="$smode" "$AD" skills "$name" "$folder" </dev/null; rc=$?
+  rm -rf "$rdir" "$rdir.ctx"
   [ "$rc" -eq 0 ] && record_handover "$cli" "$name" "$folder" "$VPATH" "$VMODE" "$smode"
   # 1.7.0: a namespaced skill goes to the CLI by its folder name, <ns>--<name>; say which
   local nsk
@@ -1753,6 +2155,7 @@ case "${1:-}" in
   handovers) shift; cmd_handovers "$@" ;;
   refresh) shift; cmd_refresh "$@" ;;
   remember) shift; cmd_remember "$@" ;;
+  render) shift; cmd_render "$@" ;;
   -h | --help | help | '') usage ;;
-  *) die 2 "unknown verb '$1' (resolve, explain, version, layer-list, handover, forget, handovers, refresh, remember)" ;;
+  *) die 2 "unknown verb '$1' (resolve, explain, version, layer-list, handover, forget, handovers, refresh, remember, render)" ;;
 esac

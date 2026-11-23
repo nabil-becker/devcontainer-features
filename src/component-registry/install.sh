@@ -1,20 +1,32 @@
 #!/usr/bin/env bash
 # Installs the component-registry Feature: the dcf-registry command (resolve, explain, handover,
-# refresh, remember), the registry sources this release ships (registry-source-git,
+# refresh, remember, render), minijinja-cli (1.11.0, ADR-0077: the template engine that renders each
+# vendor's files, one pinned static binary checked against its sha256), the registry sources this release ships (registry-source-git,
 # registry-source-path, registry-source-http, which reads dcf-curl.sh from the share folder, and
 # registry-source-db, 1.5.0, which needs sqlite3 or psql in the image for its driver), the built-in base layer with the utility skills, the postStartCommand
 # component-registry-setup, the dcf-persist helper and the Feature Taskfile.
 # Feature options arrive as upper-cased environment variables (see devcontainer-feature.json):
 # REGISTRYFILE, INSTALLTASKFILE.
 #
-# Nothing is downloaded at build, so there is nothing to verify (the http source fetches layers at
-# run time through dcf_curl): the scripts are bash, awk and sed (NFR-7);
+# One download at build (1.11.0): minijinja-cli, pinned below with its sha256 per architecture and
+# fetched through dcf_curl (ADR-0034); a mismatch stops the build. The http source fetches layers at
+# run time through dcf_curl. The scripts are bash, awk and sed (NFR-7);
 # the git source needs git and the http source curl, which this Feature does not install (the git Feature or the image
 # brings it; without it a git source fails with a plain line and the other layers still resolve).
 #
 # Never writes into /var/lib/devcontainer-features/component-registry: the volume is not mounted
 # at image build; component-registry-setup makes it usable, owner-only, at start.
 set -euo pipefail
+
+# shellcheck source=src/component-registry/dcf-curl.sh
+. "$(cd "$(dirname "$0")" && pwd)/dcf-curl.sh"
+
+# minijinja-cli (ADR-0077): the version and the sha256 of each static (musl) build, from the
+# publisher's .sha256 files of that release, checked again when the pin moves. Not an option: the
+# base templates are tested against this version.
+MINIJINJA_VERSION=3.1.0
+MINIJINJA_SHA256_X86_64=94b815a17dc3b7a4e11e348c62a916c85fc1728bc7a9b731edd905af2a818324
+MINIJINJA_SHA256_AARCH64=c4c297180bc73ccac86afd63f39de9b06a89d6bb53527b515eec0f48d52a2580
 
 REGISTRYFILE="${REGISTRYFILE:-.devcontainer/registry.yml}"
 
@@ -48,8 +60,47 @@ install -m 0644 "$feature_dir/dcf-curl.sh" "$share/dcf-curl.sh"
 install -m 0755 "$feature_dir/component-registry-setup.sh" /usr/local/bin/component-registry-setup
 install -m 0755 "$feature_dir/dcf-persist.sh" /usr/local/bin/dcf-persist
 
+# minijinja-cli (1.11.0, ADR-0077): renders the resolved view through the winning templates at each
+# hand-over. A static build for x86_64 and aarch64; on another architecture nothing is installed
+# and a hand-over to a CLI with templates fails with one line (its CLI keeps the skills it has).
+case "$(uname -m)" in
+  x86_64 | amd64) mj_arch=x86_64 mj_sum="$MINIJINJA_SHA256_X86_64" ;;
+  aarch64 | arm64) mj_arch=aarch64 mj_sum="$MINIJINJA_SHA256_AARCH64" ;;
+  *) mj_arch='' mj_sum='' ;;
+esac
+if [ -z "$mj_arch" ]; then
+  echo "component-registry: no static minijinja-cli build for $(uname -m); a hand-over to a CLI with templates will fail until one is on PATH" >&2
+elif [ -x /usr/local/bin/minijinja-cli ] && [ "$(/usr/local/bin/minijinja-cli --version 2>/dev/null)" = "minijinja-cli $MINIJINJA_VERSION" ]; then
+  echo "component-registry: minijinja-cli $MINIJINJA_VERSION already installed"
+else
+  missing=()
+  command -v curl >/dev/null 2>&1 || missing+=(curl ca-certificates)
+  command -v xz >/dev/null 2>&1 || missing+=(xz-utils)
+  command -v tar >/dev/null 2>&1 || missing+=(tar)
+  if [ "${#missing[@]}" -gt 0 ]; then
+    if command -v apt-get >/dev/null 2>&1; then
+      apt-get update -qq
+      apt-get install -y -qq --no-install-recommends "${missing[@]}"
+      rm -rf /var/lib/apt/lists/*
+    else
+      echo "component-registry: missing ${missing[*]} and no apt-get to install them." >&2
+      exit 1
+    fi
+  fi
+  mj_asset="minijinja-cli-${mj_arch}-unknown-linux-musl"
+  mj_tmp="$(mktemp -d)"
+  trap 'rm -rf "$mj_tmp"' EXIT
+  echo "component-registry: downloading minijinja-cli ${MINIJINJA_VERSION} (${mj_asset})..."
+  dcf_curl -fsSL -o "$mj_tmp/$mj_asset.tar.xz" "https://github.com/mitsuhiko/minijinja/releases/download/${MINIJINJA_VERSION}/${mj_asset}.tar.xz"
+  echo "$mj_sum  $mj_tmp/$mj_asset.tar.xz" | sha256sum -c -
+  tar -xJf "$mj_tmp/$mj_asset.tar.xz" -C "$mj_tmp"
+  install -m 0755 "$mj_tmp/$mj_asset/minijinja-cli" /usr/local/bin/minijinja-cli
+  /usr/local/bin/minijinja-cli --version
+fi
+
 # The built-in base layer (1.1.0): the utility skills /registry-refresh, /registry-explain and
-# /registry-remember, read by dcf-registry resolve as layer rank 0 (id component-registry, at /).
+# /registry-remember, read by dcf-registry resolve as layer rank 0 (id component-registry, at /);
+# and (1.11.0, ADR-0077) the base templates, templates/<vendor>/<file>.j2.
 rm -rf "$share/base"
 cp -R "$feature_dir/base" "$share/base"
 find "$share/base" -type d -exec chmod 0755 {} +
