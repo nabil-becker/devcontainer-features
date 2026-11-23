@@ -1458,3 +1458,7 @@ What slice N4 found where a ruling could not be built as written, and the Operat
   carrying the hash of the one before (a cut or an edit shows; a whole rewrite would not); the approval and
   denial are also signed `notice` packets in the conversations they concern. Slice N5 adds a signed audit
   register type and replays the log into it. Rejected: the signed register in N4 (B: delays the slice).
+- **HC4, how long an approval lasts: option A, ruled 2026-11-23.** A person approves a client (its token) once;
+  the approval lasts `approval_ttl` (30 days at public), across every conversation the client starts, until it
+  expires or the token is revoked. Rejected: an approval per conversation (B: a person in every new
+  conversation).
