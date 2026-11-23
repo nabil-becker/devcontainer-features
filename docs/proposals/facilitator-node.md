@@ -1480,8 +1480,13 @@ What slice N4 found where a ruling could not be built as written, and the Operat
   a file. A short test proves an agent-signed certificate is accepted by SLIM before it is built.
 - **K4, the built-in root: option A.** The hub (or its agent) generates the root, and
   `facilitator node issuer export-root` lets a person take it offline later. Rejected: always bringing your own (B).
-- **K2, when: straight after N5a.** The slice "hub on Kubernetes" (backlog `hub-on-kubernetes`): **a Helm chart**
-  (the Operator, 2026-11-23: a chart, not a kustomize base): a StatefulSet with a volume, `mesh.yml` from the
-  chart's values, a Service for SLIM and the join endpoint, the issuer tier chosen in values; a values file
-  for Rancher Desktop, the `openbao:pki:*` tasks for when OpenBao is used, and a test in a throwaway cluster.
+- **K2, when: straight after N5a.** The slice "hub on Kubernetes" (backlog `hub-on-kubernetes`): **a kustomize base
+  now, a Helm chart later** (the Operator, 2026-11-23: a chart was asked for, then deferred with the `helm`
+  Feature it needs; option A: the slice goes ahead as kustomize, with the `kustomize` and `kubeconform`
+  Features): a StatefulSet with a volume, `mesh.yml` in a ConfigMap, a Service for SLIM and the join endpoint,
+  the issuer tier chosen in the config; an overlay for Rancher Desktop, the `openbao:pki:*` tasks for when OpenBao is used, and a test in a throwaway cluster.
   K1 (where the hub's OpenBao comes from) is moot under K3: the built-in issuer by default.
+- **The ssh-agent test (2026-11-23, [spike](../spikes/2026-11-23-ssh-agent-ca.md)):** an ed25519 key in an
+  ssh-agent signs the certificate's bytes as they are, and SLIM accepts the result; RSA and ECDSA keys hash
+  first and FIDO keys cannot sign. It also found that SLIM refuses every certificate from a CA carrying a URI
+  name constraint, so the built-in issuer keeps only the DNS constraint (lock two still checks the domain).
