@@ -1415,3 +1415,12 @@ What slice N3 found where a ruling could not be built as written, and the Operat
   5353 with iptables, `external` when a person firewalls it); a hub then opens OCI and libp2p, a spoke syncs the
   hub's records by registry. An upstream issue asks for an mDNS switch (and notes the anonymous OCI push).
   Rejected: peering on by default (B). It amends ADR-0071 decision 4.
+- **H3, binding agents' keys to their node: option A, ruled 2026-11-23.** OpenSSH cannot export an ed25519 key
+  to PKCS8, so the node's certificate key and the packet keys stay separate (section 5.2's fallback). Each node
+  signs a card with its certificate key: its certificate, its facilitator key and the keys of the participants it
+  exposes; the hub passes every admitted card on in the roster. Lock two takes a packet's SPIFFE ID
+  (`spiffe://<domain>/node/<id>/agent/<handle>`) from its signer's key looked up in the admitted cards. Agents get
+  no certificates of their own; revoking a node cuts off all its agents. Rejected: a certificate per agent (B:
+  more issuing and renewing, and SLIM checks only the node's certificate). Per-agent identity comes with AGNTCY
+  Identity (slice N5). It refines ADR-0069 decision 5; the node's certificate key is a file on every node
+  (SLIM reads it from a file), which widens ADR-0069 decision 4.
