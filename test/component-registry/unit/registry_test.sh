@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Docker-free tests of the component-registry Feature (src/component-registry): the layer list
 # (the YAML subset, flow maps, unknown keys refused with file:line, git and path sources checked),
-# COMPONENT_REGISTRY_WHOAMI (required, with how to set it; .env; --as), the .reg grammar and the
+# COMPONENT_REGISTRY_WHOAMI (required, with how to set it; .env; --as), the .layer grammar and the
 # match rule on fixture layers (the proposal's worked example of section 3.3 to the letter; scope
 # and component, relative paths joined to at, * and **, specificity and its tie-breaks, ! exclusion
 # sections, lock, @replace and a lock surviving it, a type clash, list !item and ref: items, @file,
@@ -70,7 +70,7 @@ W=/Corp/MyDepartment/team/me
 # ------------------------------------------------------------ worked example ----
 new_case worked
 l1="$(layer corp)"; l2="$(layer dept)"; l3="$(layer mine)"
-cat > "$l1/corp.reg" <<'EOF'
+cat > "$l1/corp.layer" <<'EOF'
 ; layer 1 corp-base (at /Corp)
 [skills/architecture-artifacts]
 body:text = @file architecture-artifacts/SKILL.md
@@ -79,7 +79,7 @@ lock classification
 EOF
 mkdir -p "$l1/architecture-artifacts"
 printf '%s\n' '# Architecture artifacts' '' 'Produce the artifacts.' > "$l1/architecture-artifacts/SKILL.md"
-cat > "$l2/dept.reg" <<'EOF'
+cat > "$l2/dept.layer" <<'EOF'
 ; layer 2 dept (at /Corp/MyDepartment)
 [skills/architecture-artifacts]
 body:text = Draw C4, not UML.
@@ -87,7 +87,7 @@ terms:list = C4, ADR, SLA
 [/Corp/Finance/skills/architecture-artifacts]
 body:text = Use the finance templates.
 EOF
-cat > "$l3/mine.reg" <<'EOF'
+cat > "$l3/mine.layer" <<'EOF'
 ; layer 3 mine (at /Corp/MyDepartment/team/me)
 [/**/skills/architecture-artifacts]
 body:text = Use colour-blind-safe colours.
@@ -115,7 +115,7 @@ layers:
 EOF
 out="$(dcf-registry resolve --as "$W" 2>&1)"; rc=$?
 check "worked example: resolve exits 0" 0 "$rc"
-contains "worked example: resolve reports the locked line" "$out" "skipped mine 1:mine.reg:5 skills/architecture-artifacts:classification: locked by corp-base at 1:corp.reg:5"
+contains "worked example: resolve reports the locked line" "$out" "skipped mine 1:mine.layer:5 skills/architecture-artifacts:classification: locked by corp-base at 1:corp.layer:5"
 expected="$(printf '%s\n' '## Layer corp-base' '' '# Architecture artifacts' '' 'Produce the artifacts.' '' '## Layer dept' '' 'Draw C4, not UML.' '' '## Layer mine' '' 'Use colour-blind-safe colours.')"
 check "worked example: body is the corp SKILL.md, then dept's line, then mine's, under layer headings" "$expected" "$(cat "$(V)/skills/architecture-artifacts/SKILL.md")"
 lacks "worked example: the finance line does not apply" "$(cat "$(V)/skills/architecture-artifacts/SKILL.md")" "finance"
@@ -123,7 +123,7 @@ check "worked example: terms is C4, SLA" "$(printf 'C4\nSLA')" "$(val skills/arc
 check "worked example: classification stays internal (locked by layer 1)" internal "$(val skills/architecture-artifacts classification)"
 ex="$(dcf-registry explain skills/architecture-artifacts)"
 contains "worked example: explain shows layer 3's line skipped by the lock" "$ex" "skipped      mine@tree-"
-contains "worked example: explain names the lock that skipped it" "$ex" "classification:value = public  (locked by corp-base at 1:corp.reg:5)"
+contains "worked example: explain names the lock that skipped it" "$ex" "classification:value = public  (locked by corp-base at 1:corp.layer:5)"
 contains "worked example: explain shows the finance line as not applying" "$ex" "not-applying dept@"
 contains "worked example: explain shows each layer's version" "$ex" "1 corp-base at /Corp, source 1 (path): fetched, tree-"
 contains "explain with :key shows that key only" "$(dcf-registry explain /Corp/skills/architecture-artifacts:terms)" "terms:list = C4, SLA"
@@ -197,7 +197,7 @@ check "without dept, terms comes from mine only (an empty list)" "" "$(val skill
 
 # -------------------------------------------------------- who you are ----
 new_case whoami
-l="$(layer a)"; printf '[skills/x]\ncolor:value = blue\n' > "$l/a.reg"
+l="$(layer a)"; printf '[skills/x]\ncolor:value = blue\n' > "$l/a.layer"
 path_list "a:/Corp:$l"
 out="$(dcf-registry resolve 2>&1)"; rc=$?
 check "no COMPONENT_REGISTRY_WHOAMI: exit 2" 2 "$rc"
@@ -220,7 +220,7 @@ contains "explain for another path says to resolve first" "$out" "run dcf-regist
 
 # ------------------------------------------------------- the layer list ----
 new_case list
-l="$(layer a)"; printf '[skills/x]\ncolor:value = blue\n' > "$l/a.reg"
+l="$(layer a)"; printf '[skills/x]\ncolor:value = blue\n' > "$l/a.layer"
 bad() { # <name> <expected text> <yaml>
   printf '%s\n' "$3" > .devcontainer/registry.yml
   out="$(dcf-registry resolve --as /Corp 2>&1)"; rc=$?
@@ -258,7 +258,7 @@ rm .devcontainer/.env
 new_case merge
 l1="$(layer one)"; l2="$(layer two)"
 path_list "one:/Corp:$l1" "two:/Corp/MyDepartment:$l2"
-cat > "$l1/one.reg" <<'EOF'
+cat > "$l1/one.layer" <<'EOF'
 ; types, locks, permissions, files
 [skills/x]
 color:value = blue
@@ -277,7 +277,7 @@ lock keep
 z:value = 1
 EOF
 mkdir -p "$l1/x-files"; echo base-a > "$l1/x-files/a.md"; echo base-b > "$l1/x-files/b.md"
-cat > "$l2/two.reg" <<'EOF'
+cat > "$l2/two.layer" <<'EOF'
 [skills/x]
 color:list = red
 size:list = l, !s
@@ -299,12 +299,12 @@ key:ref = skills/x:color
 nokey:ref = skills/x:nothere
 EOF
 mkdir -p "$l2/x-files"; echo dept-b > "$l2/x-files/b.md"
-printf '[skills/v]\nv:value = 1\n[!/Corp/**]\n' > "$l2/y-excl.reg"
-printf 'not a line\n[skills/q\nk:number = 1\n[/Corp/prompts/helper]\nmodel:value = big\n' > "$l2/z-broken.reg"
+printf '[skills/v]\nv:value = 1\n[!/Corp/**]\n' > "$l2/y-excl.layer"
+printf 'not a line\n[skills/q\nk:number = 1\n[/Corp/prompts/helper]\nmodel:value = big\n' > "$l2/z-broken.layer"
 out="$(dcf-registry resolve --as "$W" 2>&1)"; rc=$?
 check "merge fixtures resolve (content never fails a resolve)" 0 "$rc"
 check "type clash: the lowest layer's type wins" blue "$(val skills/x color)"
-contains "type clash: reported by resolve" "$out" "skills/x:color: type clash: color is value, fixed by one at 1:one.reg:3"
+contains "type clash: reported by resolve" "$out" "skills/x:color: type clash: color is value, fixed by one at 1:one.layer:3"
 contains "type clash: shown by explain" "$(dcf-registry explain skills/x:color)" "skipped      two@"
 check "list: !item removes, items combined" "$(printf 'm\nl')" "$(val skills/x size)"
 check "a permission key comes from the lowest layer only" Read "$(val skills/x allowed-tools)"
@@ -317,14 +317,14 @@ check "files: the weaker layer's other files stay" base-a "$(cat "$(V)/skills/x/
 check "@replace drops the lower layer's lines" "" "$(val skills/y a)"
 check "@replace keeps its own lines" 3 "$(val skills/y c)"
 check "a locked key survives a higher @replace" locked "$(val skills/y keep)"
-contains "@replace: explain shows the dropped lines" "$(dcf-registry explain skills/y)" "dropped by @replace in two at 1:two.reg:"
+contains "@replace: explain shows the dropped lines" "$(dcf-registry explain skills/y)" "dropped by @replace in two at 1:two.layer:"
 check "! exclusion section: the sections above it in the file no longer apply" 1 "$(val skills/z z)"
 contains "! exclusion section: explain says what excluded the line" "$(dcf-registry explain skills/z)" "excluded by [!/Corp/MyDepartment/**/skills/z]"
 check "an exclusion without a component excludes every section above it in its file" "" "$(val skills/v v)"
 check "! exclusion section: it excludes only the component it names" blue "$(val skills/x color)"
-contains "an unreadable line is reported with its place" "$out" "skipped two 1:z-broken.reg:1: not a section"
+contains "an unreadable line is reported with its place" "$out" "skipped two 1:z-broken.layer:1: not a section"
 contains "an unknown type is reported" "$out" "type 'number' is none of value, list, text, ref"
-contains "a bad section header is reported" "$out" "1:z-broken.reg:2: a section header needs a closing ]"
+contains "a bad section header is reported" "$out" "1:z-broken.layer:2: a section header needs a closing ]"
 contains "a kind not in this release is reported" "$out" "kind prompts is not in this release"
 check "a kind not in this release is not resolved" no "$([ -e "$(V)/prompts" ] && echo yes || echo no)"
 check "ref: the strongest line's path" /skills/x "$(val skills/w w)"
@@ -347,7 +347,7 @@ check "explain of a component not in the view: exit 1" 1 "$rc"
 # specificity inside one layer: the deeper match wins, then fewer wildcards, then the later line
 new_case spec
 l="$(layer a)"; path_list "a:/:$l"
-cat > "$l/a.reg" <<'EOF'
+cat > "$l/a.layer" <<'EOF'
 [/Corp/MyDepartment/skills/s]
 depth:value = shallow
 [/Corp/*/team/me/skills/s]
@@ -374,13 +374,13 @@ check "who you are selects lines: the team lines do not apply to /Corp/Finance" 
 
 # ------------------------------------------------------------- sources ----
 new_case required
-l="$(layer present)"; printf '[skills/x]\ncolor:value = blue\n' > "$l/a.reg"
+l="$(layer present)"; printf '[skills/x]\ncolor:value = blue\n' > "$l/a.layer"
 printf 'layers:\n  - id: corp\n    at: /Corp\n    required: true\n    sources:\n      - { kind: path, path: %s/nowhere }\n  - id: b\n    at: /Corp\n    sources:\n      - { kind: path, path: %s }\n' "$C/layers" "$l" > .devcontainer/registry.yml
 out="$(dcf-registry resolve --as /Corp 2>&1)"; rc=$?
 check "a required layer never fetched: exit 1" 1 "$rc"
 contains "a required layer never fetched: said" "$out" "layer corp source 1 (path) is required and has never been fetched"
 check "a required layer never fetched: no view is made" no "$([ -e "$(V)" ] && echo yes || echo no)"
-printf 'layers:\n  - id: corp\n    at: /Corp\n    sources:\n      - { kind: http, url: "https://registry.example.invalid/l.reg", required: true }\n' > .devcontainer/registry.yml
+printf 'layers:\n  - id: corp\n    at: /Corp\n    sources:\n      - { kind: http, url: "https://registry.example.invalid/l.layer", required: true }\n' > .devcontainer/registry.yml
 # A devhost with the Feature installed has a registry-source-http on PATH; leave out
 # every PATH folder that holds one, so this case does not depend on the machine.
 nohttp=""; IFS=: read -ra dirs <<< "$PATH"
@@ -390,17 +390,17 @@ check "a required http source with no registry-source-http on PATH: exit 1" 1 "$
 contains "an http source with no command says so" "$out" "no registry-source-http on PATH"
 
 new_case path
-l="$(layer a)"; printf '[skills/x]\n' > "$l/a.reg"
+l="$(layer a)"; printf '[skills/x]\n' > "$l/a.layer"
 v1="$(registry-source-path version a "path=$l")"
 check "path source: version is a tree fingerprint" tree "${v1%%-*}"
-sleep 0.01; echo more >> "$l/a.reg"
+sleep 0.01; echo more >> "$l/a.layer"
 check "path source: a changed file changes the version" changed "$([ "$(registry-source-path version a "path=$l")" != "$v1" ] && echo changed)"
 registry-source-path version a "path=$C/none" >/dev/null 2>&1; check "path source: a missing folder is exit 1" 1 $?
 registry-source-path version a "url=x" >/dev/null 2>&1; check "path source: an unknown setting is exit 2" 2 $?
 registry-source-path frobnicate >/dev/null 2>&1; check "path source: an unknown verb is exit 3" 3 $?
 check "path source: supports lists its verbs" "fetch version supports" "$(registry-source-path supports | tr '\n' ' ' | sed 's/ $//')"
 printf 'layers:\n  - id: a\n    at: /Corp\n    sources:\n      - { kind: path, path: rel-layer }\n' > .devcontainer/registry.yml
-mkdir rel-layer; printf '[skills/r]\nk:value = relative\n' > rel-layer/r.reg
+mkdir rel-layer; printf '[skills/r]\nk:value = relative\n' > rel-layer/r.layer
 mkdir -p sub/dir; (cd sub/dir && dcf-registry resolve --as /Corp >/dev/null 2>&1)
 check "path source: a relative path is the repository's, from any folder in it" relative "$(val skills/r k)"
 
@@ -413,9 +413,9 @@ echo s3cret
 EOF
 chmod +x "$bin/dcf-secret"; export DCF_SECRET_CALLS="$C/secret-calls"
 g="$C/remote"; git init -q "$g"
-printf '[skills/g]\nv:value = one\n' > "$g/g.reg"
+printf '[skills/g]\nv:value = one\n' > "$g/g.layer"
 git -C "$g" add -A; git -C "$g" commit -qm one; git -C "$g" tag -a v1 -m v1; c1="$(git -C "$g" rev-parse HEAD)"
-printf '[skills/g]\nv:value = two\n' > "$g/g.reg"; git -C "$g" commit -qam two; c2="$(git -C "$g" rev-parse HEAD)"
+printf '[skills/g]\nv:value = two\n' > "$g/g.layer"; git -C "$g" commit -qam two; c2="$(git -C "$g" rev-parse HEAD)"
 check "git source: version of a branch is its commit" "$c2" "$(registry-source-git version g "url=$g" branch=main)"
 check "git source: version of an annotated tag is the tagged commit" "$c1" "$(registry-source-git version g "url=$g" tag=v1)"
 registry-source-git version g "url=$g" tag=v9 >/dev/null 2>&1; check "git source: an unknown tag is exit 1" 1 $?
@@ -424,7 +424,7 @@ out="$(registry-source-git version g "url=$g" branch=main auth.secret=registry/b
 check "git source: a secret dcf-secret cannot read is exit 1" 1 "$rc"
 contains "git source: a secret dcf-secret cannot read is named" "$out" "dcf-secret could not read registry/bad"
 mkdir "$C/dest"; registry-source-git fetch g "$C/dest" "url=$g" "commit=$c1" >/dev/null 2>&1
-check "git source: fetch at a commit" "v:value = one" "$(sed -n 2p "$C/dest/g.reg")"
+check "git source: fetch at a commit" "v:value = one" "$(sed -n 2p "$C/dest/g.layer")"
 check "git source: no .git in the layer copy" no "$([ -e "$C/dest/.git" ] && echo yes || echo no)"
 printf 'layers:\n  - id: g\n    at: /Corp\n    sources:\n      - { kind: git, url: "%s", tag: v1 }\n  - id: h\n    at: /Corp\n    sources:\n      - kind: git\n        url: "%s"\n        branch: main\n        auth: { type: basic, secret: registry/none }\n' "$g" "$g" > .devcontainer/registry.yml
 out="$(dcf-registry resolve --as /Corp 2>&1)"; rc=$?
@@ -434,7 +434,7 @@ check "git source: the higher layer (branch main) wins" two "$(val skills/g v)"
 contains "git source: the auth secret is read with dcf-secret" "$(cat "$DCF_SECRET_CALLS")" "get registry/none"
 lacks "git source: the secret never reaches the output" "$out" s3cret
 contains "git source: explain shows the commit each layer was read at" "$(dcf-registry explain skills/g)" "g@$c1"
-printf '[skills/g]\nv:value = three\n' > "$g/g.reg"; git -C "$g" commit -qam three
+printf '[skills/g]\nv:value = three\n' > "$g/g.layer"; git -C "$g" commit -qam three
 out="$(dcf-registry resolve --as /Corp 2>&1)"
 contains "git source: a tag that did not move is unchanged" "$out" "layer g source 1 (git): unchanged at $c1"
 check "git source: a branch that moved is fetched again" three "$(val skills/g v)"
@@ -463,7 +463,7 @@ chmod 755 "$COMPONENT_REGISTRY_STATE_DIR"; component-registry-setup >/dev/null 2
 check "setup repairs a widened mode" 700 "$(stat -c %a "$COMPONENT_REGISTRY_STATE_DIR")"
 
 if command -v task >/dev/null 2>&1; then
-  l="$(layer a)"; printf '[skills/t]\nk:value = from-task\n' > "$l/a.reg"; path_list "a:/Corp:$l"
+  l="$(layer a)"; printf '[skills/t]\nk:value = from-task\n' > "$l/a.layer"; path_list "a:/Corp:$l"
   out="$(task -t "$src/taskfile.yml" resolve COMPONENT_REGISTRY_WHOAMI=/Corp/me 2>&1)"; rc=$?
   check "task resolve with the who-you-are path as a task variable" 0 "$rc"
   contains "task resolve: the task variable is named as the source" "$out" "from the task variable COMPONENT_REGISTRY_WHOAMI"
@@ -477,7 +477,7 @@ fi
 # The built-in base layer: the Feature's utility skills, from COMPONENT_REGISTRY_SHARE_DIR/base.
 base_share="$T/share-base"; mkdir -p "$base_share"; cp -R "$src/base" "$base_share/base"; echo 1.1.0 > "$base_share/version"
 new_case base
-l="$(layer mine)"; printf '[skills/demo]\nbody:text = mine\n' > "$l/a.reg"
+l="$(layer mine)"; printf '[skills/demo]\nbody:text = mine\n' > "$l/a.layer"
 printf 'layers:\n  - id: mine\n    at: /Corp/me\n    writable: true\n    sources:\n      - { kind: path, path: "%s" }\n' "$l" > .devcontainer/registry.yml
 out="$(COMPONENT_REGISTRY_SHARE_DIR="$base_share" dcf-registry resolve --as /Corp/me 2>&1)"
 contains "base layer: the three utility skills and the layer's skill resolved" "$out" "resolved 4 component(s)"
@@ -486,8 +486,8 @@ for s in registry-refresh registry-explain registry-remember; do
 done
 out="$(COMPONENT_REGISTRY_SHARE_DIR="$base_share" dcf-registry explain skills/registry-refresh 2>&1)"
 contains "base layer: explain lists it as rank 0, builtin" "$out" "0 component-registry at /, source 1 (builtin): builtin, 1.1.0"
-contains "base layer: explain names it for each line" "$out" "used         component-registry@1.1.0 1:component-registry.reg:"
-printf '[skills/registry-refresh]\nbody:text = also say hello\n' >> "$l/a.reg"
+contains "base layer: explain names it for each line" "$out" "used         component-registry@1.1.0 1:component-registry.layer:"
+printf '[skills/registry-refresh]\nbody:text = also say hello\n' >> "$l/a.layer"
 COMPONENT_REGISTRY_SHARE_DIR="$base_share" dcf-registry resolve --as /Corp/me >/dev/null 2>&1
 contains "base layer: a listed layer stacks on a utility skill" "$(cat "$(V)/skills/registry-refresh/SKILL.md")" "also say hello"
 check "base layer: absent (no base folder) adds nothing (the two skills the layer names)" 1 "$(COMPONENT_REGISTRY_SHARE_DIR="$T/none" dcf-registry resolve --as /Corp/me 2>&1 | grep -c "resolved 2 component")"
@@ -512,7 +512,7 @@ printf '#!/usr/bin/env bash\n[ "$1" = supports ] && { echo skills; exit 0; }\n[ 
 printf '#!/usr/bin/env bash\n[ "$1" = supports ] && { echo new; exit 0; }\necho "called $1" >> "%s/nosk-calls"\nexit 3\n' "$T" > "$abin/agent-adapter-noskills"
 chmod +x "$abin"/*
 new_case handover
-l="$(layer a)"; printf '[skills/one]\nbody:text = one\n[skills/two]\nbody:text = two\n' > "$l/a.reg"; path_list "a:/Corp:$l"
+l="$(layer a)"; printf '[skills/one]\nbody:text = one\n[skills/two]\nbody:text = two\n' > "$l/a.layer"; path_list "a:/Corp:$l"
 out="$(PATH="$abin:$PATH" dcf-registry handover takes 2>&1)"; rc=$?
 check "handover with no resolved view: exit 1" 1 "$rc"
 dcf-registry resolve --as /Corp/me >/dev/null 2>&1
@@ -545,7 +545,7 @@ contains "refresh: says a CLI without live reload needs a restart" "$out" "when 
 out="$(PATH="$abin:$PATH" dcf-registry refresh --as /Corp/other 2>&1)"
 check "refresh --as: resolves for that path" /Corp/other "$(cat "$(V)/whoami")"
 new_case refreshfail
-l="$(layer a)"; printf '[skills/one]\nbody:text = one\n' > "$l/a.reg"; path_list "a:/Corp:$l"
+l="$(layer a)"; printf '[skills/one]\nbody:text = one\n' > "$l/a.layer"; path_list "a:/Corp:$l"
 out="$(PATH="$abin:$PATH" dcf-registry refresh 2>&1)"; rc=$?
 check "refresh with no view and no who-you-are path: exit 2" 2 "$rc"
 contains "refresh failing: nothing handed over" "$out" "nothing was handed over"
@@ -561,7 +561,7 @@ RP="$rbin:$bin:/usr/bin:/bin"
 P() { printf '%s' "$COMPONENT_REGISTRY_STATE_DIR/paths/$1"; }
 new_case perpath
 l="$(layer a)"
-printf '[/**/skills/shared]\nbody:text = same\n[/Corp/x/skills/mine]\nbody:text = for x\n[/Corp/y/skills/mine]\nbody:text = for y\n' > "$l/a.reg"
+printf '[/**/skills/shared]\nbody:text = same\n[/Corp/x/skills/mine]\nbody:text = for x\n[/Corp/y/skills/mine]\nbody:text = for y\n' > "$l/a.layer"
 path_list "a:/Corp:$l"
 dcf-registry resolve --as /Corp/x >/dev/null 2>&1; dcf-registry resolve --as /Corp/y >/dev/null 2>&1
 check "per path: a view kept for /Corp/x" "for x" "$(tail -n 1 "$(P +Corp+x)/skills/mine/SKILL.md" 2>/dev/null)"
@@ -592,7 +592,7 @@ check "prune: a resolve keeps an unrecorded path's view" yes "$([ -f "$(P +Corp+
 check "prune: a recorded path's view stays" yes "$([ -f "$(P +Corp+x)/whoami" ] && echo yes || echo no)"
 check "prune: only views a pointer names stay (x, y, z)" 3 "$(find "$COMPONENT_REGISTRY_STATE_DIR/views" -mindepth 1 -maxdepth 1 | wc -l)"
 # refresh --session: the calling agent alone, for its own path
-printf '[/Corp/x/skills/mine]\nbody:text = for x, changed\n' > "$l/b.reg"
+printf '[/Corp/x/skills/mine]\nbody:text = for x, changed\n' > "$l/b.layer"
 printf 'ax\tsid-ax\trunning\t/fx\n' > "$T/rec-list"
 : > "$T/rec-log"
 out="$(PATH="$RP" dcf-registry refresh --session sid-ax 2>&1)"; rc=$?
@@ -652,7 +652,7 @@ contains "handovers --skills: the shared ones" "$out" "  shared (/shared): share
 # hand-over of that path gives it to the agent
 new_case perpathns
 ln="$(layer acme)"
-printf '[/Corp/x/skills/review]\nbody:text = acme for x\n[/Corp/y/skills/review]\nbody:text = acme for y\n' > "$ln/a.reg"
+printf '[/Corp/x/skills/review]\nbody:text = acme for x\n[/Corp/y/skills/review]\nbody:text = acme for y\n' > "$ln/a.layer"
 printf 'layers:\n  - id: acme\n    at: /Corp\n    namespace: acme\n    sources:\n      - { kind: path, path: "%s" }\n' "$ln" > .devcontainer/registry.yml
 dcf-registry resolve --as /Corp/x >/dev/null 2>&1; dcf-registry resolve --as /Corp/y >/dev/null 2>&1
 check "namespaced, per path: /Corp/x's view holds acme--review" "acme for x" "$(tail -n 1 "$(P +Corp+x)/skills/acme--review/SKILL.md" 2>/dev/null)"
@@ -661,7 +661,7 @@ out="$(PATH="$RP" dcf-registry handover rec nx /fx --as /Corp/x 2>&1)"
 contains "namespaced, per path: the hand-over names it by its folder name" "$out" "namespaced skills are handed over by their folder name"
 # the lock: two resolves for two paths at once both finish, each with its own view
 new_case perpathlock
-l="$(layer a)"; printf '[/**/skills/shared]\nbody:text = same\n' > "$l/a.reg"; path_list "a:/Corp:$l"
+l="$(layer a)"; printf '[/**/skills/shared]\nbody:text = same\n' > "$l/a.layer"; path_list "a:/Corp:$l"
 dcf-registry resolve --as /Corp/p >/dev/null 2>&1 & p1=$!
 dcf-registry resolve --as /Corp/q >/dev/null 2>&1 & p2=$!
 wait "$p1"; r1=$?; wait "$p2"; r2=$?
@@ -672,25 +672,25 @@ check "lock: the second path's view is there" yes "$([ -f "$(P +Corp+q)/whoami" 
 # remember
 new_case remember
 lm="$(layer mine)"; lb="$(layer base)"
-printf '[skills/demo]\nbody:text = base text\n' > "$lb/a.reg"
+printf '[skills/demo]\nbody:text = base text\n' > "$lb/a.layer"
 printf 'layers:\n  - id: base\n    at: /Corp\n    sources:\n      - { kind: path, path: "%s" }\n  - id: mine\n    at: /Corp/me\n    writable: true\n    sources:\n      - { kind: path, path: "%s" }\n' "$lb" "$lm" > .devcontainer/registry.yml
 dcf-registry resolve --as /Corp/me >/dev/null 2>&1
 out="$(PATH="$abin:$PATH" dcf-registry remember -- "I am colour-blind; use safe colours" 2>&1)"; rc=$?
 check "remember: exit 0" 0 "$rc"
-check "remember: appended to the writable layer's folder" "[skills/*]" "$(sed -n 2p "$lm/remembered.reg")"
-check "remember: the line as body:text" "body:text = I am colour-blind; use safe colours" "$(sed -n 3p "$lm/remembered.reg")"
+check "remember: appended to the writable layer's folder" "[skills/*]" "$(sed -n 2p "$lm/remembered.layer")"
+check "remember: the line as body:text" "body:text = I am colour-blind; use safe colours" "$(sed -n 3p "$lm/remembered.layer")"
 contains "remember: refreshed, the line is in the resolved skill" "$(cat "$(V)/skills/demo/SKILL.md")" "I am colour-blind; use safe colours"
 contains "remember: and handed over" "$out" "took component-registry"
 PATH="$abin:$PATH" dcf-registry remember --skill skills/demo -- "Only for demo" >/dev/null 2>&1
-check "remember --skill: that skill's section" "[skills/demo]" "$(grep -F '[skills/demo]' "$lm/remembered.reg")"
-check "remember: appends, never rewrites (two entries)" 2 "$(grep -c '^; remembered ' "$lm/remembered.reg")"
+check "remember --skill: that skill's section" "[skills/demo]" "$(grep -F '[skills/demo]' "$lm/remembered.layer")"
+check "remember: appends, never rewrites (two entries)" 2 "$(grep -c '^; remembered ' "$lm/remembered.layer")"
 contains "remember --skill: in the resolved skill" "$(cat "$(V)/skills/demo/SKILL.md")" "Only for demo"
-check "remember: the base layer is never written" "a.reg" "$(find "$lb" -mindepth 1 -printf '%f\n')"
-before="$(cat "$lm/remembered.reg")"
+check "remember: the base layer is never written" "a.layer" "$(find "$lb" -mindepth 1 -printf '%f\n')"
+before="$(cat "$lm/remembered.layer")"
 dcf-registry remember -- "" >/dev/null 2>&1; check "remember an empty line: exit 2" 2 $?
 dcf-registry remember -- "@file /etc/passwd" >/dev/null 2>&1; check "remember a line starting with @: exit 2" 2 $?
 dcf-registry remember --skill "../x" -- "y" >/dev/null 2>&1; check "remember with a bad skill name: exit 2" 2 $?
-check "refused lines: nothing written" "$before" "$(cat "$lm/remembered.reg")"
+check "refused lines: nothing written" "$before" "$(cat "$lm/remembered.layer")"
 sed -i 's/    writable: true//' .devcontainer/registry.yml
 out="$(dcf-registry remember -- "x" 2>&1)"; rc=$?
 check "remember with no writable layer: exit 1" 1 "$rc"
@@ -699,7 +699,7 @@ printf 'layers:\n  - id: base\n    at: /Corp\n    writable: true\n    sources:\n
 out="$(dcf-registry remember -- "x" 2>&1)"; rc=$?
 check "remember with two writable layers: exit 2" 2 "$rc"
 contains "remember with two writable layers: names them" "$out" "(base mine )"
-repo_g="$(layer gitrepo)"; git -C "$repo_g" init -q; printf '[skills/g]\nbody:text = g\n' > "$repo_g/g.reg"; git -C "$repo_g" add . && git -C "$repo_g" commit -qm g
+repo_g="$(layer gitrepo)"; git -C "$repo_g" init -q; printf '[skills/g]\nbody:text = g\n' > "$repo_g/g.layer"; git -C "$repo_g" add . && git -C "$repo_g" commit -qm g
 printf 'layers:\n  - id: g\n    at: /Corp\n    writable: true\n    sources:\n      - { kind: git, url: "%s", branch: main }\n' "$repo_g" > .devcontainer/registry.yml
 out="$(dcf-registry remember -- "x" 2>&1)"; rc=$?
 check "remember on a git layer: refused (exit 1)" 1 "$rc"
@@ -714,9 +714,9 @@ new_case heading
 ha="$(layer ha)"; hb="$(layer hb)"; hc="$(layer hc)"
 mkdir -p "$ha/s"
 printf '%s\n' '---' 'name: s' 'description: the base says' 'allowed-tools: Read' '---' '' '# S' '' 'Base text.' > "$ha/s/SKILL.md"
-printf '[skills/s]\nbody:text = @file s/SKILL.md\n' > "$ha/a.reg"
-printf '[skills/s]\nbody:text = Middle one.\nbody:text = Middle two.\ndescription:value = the middle says\n' > "$hb/b.reg"
-printf '[skills/s]\nbody:text = Top text.\ndescription:value = the top says\n' > "$hc/c.reg"
+printf '[skills/s]\nbody:text = @file s/SKILL.md\n' > "$ha/a.layer"
+printf '[skills/s]\nbody:text = Middle one.\nbody:text = Middle two.\ndescription:value = the middle says\n' > "$hb/b.layer"
+printf '[skills/s]\nbody:text = Top text.\ndescription:value = the top says\n' > "$hc/c.layer"
 printf 'layers:\n  - id: ha\n    at: /\n    heading: false\n    sources:\n      - { kind: path, path: "%s" }\n  - id: hb\n    at: /\n    heading: false\n    sources:\n      - { kind: path, path: "%s" }\n  - id: hc\n    at: /\n    sources:\n      - { kind: path, path: "%s" }\n' "$ha" "$hb" "$hc" > .devcontainer/registry.yml
 dcf-registry resolve --as /x >/dev/null 2>&1; check "heading: resolve succeeds" 0 $?
 expected="$(printf '%s\n' '---' 'name: s' 'description: the top says' 'allowed-tools: Read' '---' '' '# S' '' 'Base text.' '' 'Middle one.' '' 'Middle two.' '' '## Layer hc' '' 'Top text.')"
@@ -731,10 +731,10 @@ check "heading: a value other than true or false is refused (exit 2)" 2 "$rc"
 contains "heading: the refusal names the line" "$out" "heading is true or false"
 # Front matter values: added when the body has none, name too; a permission key stays the lowest's.
 nc_="$(layer nofm)"
-printf '[skills/t]\nbody:text = Just text.\nname:value = t\n' > "$nc_/a.reg"
+printf '[skills/t]\nbody:text = Just text.\nname:value = t\n' > "$nc_/a.layer"
 mkdir -p "$nc_/u"; printf '%s\n' '---' 'name: u' 'description: >' '  folded over' '  two lines' 'model: x' '---' '' 'U.' > "$nc_/u/SKILL.md"
-printf '[skills/u]\nbody:text = @file u/SKILL.md\ndescription:value = one line now\n' >> "$nc_/a.reg"
-printf '[skills/t]\ndescription:value = added on top\nname:value = t2\n[skills/s]\nallowed-tools:value = Bash\n' > "$hc/d.reg"
+printf '[skills/u]\nbody:text = @file u/SKILL.md\ndescription:value = one line now\n' >> "$nc_/a.layer"
+printf '[skills/t]\ndescription:value = added on top\nname:value = t2\n[skills/s]\nallowed-tools:value = Bash\n' > "$hc/d.layer"
 printf 'layers:\n  - id: ha\n    at: /\n    heading: false\n    sources:\n      - { kind: path, path: "%s" }\n  - id: nofm\n    at: /\n    heading: false\n    sources:\n      - { kind: path, path: "%s" }\n  - id: hc\n    at: /\n    heading: false\n    sources:\n      - { kind: path, path: "%s" }\n' "$ha" "$nc_" "$hc" > .devcontainer/registry.yml
 dcf-registry resolve --as /x >/dev/null 2>&1; check "front matter: resolve succeeds" 0 $?
 check "front matter: made for a body without one, name and description from the strongest values" "$(printf '%s\n' '---' 'name: t2' 'description: added on top' '---' '' 'Just text.')" "$(cat "$(V)/skills/t/SKILL.md")"
@@ -745,7 +745,7 @@ check "front matter: a multi-line description is replaced whole, the keys after 
 # ------------------------------------------- release 1.6.0: agent definitions ----
 new_case agents
 aa="$(layer corp)"; ab="$(layer dept)"; ac="$(layer mine)"
-cat > "$aa/a.reg" <<'EOF'
+cat > "$aa/a.layer" <<'EOF'
 [/Corp/agents/*]
 model:value = sonnet
 [agents/reviewer]
@@ -755,7 +755,7 @@ allowed-tools:list = Bash
 [skills/review]
 body:text = Review.
 EOF
-cat > "$ab/b.reg" <<'EOF'
+cat > "$ab/b.layer" <<'EOF'
 [agents/reviewer]
 model:value = opus
 args:list = --dangerously-skip-permissions
@@ -765,7 +765,7 @@ model:list = x
 skills:value = one
 color:value = red
 EOF
-cat > "$ac/c.reg" <<'EOF'
+cat > "$ac/c.layer" <<'EOF'
 [/**/agents/reviewer]
 skills:list = !ref:skills/diagrams, plan, ref:/Corp/skills/review:body, bad/one
 EOF
@@ -777,8 +777,8 @@ check "agents: skills combined, !item removed, a ref gives its skill name, one n
 check "agents: a pattern [agents/*] reaches an agent named only in COMPONENT_REGISTRY_AGENTS" sonnet "$(cat "$(V)/agents/host/model" 2>/dev/null)"
 check "agents: the requested names are kept in the view, a bad one left out" "$(printf '%s\n' host reviewer)" "$(cat "$(V)/agent-names")"
 contains "agents: a bad requested name is said" "$out" "'bad.name' is not an agent name"
-contains "agents: from.tsv names the layer and line of the model" "$(cat "$(V)/agents/reviewer/from.tsv")" "$(printf 'model\tdept\t1:b.reg:2')"
-contains "agents: from.tsv names every layer of the skills" "$(cat "$(V)/agents/reviewer/from.tsv")" "$(printf 'skills\tmine\t1:c.reg:2')"
+contains "agents: from.tsv names the layer and line of the model" "$(cat "$(V)/agents/reviewer/from.tsv")" "$(printf 'model\tdept\t1:b.layer:2')"
+contains "agents: from.tsv names every layer of the skills" "$(cat "$(V)/agents/reviewer/from.tsv")" "$(printf 'skills\tmine\t1:c.layer:2')"
 lacks "agents: from.tsv holds no skipped line" "$(cat "$(V)/agents/reviewer/from.tsv")" "kind"
 contains "agents: a field the list owns is skipped (kind)" "$out" "agents/reviewer:kind: the agents list owns kind; the registry never sets it"
 contains "agents: args is skipped as a possible widening" "$out" "agents/reviewer:args: the agents list owns args; the registry never sets it for an agent; it could widen a permission"
@@ -810,7 +810,7 @@ check "agents: another path gets only the lines that apply to it (corp's pattern
 # model at the same layer and path, and loses to a higher layer's or a more specific path's plain one
 new_case agentcli
 ma="$(layer corp)"; mb="$(layer dept)"
-cat > "$ma/a.reg" <<'EOF'
+cat > "$ma/a.layer" <<'EOF'
 [/Corp/agents/*]
 model:value = sonnet
 model.copilot:value = gpt-5.4
@@ -821,7 +821,7 @@ model.claude:value = haiku
 model.claude:value = opus
 lock model
 EOF
-cat > "$mb/b.reg" <<'EOF'
+cat > "$mb/b.layer" <<'EOF'
 [/Corp/agents/ops]
 model:value = big-dept
 [/Corp/agents/rev]
@@ -836,14 +836,14 @@ check "model.<cli>: a CLI with no suffixed key gets the plain model" sonnet "$(c
 check "model.<cli>: an agent with no CLI named gets the plain model" sonnet "$(cat "$(V)/agents/bare/model" 2>/dev/null)"
 check "model.<cli>: a higher layer's plain model beats a lower layer's suffixed one" big-dept "$(cat "$(V)/agents/ops/model" 2>/dev/null)"
 check "model.<cli>: the view records the CLI it resolved for" copilot "$(cat "$(V)/agents/pair/cli" 2>/dev/null)"
-contains "model.<cli>: from.tsv names the key the model came from" "$(cat "$(V)/agents/pair/from.tsv")" "$(printf 'model\tcorp\t1:a.reg:3\tmodel.copilot')"
-contains "model.<cli>: from.tsv names the plain key when it wins" "$(cat "$(V)/agents/ops/from.tsv")" "$(printf 'model\tdept\t1:b.reg:2\tmodel')"
+contains "model.<cli>: from.tsv names the key the model came from" "$(cat "$(V)/agents/pair/from.tsv")" "$(printf 'model\tcorp\t1:a.layer:3\tmodel.copilot')"
+contains "model.<cli>: from.tsv names the plain key when it wins" "$(cat "$(V)/agents/ops/from.tsv")" "$(printf 'model\tdept\t1:b.layer:2\tmodel')"
 check "model.<cli>: a lock on model holds model.<cli> in a higher layer" opus "$(cat "$(V)/agents/rev/model" 2>/dev/null)"
 contains "model.<cli>: the locked line is reported" "$out" "a lock on model holds every model.<cli>"
-contains "model.<cli>: explain shows the effective model, its key and layer" "$(dcf-registry explain agents/pair)" "Effective model for its CLI, copilot: gpt-5.4 (model.copilot from corp at 1:a.reg:3)"
+contains "model.<cli>: explain shows the effective model, its key and layer" "$(dcf-registry explain agents/pair)" "Effective model for its CLI, copilot: gpt-5.4 (model.copilot from corp at 1:a.layer:3)"
 lacks "model.<cli>: an unknown suffix is no problem" "$out" "nosuchcli"
-: > "$mb/b.reg"
-cat > "$ma/a.reg" <<'EOF'
+: > "$mb/b.layer"
+cat > "$ma/a.layer" <<'EOF'
 [/Corp/agents/*]
 model.copilot:value = gpt-5.4
 [/Corp/MyDepartment/agents/*]
@@ -855,7 +855,7 @@ check "model.<cli>: a more specific path's plain model beats a less specific suf
 # ------------------------------------------------- release 1.7.0: layer namespaces ----
 new_case namespace
 nm_="$(layer mine)"; nc_="$(layer community)"; na_="$(layer adapt)"; nb_="$(layer beta)"; nt_="$(layer top)"
-cat > "$nm_/m.reg" <<'EOF'
+cat > "$nm_/m.layer" <<'EOF'
 [skills/arch-review]
 body:text = Mine.
 [skills/*]
@@ -872,7 +872,7 @@ skills:list = acme:arch-review, plain, pub:helper
 EOF
 mkdir -p "$nc_/ar"
 printf '%s\n' '---' 'name: arch-review' 'description: community review' '---' '' 'Community text.' > "$nc_/ar/SKILL.md"
-cat > "$nc_/c.reg" <<'EOF'
+cat > "$nc_/c.layer" <<'EOF'
 [skills/*]
 color:value = community
 [skills/arch-review]
@@ -893,7 +893,7 @@ skills:list = arch-review, other:thing
 cross:ref = skills/beta:arch-review
 dep:ref = skills/lint-tools:lint
 EOF
-cat > "$na_/a.reg" <<'EOF'
+cat > "$na_/a.layer" <<'EOF'
 [skills/arch-review]
 body:text = Adapted.
 style:value = loose
@@ -904,8 +904,8 @@ body:text = Replaced helper.
 [skills/arch-review]
 al:ref = skills/pub:arch-review
 EOF
-printf '[skills/arch-review]\nbody:text = Beta.\n' > "$nb_/b.reg"
-printf '[skills/arch-review]\nbody:text = Top.\n' > "$nt_/t.reg"
+printf '[skills/arch-review]\nbody:text = Beta.\n' > "$nb_/b.layer"
+printf '[skills/arch-review]\nbody:text = Top.\n' > "$nt_/t.layer"
 cat > .devcontainer/registry.yml <<EOF
 layers:
   - id: mine
@@ -942,7 +942,7 @@ check "namespace: a namespaced skill lands as <ns>--<name>, two layers of one na
 check "namespace: two namespaces never mix (beta has only its own text)" "$(printf '%s\n' '---' 'name: beta--arch-review' '---' '## Layer beta' '' 'Beta.')" "$(cat "$(V)/skills/beta--arch-review/SKILL.md")"
 check "namespace: no folder with a ':' in the view's skills" "" "$(find "$(V)/skills" -name '*:*')"
 check "namespace: the metadata keeps the registry name" strict "$(val skills/acme:arch-review style)"
-contains "namespace: a lock inside the namespace holds against its higher layer" "$out" "adapt 1:a.reg:3 skills/acme:arch-review:style: locked by community"
+contains "namespace: a lock inside the namespace holds against its higher layer" "$out" "adapt 1:a.layer:3 skills/acme:arch-review:style: locked by community"
 check "namespace: a permission key comes from the namespace's lowest layer" Read "$(val skills/acme:arch-review allowed-tools)"
 contains "namespace: a higher layer's permission key in the namespace is skipped" "$out" "skills/acme:arch-review:allowed-tools: a permission key is taken from the component's lowest layer only"
 check "namespace: @replace inside the namespace drops the weaker line" "$(printf '%s\n' '## Layer adapt' '' 'Replaced helper.')" "$(val skills/acme:helper body)"
@@ -982,7 +982,7 @@ contains "refs: explain lists a layer's aliases (marker)" "$ex" ", aliases pub=b
 ex="$(dcf-registry explain skills/acme:arch-review)"
 contains "namespace: explain says the namespace and the hand-over name" "$ex" "Namespace acme: only the layers with namespace: acme reach it; handed over as acme--arch-review"
 contains "namespace: explain shows the namespace on each line" "$ex" "used         adapt@"
-contains "namespace: explain shows the namespace on each line (marker)" "$ex" "[namespace acme] 1:a.reg:2  body:text = Adapted."
+contains "namespace: explain shows the namespace on each line (marker)" "$ex" "[namespace acme] 1:a.layer:2  body:text = Adapted."
 contains "namespace: explain lists the layers with their namespace" "$ex" "adapt at /Corp, source 1 (path): fetched"
 contains "namespace: explain lists the layers with their namespace (marker)" "$ex" ", namespace acme"
 check "namespace: explain takes the folder name too" "$(dcf-registry explain skills/acme:arch-review:style)" "$(dcf-registry explain skills/acme--arch-review:style)"
@@ -990,11 +990,11 @@ contains "namespace: explain ns:name:key picks the key" "$(dcf-registry explain 
 contains "namespace: explain --uses shows the resolved target and namespace" "$(dcf-registry explain skills/acme:helper --uses)" "skills/acme:arch-review:see -> skills/helper = skills/acme:helper (ok) [namespace acme]"
 contains "namespace: explain of a namespaced agent says it applies to no listed agent" "$(dcf-registry explain agents/acme:reviewer)" "applies to no agent of the agents list"
 lacks "namespace: explain of the Operator's skill shows no namespace" "$(dcf-registry explain skills/arch-review)" "[namespace"
-printf '[skills/acme:arch-review]\nbody:text = Sneaking in.\n' > "$nt_/t2.reg"
+printf '[skills/acme:arch-review]\nbody:text = Sneaking in.\n' > "$nt_/t2.layer"
 out="$(dcf-registry resolve --as "$W" 2>&1)"
 contains "namespace: an un-namespaced section cannot name a namespaced component" "$out" "segment 'acme:arch-review' of [skills/acme:arch-review]"
 lacks "namespace: ...and its text never reaches it" "$(cat "$(V)/skills/acme--arch-review/SKILL.md")" "Sneaking"
-rm -f "$nt_/t2.reg"
+rm -f "$nt_/t2.layer"
 # hand-over: the adapter gets the folders, and the line says the mapping
 cat > "$bin/agent-adapter-nsfake" <<EOF
 #!/usr/bin/env bash
@@ -1032,6 +1032,37 @@ albad "a block map" "" "aliases must be a one-line map"
 albad "twice" "{ pub: beta, pub: gamma }" "alias 'pub' appears twice in one layer"
 printf 'layers:\n  - id: a\n    at: /\n    namespace: acme\n    namespace: beta\n    sources:\n      - { kind: path, path: "%s" }\n' "$nc_" > .devcontainer/registry.yml
 contains "namespace: twice in one layer is refused" "$(dcf-registry resolve --as "$W" 2>&1)" "'namespace' appears twice in one layer"
+
+# release 1.9.0: .layer is the layer file extension; .reg is still read, deprecated
+new_case layerext
+l="$(layer x)"; printf '[skills/x]\ncolor:value = blue\n' > "$l/a.layer"; path_list "x:/Corp:$l"
+out="$(dcf-registry resolve --as "$W" 2>&1)"; rc=$?
+check ".layer: resolve exit 0" 0 "$rc"
+check ".layer: the file is read" "blue" "$(val skills/x color)"
+lacks ".layer: no deprecation line" "$out" "rename to .layer"
+l="$(layer y)"; printf '[skills/y]\ncolor:value = red\n' > "$l/old.reg"; path_list "y:/Corp:$l"
+out="$(dcf-registry resolve --as "$W" 2>&1)"; rc=$?
+check ".reg: resolve exit 0" 0 "$rc"
+check ".reg: the file is still read" "red" "$(val skills/y color)"
+contains ".reg: the deprecation line names the file" "$out" "reads old.reg; rename to .layer; .reg is removed in 2.0.0"
+l="$(layer z)"; printf '[skills/z]\nk:value = from-layer\n' > "$l/m.layer"; printf '[skills/z]\nk:value = from-reg\n' > "$l/n.reg"; path_list "z:/Corp:$l"
+out="$(dcf-registry resolve --as "$W" 2>&1)"
+check "both extensions: read in name order (n.reg after m.layer wins)" "from-reg" "$(val skills/z k)"
+contains "both extensions: the deprecation line names only the .reg" "$out" "reads n.reg; rename to .layer"
+lacks "both extensions: m.layer is not named" "$out" "reads m.layer"
+# remember writes remembered.layer; an existing remembered.reg is appended to, with the line
+new_case layerext-remember
+lm="$(layer mine)"
+printf 'layers:\n  - id: mine\n    at: /Corp/me\n    writable: true\n    sources:\n      - { kind: path, path: "%s" }\n' "$lm" > .devcontainer/registry.yml
+dcf-registry remember -- "first" >/dev/null 2>&1
+check "remember: writes remembered.layer" "remembered.layer" "$(find "$lm" -mindepth 1 -printf '%f\n')"
+new_case layerext-remember-old
+lm="$(layer mine)"; printf '; old\n[skills/*]\nbody:text = before\n' > "$lm/remembered.reg"
+printf 'layers:\n  - id: mine\n    at: /Corp/me\n    writable: true\n    sources:\n      - { kind: path, path: "%s" }\n' "$lm" > .devcontainer/registry.yml
+out="$(dcf-registry remember -- "second" 2>&1)"
+check "remember: appends to an existing remembered.reg (no split)" "remembered.reg" "$(find "$lm" -mindepth 1 -printf '%f\n')"
+contains "remember: the line is in remembered.reg" "$(cat "$lm/remembered.reg")" "body:text = second"
+contains "remember: prints the deprecation line" "$out" "rename to .layer; .reg is removed in 2.0.0"
 
 echo "component-registry unit: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

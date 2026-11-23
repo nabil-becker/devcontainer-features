@@ -15,25 +15,25 @@ check "registry-source-path on PATH" command -v registry-source-path
 check "registry-source-http on PATH (1.2.0)" command -v registry-source-http
 check "the http source's curl helper is installed" test -f /usr/local/share/component-registry-feature/dcf-curl.sh
 check "the http source says what it supports" bash -c "registry-source-http supports | grep -qx version"
-check "the http source refuses a secret over plain http" bash -c "registry-source-http version l url=http://x.example.invalid/a.reg auth.secret=s 2>&1 | grep -F allow-insecure"
+check "the http source refuses a secret over plain http" bash -c "registry-source-http version l url=http://x.example.invalid/a.layer auth.secret=s 2>&1 | grep -F allow-insecure"
 check "registry-source-db on PATH (1.5.0)" command -v registry-source-db
 check "the db source says what it supports" bash -c "registry-source-db supports | grep -qx version"
 check "the db source refuses an unsupported driver (exit 3)" bash -c "registry-source-db version l driver=oracle table=t; [ \$? -eq 3 ]"
 check "component-registry-setup on PATH" command -v component-registry-setup
 check "dcf-persist on PATH" command -v dcf-persist
-check "the Feature version is baked" grep -qx '1.8.0' /usr/local/share/component-registry-feature/version
+check "the Feature version is baked" grep -qx '1.9.0' /usr/local/share/component-registry-feature/version
 check "the registryFile option is baked (default)" grep -qx 'REGISTRYFILE=.devcontainer/registry.yml' /usr/local/share/component-registry-feature/options.env
 check "COMPONENT_REGISTRY_STATE_DIR set" bash -c "[ \"\$COMPONENT_REGISTRY_STATE_DIR\" = /var/lib/devcontainer-features/component-registry ]"
 check "setup makes the state folder owner-only" bash -c "component-registry-setup >/dev/null && [ \"\$(stat -c %a \"\$COMPONENT_REGISTRY_STATE_DIR\")\" = 700 ]"
 check "state folder writable by the user" test -w /var/lib/devcontainer-features/component-registry
 check "taskfile registered" test -f /usr/local/share/go-task/includes.d/component-registry.yml
-check "the built-in base layer is installed (1.1.0)" bash -c "for s in registry-refresh registry-explain registry-remember; do test -f /usr/local/share/component-registry-feature/base/\$s/SKILL.md || exit 1; done; test -f /usr/local/share/component-registry-feature/base/component-registry.reg"
+check "the built-in base layer is installed (1.1.0)" bash -c "for s in registry-refresh registry-explain registry-remember; do test -f /usr/local/share/component-registry-feature/base/\$s/SKILL.md || exit 1; done; test -f /usr/local/share/component-registry-feature/base/component-registry.layer"
 check "the sources say what they support" bash -c "registry-source-path supports | grep -qx version && registry-source-git supports | grep -qx fetch"
 
 # shellcheck disable=SC2016  # expansion is meant to happen inside the inner bash
 setup='t=$(mktemp -d); mkdir -p "$t/repo/.devcontainer" "$t/a" "$t/b"
-printf "[skills/demo]\nbody:text = base\nterms:list = a, b\n" > "$t/a/a.reg"
-printf "[skills/demo]\nbody:text = mine\nterms:list = !a\n" > "$t/b/b.reg"
+printf "[skills/demo]\nbody:text = base\nterms:list = a, b\n" > "$t/a/a.layer"
+printf "[skills/demo]\nbody:text = mine\nterms:list = !a\n" > "$t/b/b.layer"
 printf "layers:\n  - id: base\n    at: /Corp\n    sources:\n      - { kind: path, path: \"%s/a\" }\n  - id: mine\n    at: /Corp/me\n    sources:\n      - { kind: path, path: \"%s/b\" }\n" "$t" "$t" > "$t/repo/.devcontainer/registry.yml"
 export COMPONENT_REGISTRY_STATE_DIR="$t/state"; cd "$t/repo"'
 check "resolve refuses without a who-you-are path" bash -c "$setup; dcf-registry resolve 2>&1 | grep -F COMPONENT_REGISTRY_WHOAMI; [ \"\${PIPESTATUS[0]}\" -eq 2 ]"

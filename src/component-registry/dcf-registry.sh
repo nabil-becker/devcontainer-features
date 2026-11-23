@@ -53,7 +53,7 @@
 #           url: https://git.example.invalid/corp/registry.git
 #           tag: v3               # exactly one of branch, tag, commit
 #           auth: { type: basic, user: bot, secret: registry/corp }   # optional, dcf-secret
-#         - { kind: http, url: "https://registry.example.invalid/corp.reg", auth: { type: bearer, secret: registry/corp } }
+#         - { kind: http, url: "https://registry.example.invalid/corp.layer", auth: { type: bearer, secret: registry/corp } }
 #         - { kind: cloud-folder, remote: registry/mine }   # a folder under the cloud folder
 #         - { kind: path, path: .registry-mine }   # repo-relative or absolute folder
 #         - { kind: db, driver: postgres, host: db.example.invalid, database: registry, user: reader, table: registry_rows, auth: { secret: registry/db } }   # 1.5.0
@@ -62,7 +62,7 @@
 # Only that subset of YAML is read (comments, plain and quoted scalars, block entries, one-line
 # { } maps); unknown keys are refused with file:line. The parser is awk (NFR-7).
 #
-# A layer's content is one or more *.reg files at the root of its copy (the grammar is in the
+# A layer's content is one or more *.layer files (*.reg is still read, deprecated, removed in 2.0.0) at the root of its copy (the grammar is in the
 # Feature NOTES and docs/proposals/component-registry.md section 3.2); the merge is section 3.3.
 #
 # State (owner-only, never committed) in COMPONENT_REGISTRY_STATE_DIR
@@ -583,7 +583,7 @@ offline_or_missing() {
 
 # ------------------------------------------------------------------- merge ----
 # The resolver: reads the manifest (rank, layer, at, source, version, copy folder, .reg file per
-# line), parses every .reg file, applies the match rule for W and merges by type (proposal 3.3).
+# line), parses every .layer file, applies the match rule for W and merges by type (proposal 3.3).
 # Writes meta/ in VIEW itself and prints to stdout:
 #   C <component> <folder>             copy the folder's files into the component (in order)
 #   N <component>                      a component resolved
@@ -1134,7 +1134,7 @@ cmd_resolve() {
     printf '0\t%s\t/\t1\tbuiltin\t%s\tbuiltin\t-\tthe Feature'"'"'s utility skills, %s\t-\t-\n' "$BASE_ID" "$v" "$BASE_DIR" >> "$stage/layers.tsv"
     while IFS= read -r f; do
       [ -n "$f" ] && printf '0\t%s\t/\t1\t%s\t%s\t%s\t-\n' "$BASE_ID" "$v" "$BASE_DIR" "$f" >> "$TMP/manifest"
-    done < <(cd "$BASE_DIR" && find . -maxdepth 1 -type f -name '*.reg' | sed 's|^\./||' | LC_ALL=C sort)
+    done < <(cd "$BASE_DIR" && find . -maxdepth 1 -type f \( -name '*.layer' -o -name '*.reg' \) | sed 's|^\./||' | LC_ALL=C sort)
   fi
   for ((n = 1; n <= NL; n++)); do
     id="${L_ID[n]}"
@@ -1156,9 +1156,13 @@ cmd_resolve() {
       v="${L_AL[n]:-}"; v="${v% }"
       printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$n" "$id" "${L_AT[n]}" "$m" "$kind" "${SRC_VER:--}" "$SRC_STATE" "${SRC_AT:--}" "${SRC_NOTE:--}" "${L_NS[n]:--}" "${v:--}" | tr -d '\r' >> "$stage/layers.tsv"
       [ "$SRC_STATE" = missing ] && continue
+      oldreg=''
       while IFS= read -r f; do
-        [ -n "$f" ] && printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$n" "$id" "${L_AT[n]}" "$m" "$SRC_VER" "$dir" "$f" "${L_NS[n]:--}" >> "$TMP/manifest"
-      done < <(cd "$dir" && find . -maxdepth 1 -type f -name '*.reg' | sed 's|^\./||' | LC_ALL=C sort)
+        [ -n "$f" ] || continue
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$n" "$id" "${L_AT[n]}" "$m" "$SRC_VER" "$dir" "$f" "${L_NS[n]:--}" >> "$TMP/manifest"
+        case "$f" in *.reg) oldreg="${oldreg:+$oldreg, }$f" ;; esac
+      done < <(cd "$dir" && find . -maxdepth 1 -type f \( -name '*.layer' -o -name '*.reg' \) | sed 's|^\./||' | LC_ALL=C sort)
+      [ -z "$oldreg" ] || warn "layer $id source $m: reads $oldreg; rename to .layer; .reg is removed in 2.0.0"
     done
   done
   if [ "$failed" -ne 0 ]; then
@@ -1685,7 +1689,7 @@ cmd_refresh() {
 
 # remember [--skill <name>] [--] <line> (1.1.0, /registry-remember): append one text line to the
 # layer marked writable: true (the person's own), as body:text of that skill or, without --skill,
-# of every skill ([skills/*]), into remembered.reg at the root of its path source's folder; then
+# of every skill ([skills/*]), into remembered.layer at the root of its path source's folder; then
 # refresh. Refused, nothing written: no writable layer, two of them, a writable layer without a
 # path source (git, http and the others are the owner's release process, not a file to append
 # to), a folder that is not there or not writable, an empty line, a line starting with @ (it
@@ -1723,7 +1727,11 @@ cmd_remember() {
   [ -d "$folder" ] || die 1 "layer ${L_ID[w]}: its folder $folder is not there; create it (git-ignored, or outside the repository) and try again. Nothing was written."
   [ -w "$folder" ] || die 1 "layer ${L_ID[w]}: its folder $folder is not writable by $(id -un). Nothing was written."
   if [ -n "$skill" ]; then sect="skills/$skill"; else sect='skills/*'; fi
-  file="$folder/remembered.reg"
+  file="$folder/remembered.layer"
+  if [ ! -e "$file" ] && [ -e "$folder/remembered.reg" ]; then
+    file="$folder/remembered.reg"
+    warn "layer ${L_ID[w]}: appending to the existing remembered.reg; rename to .layer; .reg is removed in 2.0.0"
+  fi
   [ ! -s "$file" ] || [ -z "$(tail -c 1 "$file")" ] || printf '\n' >> "$file"
   printf '; remembered %s\n[%s]\nbody:text = %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$sect" "$line" >> "$file" ||
     die 1 "could not write $file. Nothing was written."

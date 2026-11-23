@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # registry-source-db: the component registry's `db` source. A layer is the rows a query returns
-# from a database, rendered into one .reg file in the layer copy. Review and release are the
+# from a database, rendered into one .layer file in the layer copy. Review and release are the
 # database owner's; the registry only pins what to read and how to log in. Installed on PATH by
 # the component-registry Feature; dcf-registry calls it.
 #
 #   registry-source-db fetch <layer> <dest> driver=<d> <connection> (table=|query=)<x> [auth.secret=...]
-#                                         the rendered rows into <dest>/<layer>.reg (and, for a
+#                                         the rendered rows into <dest>/<layer>.layer (and, for a
 #                                         text value that is not one plain line, <dest>/text/<n>.txt)
 #   registry-source-db version <layer> driver=<d> ...
 #                                         sha256 of the rendered files (the query runs, nothing is kept)
@@ -152,11 +152,11 @@ unhex() {
   UNHEXED="$(printf "${fmt}x")"; UNHEXED="${UNHEXED%x}"
 }
 
-# render: rows -> $tmp/out/<layer>.reg (+ text/<n>.txt), or die with the first bad row's reason
+# render: rows -> $tmp/out/<layer>.layer (+ text/<n>.txt), or die with the first bad row's reason
 render() {
   local sec key typ dat lck n=0 prev=$'\x01' entry nt=0 f
   mkdir -p "$tmp/out"
-  : > "$tmp/out/$layer.reg"
+  : > "$tmp/out/$layer.layer"
   while IFS='|' read -r sec key typ dat lck _ || [ -n "$sec" ]; do
     n=$((n + 1))
     for f in sec key typ dat lck; do
@@ -169,7 +169,7 @@ render() {
     case "${lck,,}" in 1 | t | true | yes | y) lck=1 ;; 0 | f | false | no | n | '') lck=0 ;; *) die 1 "layer $layer: row $n ([$sec] $key): locked '$lck' is not 1, 0, true or false" ;; esac
     case "$sec" in !*) die 1 "layer $layer: row $n: an exclusion section ([$sec]) takes no entries" ;; esac
     if [ "$typ" = text ]; then
-      # one plain line goes in the .reg; anything else (a newline, a leading @ or edge blanks) in a file
+      # one plain line goes in the .layer; anything else (a newline, a leading @ or edge blanks) in a file
       if [[ "$dat" == *$'\n'* || "$dat" == *$'\r'* || "$dat" == @* || "$dat" == [[:space:]]* || "$dat" == *[[:space:]] ]]; then
         nt=$((nt + 1)); mkdir -p "$tmp/out/text"
         printf '%s' "$dat" > "$tmp/out/text/$nt.txt"
@@ -183,11 +183,11 @@ render() {
       entry="$key:$typ = $dat"
     fi
     if [ "$sec" != "$prev" ]; then
-      [ "$n" -eq 1 ] || printf '\n' >> "$tmp/out/$layer.reg"
-      printf '[%s]\n' "$sec" >> "$tmp/out/$layer.reg"; prev="$sec"
+      [ "$n" -eq 1 ] || printf '\n' >> "$tmp/out/$layer.layer"
+      printf '[%s]\n' "$sec" >> "$tmp/out/$layer.layer"; prev="$sec"
     fi
-    printf '%s\n' "$entry" >> "$tmp/out/$layer.reg"
-    [ "$lck" -eq 0 ] || printf 'lock %s\n' "$key" >> "$tmp/out/$layer.reg"
+    printf '%s\n' "$entry" >> "$tmp/out/$layer.layer"
+    [ "$lck" -eq 0 ] || printf 'lock %s\n' "$key" >> "$tmp/out/$layer.layer"
   done < "$tmp/rows"
   [ "$n" -gt 0 ] || die 1 "layer $layer: the query returned no rows"
 }
@@ -197,8 +197,8 @@ render
 
 case "$verb" in
   version)
-    # the .reg then each text file in name order, so a change in either is another version
-    printf 'sha256:%s\n' "$({ cat "$tmp/out/$layer.reg"; [ ! -d "$tmp/out/text" ] || find "$tmp/out/text" -type f | LC_ALL=C sort | while read -r f; do printf '\0%s\0' "${f#"$tmp/out/"}"; cat "$f"; done; } | sha256sum | cut -d' ' -f1)" ;;
+    # the .layer then each text file in name order, so a change in either is another version
+    printf 'sha256:%s\n' "$({ cat "$tmp/out/$layer.layer"; [ ! -d "$tmp/out/text" ] || find "$tmp/out/text" -type f | LC_ALL=C sort | while read -r f; do printf '\0%s\0' "${f#"$tmp/out/"}"; cat "$f"; done; } | sha256sum | cut -d' ' -f1)" ;;
   fetch)
     [ -d "$dest" ] || die 2 "layer $layer: the destination $dest is not a folder"
     cp -R "$tmp/out/." "$dest/" || die 1 "layer $layer: could not write into $dest" ;;

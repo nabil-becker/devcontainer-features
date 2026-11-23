@@ -87,7 +87,7 @@ export COMPONENT_REGISTRY_STATE_DIR="$T/regstate" COMPONENT_REGISTRY_SHARE_DIR="
 export CLAUDE_CONFIG_DIR="$T/claude-config"; mkdir -p "$CLAUDE_CONFIG_DIR"
 unset AGENTS_FILE AGENTS_FILE_TASK_VAR AGENTS_TTY CLAUDE_CODE_CHILD_SESSION AGENTS_SESSION_NAME AGENTS_SESSION_NAME_TASK_VAR AGENT_SESSION_NAME DCF_HOST_MACHINE
 unset COMPONENT_REGISTRY_WHOAMI COMPONENT_REGISTRY_FILE COMPONENT_REGISTRY_WHOAMI_TASK_VAR COMPONENT_REGISTRY_FILE_TASK_VAR
-cat > "$T/layer/a.reg" <<'EOF'
+cat > "$T/layer/a.layer" <<'EOF'
 [/Corp/skills/demo]
 body:text = for everyone at Corp
 [/Corp/review/skills/demo]
@@ -310,7 +310,7 @@ check 'start limit, a bad value: the default applies, handed over' 1 "$(skills_c
 # The registry's agents/<name>: its model reaches the adapter in AGENT_MODEL on the calls about the
 # agent (empty on the others); its skills replace the list entry's (the registry wins for both); read
 # only when the view is for the agent's path; check and list --json show it.
-cat > "$T/layer/agents.reg" <<'EOF'
+cat > "$T/layer/agents.layer" <<'EOF'
 [/Corp/agents/*]
 model:value = sonnet
 [/Corp/review/agents/rev]
@@ -352,8 +352,8 @@ check 'definition, up with a path again after another: resolved again' 3 "$(grep
 check 'definition, up with a path again after another: each its own model' 'start-bg|sonnet start-bg|opus start-bg|sonnet' "$(grep '^start-bg' "$MODELS_A" | tr '\n' ' ' | sed 's/ $//')"
 cp "$T/agents.keep" "$repo/.devcontainer/agents.yml"
 # model.<cli> under [agents/*]: each agent gets the model for its own CLI
-cp "$T/layer/agents.reg" "$T/agents.reg.keep"
-printf '[/Corp/agents/*]\nmodel.fakeb:value = b-model\n' >> "$T/layer/agents.reg"
+cp "$T/layer/agents.layer" "$T/agents.layer.keep"
+printf '[/Corp/agents/*]\nmodel.fakeb:value = b-model\n' >> "$T/layer/agents.layer"
 reset
 TTY=1 run 1 start pair
 check 'definition, model.<cli>: the fakeb agent gets model.fakeb' 'new|b-model' "$(grep '^new' "$MODELS_B")"
@@ -361,7 +361,7 @@ contains 'definition, model.<cli>: the start line names the key' "$OUT" 'model b
 reset
 run 1 start host
 check 'definition, model.<cli>: the fakea agent keeps the plain model' 'start-bg|sonnet' "$(grep '^start-bg' "$MODELS_A")"
-cp "$T/agents.reg.keep" "$T/layer/agents.reg"
+cp "$T/agents.layer.keep" "$T/layer/agents.layer"
 # a CLI whose adapter does not read AGENT_MODEL (fakeb) starts as before
 reset
 TTY=1 run 1 start pair
@@ -395,7 +395,7 @@ run 0 start host
 check 'definition, registry absent: AGENT_MODEL empty' 'start-bg|' "$(grep '^start-bg' "$MODELS_A")"
 # fake views, read by check (read-only, no resolve)
 reset; mkdir -p "$T/regstate/view/agents/host"; echo /Corp/me > "$T/regstate/view/whoami"
-echo 'claude-opus-4-5[1m]' > "$T/regstate/view/agents/host/model"; printf 'model\tteam\t1:x.reg:3\n' > "$T/regstate/view/agents/host/from.tsv"
+echo 'claude-opus-4-5[1m]' > "$T/regstate/view/agents/host/model"; printf 'model\tteam\t1:x.layer:3\n' > "$T/regstate/view/agents/host/from.tsv"
 run 1 check
 contains 'fake view: a model with brackets is read' "$OUT" 'model claude-opus-4-5[1m] (registry: team)'
 check 'fake view: check resolves nothing' '' "$(grep resolve "$T/reg-calls")"
@@ -406,7 +406,7 @@ contains 'fake view: only skill names are read' "$OUT" 'skills [ok] (registry: ?
 echo /Corp/other > "$T/regstate/view/whoami"
 run 1 check
 contains 'fake view for another path: not read, said' "$OUT" 'registry: its definition is not read: the resolved view is for /Corp/other, not /Corp/me'
-rm -f "$T/layer/agents.reg"
+rm -f "$T/layer/agents.layer"
 
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

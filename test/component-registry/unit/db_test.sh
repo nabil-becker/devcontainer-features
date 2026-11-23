@@ -90,7 +90,7 @@ PY
 fetch_to() { rm -rf "$T/d"; mkdir "$T/d"; $S fetch l "$T/d" "$@" 2>"$T/err" >"$T/out"; }
 
 fetch_to driver=sqlite "path=$DB" table=rows; check "sqlite table: fetched" 0 $?
-reg="$(cat "$T/d/l.reg" 2>/dev/null)"
+reg="$(cat "$T/d/l.layer" 2>/dev/null)"
 contains "the first section is rendered" "$reg" "[skills/*]"
 contains "a value entry" "$reg" "owner:value = naïve café"
 contains "a text entry on one line" "$reg" "body:text = from the database"
@@ -101,7 +101,7 @@ contains "a text value starting with @ goes to a file" "$reg" "at:text = @file t
 check "the file holds the @ text as it is" "@not a file" "$(cat "$T/d/text/1.txt" 2>/dev/null)"
 check "the file holds the multi-line text as it is" $'line one\nline two\nx' "$(cat "$T/d/text/2.txt" 2>/dev/null; echo x)"
 fetch_to driver=sqlite "path=$DB" "query=SELECT section, key, type, data, locked FROM rows WHERE locked = 1"; check "sqlite query: fetched" 0 $?
-check "the query's rows only (a section, an entry, a lock)" "3" "$(wc -l < "$T/d/l.reg" | tr -d ' ')"
+check "the query's rows only (a section, an entry, a lock)" "3" "$(wc -l < "$T/d/l.layer" | tr -d ' ')"
 fetch_to driver=sqlite "path=$DB" "query=select section, key, type, data, locked from rows"; check "a lower-case select is fine" 0 $?
 v1="$($S version l driver=sqlite "path=$DB" table=rows)"; v2="$($S version l driver=sqlite "path=$DB" table=rows)"
 contains "version: a sha256" "$v1" "sha256:"
@@ -158,7 +158,7 @@ pgfetch() { rm -rf "$T/d"; mkdir "$T/d"; $S fetch l "$T/d" driver=postgres "$@" 
 CONN=(host=db.example.invalid port=6543 database=registry user=reader sslmode=require)
 { hexrow skills/pg body text "from postgres" false; hexrow skills/pg terms list "x, y" true; } > "$STUB_DIR/rows"
 pgfetch "${CONN[@]}" table=public.registry_rows auth.secret=registry/db; check "postgres: fetched" 0 $?
-reg="$(cat "$T/d/l.reg" 2>/dev/null)"
+reg="$(cat "$T/d/l.layer" 2>/dev/null)"
 check "postgres: the rendered file" $'[skills/pg]\nbody:text = from postgres\nterms:list = x, y\nlock terms' "$reg"
 env="$(cat "$STUB_DIR/pgenv")"
 contains "connection: host" "$env" "PGHOST=db.example.invalid"

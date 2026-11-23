@@ -6,6 +6,22 @@ of the Feature and whether they must act (an option renamed, a task removed, a r
 The version in `devcontainer-feature.json` is bumped in the same change that adds its entry
 here; `task lint` fails when the entry is missing.
 
+## [1.9.0] - 2026-11-23
+
+### Changed
+
+- A layer's files are now `*.layer`, not `*.reg`: Windows opens a `.reg` file in the Registry
+  Editor on double-click. The grammar is unchanged. The built-in base layer, the `http` source
+  (a URL without a `.layer` or `.reg` name is saved as `<layer>.layer`) and the `db` source
+  (renders `<layer>.layer`) use the new name. `remember` writes `remembered.layer`.
+
+### Deprecated
+
+- `.reg` files are still read in 1.x, in name order with any `.layer` files, and `resolve`
+  prints one line per layer source naming them. `remember` keeps appending to an existing
+  `remembered.reg` (no split) with the same line. Action: rename your layer files to `.layer`
+  (`git mv x.reg x.layer`); `.reg` is removed in 2.0.0.
+
 ## [1.8.0] - 2026-11-21
 
 ### Added

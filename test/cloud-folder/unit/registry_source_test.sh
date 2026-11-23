@@ -27,20 +27,20 @@ export PATH="$bin:$PATH" CLOUD_FOLDER_MOUNT_POINT="$T/cf" COMPONENT_REGISTRY_SHA
 S=registry-source-cloud-folder
 
 mkdir -p "$T/cf/registry/mine" "$T/cf/registry/with space"
-printf '[skills/cf]\nbody:text = from the cloud folder\n' > "$T/cf/registry/mine/mine.reg"
+printf '[skills/cf]\nbody:text = from the cloud folder\n' > "$T/cf/registry/mine/mine.layer"
 echo marker > "$T/cf/registry/mine/.cloud-folder-bisync"
-echo x > "$T/cf/registry/with space/a.reg"
+echo x > "$T/cf/registry/with space/a.layer"
 
 mkdir "$T/d"; $S fetch l "$T/d" remote=registry/mine >/dev/null 2>"$T/err"; check "fetch: exit 0" 0 $?
-check "fetch: the layer's file is copied" "[skills/cf]" "$(head -n 1 "$T/d/mine.reg")"
+check "fetch: the layer's file is copied" "[skills/cf]" "$(head -n 1 "$T/d/mine.layer")"
 check "fetch: the sync marker is not copied" no "$([ -e "$T/d/.cloud-folder-bisync" ] && echo yes || echo no)"
-rm -rf "$T/d"; mkdir "$T/d"; $S fetch l "$T/d" "remote=/registry/with space/" >/dev/null 2>&1; check "fetch: a path with a space and slashes around it" yes "$([ -f "$T/d/a.reg" ] && echo yes)"
+rm -rf "$T/d"; mkdir "$T/d"; $S fetch l "$T/d" "remote=/registry/with space/" >/dev/null 2>&1; check "fetch: a path with a space and slashes around it" yes "$([ -f "$T/d/a.layer" ] && echo yes)"
 before="$(cd "$T/cf" && find . -printf '%p %s %T@\n' | sort | cksum)"
 v1="$($S version l remote=registry/mine)"; rm -rf "$T/d"; mkdir "$T/d"; $S fetch l "$T/d" remote=registry/mine >/dev/null 2>&1
 check "nothing is written into the cloud folder by version or fetch" "$before" "$(cd "$T/cf" && find . -printf '%p %s %T@\n' | sort | cksum)"
 contains "version: a tree fingerprint" "$v1" "tree-"
 check "version: stable" "$v1" "$($S version l remote=registry/mine)"
-echo changed >> "$T/cf/registry/mine/mine.reg"
+echo changed >> "$T/cf/registry/mine/mine.layer"
 check "version: a changed file changes it" yes "$([ "$($S version l remote=registry/mine)" != "$v1" ] && echo yes)"
 v2="$($S version l remote=registry/mine)"; echo m2 > "$T/cf/registry/mine/.cloud-folder-bisync"
 check "version: the sync marker does not change it" "$v2" "$($S version l remote=registry/mine)"

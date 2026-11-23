@@ -376,14 +376,14 @@ from its own source at image build, with the same upstream pins.
 
 ## 7. The component registry
 
-Built in slices 1 to 3 (component-registry 1.2.0, claude-code 1.12.0, cloud-folder 1.4.0): sources `git`, `path`, `http` (one `.reg` file, auth settings only), `cloud-folder` and, from component-registry 1.5.0, `db` (`sqlite`, `postgres`),
+Built in slices 1 to 3 (component-registry 1.2.0, claude-code 1.12.0, cloud-folder 1.4.0): sources `git`, `path`, `http` (one `.layer` file, auth settings only), `cloud-folder` and, from component-registry 1.5.0, `db` (`sqlite`, `postgres`),
 the view in the Feature's volume, the hand-over to the CLI's skills folder through the adapter's
 `skills` verb, and `/registry-remember` appending to the person's own writable layer.
 
 ```mermaid
 flowchart LR
   external-sources["Layer sources: git, a folder or file share"]
-  external-http["http(s) endpoint: one .reg file"]
+  external-http["http(s) endpoint: one .layer file"]
   external-cloud["The cloud folder (tier 2)"]
   master-of-secrets["OpenBao"]
   subgraph external-zone-ct["Container"]

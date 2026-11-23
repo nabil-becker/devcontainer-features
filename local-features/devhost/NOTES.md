@@ -174,7 +174,7 @@ Every script reads the same variables; a repository overrides them in `container
 
 The Feature also installs a layer for the component registry (ADR-0063; the component-registry
 Feature): `share/registry/` goes to `/usr/local/share/devhost/registry/` with the rest of
-`share/`. It holds `devhost.reg` and the generic half of the `architecture-review` skill (the
+`share/`. It holds `devhost.layer` and the generic half of the `architecture-review` skill (the
 review method, front matter included), so a repository can adapt the skill in a layer of its own
 instead of editing the copy `devhost-init` made. A repository with the component-registry
 Feature names it first in `.devcontainer/registry.yml`:
