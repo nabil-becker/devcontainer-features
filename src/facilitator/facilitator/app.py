@@ -913,8 +913,8 @@ class HttpSession(Session):
         self.received: list[dict] = []
 
     def say(self, conv: str | None, text: str, to: list[str] | None = None) -> dict:
-        if self.turn is not None:
-            return self.fac.say(self.handle, self.turn, conv, text, to, self.tr)
+        """Begins a conversation (a chain's root, hop 0, which the node vouches for) or writes in one, answering its last
+        message; never the lineage of a message received (that is `reply`)."""
         return self.fac.send_http(self.handle, text, conv, to, self.tr)
 
     def mail(self, limit: int = 20) -> dict:

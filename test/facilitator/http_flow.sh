@@ -92,7 +92,7 @@ EOF
 export FACILITATOR_HOME="$tmp/home" FACILITATOR_KEYS=file FACILITATOR_TRANSPORT=poll FACILITATOR_DIRCTL=/nonexistent FACILITATOR_SLIMCTL=/nonexistent
 unset CLAUDECODE DEVHOST_JOB_CHILD FACILITATOR_HANDLE FACILITATOR_TOKEN
 fx() { (cd "$repo" && "$py" -I "$tree/bin/facilitator" "$@"); }
-agent() { (cd "$repo" && "$py" -I "$tests/integration/http_agent.py" "$@" "$tree/lib"); }
+agent() { (cd "$repo" && exec "$py" -I "$tests/integration/http_agent.py" "$@" "$tree/lib"); }      # exec: the pid the cleanup kills
 jget() { "$py" -I -c "import json,sys; d=json.load(sys.stdin); print(eval(sys.argv[1], {'d': d}))" "$1"; }
 wait_for() { local n="$1"; shift; for _ in $(seq 1 "$n"); do if "$@" >/dev/null 2>&1; then return 0; fi; sleep 1; done; return 1; }
 

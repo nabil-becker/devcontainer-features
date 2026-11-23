@@ -789,7 +789,7 @@ A person's (none of them waits):
 | `who` | none | As an agent's. |
 
 An **HTTP client's** (over `facilitator http serve`, never `human`; "MCP over HTTP for CLIs" above): `who` (only what its
-level reaches), `say` (starts a conversation when nothing was received), `reply`, `receive` (at most `http_receive_wait`),
+level reaches), `say` (begins a conversation, or writes in one of its own, answering its last message), `reply`, `receive` (at most `http_receive_wait`),
 `mail` and a read-only `transcript` that shows each packet's `via`. Never `continue` or `approve`.
 
 ### The record: the `conversation` register type
@@ -833,10 +833,10 @@ each delivery in its route.
 - The audit of enrolments is a hash-chained log in the volume, not a signed register: a person with the volume can
   rewrite it whole (a cut or an edit shows; a rewrite of the chain does not). A signed `audit` register type is a
   backlog item; approvals and denials are also signed notices in the conversations.
-- An HTTP client that calls `say` with nothing received begins a conversation (hop 0, the node vouches for it) where
+- An HTTP client that calls `say` begins a conversation (hop 0, the node vouches for it) where
   an agent may not: it is the only non-person that starts a chain, bounded by the public limits, the reach rule and
-  the approval; `continue` stays a person's. A leaf (`mode: leaf`) has no way to reach a node yet:
-  N3 built nodes, not leaf clients.
+  the approval; `continue` stays a person's.
+- A leaf (`mode: leaf`) has no way to reach a node yet: N3 built nodes, not leaf clients.
 - Revocation is the certificate's 24 h lifetime plus lock two: SLIM checks no revocation list, and a renewed
   certificate or a changed bundle reaches the SLIM node only when it restarts (its `reload_interval` and
   `reload_client_ca_file` did nothing in 3.4.6 here); the peers part restarts it after a renewal.

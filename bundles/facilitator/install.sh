@@ -214,9 +214,9 @@ if [ -z "$SKIP_DOWNLOADS" ]; then
     "$tree/python/bin/python3" -I -B -m pip "${pip_args[@]}"
   else
     command -v python3 >/dev/null 2>&1 || die "a cross build ($arch on $(uname -m)) needs python3 with pip on the build host"
-    say "cross build: slim-bindings and mcp installed by the build host's python3 for manylinux_2_28_$march"
-    python3 -I -B -m pip "${pip_args[@]}" --platform "manylinux_2_28_$march" --implementation cp \
-      --python-version "${PY_VERSION%.*}" --only-binary=:all:
+    say "cross build: slim-bindings and mcp installed by the build host's python3 for manylinux_2_28 (and the older 2_17 and 2014 tags mcp's wheels carry) $march"
+    python3 -I -B -m pip "${pip_args[@]}" --platform "manylinux_2_28_$march" --platform "manylinux_2_17_$march" \
+      --platform "manylinux2014_$march" --implementation cp --python-version "${PY_VERSION%.*}" --only-binary=:all:
   fi
   # The wheel's example console scripts carry the build host's work path in their first line: dropped, with
   # their RECORD lines, so the same inputs give the same bytes.
