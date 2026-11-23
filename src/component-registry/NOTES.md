@@ -6,13 +6,16 @@
         v
   volume: COMPONENT_REGISTRY_STATE_DIR
     copies/<layer>/<n>/   layer copies
-        | dcf-registry resolve, for COMPONENT_REGISTRY_WHOAMI
+        | dcf-registry resolve, for COMPONENT_REGISTRY_WHOAMI or --as an agent's path
         v
     view -> views/<stamp>/   the resolved view: skills/<name>/, agents/<name>/, meta/
-        | dcf-registry handover <cli>: agent-adapter-<cli> skills (at an agent's start,
-        |   by the participant component; or /registry-refresh)
+    paths/<path> -> ...      (1.8.0) the latest view of each who-you-are path
+    handovers.tsv            (1.8.0) who was handed which path's skills
+        | dcf-registry handover <cli> <agent> <folder> --as <path>: agent-adapter-<cli> skills
+        |   (at an agent's start, by the participant component; or /registry-refresh)
         v
-  the CLI's own skills folder (Claude Code: $CLAUDE_CONFIG_DIR/skills, marked owned)
+  the CLI's own skills folders (Claude Code: $CLAUDE_CONFIG_DIR/skills for what every agent
+  shares, and each agent's own folder read through --add-dir; marked owned)
   agents/<name>/ (1.6.0): read by the participant component at the agent's start (model, skills)
 
   dcf-registry explain <path> [--uses] [--color auto|always|never]   read-only
@@ -24,7 +27,8 @@
 | Who-you-are path (`COMPONENT_REGISTRY_WHOAMI`) | `.env` (git-ignored) or the launcher, per person | none (a setting, set again) |
 | A layer's `.reg` files and skill files | its source: a git repository, a folder, a file share | the owner's choice |
 | Layer copies, the resolved view, the lock file | named volume at `/var/lib/devcontainer-features/component-registry`, owner-only | 4 working set |
-| Resolved skills handed to a CLI | the CLI's skills folder (Claude Code: `$CLAUDE_CONFIG_DIR/skills`, the claude-code volume), owner-only | 4 working set |
+| Resolved skills handed to a CLI | the CLI's skills folders (Claude Code: `$CLAUDE_CONFIG_DIR/skills` and, per agent, `$CLAUDE_CONFIG_DIR/registry-agents/`, the claude-code volume), owner-only | 4 working set |
+| Hand-over records (`handovers.tsv`: CLI, agent, folder, path) | the state volume, owner-only | 4 working set |
 | Remembered lines (`/registry-remember`) | `remembered.reg` in the writable layer's folder | the person's choice (their own layer's source) |
 | The utility skills (built-in base layer) | `/usr/local/share/component-registry-feature/base`, in the image | none (the Feature) |
 | Source secrets | OpenBao, read with `dcf-secret` | OpenBao's |
@@ -57,6 +61,8 @@ Release 1.6.0 adds the second component kind, **agent definitions** (`agents/<na
 `skills`, read by the participant component at the agent's start; below).
 It resolves **skills** and **agent definitions**; prompts and settings are not in this release (a
 section for them is reported and not resolved).
+Release 1.8.0 keeps a view per who-you-are path, so agents with different `registry-path`s each
+get their own skills (ADR-0074, below).
 
 ## What it installs
 
@@ -64,7 +70,7 @@ Nothing is downloaded at build; there is nothing to verify (an `http` layer is r
 work; no python3, no jq):
 
 - `dcf-registry` (`/usr/local/bin`): `resolve`, `explain`, `version`, and (1.1.0) `handover`,
-  `refresh`, `remember`, `layer-list`.
+  `refresh`, `remember`, `layer-list`, and (1.8.0) `forget`, `handovers`.
 - `/usr/local/share/component-registry-feature/base/`: the built-in base layer, the utility skills.
 - `registry-source-git`, `registry-source-path`, `registry-source-http` and (1.5.0) `registry-source-db`: the **registry sources** of this release.
 - `component-registry-setup`: the `postStartCommand`.
@@ -92,6 +98,7 @@ Settings are plain variables (NFR-6), each from the task variable, then the root
 | `COMPONENT_REGISTRY_STATE_DIR` | `/var/lib/devcontainer-features/component-registry` (`containerEnv`) | The state folder. |
 | `COMPONENT_REGISTRY_LOCK_WAIT` | `120` | Seconds a `resolve` waits for another one to finish. |
 | `COMPONENT_REGISTRY_AGENTS` | the current view's names | 1.6.0: agents, comma-separated `name` or `name:cli` items, whose definitions `resolve` makes even when only a pattern names them, the effective model picked for the CLI. The participant component sets it to the listed agents; a person seldom does. Empty clears the names. |
+| `COMPONENT_REGISTRY_SKILLS_MODE` | `split` | (1.8.0, ADR-0074) How a CLI keeps an agent's skills, for every agent whose agents list entry has no `registry-skills`: `split` (shared plus the agent's own), `shared` (the whole view shared, the latest hand-over wins), `off` (nothing handed over). `handover --skills-mode` beats it. |
 
 ## The layer list
 
@@ -293,7 +300,7 @@ list using it is refused with its line. A listed layer adapts a utility skill li
 
 | Skill | Runs | Does |
 | --- | --- | --- |
-| `/registry-refresh` | `dcf-registry refresh` | resolve now, for the path the current view was resolved for (so an agent's own `registry-path` is kept; `--as` names another), then `handover` to every CLI adapter on PATH. Claude Code picks the change up in the running session; a CLI that does not watch its skills folder needs its session restarted; a skill already used in a conversation keeps its old text until a new conversation |
+| `/registry-refresh` | `dcf-registry refresh --session "${CLAUDE_SESSION_ID}"` | (1.8.0) resolve now for the calling agent's own path and hand over to it alone (its session id, found in each adapter's `list`); an unknown or unsubstituted id refreshes every recorded hand-over, each path once; with no record, for the path the latest view was resolved for, to every CLI adapter on PATH. Claude Code picks the change up in the running session; a CLI that does not watch its skills folder needs its session restarted; a skill already used in a conversation keeps its old text until a new conversation |
 | `/registry-explain <path>` | `dcf-registry explain <path> [--uses] [--color auto|always|never]` | read-only, shown to the person |
 | `/registry-remember [skills/<name>] <line>` | `dcf-registry remember [--skill <name>] -- <line>` | appends `body:text = <line>` under `[skills/<name>]` (or `[skills/*]`, every skill) to `remembered.reg` in the folder of the layer marked `writable: true`, then refreshes. Refused, nothing written: no writable layer, two, a writable layer without a `path` source (a git or http layer changes through its owner's release), a folder that is not there or not writable, an empty line, a line starting with `@`. Only when the person asks (`disable-model-invocation`) |
 
@@ -314,6 +321,53 @@ start: no layer list, a failed resolve or a CLI that cannot take skills is one l
 the hand-over together get at most `COMPONENT_REGISTRY_START_WAIT` seconds there (default 15, a
 hanging fetch and a held lock included); past it the CLI starts with the last good skills already
 in its folder, said in one line. `/registry-refresh` keeps `COMPONENT_REGISTRY_LOCK_WAIT`.
+
+## A view per agent path (1.8.0)
+
+Agents with different `registry-path`s in one container each get the skills their path resolves
+([ADR-0074](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/adr/0074-each-agent-reads-the-skills-its-registry-path-resolves-through-an-added-directory-and-the-personal-folder-keeps-what-every-agent-shares.md),
+it amends ADR-0064's "one per container").
+
+```text
+  agents start rev   resolve --as /Corp/review  ->  paths/+Corp+review -> views/<a>/
+                     handover claude rev <folder> --as /Corp/review
+  agents start host  resolve (who-you-are /Corp/me) -> paths/+Corp+me -> views/<b>/
+                     handover claude host <folder>       (the setting's view, never <a>)
+  Claude Code:  $CLAUDE_CONFIG_DIR/skills              what <a> and <b> have alike
+                registry-agents/rev.<sum>/registry     the rest of <a>, --add-dir for rev
+                registry-agents/host.<sum>/registry    the rest of <b>, --add-dir for host
+```
+
+- **Views.** `resolve` points `paths/<path, / as +>` at the view it made, besides `view` (the
+  latest). A resolve removes only the views no pointer names; `forget` also drops the pointers of
+  paths no hand-over record names (but the latest view's).
+- **The lock.** One `resolve.lock` for every path, as before: the layer copies under `copies/` are
+  shared between paths, so two resolves never interleave; a hand-over holds it shared while it
+  reads a view. A second agent's resolve waits for the first (the start limit,
+  `COMPONENT_REGISTRY_START_WAIT`, bounds it); a lock per path would let two fetches write one copy.
+- **Records.** `handovers.tsv`: CLI, agent, folder, path, and `as` (the agent's own path) or
+  `whoami` (the setting, followed when it changes). `dcf-registry handovers` prints it; `refresh`
+  repeats it; `forget <cli> <name> <folder>` removes a line after the adapter dropped the agent's
+  copies (the adapter's `skills` verb with `COMPONENT_REGISTRY_FORGET=1`). `agents up` forgets an
+  agent no longer in the list. The sessions no agent started are recorded as the agent
+  `component-registry` in the repository root (a `refresh --as <path>` or a `handover` with no
+  agent); nothing forgets it on its own: `dcf-registry forget claude component-registry <root>`.
+- **Mid-session refresh.** `/registry-refresh` passes the session id Claude Code substitutes; the
+  agent is found by that id in each adapter's `list` (name, id, state, folder) and its record, so
+  its own path is refreshed and nothing else. A changed layer that other agents also read reaches
+  them at their next start or refresh; meanwhile Claude Code moves that skill out of the shared
+  folder into each agent's own (the views no longer agree), so no agent reads another's text.
+- **What you will see and how to override it.** `dcf-registry handovers --skills` lists each
+  agent's path, its skills mode and, from the adapter's read-only `skills-show`, its own folder,
+  its own skills and the shared ones. The mode is the agents list's `registry-skills`
+  (`handover --skills-mode`), else `COMPONENT_REGISTRY_SKILLS_MODE`, else `split`; `shared` puts an
+  agent's whole view in the shared folder as before 1.8.0 (the latest hand-over wins), `off` hands
+  nothing over and forgets the agent. `refresh` repeats each agent's recorded mode.
+- **Where the CLI keeps them** is the adapter's (NFR-13). Claude Code (claude-code 1.14.0): what
+  every agent's view has alike stays personal, the rest goes to an added directory per agent; see
+  the claude-code notes.
+- **Disk.** A view per path in use (a few kilobytes each), and in Claude Code each agent's view
+  kept twice at most.
 
 ## Agent definitions (1.6.0)
 
@@ -642,7 +696,8 @@ every skipped line with its reason, and `resolved N component(s) for <W>`.
   when `NO_COLOR` is set; `always` wins over `NO_COLOR`. Without colour the text is byte for byte
   that of 1.3.0.
 - `component-registry:setup`: re-run the start hook.
-- `component-registry:refresh`: resolve and hand over now (`-- --as <path>`); `/registry-refresh`.
+- `component-registry:refresh`: resolve and hand over now (`-- --as <path>`, `-- --session <id>`);
+  `/registry-refresh`.
 - `component-registry:remember`: `-- [--skill <name>] -- <line>`; `/registry-remember`.
 
 ## Pairs with
@@ -664,9 +719,11 @@ every skipped line with its reason, and `resolved N component(s) for <W>`.
   list; a person who wants another model for one run sets it in their own layer.
 - An agent's `skills` from the registry are what it is said to use (`agents list --json`); they do
   not limit which resolved skills its CLI receives (every resolved skill is handed over).
-- One resolved view per container, and one skills folder per CLI configuration: agents with
-  different who-you-are paths do not each keep their own skills; the latest resolve is what every
-  session of that CLI reads.
+- Agents with different who-you-are paths each keep their own skills only where the CLI's adapter
+  keeps them apart (Claude Code from claude-code 1.14.0, ADR-0074); another CLI reads the latest
+  hand-over. In Claude Code a session not started through `agents` reads only the skills every
+  agent's view has alike, and a project skill of the same name beats an agent's own copy (the
+  registry's then runs as `/registry:<name>`).
 - `remember` writes to a `path` source only, appends, and never edits or removes a line; to take
   one back, edit `remembered.reg` in your layer.
 - A `path` source's version is a fingerprint of names, sizes and

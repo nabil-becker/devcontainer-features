@@ -17,7 +17,11 @@
 # only, each path its own model in agents up, an adapter that ignores it, the registry's skills and
 # model replacing the list's (the Operator's ruling of 2026-11-21), the list's where it sets none, nothing read without a layer list or the registry,
 # check and list --json, and fake views (a bracketed model, one that is not a word, a skill name
-# that is not one, a view for another path). Part of `task lint` (`task test:agents-registry`).
+# that is not one, a view for another path); each agent its own path's view (participant 1.4.0,
+# ADR-0074: handover --as the registry-path, the records), an agent taken out of the list forgotten
+# at agents up, registry-skills (split, shared, off) and the container default
+# COMPONENT_REGISTRY_SKILLS_MODE, shown by check with the adapter's skills-show. Part of `task lint`
+# (`task test:agents-registry`).
 set -u
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -45,13 +49,15 @@ printf '#!/usr/bin/env bash\necho "$*" >> "%s/reg-calls"\n[ "$1" = resolve ] && 
 cat > "$bin/agent-adapter-fakea" <<'FAKE'
 #!/usr/bin/env bash
 verb="$1"; shift
-[ "$verb" = supports ] && { printf '%s\n' start-bg wake attach resume new list stop logs skills; exit 0; }
+[ "$verb" = supports ] && { printf '%s\n' start-bg wake attach resume new list stop logs skills skills-show; exit 0; }
+[ "$verb" = skills-show ] && { printf 'own\t/own/%s\nown-skills\tdemo\nshared\t/shared\nshared-skills\ta b\n' "$1"; exit 0; }
 echo "$verb|$*" >> "$CALLS_A"
 echo "$verb|${AGENT_MODEL-unset}" >> "$MODELS_A"
 [ "$verb" = list ] && { cat "$SESS_A" 2>/dev/null; exit 0; }
 name="$1" folder="$2"
 case "$verb" in
-  skills) [ -n "${FAKEA_SKILLS_FAIL:-}" ] && { echo "fakea: cannot write" >&2; exit 1; }
+  skills) [ "${COMPONENT_REGISTRY_FORGET:-}" = 1 ] && { echo "forget|$name" >> "$CALLS_A"; exit 0; }
+    [ -n "${FAKEA_SKILLS_FAIL:-}" ] && { echo "fakea: cannot write" >&2; exit 1; }
     printf 'skills-from|%s|%s\n' "$COMPONENT_REGISTRY_SKILLS" "$(ls "$COMPONENT_REGISTRY_SKILLS" | tr '\n' ' ')" >> "$CALLS_A"
     cat "$COMPONENT_REGISTRY_SKILLS/demo/SKILL.md" > "$T_SKILL" 2>/dev/null; exit 0 ;;
   start-bg) n=$(( $(grep -c . "$SESS_A" 2>/dev/null) + 1 ))
@@ -148,7 +154,7 @@ check 'resolve fails: nothing handed over' 0 "$(skills_calls)"
 reset; export COMPONENT_REGISTRY_WHOAMI=/Corp/me
 run 1 start host
 check 'handover: exit 0' 0 "$RC"
-contains 'handover: one line' "$OUT" "host: the registry's resolved skills handed to fakea."
+contains 'handover: one line, with the skills mode and where it came from' "$OUT" "host: the registry's resolved skills handed to fakea, registry skills split (from the default)."
 check 'handover: the skills verb once' 1 "$(skills_calls)"
 contains 'handover: the adapter gets the agent and its folder' "$(cat "$CALLS_A")" "skills|host $repo"
 contains 'handover: COMPONENT_REGISTRY_SKILLS is the resolved view' "$(cat "$CALLS_A")" "$T/regstate/views/"
@@ -206,6 +212,62 @@ check 'up: exit 0' 0 "$RC"
 check 'up: one resolve per path (host for the setting, rev for its own)' 2 "$(grep -c '^resolve' "$T/reg-calls")"
 check 'up: each resident handed over' 2 "$(skills_calls)"
 lacks 'up: an on-demand agent is not resolved for' "$OUT" 'od: the registry'
+
+# ------------------------------------- each agent its own path's view (participant 1.4.0) ----
+reset
+run 1 start rev
+run 1 start host
+contains 'own view: the hand-over names the agent'"'"'s path' "$(cat "$T/reg-calls")" "handover fakea rev $repo --as /Corp/review"
+check 'own view: records both agents with their paths' "host /Corp/me whoami|rev /Corp/review as" "$(cd "$repo" && PATH="$regbin:$PATH" dcf-registry handovers | awk -F'\t' '{ print $2, $4, $5 }' | sort | paste -sd'|')"
+check 'own view: a view kept per path' "for the reviewer only|for everyone at Corp" "$(tail -n 1 "$T/regstate/paths/+Corp+review/skills/demo/SKILL.md")|$(tail -n 1 "$T/regstate/paths/+Corp+me/skills/demo/SKILL.md")"
+f1="$(grep '^skills-from' "$CALLS_A" | sed -n 1p | cut -d'|' -f2)"; f2="$(grep '^skills-from' "$CALLS_A" | sed -n 2p | cut -d'|' -f2)"
+check 'own view: the two agents got two different views' yes "$([ -n "$f1" ] && [ "$f1" != "$f2" ] && echo yes || echo no)"
+# an agent taken out of the list is forgotten at the next up; the sessions no agent started are not
+(cd "$repo" && PATH="$bin:$regbin:/usr/bin:/bin" dcf-registry handover fakea >/dev/null 2>&1)
+cp "$repo/.devcontainer/agents.yml" "$T/agents.keep2"
+printf 'agents:\n  - name: host\n    cli: fakea\n    kind: resident\n' > "$repo/.devcontainer/agents.yml"
+: > "$CALLS_A"
+run 1 up
+contains 'forget: said at up' "$OUT" 'rev: no longer in the agent list; its own registry skills are removed.'
+contains 'forget: the adapter drops its copies' "$(cat "$CALLS_A")" 'forget|rev'
+check 'forget: its record goes' "component-registry host" "$(cd "$repo" && PATH="$regbin:$PATH" dcf-registry handovers | cut -f2 | sort | paste -sd' ')"
+lacks 'forget: a listed agent is never forgotten' "$(cat "$CALLS_A")" 'forget|host'
+cp "$T/agents.keep2" "$repo/.devcontainer/agents.yml"
+
+# ------------------------------- registry-skills and COMPONENT_REGISTRY_SKILLS_MODE (1.4.0) ----
+cp "$repo/.devcontainer/agents.yml" "$T/agents.keep3"
+printf 'agents:\n  - name: host\n    cli: fakea\n    kind: resident\n  - name: sh\n    cli: fakea\n    kind: resident\n    registry-skills: shared\n  - name: no\n    cli: fakea\n    kind: resident\n    registry-skills: off\n' > "$repo/.devcontainer/agents.yml"
+reset
+run 1 start sh
+contains 'registry-skills shared: handed over with that mode' "$(cat "$T/reg-calls")" "handover fakea sh $repo --skills-mode shared"
+contains 'registry-skills shared: said with where it came from' "$OUT" "registry skills shared (from registry-skills in the list)"
+reset
+run 1 start no
+check 'registry-skills off: the agent starts (exit 0)' 0 "$RC"
+check 'registry-skills off: never resolved' '' "$(grep '^resolve' "$T/reg-calls")"
+contains 'registry-skills off: its copies forgotten' "$(cat "$T/reg-calls")" "forget fakea no $repo"
+contains 'registry-skills off: one line' "$OUT" "no: registry skills off (from registry-skills in the list)"
+contains 'registry-skills off: started' "$(cat "$CALLS_A")" 'start-bg|no'
+reset
+COMPONENT_REGISTRY_SKILLS_MODE=shared run 1 start host
+contains 'container default (environment): applies to an agent with no key' "$(cat "$T/reg-calls")" "handover fakea host $repo --skills-mode shared"
+contains 'container default: said with its source' "$OUT" "registry skills shared (from COMPONENT_REGISTRY_SKILLS_MODE in the environment)"
+reset
+COMPONENT_REGISTRY_SKILLS_MODE=off run 1 start sh
+contains 'the key beats the container default' "$(cat "$T/reg-calls")" "handover fakea sh $repo --skills-mode shared"
+reset
+COMPONENT_REGISTRY_SKILLS_MODE=sometimes run 1 start host
+contains 'a bad container default: said, split used' "$OUT" "not split, shared or off; using split"
+contains 'a bad container default: handed over split' "$(cat "$T/reg-calls")" "--skills-mode split"
+run 1 check
+contains 'check: each agent its mode and where it came from' "$OUT" "registry skills shared (from registry-skills in the list)"
+contains 'check: the default named' "$OUT" "host: cli fakea, resident, stateful (identity host, lease container), folder ., args: none, registry skills split (from the default)"
+contains 'check: its own folder and skills (the adapter'"'"'s skills-show)' "$OUT" "    registry skills: own folder /own/host: demo (2 shared skill(s) besides)"
+printf 'agents:\n  - name: x\n    cli: fakea\n    kind: resident\n    registry-skills: sometimes\n' > "$repo/.devcontainer/agents.yml"
+run 1 check
+check 'registry-skills bad value: refused (exit 2)' 2 "$RC"
+contains 'registry-skills bad value: file and line' "$OUT" "registry-skills 'sometimes' must be split, shared or off"
+cp "$T/agents.keep3" "$repo/.devcontainer/agents.yml"
 
 # ------------------------------------------------ the start limit (participant 1.2.0) ----
 # COMPONENT_REGISTRY_START_WAIT bounds resolve and the hand-over; past it the agent starts with the

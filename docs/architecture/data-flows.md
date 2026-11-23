@@ -364,7 +364,7 @@ flowchart LR
     component-registry["component-registry: dcf-registry"]
     external-copies["Layer copies, tier 4, owner-only"]
     external-view["Resolved view, tier 4, owner-only"]
-    external-cli-skills["The CLI's skills folder, tier 4"]
+    external-cli-skills["The CLI's skills folders: shared and per agent, tier 4"]
   end
   launcher["Launcher"]
   external-sources -->|registry-source-git, -path| external-copies
@@ -385,6 +385,7 @@ flowchart LR
 - The CLI's skills folder (Claude Code: `$CLAUDE_CONFIG_DIR/skills`, the claude-code volume) gets owner-only copies, each marked owned by the registry; never the repository's `.claude/skills`.
 - Agent definitions (release 2, component-registry 1.6.0): the view's `agents/<name>/` (a model and skill names) is read by the participant component at the agent's start; the model reaches the CLI adapter only as the environment variable `AGENT_MODEL` of that call, never written elsewhere. An agent definition carries no permission, identity, lease or folder.
 - A layer pointed at a public or community source carries a namespace (component-registry 1.7.0, ADR-0073): its components reach the view and the CLI's skills folder only under its prefix (`skills/<ns>--<name>/`), and it cannot change, lock or refer to the Operator's own components; trust in that source stops at its namespace.
+- Each who-you-are path keeps its own view (`paths/<path>`, component-registry 1.8.0), and each hand-over is recorded (`handovers.tsv`: CLI, agent, folder, path; no content). In Claude Code (claude-code 1.14.0) the skills every agent's view has alike stay in `$CLAUDE_CONFIG_DIR/skills`; the rest of an agent's view goes to `$CLAUDE_CONFIG_DIR/registry-agents/<agent>/registry/.claude/skills`, which only that agent's sessions read (`--add-dir`), so one agent's personal facts never reach another agent's skills (ADR-0074).
 - `/registry-remember` writes only to the layer marked `writable: true`, and only to a folder (a `path` source): the person's own layer, wherever they keep it.
 - In this repository (slice 4) two `path` layers feed the resolve: the devhost Feature's folder in the image (`/usr/local/share/devhost/registry`) and the committed `.devcontainer/registry/repo`; both public, both `required`, so a missing one leaves the last view and never hands over half a skill.
 
@@ -399,7 +400,7 @@ flowchart LR
   component-registry -->|handover| external-cli-skills
 ```
 
-- Sources: `src/component-registry/NOTES.md`, `src/claude-code/NOTES.md`, `docs/proposals/component-registry.md`, `docs/adr/0063-*.md`, `docs/adr/0064-*.md`.
+- Sources: `src/component-registry/NOTES.md`, `src/claude-code/NOTES.md`, `docs/proposals/component-registry.md`, `docs/adr/0063-*.md`, `docs/adr/0064-*.md`, `docs/adr/0074-*.md`.
 
 ## Gaps seen while drawing
 

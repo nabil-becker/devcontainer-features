@@ -424,6 +424,12 @@ The domain words of the project itself are not here; they live with the project'
   brings it is the user's job.
 - **Registry alias**: `aliases: { acme: acme-public }` on a registry layer; in that layer's
   references `acme:` means `acme-public:`, one hop only.
+- **Own skills folder**: the directory of registry skills one agent alone reads, added to its Claude
+  Code with `--add-dir` (skills in `<dir>/.claude/skills`); it holds the skills that agent's resolved
+  view does not share with the other agents' views, the shared ones staying in the personal folder.
+- **Hand-over record**: the record `dcf-registry` keeps of which agent was handed which who-you-are
+  path's view and own skills folder (`handovers`, `forget`); an agent no longer in the agents list is
+  forgotten and its own skills folder dropped.
 
 ## Secrets
 

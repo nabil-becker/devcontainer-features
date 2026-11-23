@@ -49,7 +49,8 @@ cloud-folder Feature, `db` for sqlite and postgres) and resolves them; the parti
 runs `resolve` at every agent's start and `dcf-registry handover` gives the skills to the CLI
 adapter's `skills` verb (ADR-0064). OpenBao gives a `git`, `http` or `db` source its secret,
 through `dcf-secret`. The dashed relation comes later: the launcher's share mount and who-you-are
-path.
+path. Each who-you-are path keeps its own view and each agent its own
+skills (ADR-0074).
 Slice 4 (the first real use) adds the devhost Feature as a layer's owner: its image folder holds
 the generic `architecture-review`, which this repository's own layer stacks on.
 Release 2 (agent definitions, proposal section 6.1; published in component-registry 1.6.0, ADR-0073) adds one relation: the participant component

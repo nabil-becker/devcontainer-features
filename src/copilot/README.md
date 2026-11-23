@@ -298,6 +298,14 @@ the line "manage the environment, not the CLI" (NFR-13); `trust` answers exit 3 
 
 ## Changes
 
+### [0.2.1] - 2026-11-21
+
+#### Changed
+
+- The participant component 1.4.0 it carries: an agent's hand-over names its own `registry-path`,
+  and `agents up` forgets the agents no longer in the list (ADR-0074). The Copilot adapter has no
+  `skills` verb, so nothing changes for a Copilot agent; nothing to do.
+
 ### [0.2.0] - 2026-11-20
 
 #### Added
