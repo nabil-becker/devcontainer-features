@@ -1429,3 +1429,8 @@ What slice N3 found where a ruling could not be built as written, and the Operat
   two refuses everything it sends, and it gets no renewal. Kept for N3; rotating the mesh's SLIM app secret on
   every revoke is a backlog item, done before slice N5 (public trust). Rejected: rotating it in N3 (B: every
   remaining node needs the new secret, and it delays the slice).
+- **H5, the same handle on two nodes: option B, ruled 2026-11-23.** Qualified handles are built in slice N3:
+  an agent on another node can be named with its node (for example `@b1.spoke-b`), so two nodes may expose the
+  same handle and both stay reachable. A bare handle still works when it names one agent; when it names several,
+  the facilitator refuses it and lists the qualified names. Rejected: refusing the second claim, so that neither
+  is reachable until one is renamed (A, as first built).
