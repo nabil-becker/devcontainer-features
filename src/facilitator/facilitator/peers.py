@@ -227,6 +227,19 @@ class Net:
 
     # ------------------------------------------------------------ conversations shared with other nodes
 
+    def approvals(self) -> dict:
+        """`handle.node` -> {at, by}: another node's agents a person approved at first contact (ruling AH, approval_ttl)."""
+        try:
+            return json.loads((self.store.root / "approved.json").read_text())
+        except (OSError, ValueError):
+            return {}
+
+    def approve(self, principal: str, by: str) -> None:
+        self.store.ensure()
+        d = self.approvals()
+        d[principal] = {"at": identity.now_utc(), "by": by}
+        identity._private(self.store.root / "approved.json", json.dumps(d, sort_keys=True))
+
     def copy_of(self, node: str) -> str:
         """What this node replicates to `node`: the `copy` of the level its card puts it at (ruling AH: addressed at public)."""
         c = self.cards().get(node)
@@ -787,7 +800,7 @@ class Daemon:
             _log_refusal(self.store, f"entries of {conv} from {env['from']}", f"lock two: {why}")
             return []
         old = self.net.meta(conv)
-        self.net.save_meta(conv, members, env.get("home") or env["from"])
+        self.net.save_meta(conv, members, env.get("home") or env["from"], self.mesh.limit(c["level"], "copy")[0])
         rec = self.fac.record
         store = rec.store(conv)
         rep = adapters.sync([adapters.raws(store), raws], store, rec.anchors_for(conv), rec.checked, conv, rec.kinds)
@@ -843,6 +856,11 @@ class Daemon:
         meta = self.net.meta(conv)
         if not meta:
             return None
+        if self.net.copy_of(node) == "addressed":
+            ok, why = self.net.addressed_ok(conv, node)
+            if not ok:
+                _log_refusal(self.store, f"entries of {conv} to {node}", f"withheld, copy addressed: {why}")
+                return None
         from registerengine import adapters
         raws = [r.decode() for r in adapters.raws(self.fac.record.store(conv))]
         return self.envelope(node, {"type": "entries", "conv": conv, "members": meta["members"], "home": meta["home"],

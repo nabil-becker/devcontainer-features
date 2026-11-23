@@ -166,6 +166,20 @@ def mesh_parts(fac) -> list[tuple]:
             "facilitator node join --token <token>" if m.role == "spoke" else
             "its issuer must answer: OpenBao unsealed by hand, the PKI set up, the AppRole file written (the peers part "
             "keeps asking, then opens the listeners)" + (f"; last: {last.split(' ', 1)[-1]}" if last else ""))))
+    if m.public_domain:
+        pst = store.cert_state(m.public_domain)
+        out.append(("public cert", bool(pst.get("present")) and not pst.get("expired"),
+                    f"{pst['id']}, {(pst['not_after'] - time.time()) / 60:.0f} min left" if pst.get("present")
+                    else f"none in {m.public_domain} yet (facilitator infra up)", False))
+        out.append(("join requests", True, f"{sum(1 for r in identity.requests(store) if r['status'] == 'pending')} wait for a person "
+                    "(facilitator node requests, node approve)", False))
+    if m.role == "peer":
+        out.append(("peers", True, ", ".join(f"{n} ({'dials it' if a_ != 'incoming' else 'dials us'})" for n, a_ in sorted(m.peers.items()))
+                    or "none yet (facilitator node invite, node peer --token)", False))
+    rot = identity.rotation(store)
+    if rot:
+        out.append(("secret rotation", rot.get("state") == "done", f"{rot['rid']} {rot.get('state')}"
+                    + (f", still owed to {', '.join(rot['pending'])}" if rot.get("pending") else ""), False))
     rows = m.open_ports()
     out.append(("open ports", True, "; ".join(f"{r['what']} {r['address']} ({r['when']})" for r in rows)
                 or "none beyond loopback (a spoke dials out)", False))
@@ -173,7 +187,9 @@ def mesh_parts(fac) -> list[tuple]:
         status = json.loads(store.status_file.read_text())
     except (OSError, ValueError):
         status = {}
-    if m.role == "spoke":
+    if m.role == "peer":
+        pass
+    elif m.role == "spoke":
         seen = status.get("hub_seen")
         out.append(("hub", bool(seen), f"{m.node.get('hub_node')} at {m.node.get('hub')} (server_name {m.node.get('hub_name')}): "
                     + (f"its roster last received {seen}" if seen else "no roster received yet (peers part down, or the hub unreachable)")))
@@ -1012,6 +1028,11 @@ def cmd_verify(a) -> int:
                 print("\n".join(lines))
         for p in r["problems"]:
             print(f"{a.conv}: {p}")
+        for p in r.get("partial", []):
+            print(f"{a.conv}: partial: {p}")
+        if r.get("replica"):
+            print(f"{a.conv}: a replica copied at policy {r['replica']}: what it holds verifies; what policy keeps off this node "
+                  "is not a break (exit 0), and a break in what is here is (exit 1)")
         print(f"facilitator: {a.conv}: {r['entries']} entries, {r['messages']} message chain(s) walked: "
               f"{'every chain verifies back to a human' if r['ok'] else str(len(r['problems'])) + ' problem(s)'}")
     return 0 if r["ok"] else 1

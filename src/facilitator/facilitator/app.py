@@ -204,6 +204,14 @@ class Facilitator:
     def approve_client(self, name: str, by: str) -> dict:
         """A person approves an HTTP client: its held first-contact messages are delivered (BG: only those younger
         than 7 days)."""
+        if self.net.active and router.split(name)[1] in self.net.cards():
+            # another node's public agent (`handle.node`): first contact, approved by a person, for approval_ttl
+            self.net.approve(name, by)
+            try:
+                self.audit.append("approved", name.replace("/", "-"), by, "a public node's agent, first contact")
+            except Exception:                  # noqa: BLE001
+                pass
+            return {"client": name, "approved_by": by, "released": []}
         c = self.clients.get(name)
         if c is None or not self.is_http(name):
             raise FacilitatorError(f"no HTTP client {name} (facilitator http list)")
@@ -272,9 +280,35 @@ class Facilitator:
             out.append({"conversation": c, "message_id": mid, "delivered": r["delivered"], "to": r["to"]})
         return out
 
+    def remote_first_contact(self, principal: str) -> bool:
+        """Whether a message from another node's agent waits for a person's approval (level public, approval first-contact,
+        and no unexpired approval of that agent): the receiving node enforces it, whatever the sender's node did."""
+        h, n = router.split(principal)
+        if not n or n == self.mesh.node_id or not self.net.active:
+            return False
+        card = self.net.cards().get(n)
+        if not card or self.mesh.limit(card["level"], "approval")[0] != "first-contact":
+            return False
+        ttl = mesh_mod.seconds(self.mesh.limit(card["level"], "approval_ttl")[0])
+        ap = self.net.approvals().get(principal)
+        return not (ap and (ttl <= 0 or time.time() - clients_mod.parse_iso(ap["at"]) < ttl))
+
     def pending_approvals(self) -> list[dict]:
         """The HTTP clients whose messages wait for a person: client, how many, where (a person's mail shows them)."""
         out = []
+        if self.net.active:
+            seen: dict[str, set] = {}
+            for c in self.record.conversations():
+                try:
+                    led, proj, _ = self.record.read(c)
+                except RecordError:
+                    continue
+                for t in proj["tasks"].values():
+                    m = proj["messages"].get(t["message_id"])
+                    if m and t["state"] == "submitted" and self.local_of(t["assignee"]) and self.remote_first_contact(m["from"]):
+                        seen.setdefault(m["from"], set()).add(c)
+            for who, convs in sorted(seen.items()):
+                out.append({"client": who, "held": len(convs), "conversations": sorted(convs), "id": f"spiffe://{self.net.cards()[router.split(who)[1]]['card']['domain']}/node/{router.split(who)[1]}/agent/{router.split(who)[0]}"})
         for name, c in sorted(self.clients.all().items()):
             if c["status"] not in ("enrolled", "approved") or not self.is_http(name):
                 continue
@@ -465,6 +499,7 @@ class Facilitator:
             raise FacilitatorError(f"{author} is not a member of {conv} (its members: {', '.join(th['members'])})")
         human = me in th["humans"]
         lim = self.limits_for(self.conv_level(th))
+        self.addressed_rule(th, proj, me, text, to, reply_to)
         if self.is_http(author):
             for mm in th["members"]:
                 if mm != me and not self.visible(author, router.split(mm)[0]):
@@ -490,6 +525,34 @@ class Facilitator:
             data["refs"] = r
         self.record.add(conv, author, "message", data)
         return mid
+
+    def addressed_members(self, th: dict) -> dict[str, list[str]]:
+        """node -> its members of a conversation, for the nodes this node replicates to at copy `addressed` (a public node)."""
+        if not self.net.active:
+            return {}
+        out: dict[str, list[str]] = {}
+        for m in th["members"]:
+            n = router.split(m)[1]
+            if n and n != self.mesh.node_id and self.net.copy_of(n) == "addressed":
+                out.setdefault(n, []).append(m)
+        return out
+
+    def addressed_rule(self, th: dict, proj: dict, me: str, text: str, to: list[str] | None, reply_to: str | None) -> None:
+        """Copy addressed (proposal 10, ruling AH): a conversation with a member on a node that gets only what is addressed
+        to it carries only messages addressed to that node's members. The write is refused, not the delivery, because the
+        register is what replicates: register-engine cannot hold a part of a register (an entry's chain needs its
+        predecessors), so what is not addressed must never be in it."""
+        addr = self.addressed_members(th)
+        if not addr:
+            return
+        dec = router.route(th, proj["messages"], me, text, to, reply_to, self.participants()[1].fallback,
+                           self.known() | set(th["humans"]), self.mesh.node_id, self.nodes())
+        reached = {router.split(t)[1] for t in dec.to}
+        if not reached & set(addr):
+            names = ", ".join(f"@{m}" for ms in addr.values() for m in ms)
+            raise FacilitatorError(f"this conversation has {names}, whose node gets only what is addressed to it (copy addressed): "
+                                   f"address the message to them (@handle), or talk to the others in another conversation; "
+                                   "this message was not written")
 
     # ------------------------------------------------------------ the dispatcher
 
@@ -628,6 +691,8 @@ class Facilitator:
             for t in proj["tasks"].values():
                 if t["assignee"] == self.p(c, handle) and t["state"] == "submitted":
                     m = proj["messages"][t["message_id"]]
+                    if self.remote_first_contact(m["from"]):
+                        continue                        # a public node's agent a person has not approved: held, shown to them
                     out.append({"conv": c, "task": t["task"], "message": m, "pos": (t["at"], pos.get(t["history"][0][2], 0)),
                                 "members": proj["thread"]["members"]})
         out.sort(key=lambda p: p["pos"])
