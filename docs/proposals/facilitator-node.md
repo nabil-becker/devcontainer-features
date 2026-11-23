@@ -1424,3 +1424,8 @@ What slice N3 found where a ruling could not be built as written, and the Operat
   more issuing and renewing, and SLIM checks only the node's certificate). Per-agent identity comes with AGNTCY
   Identity (slice N5). It refines ADR-0069 decision 5; the node's certificate key is a file on every node
   (SLIM reads it from a file), which widens ADR-0069 decision 4.
+- **H4, a revoked node's TLS link: option A, ruled 2026-11-23.** SLIM 3.4.6 checks no revocation list and
+  reloads no certificate, so a revoked node's TLS link can still form until its certificate expires (24 h); lock
+  two refuses everything it sends, and it gets no renewal. Kept for N3; rotating the mesh's SLIM app secret on
+  every revoke is a backlog item, done before slice N5 (public trust). Rejected: rotating it in N3 (B: every
+  remaining node needs the new secret, and it delays the slice).
