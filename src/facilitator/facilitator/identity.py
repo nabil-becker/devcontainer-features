@@ -15,6 +15,8 @@ ca-certificates on Debian): Python's standard library has no X.509 parser.
     mesh/invites.json                                      a hub's join tokens: hashed, 15 minutes, single use
     mesh/roster.json                                       a hub's roster: the nodes it issued for, revoked or not
     mesh/secret                                            the mesh's SLIM app secret (the hub makes it, a join hands it over)
+    mesh/ca/<domain>/                                      a CA this node keeps for a domain it issues in (a peer's own, a public one)
+    mesh/requests.json                                     public join requests: a key, waiting for a person's approval (slice N5a)
 
 A **card** is how a node says who it is and which of its participants the mesh may reach: its certificate,
 its facilitator's packet key, and each participant exposed at least as wide as its domain's level, with its
@@ -197,6 +199,9 @@ class Store:
         self.convs = self.root / "convs"
         self.outbox = self.root / "outbox"
         self.invites = self.root / "invites.json"
+        self.requests_file = self.root / "requests.json"
+        self.window_file = self.root / "request-window"
+        self.rotation_file = self.root / "rotation.json"
         self.roster_file = self.root / "roster.json"
         self.secret_file = self.root / "secret"
         self.status_file = self.root / "status.json"
@@ -518,3 +523,181 @@ class Issuer:
     def restore_roster(self) -> dict:
         d = self._call("GET", f"{self.kv}/data/facilitator/mesh/roster")
         return json.loads(d["data"]["data"]["roster"])
+
+
+
+# ---------------------------------------------------------------- an issuer a node keeps itself (slice N5a)
+
+def _stamp(t: float) -> str:
+    return dt.datetime.fromtimestamp(t, dt.timezone.utc).strftime("%Y%m%d%H%M%SZ")
+
+
+class LocalIssuer:
+    """A CA this node keeps for a domain it issues in: a peer's own domain (its own certificate, and what it needs to
+    be dialled) and the public domain a node issues for (1 h certificates, after a person approves a join request,
+    ruling AH). The CA key is a file in the state volume, mode 600, and the CA certificate is constrained to the
+    domain's SPIFFE URIs (name constraints), so it can vouch for nothing else. It has the same face as the OpenBao
+    Issuer: sign, bundle, revoke. Short lifetimes are the revocation (proposal 12.2); no CRL exists across SLIM's
+    checks. A lifetime under a day needs OpenSSL 3.4 or later (x509 -not_after)."""
+
+    def __init__(self, store: Store, domain: str):
+        self.store = store
+        self.domain = domain
+        self.dir = store.ca / domain
+        self.ca_pem, self.ca_key = self.dir / "ca.pem", self.dir / "ca.key"
+
+    def ensure(self) -> Path:
+        if self.ca_pem.is_file() and self.ca_key.is_file():
+            return self.ca_pem
+        self.store.ensure()
+        self.dir.mkdir(parents=True, exist_ok=True)
+        os.chmod(self.dir, 0o700)
+        new_key(self.ca_key)
+        r = _run(["req", "-x509", "-new", "-key", str(self.ca_key), "-subj", f"/O={self.domain}/CN={self.domain} CA",
+                  "-days", "3650", "-addext", "basicConstraints=critical,CA:true,pathlen:0",
+                  "-addext", "keyUsage=critical,keyCertSign,cRLSign",
+                  "-addext", f"nameConstraints=critical,permitted;URI:{self.domain}"])
+        self.ca_pem.write_bytes(r.stdout)
+        return self.ca_pem
+
+    def bundle(self) -> str:
+        return self.ensure().read_text()
+
+    def sign(self, request_pem: str, node_id: str, dns: str, ttl_seconds: int) -> dict:
+        ca = self.ensure()
+        serial = secrets.token_hex(8)
+        now = time.time()
+        with tempfile.TemporaryDirectory(prefix="fac-ca-") as t:
+            (Path(t) / "req.csr").write_text(request_pem)
+            (Path(t) / "ext").write_text(
+                "basicConstraints=critical,CA:false\nkeyUsage=critical,digitalSignature\n"
+                f"extendedKeyUsage=serverAuth,clientAuth\nsubjectAltName=DNS:{dns},URI:spiffe://{self.domain}/node/{node_id}\n")
+            args = ["x509", "-req", "-in", str(Path(t) / "req.csr"), "-CA", str(ca), "-CAkey", str(self.ca_key),
+                    "-extfile", str(Path(t) / "ext"), "-set_serial", "0x" + serial,
+                    "-not_before", _stamp(now - 5), "-not_after", _stamp(now + ttl_seconds)]
+            r = _run(args, check=False)
+            if r.returncode != 0:
+                err = r.stderr.decode(errors="replace")
+                if "Unknown option" in err or "unknown option" in err or "-not_after" in err:
+                    raise IdentityError("a certificate with a set lifetime needs OpenSSL 3.4 or later (x509 -not_after); "
+                                        "this node has " + (subprocess.run([_openssl(), "version"], capture_output=True,
+                                                                           text=True).stdout.strip() or "an older one"))
+                raise IdentityError(f"openssl x509: {err.strip().splitlines()[-1:] or ['failed']}")
+        return {"cert": r.stdout.decode(), "chain": "", "serial": serial}
+
+    def revoke(self, serial: str) -> None:        # no CRL: the certificate is not renewed and expires (12.2)
+        return None
+
+    def backup_roster(self, r: dict) -> None:      # the roster is in this node's state volume
+        return None
+
+    def issue_self(self, node_id: str, dns: str, ttl_seconds: int) -> None:
+        """This node's own certificate in this domain: its key, a request, and the CA's signature."""
+        k = self.store.key(self.domain)
+        self.store.dom(self.domain).mkdir(parents=True, exist_ok=True)
+        os.chmod(self.store.dom(self.domain), 0o700)
+        if not k.is_file():
+            new_key(k)
+        got = self.sign(csr(k, dns), node_id, dns, ttl_seconds)
+        self.store.write_bundle(self.domain, self.bundle())
+        self.store.cert(self.domain).write_text(got["cert"])
+
+
+def make_issuer(m: "mesh_mod.Mesh", store: Store, domain: str):
+    """The issuer of a domain this node issues in: a hub's own domain is its OpenBao PKI (ADR-0069); a peer's own
+    domain with node.issuer set likewise; anything else (a peer's own domain, a public domain) is a CA the node keeps."""
+    iss = m.node.get("issuer")
+    if domain == m.domain and iss and iss.get("openbao"):
+        return Issuer({**iss, "domain": domain})
+    return LocalIssuer(store, domain)
+
+
+# ---------------------------------------------------------------- public join requests (a key, then a person's approval)
+
+REQUEST_WINDOW_SECONDS = 15 * 60
+MAX_PENDING_REQUESTS = 20
+
+
+def csr_check(pem: str) -> str:
+    """The sha256 of an ed25519 request's public key (what a person approves); refuses anything else, and a
+    request whose own signature does not verify (proof of holding the key)."""
+    if "BEGIN CERTIFICATE REQUEST" not in (pem or "") or len(pem) > 4096:
+        raise IdentityError("not a certificate request")
+    r = _run(["req", "-verify", "-noout"], stdin=pem.encode(), check=False)
+    if r.returncode != 0:
+        raise IdentityError("the request's signature does not verify (it must be signed by the key it carries)")
+    pub = _run(["req", "-noout", "-pubkey"], stdin=pem.encode()).stdout.decode()
+    der = base64.b64decode("".join(pub.strip().splitlines()[1:-1]))
+    if not der.startswith(bytes.fromhex("302a300506032b6570032100")):
+        raise IdentityError("the request's key is not ed25519")
+    return hashlib.sha256(der[-32:]).hexdigest()
+
+
+def requests(store: Store) -> list[dict]:
+    try:
+        return json.loads(store.requests_file.read_text())
+    except (OSError, ValueError):
+        return []
+
+
+def _save_requests(store: Store, rows: list[dict]) -> None:
+    store.ensure()
+    _private(store.requests_file, json.dumps(rows, indent=2, sort_keys=True) + "\n")
+
+
+def open_window(store: Store, seconds: int = REQUEST_WINDOW_SECONDS, now: float | None = None) -> float:
+    until = (time.time() if now is None else now) + seconds
+    store.ensure()
+    _private(store.window_file, f"{until}\n")
+    return until
+
+
+def window_open(store: Store, now: float | None = None) -> bool:
+    try:
+        return float(store.window_file.read_text()) > (time.time() if now is None else now)
+    except (OSError, ValueError):
+        return False
+
+
+def add_request(store: Store, node: str, domain: str, csr_pem: str, secret_hash: str, now: float | None = None) -> dict:
+    """A public node's join request: its node id and key, waiting for a person (`node approve`). The node id is its
+    own claim until a person approves its key for that domain. One pending request per node id; a request
+    window (`node invite --level public`) must be open; at most MAX_PENDING_REQUESTS wait."""
+    now = time.time() if now is None else now
+    if not window_open(store, now):
+        raise IdentityError("no request window is open on this node (a person runs `facilitator node invite --level public`)")
+    fp = csr_check(csr_pem)
+    rows = requests(store)
+    if sum(1 for r in rows if r["status"] == "pending") >= MAX_PENDING_REQUESTS:
+        raise IdentityError(f"{MAX_PENDING_REQUESTS} join requests wait for a person: approve or deny some first")
+    if any(r["node"] == node and r["status"] in ("pending", "approved") for r in rows):
+        raise IdentityError(f"a join request of {node} waits or was approved already")
+    row = {"id": "r-" + secrets.token_hex(4), "node": node, "domain": domain, "csr": csr_pem, "fp": fp,
+           "secret_hash": secret_hash, "at": now_utc(), "status": "pending"}
+    rows.append(row)
+    _save_requests(store, rows)
+    return row
+
+
+def get_request(store: Store, rid: str) -> dict | None:
+    return next((r for r in requests(store) if r["id"] == rid), None)
+
+
+def update_request(store: Store, rid: str, **fields) -> dict:
+    rows = requests(store)
+    for r in rows:
+        if r["id"] == rid:
+            r.update(fields)
+            _save_requests(store, rows)
+            return r
+    raise IdentityError(f"no join request {rid} (facilitator node requests)")
+
+
+def live_requests(store: Store) -> int:
+    """Requests the join endpoint still has to serve: waiting for a person, or approved and not yet collected."""
+    return sum(1 for r in requests(store) if r["status"] in ("pending", "approved"))
+
+
+def request_view(r: dict) -> dict:
+    return {k: r[k] for k in ("id", "node", "domain", "fp", "at", "status") if k in r} | {
+        k: r[k] for k in ("approved_by", "approved_at") if k in r}

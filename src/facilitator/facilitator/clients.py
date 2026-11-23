@@ -70,6 +70,7 @@ class Clients:
         self.dir = state.home / "http"
         self.file = self.dir / "clients.json"
         self.audit_file = self.dir / "audit.jsonl"
+        self.sink = None        # the signed audit register (slice N5a, audit.Audit.on_line): called with each line written
 
     # ------------------------------------------------------------ the table
 
@@ -196,6 +197,8 @@ class Clients:
         fd = os.open(self.audit_file, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
         with os.fdopen(fd, "a") as f:
             f.write(line + "\n")
+        if self.sink is not None:
+            self.sink(line, rec)
 
     def audit_log(self) -> list[dict]:
         try:

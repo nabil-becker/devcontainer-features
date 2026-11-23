@@ -18,6 +18,9 @@ Kinds:
     notice    {thread, code, text, refs?}        by facilitator: why something was held, paused or dropped
     continue  {thread, upto}                     by a human member: lets a paused chain run another hop limit
 
+A second type, `audit` (slice N5a, ruling HC3), keeps the node's enrolment audit as a signed register: one kind,
+`enrolment` {event, subject, by, claimed?, detail?, line?}, written by the facilitator only (see audit.py).
+
 Flags (kept, shown to a person; the entry is ignored where it says so):
     unknown-thread   an entry before or without its thread (ignored)
     not-a-member     a message by a principal that is not a member (ignored)
@@ -253,5 +256,46 @@ def project(led) -> tuple[dict, dict[str, list[str]]]:
     return conv, flags
 
 
+AUDIT_EVENTS = ("enrolled", "approved", "denied", "revoked",                      # an HTTP client's token and its approval (slice N4)
+                "join-requested", "join-approved", "join-denied", "node-revoked",   # a node's join and its cut-off (slice N5a)
+                "secret-rotated")
+SUBJECT_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.@:/-]{0,127}")
+
+
+def _enrolment(d: dict) -> None:
+    _need(set(d) <= {"event", "subject", "by", "claimed", "detail", "line"}, "enrolment: unknown field")
+    _need(d.get("event") in AUDIT_EVENTS, f"enrolment.event: one of {', '.join(AUDIT_EVENTS)}")
+    _need(isinstance(d.get("subject"), str) and SUBJECT_RE.fullmatch(d["subject"]), "enrolment.subject: a client or node name")
+    _need(isinstance(d.get("by"), str) and 0 < len(d["by"]) <= 128, "enrolment.by: who acted")
+    _need("claimed" not in d or (isinstance(d["claimed"], str) and len(d["claimed"]) <= 40), "enrolment.claimed: the time of the replayed line")
+    _need("detail" not in d or (isinstance(d["detail"], str) and len(d["detail"]) <= 500), "enrolment.detail")
+    _need("line" not in d or (isinstance(d["line"], str) and re.fullmatch(r"[0-9a-f]{64}", d["line"])),
+          "enrolment.line: the SHA-256 of the line of http/audit.jsonl this entry replays")
+
+
+AUDIT_KINDS = {"enrolment": _enrolment}
+
+
+def audit_project(led) -> tuple[dict, dict[str, list[str]]]:
+    """(the audit, flags): {"events": [{event, subject, by, at, claimed?, detail?, line?, entry}], "lines": {sha: entry id}},
+    in the register's order. Only the facilitator's own entries count: an enrolment by anyone else is flagged and ignored."""
+    flags: dict[str, list[str]] = {}
+    out: dict = {"events": [], "lines": {}}
+    for i in led.order:
+        e = led.valid[i]
+        if e.kind != "enrolment":
+            continue
+        if e.principal != FACILITATOR:
+            flags.setdefault(i, []).append("not-facilitator")
+            continue
+        out["events"].append({**e.data, "at": e.at, "entry": i})
+        if e.data.get("line"):
+            out["lines"].setdefault(e.data["line"], i)
+    return out, flags
+
+
 TYPES = [RegisterType("conversation", KINDS, description="the facilitator's conversations: group and direct, A2A-shaped",
-                      project=project, outside_git=True, feature="facilitator")]
+                      project=project, outside_git=True, feature="facilitator"),
+         RegisterType("audit", AUDIT_KINDS, description="the node's signed audit of enrolments: HTTP clients (token, approve, deny, "
+                      "revoke) and nodes (join requests, approvals, cut-offs, secret rotations); each entry signed by the facilitator",
+                      project=audit_project, outside_git=True, feature="facilitator")]

@@ -57,6 +57,9 @@ class Facilitator:
         self._list = None
         self._net = None
         self.clients = clients_mod.Clients(self.state)
+        from .audit import Audit
+        self.audit = Audit(self)
+        self.clients.sink = self.audit.on_line          # every enrolment event is also a signed entry (ruling HC3)
 
     # ------------------------------------------------------------ parts, made when first needed
 

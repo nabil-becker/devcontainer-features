@@ -46,6 +46,23 @@ def conversation_type():
     return types["conversation"]
 
 
+def audit_type():
+    """The `audit` register type of the facilitator's types folder (slice N5a, ruling HC3), loaded as conversation_type is."""
+    if not INSTALLED:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("facilitator_types_source", LIB / "types.d" / "facilitator.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return next(t for t in mod.TYPES if t.name == "audit")
+    try:
+        types = registertypes.load()
+    except registertypes.TypesError as e:
+        raise RecordError(f"the audit type cannot be loaded: {e}") from None
+    if "audit" not in types:
+        raise RecordError(f"no audit type in {registertypes.TYPES_DIR}")
+    return types["audit"]
+
+
 def new_id(prefix: str, n: int = 6) -> str:
     return f"{prefix}-{secrets.token_hex(n)}"
 
