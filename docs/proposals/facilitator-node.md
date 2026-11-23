@@ -1447,3 +1447,9 @@ What slice N4 found where a ruling could not be built as written, and the Operat
   person's. Rejected: the client may only reply (B: it could never begin, so it could not talk at all) and a
   person approves every conversation it starts (C: a person in every loop). It refines ADR-0066 and ADR-0070
   decision 4.
+- **HC2, public under the `team` preset: option A, ruled 2026-11-23.** `team`'s ceiling is private, but an HTTP
+  client is public until `mesh.yml` trusts `http.<home domain>` as private. Under `team`, `expose: public` marks
+  the agents this node's own HTTP clients may reach; public from other nodes stays slice N5, and `trust` may map
+  `http.<home domain>` only to private or public. Refused under `solo`. Rejected: a new preset between `team`
+  and `open` (B; the names are revisited when N5 defines `open`) and no public under `team`, HTTP clients mapped
+  to private (C: any token holder would get private reach).
