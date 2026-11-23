@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# registry-source-http: the component registry's `http` source. A layer is one .reg file served
+# registry-source-http: the component registry's `http` source. A layer is one .layer file served
 # over HTTP(S) (a REST endpoint, a static site, a raw file in a code host). Review and release are
 # the endpoint owner's; the registry only pins what to read and how to log in. No manifest and no
 # signature are required. Installed on PATH by the component-registry Feature; dcf-registry calls it.
 #
 #   registry-source-http fetch <layer> <dest> url=<url> [allow-insecure=true] [auth.*=...]
-#                                         the file into <dest>/<name>.reg (the URL's last path
-#                                         segment when it ends in .reg, else <layer>.reg)
+#                                         the file into <dest>/<name> (the URL's last path
+#                                         segment when it ends in .layer or .reg, else <layer>.layer)
 #   registry-source-http version <layer> url=<url> [...]
 #                                         the ETag, else the Last-Modified, else a hash of the body
 #   registry-source-http supports         the verbs it implements
 #
-# The smallest safe form: one .reg file, at most 1 MiB. An archive (.tar.gz, .zip) and @file
+# The smallest safe form: one .layer file, at most 1 MiB. An archive (.tar.gz, .zip) and @file
 # siblings are not read: unpacking untrusted archives is a risk this release does not take.
 #
 # Log-in: auth.type=none (the default without a secret: an open endpoint, the layer owner's
@@ -134,9 +134,9 @@ case "$verb" in
     get "$tmp/body" "$tmp/h" || die 1 "layer $layer: cannot read $url: $(grep -m 1 . "$tmp/err")"
     name="${url%%[?#]*}"; name="${name##*/}"
     case "$name" in
-      *.tar.gz | *.tgz | *.zip) die 1 "layer $layer: $url is an archive; this release reads one .reg file" ;;
-      *.reg) [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || name="$layer.reg" ;;
-      *) name="$layer.reg" ;;
+      *.tar.gz | *.tgz | *.zip) die 1 "layer $layer: $url is an archive; this release reads one .layer file" ;;
+      *.layer | *.reg) [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || name="$layer.layer" ;;
+      *) name="$layer.layer" ;;
     esac
     [ -s "$tmp/body" ] || die 1 "layer $layer: $url answered with an empty body"
     cp "$tmp/body" "$dest/$name" || die 1 "layer $layer: could not write into $dest" ;;

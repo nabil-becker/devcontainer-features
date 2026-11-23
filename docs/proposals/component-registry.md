@@ -2,7 +2,7 @@
 
 Status: accepted by the Operator 2026-11-19, with the architecture review's changes applied (the
 last section) and the rule that no layer widens a permission; ADR-0063. Supersedes the
-[personalization](personalization.md) proposal. Slice 1 (section 12) is built: `component-registry` 1.0.0 (2026-11-20); slice 2 is built: `component-registry` 1.1.0, `claude-code` 1.12.0, participant 1.2.0, ADR-0064 (2026-11-20); slice 3 is built: `component-registry` 1.2.0 (`http`, one `.reg` file, auth settings only; archives not read) and `cloud-folder` 1.4.0 (`cloud-folder` source) (2026-11-20); slice 4 is built: `architecture-review` in two layers, `devhost` 1.16.0 and this repository's layer, byte-equal to the committed skill with `component-registry` 1.3.0 (`heading: false`, front matter values), the switch-over waiting for the Operator (section 12) (2026-11-20); release 2, agent definitions (section 6.1), is built: `component-registry` 1.6.0, participant 1.3.0, `claude-code` 1.13.0 (2026-11-20); slice 5 is not.
+[personalization](personalization.md) proposal. Slice 1 (section 12) is built: `component-registry` 1.0.0 (2026-11-20); slice 2 is built: `component-registry` 1.1.0, `claude-code` 1.12.0, participant 1.2.0, ADR-0064 (2026-11-20); slice 3 is built: `component-registry` 1.2.0 (`http`, one `.layer` file, auth settings only; archives not read) and `cloud-folder` 1.4.0 (`cloud-folder` source) (2026-11-20); slice 4 is built: `architecture-review` in two layers, `devhost` 1.16.0 and this repository's layer, byte-equal to the committed skill with `component-registry` 1.3.0 (`heading: false`, front matter values), the switch-over waiting for the Operator (section 12) (2026-11-20); release 2, agent definitions (section 6.1), is built: `component-registry` 1.6.0, participant 1.3.0, `claude-code` 1.13.0 (2026-11-20); slice 5 is not.
 
 Who this serves: the Operator, who rules on it and is its first user (their own layer: "I'm
 colour-blind, adapt diagram colours"); a consumer's maintainer, who points devhosts at an
@@ -108,7 +108,7 @@ layers:
     at: /Corp
     sources:
       - kind: http
-        url: "https://registry.example.invalid/corp/layer.reg"
+        url: "https://registry.example.invalid/corp/layer.layer"
         auth: { type: bearer, secret: registry/corp-base }   # a dcf-secret path
         required: true
   - id: dept
@@ -151,9 +151,9 @@ skill is handed over as `<ns>--<name>` (folder and `SKILL.md` name; a `:` is no 
 its registry name staying `<ns>:<name>`; a namespaced agent definition applies to no agent of the
 agents list (ruled 2026-11-23: whether a layer is namespaced is the lister's choice).
 
-### 3.2 A layer's content: the `.reg` format
+### 3.2 A layer's content: the `.layer` format
 
-Plain text, one or more `*.reg` files at the root of each layer's copy, read with awk (NFR-7).
+Plain text, one or more `*.layer` files at the root of each layer's copy, read with awk (NFR-7).
 
 ```
 file      = *( section / comment / blank )
@@ -180,7 +180,7 @@ the same file. `!` therefore always means "not": a list item taken out, or a pat
 **A component and its scope.** A path is split at its first component-kind segment (`skills`,
 later `agents`, `prompts`, `settings`, `lexicon`): what is before it is the **scope**, what follows
 is the **component**. `/Corp/MyDepartment/skills/diagrams` has scope `/Corp/MyDepartment` and
-component `skills/diagrams`. A skill's files sit beside the `.reg` file and are named by `@file`
+component `skills/diagrams`. A skill's files sit beside the `.layer` file and are named by `@file`
 or by a `files:value = @dir <folder>` entry; a higher layer's file of the same name replaces the
 lower one, and `body:text` stacks on the skill's `SKILL.md` text.
 
@@ -258,7 +258,7 @@ exit codes: 0 done, 1 failed, 2 bad use, 3 not supported (the Feature falls back
 | Kind | Installed by | What the layer list pins | Log-in |
 |---|---|---|---|
 | `git` | component-registry | `url` and one of `branch`, `tag`, `commit` | optional; secret through `dcf-secret` |
-| `http` | component-registry | `url` (a `.reg` file or an archive) | `auth`: bearer, header or basic; secret through `dcf-secret`; none for an open endpoint |
+| `http` | component-registry | `url` (a `.layer` file or an archive) | `auth`: bearer, header or basic; secret through `dcf-secret`; none for an open endpoint |
 | `path` | component-registry | `path` (a file share is mounted on the host by the launcher, `DCF_HOST_*`) | the folder's own permissions |
 | `cloud-folder` | cloud-folder | `remote` | its existing rclone set-up |
 | `db` | component-registry (1.5.0) | `driver` (`sqlite` or `postgres`); `path`, or `host`, `port`, `database`, `user`, `sslmode`; one of `table` or `query` returning `(section, key, type, data, locked)` | `auth.secret` (the postgres password) through `dcf-secret`, into the client's environment only |
@@ -547,7 +547,7 @@ flowchart LR
 |---|---|---|---|---|---|
 | Layer list | `.devcontainer/registry.yml` | git | 1 | public | no |
 | Who-you-are path | `.env` or the launcher | the person | per person | internal | no (set again) |
-| A layer's `.reg` files | its source | any | the owner's choice | internal; a person's own layer is personal | no |
+| A layer's `.layer` files | its source | any | the owner's choice | internal; a person's own layer is personal | no |
 | Layer copies | state volume, one folder per layer | fetched | 4 | as its layer | refetched |
 | Resolved view | state volume | resolve | 4 | as its most sensitive input | rebuilt |
 | Resolved skills in the CLI | the CLI's skills folder (Claude: claude-code volume) | the adapter | 4 | as the resolved view | rebuilt |
@@ -580,7 +580,7 @@ classDiagram
 
 ## 12. Slices
 
-1. **Core**: the Feature, the layer list, `COMPONENT_REGISTRY_WHOAMI`, the `.reg` grammar, the four
+1. **Core**: the Feature, the layer list, `COMPONENT_REGISTRY_WHOAMI`, the `.layer` grammar, the four
    value types, patterns, the match rule, locks, `resolve` and `explain` (`--uses`), sources `git`
    and `path`, tasks and tests.
 2. **Adapter step**: the `skills` verb in `agent-adapter-claude`, `resolve` in the agents start
@@ -616,7 +616,7 @@ classDiagram
   component kind later.
 - Amends ADR-0037 (the CLI contract gains the optional `skills` verb) and `src/agents/NOTES.md`.
 - Lexicon terms to add with the build: registry layer, registry source, layer copy, resolved view,
-  lock, who-you-are path, `.reg` file. "Layer" alone stays the theme layer; "snapshot" stays
+  lock, who-you-are path, `.layer` file. "Layer" alone stays the theme layer; "snapshot" stays
   OpenBao's.
 
 ## 14. Open questions
@@ -640,7 +640,7 @@ NFR-10 (slice 1 tests fixtures; the scenario per option and the two-fake-adapter
 NFR-12 are not named). Not met: NFR-6 (finding 3), NFR-9 (finding 5), NFR-12 (finding 2).
 
 ### Findings
-1. **The `.reg` grammar and the match rule are not specified enough to build (section 3.2, 3.3).**
+1. **The `.layer` grammar and the match rule are not specified enough to build (section 3.2, 3.3).**
    Section 3.2 defers the grammar to "the build's NOTES", but the proposal leaves open: how a
    section header relates to the layer's `at` (the examples are absolute while a layer is mounted at
    a path); how "who you are" selects lines (is a line applied when its path is an ancestor of the
@@ -698,7 +698,7 @@ NFR-12 are not named). Not met: NFR-6 (finding 3), NFR-9 (finding 5), NFR-12 (fi
    says "adapter" is used only for the CLI adapter; `registry-source-<kind>` is called a "source
    adapter" (decision 9, section 4). "Snapshot" is already the OpenBao raft file. "Layer" collides
    with the bar and life layers (section 11 handles it). Needs terms: registry layer, registry source,
-   resolved view, lock, who-you-are path (`whoami`), `.reg` file. Recommended change: call the
+   resolved view, lock, who-you-are path (`whoami`), `.layer` file. Recommended change: call the
    executables "registry sources" (a `registry-source-<kind>` executable), call the local copy a
    "layer copy", and ask the librarian for the six terms; the component-registry ontology id
    already exists.

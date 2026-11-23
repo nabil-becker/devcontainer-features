@@ -392,7 +392,7 @@ The domain words of the project itself are not here; they live with the project'
   layers' lines for it are skipped; it beats `@replace`.
 - **Who-you-are path**: the path that says which sections of the registry apply to this person and
   agent, given to `resolve` and `explain` (`--as`).
-- **.reg file**: a file of the component registry's format: sections of paths with `:key` value
+- **.layer file**: a file of the component registry's format (`.reg` until 1.9.0; still read in 1.x, deprecated): sections of paths with `:key` value
   lines, read from a layer copy in name order.
 - **Built-in base layer**: the registry layer at rank 0 (id `component-registry`) that the Feature
   ships itself, holding the three utility skills (`registry-refresh`, `registry-explain`,

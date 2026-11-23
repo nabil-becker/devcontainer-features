@@ -540,9 +540,9 @@ type = "concept"
 term = "Who-you-are path"
 summary = "The path saying which registry sections apply to this person and agent (--as)."
 
-[reg-file]
+[layer-file]
 type = "concept"
-term = ".reg file"
+term = ".layer file"
 summary = "A component registry file of sections of paths with :key value lines."
 
 [built-in-base-layer]

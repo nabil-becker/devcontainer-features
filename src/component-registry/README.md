@@ -1,7 +1,7 @@
 
 # Component registry (component-registry)
 
-A registry for agentic components, shaped like the Windows Registry (ADR-0063). Layers from any number of sources (a git branch, tag or commit; one .reg file over http(s) with bearer, header or basic log-in, the secret through dcf-secret and never over plain http without allow-insecure; a folder or mounted file share; a folder in the cloud folder, from the cloud-folder Feature; the rows of a SQLite or PostgreSQL table or query, rendered into a .reg file, the password through dcf-secret into the client's environment only) are fetched into local layer copies (version first, so an unchanged layer is skipped; offline, the last good copy is used and said) and merged by value type into one resolved view for who you are (COMPONENT_REGISTRY_WHOAMI, a path such as /Corp/MyDepartment/team/me): value replaces, list combines (!item takes out), text stacks in layer order (under a heading per layer, or none with the layer key heading: false), a skill's name and description values go into its SKILL.md front matter, ref points at another path; the higher layer wins, the more specific scope inside a layer, a locked key beats both, and a permission key comes from a component's lowest layer only. dcf-registry resolve and dcf-registry explain <path> [--uses] [--color auto|always|never] (task component-registry:resolve, :explain); release 1 resolves skills, and dcf-registry handover gives them to a CLI's adapter (agent-adapter-<cli> skills; Claude Code: its personal skills folder, live in running sessions), which the participant component (claude-code participants: true) does at every agent's start; a view is kept per who-you-are path, so agents with different paths each get their own skills (split, shared or off per agent), and /registry-refresh refreshes the calling agent. From 1.6.0 it also resolves agent definitions (agents/<name>: model and skills only, which replace the agents list's; the registry never sets an agent's identity, lease, folder, args or permissions), which the participant component reads at each agent's start. From 1.7.0 a layer can carry namespace: <name> (a public or community source): its components become <name>:<component>, merge only with layers of the same namespace and never reach the Operator's own; a namespaced skill is handed over as <name>--<skill>. A built-in base layer ships the utility skills /registry-refresh, /registry-explain and /registry-remember (appends to the layer marked writable: true). The layer list is .devcontainer/registry.yml (option registryFile, COMPONENT_REGISTRY_FILE). Layer copies and the resolved view live owner-only in a named volume at COMPONENT_REGISTRY_STATE_DIR=/var/lib/devcontainer-features/component-registry, made usable by component-registry-setup at start. Bash, awk and sed; nothing downloaded at build.
+A registry for agentic components, shaped like the Windows Registry (ADR-0063). Layers from any number of sources (a git branch, tag or commit; one .layer file over http(s) with bearer, header or basic log-in, the secret through dcf-secret and never over plain http without allow-insecure; a folder or mounted file share; a folder in the cloud folder, from the cloud-folder Feature; the rows of a SQLite or PostgreSQL table or query, rendered into a .layer file, the password through dcf-secret into the client's environment only) are fetched into local layer copies (version first, so an unchanged layer is skipped; offline, the last good copy is used and said) and merged by value type into one resolved view for who you are (COMPONENT_REGISTRY_WHOAMI, a path such as /Corp/MyDepartment/team/me): value replaces, list combines (!item takes out), text stacks in layer order (under a heading per layer, or none with the layer key heading: false), a skill's name and description values go into its SKILL.md front matter, ref points at another path; the higher layer wins, the more specific scope inside a layer, a locked key beats both, and a permission key comes from a component's lowest layer only. dcf-registry resolve and dcf-registry explain <path> [--uses] [--color auto|always|never] (task component-registry:resolve, :explain); release 1 resolves skills, and dcf-registry handover gives them to a CLI's adapter (agent-adapter-<cli> skills; Claude Code: its personal skills folder, live in running sessions), which the participant component (claude-code participants: true) does at every agent's start; a view is kept per who-you-are path, so agents with different paths each get their own skills (split, shared or off per agent), and /registry-refresh refreshes the calling agent. From 1.6.0 it also resolves agent definitions (agents/<name>: model and skills only, which replace the agents list's; the registry never sets an agent's identity, lease, folder, args or permissions), which the participant component reads at each agent's start. From 1.7.0 a layer can carry namespace: <name> (a public or community source): its components become <name>:<component>, merge only with layers of the same namespace and never reach the Operator's own; a namespaced skill is handed over as <name>--<skill>. A built-in base layer ships the utility skills /registry-refresh, /registry-explain and /registry-remember (appends to the layer marked writable: true). The layer list is .devcontainer/registry.yml (option registryFile, COMPONENT_REGISTRY_FILE). Layer copies and the resolved view live owner-only in a named volume at COMPONENT_REGISTRY_STATE_DIR=/var/lib/devcontainer-features/component-registry, made usable by component-registry-setup at start. Bash, awk and sed; nothing downloaded at build.
 
 ## Example Usage
 
@@ -45,11 +45,11 @@ A registry for agentic components, shaped like the Windows Registry (ADR-0063). 
 | --- | --- | --- |
 | Layer list (which layers, at which paths, from which sources) | `.devcontainer/registry.yml` in the repository (option `registryFile`) | 1 git |
 | Who-you-are path (`COMPONENT_REGISTRY_WHOAMI`) | `.env` (git-ignored) or the launcher, per person | none (a setting, set again) |
-| A layer's `.reg` files and skill files | its source: a git repository, a folder, a file share | the owner's choice |
+| A layer's `.layer` files and skill files | its source: a git repository, a folder, a file share | the owner's choice |
 | Layer copies, the resolved view, the lock file | named volume at `/var/lib/devcontainer-features/component-registry`, owner-only | 4 working set |
 | Resolved skills handed to a CLI | the CLI's skills folders (Claude Code: `$CLAUDE_CONFIG_DIR/skills` and, per agent, `$CLAUDE_CONFIG_DIR/registry-agents/`, the claude-code volume), owner-only | 4 working set |
 | Hand-over records (`handovers.tsv`: CLI, agent, folder, path) | the state volume, owner-only | 4 working set |
-| Remembered lines (`/registry-remember`) | `remembered.reg` in the writable layer's folder | the person's choice (their own layer's source) |
+| Remembered lines (`/registry-remember`) | `remembered.layer` in the writable layer's folder | the person's choice (their own layer's source) |
 | The utility skills (built-in base layer) | `/usr/local/share/component-registry-feature/base`, in the image | none (the Feature) |
 | Source secrets | OpenBao, read with `dcf-secret` | OpenBao's |
 
@@ -67,7 +67,7 @@ their own **registry layer**, kept wherever they keep things. Layers are like hi
 keys, typed `:key` values like registry values, locks like Group Policy; `resolve` builds the merged
 view (like `HKCR`) for who you are, `explain` reads it (like `regedit`).
 
-Release 1.0.0 is the core: the layer list, `COMPONENT_REGISTRY_WHOAMI`, the `.reg` grammar, the
+Release 1.0.0 is the core: the layer list, `COMPONENT_REGISTRY_WHOAMI`, the `.layer` grammar, the
 four value types, patterns, the match rule, locks, `resolve` and `explain` (`--uses`), and the
 `git` and `path` registry sources. Release 1.1.0 adds the adapter step (ADR-0064): `handover` gives
 the resolved skills to a CLI through its adapter's `skills` verb, the participant component
@@ -166,14 +166,14 @@ Only this YAML subset is read: comments, plain and quoted values, block entries 
 | --- | --- | --- |
 | `git` | `url`, one of `branch`, `tag`, `commit`; `required` | `auth`: `type` `basic` (default; `user`, default `git`) or `bearer`, and `secret`, a `dcf-secret` name; handed to git through the environment, never an argument; git never prompts |
 | `path` | `path` (repository-relative or absolute); `required` | the folder's own permissions |
-| `http` | `url` (one `.reg` file); `allow-insecure`; `required` | `auth`: `type` `bearer`, `header` (`header` names it) or `basic` (`user`), and `secret`, a `dcf-secret` name; none (the default without a secret) reads an open endpoint |
+| `http` | `url` (one `.layer` file); `allow-insecure`; `required` | `auth`: `type` `bearer`, `header` (`header` names it) or `basic` (`user`), and `secret`, a `dcf-secret` name; none (the default without a secret) reads an open endpoint |
 | `cloud-folder` | `remote` (a folder under the cloud folder); `required` | the cloud folder's own set-up (cloud-folder Feature 1.4.0 or later installs the source) |
 | `db` | `driver` (`sqlite`, `postgres`); `path` or `host`, `port`, `database`, `user`, `sslmode`; one of `table`, `query`; `required` | `auth.secret`, a `dcf-secret` name, the postgres password; sqlite: the file's own permissions |
 
 ### The `http` source
 
-`registry-source-http` reads one `.reg` file of at most 1 MiB, saved in the layer copy under the
-URL's file name (or `<layer>.reg`). The smallest safe form: archives (`.tar.gz`, `.zip`) and
+`registry-source-http` reads one `.layer` file of at most 1 MiB, saved in the layer copy under the
+URL's file name (or `<layer>.layer`). The smallest safe form: archives (`.tar.gz`, `.zip`) and
 `@file` siblings are **not** read in this release, because unpacking an archive from the network
 is a risk the registry does not take; the source says so when the URL is an archive. No manifest
 and no signature are required; review is the endpoint owner's, and the layer list pins only the
@@ -194,15 +194,15 @@ URL and how to log in.
   copy and says so.
 
 ```yaml
-- { kind: http, url: "https://registry.example.invalid/corp.reg", auth: { type: bearer, secret: registry/corp } }
-- { kind: http, url: "https://registry.example.invalid/open.reg" }          # an open endpoint
-- { kind: http, url: "https://registry.example.invalid/x.reg", auth: { type: header, header: X-Api-Key, secret: registry/x } }
+- { kind: http, url: "https://registry.example.invalid/corp.layer", auth: { type: bearer, secret: registry/corp } }
+- { kind: http, url: "https://registry.example.invalid/open.layer" }          # an open endpoint
+- { kind: http, url: "https://registry.example.invalid/x.layer", auth: { type: header, header: X-Api-Key, secret: registry/x } }
 ```
 
 ### The `db` source (1.5.0)
 
 `registry-source-db` reads the rows a table or a query returns and renders them into one
-`<layer>.reg` file in the layer copy. Review and release are the database owner's; the layer list
+`<layer>.layer` file in the layer copy. Review and release are the database owner's; the layer list
 pins only what to read and how to log in.
 
 ```yaml
@@ -226,10 +226,10 @@ pins only what to read and how to log in.
 
   | Column | Holds | Becomes |
   | --- | --- | --- |
-  | `section` | a section path as in a `.reg` file (`skills/web`, `/Corp/skills/*`, no brackets) | `[section]`, written once per run of equal values |
+  | `section` | a section path as in a `.layer` file (`skills/web`, `/Corp/skills/*`, no brackets) | `[section]`, written once per run of equal values |
   | `key` | letters, digits, `.`, `_`, `-` | the entry's key |
   | `type` | `value`, `list`, `text` or `ref` | the entry's type |
-  | `data` | the entry's data, as in a `.reg` file | `key:type = data`; a `text` that is not one plain line (a newline, a leading `@`, edge blanks) goes to `text/<n>.txt` and reads `@file text/<n>.txt` |
+  | `data` | the entry's data, as in a `.layer` file | `key:type = data`; a `text` that is not one plain line (a newline, a leading `@`, edge blanks) goes to `text/<n>.txt` and reads `@file text/<n>.txt` |
   | `locked` | `1`, `t`, `true`, `yes` locks the key; `0`, `f`, `false`, `no`, empty does not | a `lock <key>` line after the entry |
 
   Rows come in the order the statement returns them (the table form: by section, then key), and
@@ -269,9 +269,12 @@ of names, sizes and times, as for `path`. When the cloud folder is not set up (t
 status says why) or the folder is absent, the source exits 1 with one line and `resolve` uses the
 last good copy.
 
-## A layer's content: `.reg` files
+## A layer's content: `.layer` files
 
-One or more `*.reg` files at the root of the layer's copy, read in name order, line by line:
+One or more `*.layer` files at the root of the layer's copy, read in name order, line by line.
+`.reg` was the extension until 1.9.0 (Windows opens `.reg` in the Registry Editor on double-click);
+it is still read in 1.x, `resolve` says once per layer source which files to rename, and it is removed
+in 2.0.0. A folder holding both `x.layer` and `x.reg` reads both, together in name order:
 
 ```
 [path]                    a section; [path] @replace replaces the component below it
@@ -301,7 +304,7 @@ lock key                  a higher layer cannot change this key
   the front matter of the `SKILL.md` that `body` makes, the strongest line winning as for any
   `value`: the key's line (and its indented continuation lines) is replaced, or added before the
   closing `---`, or a front matter is made when the body has none. Only these two keys; the value
-  is written as it is, one line (quote it in the `.reg` line if YAML needs that). Any other front
+  is written as it is, one line (quote it in the `.layer` line if YAML needs that). Any other front
   matter line stays the first block's, so a permission key (`allowed-tools`) keeps the lowest
   layer's, as rule 3 of the match rule says. A `SKILL.md` that comes from `files` is not changed.
 
@@ -314,7 +317,7 @@ The Feature carries one layer of its own, read from `/usr/local/share/component-
 (never fetched): rank 0, the id `component-registry`, at `/`, below every layer of the list and
 present in every resolve. `explain` lists it first, as
 `0 component-registry at /, source 1 (builtin): builtin, <Feature version>`, and names it on each of
-its lines (`component-registry@1.1.0 1:component-registry.reg:<line>`). The id is reserved: a layer
+its lines (`component-registry@1.1.0 1:component-registry.layer:<line>`). The id is reserved: a layer
 list using it is refused with its line. A listed layer adapts a utility skill like any other
 (`body:text` stacks on it, `@replace` replaces it).
 
@@ -322,7 +325,7 @@ list using it is refused with its line. A listed layer adapts a utility skill li
 | --- | --- | --- |
 | `/registry-refresh` | `dcf-registry refresh --session "${CLAUDE_SESSION_ID}"` | (1.8.0) resolve now for the calling agent's own path and hand over to it alone (its session id, found in each adapter's `list`); an unknown or unsubstituted id refreshes every recorded hand-over, each path once; with no record, for the path the latest view was resolved for, to every CLI adapter on PATH. Claude Code picks the change up in the running session; a CLI that does not watch its skills folder needs its session restarted; a skill already used in a conversation keeps its old text until a new conversation |
 | `/registry-explain <path>` | `dcf-registry explain <path> [--uses] [--color auto|always|never]` | read-only, shown to the person |
-| `/registry-remember [skills/<name>] <line>` | `dcf-registry remember [--skill <name>] -- <line>` | appends `body:text = <line>` under `[skills/<name>]` (or `[skills/*]`, every skill) to `remembered.reg` in the folder of the layer marked `writable: true`, then refreshes. Refused, nothing written: no writable layer, two, a writable layer without a `path` source (a git or http layer changes through its owner's release), a folder that is not there or not writable, an empty line, a line starting with `@`. Only when the person asks (`disable-model-invocation`) |
+| `/registry-remember [skills/<name>] <line>` | `dcf-registry remember [--skill <name>] -- <line>` | appends `body:text = <line>` under `[skills/<name>]` (or `[skills/*]`, every skill) to `remembered.layer` in the folder of the layer marked `writable: true`, then refreshes. Refused, nothing written: no writable layer, two, a writable layer without a `path` source (a git or http layer changes through its owner's release), a folder that is not there or not writable, an empty line, a line starting with `@`. Only when the person asks (`disable-model-invocation`) |
 
 ## Handing skills to a CLI (1.1.0)
 
@@ -523,7 +526,7 @@ layers:
 ```
 
 ```
-; acme-community (v2)                  ; acme-adapt (.registry-acme/adapt.reg)
+; acme-community (v2)                  ; acme-adapt (.registry-acme/adapt.layer)
 [skills/arch-review]                   [skills/arch-review]
 body:text = @file arch-review/SKILL.md body:text = Our ADRs live in docs/adr/.
 allowed-tools:value = Read             allowed-tools:value = Bash   ; skipped: the namespace's lowest layer's stands
@@ -655,7 +658,7 @@ what 1.3.0 changed for it:
   never written into `SKILL.md`. From 1.3.0 `name` and `description` values are.
 - **Text only appends, layer by layer.** The repository-specific lines sat inside the method
   (two of the seven checks, the NFR path in the first, the placement layers in the sixth); no
-  `.reg` line can put a higher layer's text between a lower layer's lines. The committed skill
+  `.layer` line can put a higher layer's text between a lower layer's lines. The committed skill
   was restated once, in the same words, as the method then an "In this repository" section the
   method points to; the Operator accepted the restated skill as the reference (2026-11-20), with
   no anchors or slots.
@@ -745,7 +748,7 @@ every skipped line with its reason, and `resolved N component(s) for <W>`.
   agent's view has alike, and a project skill of the same name beats an agent's own copy (the
   registry's then runs as `/registry:<name>`).
 - `remember` writes to a `path` source only, appends, and never edits or removes a line; to take
-  one back, edit `remembered.reg` in your layer.
+  one back, edit `remembered.layer` in your layer.
 - A `path` source's version is a fingerprint of names, sizes and
   modification times, so a change that keeps all three is not seen.
 - `*` and `**` are whole segments; there are no value filters.
@@ -769,9 +772,25 @@ its result to the CLI's own skills folder (1.1.0), so the two do not compete.
 
 Pin the major in the Feature reference (`component-registry:1`); a rebuild picks up the newest
 1.x. The layer copies and the view are rebuilt by the next `resolve`, so an upgrade needs nothing
-else; the `.reg` grammar and the layer list keys only grow within 1.x.
+else; the `.layer` grammar and the layer list keys only grow within 1.x.
 
 ## Changes
+
+### [1.9.0] - 2026-11-23
+
+#### Changed
+
+- A layer's files are now `*.layer`, not `*.reg`: Windows opens a `.reg` file in the Registry
+  Editor on double-click. The grammar is unchanged. The built-in base layer, the `http` source
+  (a URL without a `.layer` or `.reg` name is saved as `<layer>.layer`) and the `db` source
+  (renders `<layer>.layer`) use the new name. `remember` writes `remembered.layer`.
+
+#### Deprecated
+
+- `.reg` files are still read in 1.x, in name order with any `.layer` files, and `resolve`
+  prints one line per layer source naming them. `remember` keeps appending to an existing
+  `remembered.reg` (no split) with the same line. Action: rename your layer files to `.layer`
+  (`git mv x.reg x.layer`); `.reg` is removed in 2.0.0.
 
 ### [1.8.0] - 2026-11-21
 
@@ -843,33 +862,6 @@ Nothing to do. The adapter's `skills` verb also gets `COMPONENT_REGISTRY_PATH`; 
   was read as the skill `a` before. A ref to a target that is not there is reported as a
   `missing dependency:` line instead of `dangling ref:`. Otherwise a layer list without a
   namespace resolves exactly as in 1.6.0. `writable` and `remember` are unchanged.
-
-### [1.6.0] - 2026-11-20
-
-#### Added
-
-- **Agent definitions** (`agents/<name>`, the second component kind; proposal section 6.1). Two
-  fields, each merged by its type: `model:value` (the model the agent's CLI runs on, one word; and
-  `model.<cli>:value`, the model for agents of that CLI only, which beats a plain `model` of the same
-  layer and path; a key may now hold `.`) and
-  `skills:list` (a skill name or `ref:skills/<name>`, checked as a ref, so `explain skills/<name>
-  --uses` lists the agents that name it). A line for any other key of an agent is skipped and
-  reported: the agents list owns the identity, the address, the lease, the folder, `args` and
-  `definition`, and an agent definition carries no permission key at all.
-- **The resolved view's `agents/<name>/`**: `model` (one line), `skills` (one name per line) and
-  `from.tsv` (field, layer, `source:file:line` of each line used), what the participant component
-  (participant 1.3.0) reads at the agent's start; `meta/agents/<name>/` as for skills.
-- **`COMPONENT_REGISTRY_AGENTS`** (comma-separated `name:cli` items, set by the participant
-  component): `resolve` resolves `agents/<name>` for each, so a pattern such as `[agents/*]` reaches an
-  agent no layer names, and writes the effective model for that agent's CLI (`from.tsv` names the
-  key it came from); the names are kept in the view (`agent-names`), so `/registry-refresh` keeps them.
-- `explain agents/<name>` closes with where the participant reads the definition and that its
-  values replace the agents list's (the registry wins for `model` and `skills`, the Operator's
-  ruling of 2026-11-21).
-
-Nothing to do for a layer list or a layer that holds skills only: they resolve as before. A
-section for `agents/...`, reported as "not in this release" until now, is resolved from this
-release.
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/component-registry/CHANGELOG.md).
 
