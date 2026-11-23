@@ -1,7 +1,7 @@
 """The small subset of YAML the participant list and facilitator.yml are written in (the participant
 component's subset, components/participant/agents.sh): block maps and lists by indentation, plain,
 single- and double-quoted scalars, flow lists `[a, b]`, comments. No anchors, no multi-line strings,
-no flow maps. Errors name the file and line. Python's standard library has no YAML reader."""
+no flow maps. Keys are plain (letters, digits, `_ - . *`) or quoted. Errors name the file and line. Python's standard library has no YAML reader."""
 from __future__ import annotations
 
 import re
@@ -13,7 +13,12 @@ class YamlError(ValueError):
         self.line = line
 
 
-KEY_RE = re.compile(r"([A-Za-z0-9_-]+):(?:\s+(.*))?$")
+# A key: plain (letters, digits, _ - . *; mesh.yml's trust domains and the "*" default), or quoted (a full SPIFFE ID).
+KEY_RE = re.compile(r"(\"[^\"]+\"|'[^']+'|[A-Za-z0-9_.*-]+):(?:\s+(.*))?$")
+
+
+def _key(k: str) -> str:
+    return k[1:-1] if k[:1] in "'\"" else k
 
 
 def _strip_comment(s: str) -> str:
@@ -114,7 +119,7 @@ def parse(text: str, where: str = "<yaml>"):
             m = KEY_RE.match(t)
             if not m:
                 raise YamlError(where, n, f"expected key: value, got {t!r}")
-            k, v = m.group(1), m.group(2)
+            k, v = _key(m.group(1)), m.group(2)
             if k in out:
                 raise YamlError(where, n, f"'{k}' appears twice")
             if v is None or v == "":

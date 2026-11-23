@@ -1,28 +1,58 @@
-# A sample hub: the facilitator node image with an OpenBao beside it (ruling AI), on a network of their own that
-# reaches nothing else and publishes no port. Slice N2: the hub runs role standalone, every facilitator port on
-# loopback inside its container; the hub's networking and trust (SLIM listeners, SVIDs from OpenBao PKI) are
-# slice N3. OpenBao starts sealed and uninitialised: the Operator initialises it once and unseals it by hand
-# after every start (ruling AB), from a terminal, never an agent's job:
+# A sample intranet hub (slice N3): the facilitator node image as the hub of corp.example (role hub, from the
+# mounted mesh.yml), an OpenBao beside it whose PKI issues the domain's node certificates (ruling AI, ADR-0069), and
+# one spoke next to them. All three are on a network of their own (internal: it reaches nothing else) and no port is
+# published to the host; the hub's private SLIM listener and its join endpoint are open on that network only.
+#
+# The Operator, from a terminal (never an agent's job), as the facilitator NOTES say step by step ("A hub and its
+# spokes"):
 #
 #   docker compose -f bundles/facilitator/compose.yml up -d
-#   docker compose -f bundles/facilitator/compose.yml exec openbao bao operator init     # once; keep the shares
-#   docker compose -f bundles/facilitator/compose.yml exec openbao bao operator unseal   # after every start
-#   docker compose -f bundles/facilitator/compose.yml exec hub facilitator check
+#   docker compose -f bundles/facilitator/compose.yml exec openbao bao operator init      # once; keep the shares
+#   docker compose -f bundles/facilitator/compose.yml exec openbao bao operator unseal    # after every start
+#   ... the PKI for corp.example (its intermediate signed by a root kept offline), the hub's AppRole, written into
+#   the hub's volume as /var/lib/devcontainer-features/facilitator/approle; the hub then gets its certificate and
+#   opens its listener (until then it runs on loopback and `facilitator check` says why)
+#   docker compose -f bundles/facilitator/compose.yml exec hub facilitator node invite              # a join token
+#   docker compose -f bundles/facilitator/compose.yml exec spoke-a facilitator node join --token <token>
+#   docker compose -f bundles/facilitator/compose.yml restart spoke-a
+#   docker compose -f bundles/facilitator/compose.yml exec spoke-a facilitator check
 #
 # FACILITATOR_NODE_IMAGE names the image (task bundle:image builds facilitator-node:<version>-local).
 name: facilitator-hub
 
 services:
   hub:
-    image: ${FACILITATOR_NODE_IMAGE:-ghcr.io/nabil-becker/facilitator-node:0.3.0}
+    image: ${FACILITATOR_NODE_IMAGE:-ghcr.io/nabil-becker/facilitator-node:0.4.0}
     restart: unless-stopped
     depends_on: [openbao]
     environment:
       BAO_ADDR: http://openbao:8200
+    configs:
+      - source: hub-mesh
+        target: /etc/facilitator/mesh.yml
+      - source: hub-facilitator
+        target: /etc/facilitator/facilitator.yml
+      - source: hub-participants
+        target: /etc/facilitator/participants.yml
     volumes:
-      - facilitator-state:/var/lib/devcontainer-features/facilitator
-      # - ./facilitator.yml:/etc/facilitator/facilitator.yml:ro      # the hub's humans and settings
-      # - ./participants.yml:/etc/facilitator/participants.yml:ro
+      - hub-state:/var/lib/devcontainer-features/facilitator
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks:
+      hub:
+        aliases: [hub.corp.example]      # the DNS name in the hub's certificate: the spokes' server_name
+
+  spoke-a:
+    image: ${FACILITATOR_NODE_IMAGE:-ghcr.io/nabil-becker/facilitator-node:0.4.0}
+    restart: unless-stopped
+    depends_on: [hub]
+    environment:
+      # a spoke's mesh.yml is written by `facilitator node join`, so it lives in the spoke's own volume
+      FACILITATOR_MESH_FILE: /var/lib/devcontainer-features/facilitator/mesh.yml
+    volumes:
+      - spoke-a-state:/var/lib/devcontainer-features/facilitator
     read_only: true
     tmpfs: [/tmp]
     cap_drop: [ALL]
@@ -31,7 +61,7 @@ services:
 
   openbao:
     # quay.io/openbao/openbao 2.7.2, by digest (the multi-arch index, read from the registry on 2026-11-20; the version this devhost runs).
-    image: quay.io/openbao/openbao:2.7.2@sha256:5046911075e137e154ce49ab051502f4ec7cf367d484ae4a4dce665d9b90561f
+    image: ${FACILITATOR_OPENBAO_IMAGE:-quay.io/openbao/openbao:2.7.2@sha256:5046911075e137e154ce49ab051502f4ec7cf367d484ae4a4dce665d9b90561f}
     restart: unless-stopped
     command: ["server", "-config=/etc/openbao/hub.hcl"]
     environment:
@@ -46,13 +76,19 @@ services:
     networks: [hub]
 
 configs:
+  hub-mesh:
+    file: ./hub/mesh.yml
+  hub-facilitator:
+    file: ./hub/facilitator.yml
+  hub-participants:
+    file: ./hub/participants.yml
   openbao-config:
     content: |
       storage "raft" {
         path    = "/openbao/file"
         node_id = "hub-openbao"
       }
-      # Plain HTTP on the hub's own network only (internal, nothing published); TLS comes with slice N3.
+      # Plain HTTP on the hub's own network only (internal, nothing published).
       listener "tcp" {
         address     = "0.0.0.0:8200"
         tls_disable = true
@@ -63,7 +99,8 @@ configs:
       ui            = false
 
 volumes:
-  facilitator-state:
+  hub-state:
+  spoke-a-state:
   openbao-data:
 
 networks:

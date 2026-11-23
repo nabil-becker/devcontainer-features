@@ -77,3 +77,33 @@ flowchart LR
   participant-component -->|AGENT_MODEL to| cli-adapter
   devhost["devhost Feature: the generic layer"] -->|a path layer for| component-registry
 ```
+
+## The facilitator mesh (slice N3, ADR-0067 to ADR-0071)
+
+Built in `facilitator` 0.4.0: a hub (the node image) beside the OpenBao whose PKI issues its domain's node
+certificates, and spokes (a devcontainer, or the image) that join it with a join token and link to it over SLIM. The
+hub's listener holds only its level's CA bundle (lock one); every node's application checks each card and entry
+against its own `mesh.yml` (lock two). The hub's Directory is synced by its spokes by registry, one way, only with
+`directory.peering`.
+
+```mermaid
+flowchart LR
+  operator["Operator"]
+  facilitator-node["Facilitator node: the hub (node image, role hub)"]
+  facilitator["facilitator Feature: a spoke (a devcontainer, role spoke)"]
+  master-of-secrets["OpenBao beside the hub: PKI per trust domain, the roster's backup"]
+  node-bundle["Node bundle"]
+  join-token["Join token"]
+  mesh["mesh.yml of each node"]
+  operator -->|unseals by hand; node invite| facilitator-node
+  facilitator-node -->|makes| join-token
+  join-token -->|node join| facilitator
+  facilitator-node -->|asks for certificates, backs up the roster| master-of-secrets
+  facilitator -->|SLIM, mTLS, a link of type peer| facilitator-node
+  facilitator-node -->|routes between spokes, the roster of cards| facilitator
+  facilitator -.->|with directory.peering: syncs the hub's records by registry| facilitator-node
+  mesh -->|role, trust, expose, limits| facilitator
+  mesh -->|role, trust, expose, limits| facilitator-node
+  node-bundle -.->|installed by| facilitator-node
+  node-bundle -.->|installed by| facilitator
+```

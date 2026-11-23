@@ -214,6 +214,32 @@ flowchart LR
 - One shared MCP entry: who attaches comes from `FACILITATOR_HANDLE` and `FACILITATOR_TOKEN` in the CLI's environment; whether it is a person or an agent comes from the roster.
 - Sources: `src/facilitator/NOTES.md`, `docs/proposals/facilitator-agent.md` sections 4 and 5.
 
+### 3b. A conversation across nodes (facilitator 0.4.0, slice N3)
+
+Every node one of a conversation's members is on holds a whole replica; each write is pushed to the other member
+nodes until delivered. The hub's SLIM node routes between spokes; its application holds no copy unless one of its
+participants is a member. Each receiving node runs lock two before anything reaches its register. In a shared
+conversation every member is named `handle.node` (ruling H5), so two nodes' agents of one handle can both be members.
+
+```mermaid
+flowchart LR
+  subgraph sender["Node A (spoke)"]
+    a-signer["signer: the writer's key"]
+    a-reg["register (replica)"]
+    a-outbox["outbox: one marker per node and conversation"]
+    a-peers["peers part: signs the envelope with the node's certificate key"]
+  end
+  hub-slim["Hub's SLIM node: routes between its spokes"]
+  subgraph receiver["Node B (spoke)"]
+    b-peers["peers part: lock two (the sender's card, every entry's signer bound by a card, the reach rule, max_packet)"]
+    b-reg["register (replica)"]
+    b-agent["participant: receive"]
+  end
+  a-signer --> a-reg --> a-outbox --> a-peers
+  a-peers -->|SLIM, mTLS| hub-slim -->|SLIM, mTLS| b-peers
+  b-peers -->|sync, idempotent| b-reg --> b-agent
+```
+
 ## 4. Secrets
 
 OpenBao keeps every secret the collection creates. `ssh-agent` only uses keys. The design is
@@ -401,6 +427,10 @@ flowchart LR
 ```
 
 - Sources: `src/component-registry/NOTES.md`, `src/claude-code/NOTES.md`, `docs/proposals/component-registry.md`, `docs/adr/0063-*.md`, `docs/adr/0064-*.md`, `docs/adr/0074-*.md`.
+
+Trust boundary added in 0.4.0: **the intranet** between facilitator nodes. Only the hub's SLIM listener (mutual TLS,
+one CA bundle per level), its join endpoint (while a join token is live) and, with `directory.peering`, its Directory's
+libp2p and OCI ports cross it; the Directory's API and gateway never do. A spoke opens nothing.
 
 ## Gaps seen while drawing
 

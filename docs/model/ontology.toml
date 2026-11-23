@@ -1401,3 +1401,38 @@ object = "host-type"
 subject = "stateful-agent"
 predicate = "uses"
 object = "cli-adapter"
+
+[node-role]
+type = "mechanism"
+term = "Node role"
+summary = "What a facilitator node is in a mesh, set in mesh.yml: standalone (default), spoke or hub."
+
+[two-locks]
+type = "mechanism"
+term = "Two locks"
+summary = "One SLIM listener per trust level with its own CA bundle, plus the facilitator's check of every signed packet's SPIFFE ID against mesh.yml."
+
+[node-card]
+type = "mechanism"
+term = "Node card"
+summary = "The document a node signs with its certificate key, holding its certificate, facilitator key and exposed participants' keys; lock two reads it."
+
+[peers-part]
+type = "mechanism"
+term = "Peers part"
+summary = "The fourth part of a node's infrastructure: gets the certificate, sends the hello to the hub, exchanges cards and rosters."
+
+[join-endpoint]
+type = "mechanism"
+term = "Join endpoint"
+summary = "The HTTPS port a hub opens only while a join token is live, so a spoke without a certificate can join."
+
+[qualified-handle]
+type = "concept"
+term = "Qualified handle"
+summary = "handle.node, naming one agent when nodes share a handle; a bare handle works only when it is unique."
+
+[shared-handle]
+type = "concept"
+term = "Shared handle"
+summary = "A handle announced by agents on two or more nodes of a mesh, reached by qualified handle."

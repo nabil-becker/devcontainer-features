@@ -1,7 +1,8 @@
 """The transport part of the backend interface (proposal 4.8): in `agntcy` mode, SLIM, through
 `slim-bindings` directly (ruling E: no slim-mcp).
 
-Each running MCP server (and the model wrapper) is a SLIM app named agntcy/facilitator/<handle>,
+Each running MCP server (and the model wrapper) is a SLIM app named agntcy/facilitator/<handle> (in a mesh,
+agntcy/facilitator-<node id>/<handle>: SLIM syncs names across peer links, so a node's names are its own),
 subscribed to its own name and listening for sessions. A delivery opens a point-to-point session to
 the recipient's name, publishes the signed packets (the message and its route) and closes it. The
 recipient checks the packets and puts them in its store before it hands the message over. When the
@@ -64,8 +65,9 @@ class SlimTransport:
     """SLIM in a background thread with its own asyncio loop, so the synchronous core can call it."""
     name = "slim"
 
-    def __init__(self, endpoint: str, username: str, password: str, secret: str, me: str):
+    def __init__(self, endpoint: str, username: str, password: str, secret: str, me: str, ns: str = NS):
         self.endpoint, self.username, self.password, self.secret, self.me = endpoint, username, password, secret, me
+        self.ns = ns
         self.inbox: queue.Queue[bytes] = queue.Queue()
         self.loop = asyncio.new_event_loop()
         self.thread = threading.Thread(target=self.loop.run_forever, name="slim", daemon=True)
@@ -95,7 +97,7 @@ class SlimTransport:
         basic = sb.BasicAuth(**self._credentials())
         cfg = sb.ClientConfig(**{**vars(base), "auth": sb.ClientAuthenticationConfig.BASIC(config=basic)})
         self.conn = await svc.connect_async(cfg)
-        name = sb.Name(ORG, NS, self.me)
+        name = sb.Name(ORG, self.ns, self.me)
         self.app = svc.create_app_with_secret(name, self.secret)     # the blocking form: the _async one panics in 3.3.9
         await self.app.subscribe_async(name, self.conn)
         self.loop.create_task(self._listen())
@@ -126,7 +128,7 @@ class SlimTransport:
         cfg = sb.SessionConfig(session_type=sb.SessionType.POINT_TO_POINT, max_retries=2,
                                interval=td(milliseconds=400), metadata={}, mls_settings=None)
         try:
-            s = await asyncio.wait_for(self.app.create_session_and_wait_async(cfg, sb.Name(ORG, NS, handle)), 4)
+            s = await asyncio.wait_for(self.app.create_session_and_wait_async(cfg, sb.Name(ORG, self.ns, handle)), 4)
         except Exception:           # noqa: BLE001 - nobody listens under that name: not attached
             return False
         try:
@@ -158,7 +160,7 @@ class SlimTransport:
         app, self.app = self.app, None
         if app is not None:
             try:
-                self._run(app.unsubscribe_async(self.sb.Name(ORG, NS, self.me), self.conn), 3)
+                self._run(app.unsubscribe_async(self.sb.Name(ORG, self.ns, self.me), self.conn), 3)
             except Exception:       # noqa: BLE001
                 pass
         async def _stop():
@@ -172,7 +174,7 @@ class SlimTransport:
         self.loop.call_soon_threadsafe(self.loop.stop)
 
 
-def make(settings, secrets_: dict | None, me: str):
+def make(settings, secrets_: dict | None, me: str, ns: str = NS):
     kind = settings["FACILITATOR_TRANSPORT"]
     if kind == "poll":
         return PollTransport()
@@ -181,7 +183,7 @@ def make(settings, secrets_: dict | None, me: str):
     if not secrets_:
         raise ValueError("SLIM's secrets are not set up: facilitator infra up")
     return SlimTransport(f"http://127.0.0.1:{settings['FACILITATOR_SLIM_PORT']}", "facilitator",
-                         secrets_["password"], secrets_["secret"], me)
+                         secrets_["password"], secrets_["secret"], me, ns)
 
 
 def ephemeral_name(handle: str) -> str:

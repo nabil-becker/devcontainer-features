@@ -226,3 +226,33 @@ flowchart LR
   component-registry -->|handover, skills verb| personal
   personal -.->|byte-equal, task test:registry-first-use| project
 ```
+
+## 8. A node joins a hub (facilitator 0.4.0, slice N3)
+
+A person on each side; neither step runs inside an agent's job (`node invite` refuses there). The token carries the
+hash of the domain's trust bundle, so the spoke trusts the hub's certificate only after checking it.
+
+```mermaid
+sequenceDiagram
+  participant P as person (hub side)
+  participant H as hub (peers part, join endpoint)
+  participant B as OpenBao PKI (intermediate; root offline)
+  participant Q as person (spoke side)
+  participant S as spoke
+  P->>H: facilitator node invite
+  H-->>P: join token (single use, 15 min, bundle hash); the join endpoint opens
+  P->>Q: hand the token over
+  Q->>S: facilitator node join --token
+  S->>H: GET the trust bundle (unverified), check it against the token's hash
+  S->>H: POST join over TLS checked against that bundle: token, node id, a request for its own key
+  H->>H: token single use and unexpired; node not revoked, not joined
+  H->>B: sign the request: spiffe://domain/node/id, 24 h (AppRole)
+  B-->>H: certificate
+  H->>B: roster backed up into KV
+  H-->>S: certificate, bundle, mesh secret, the hub's address and name
+  S->>S: certificate files; the hub into mesh.yml (role spoke)
+  Q->>S: restart: SLIM links to the hub (type peer); the peers part says hello with its card
+  S->>H: hello (card)
+  H->>H: lock two on the card
+  H-->>S: roster: every admitted card, the revoked nodes
+```

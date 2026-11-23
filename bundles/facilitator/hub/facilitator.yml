@@ -1,0 +1,3 @@
+# The sample hub runs no participant and names no person; add them here to give the hub agents of its own.
+facilitator:
+  humans: []

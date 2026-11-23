@@ -9,7 +9,7 @@ import json
 import time
 from dataclasses import dataclass, field
 
-from . import __version__, collector, directory, guard, participants, router, transport
+from . import __version__, collector, directory, guard, mesh as mesh_mod, participants, router, transport
 from .infra import Infra
 from .record import FACILITATOR, Record, RecordError, new_id
 from .settings import Settings
@@ -48,17 +48,65 @@ class Facilitator:
         self.limits = guard.Limits(settings.int("FACILITATOR_HOP_LIMIT", 1), settings.int("FACILITATOR_MESSAGE_BUDGET", 1),
                                    settings.int("FACILITATOR_RATE_LIMIT", 1))
         self.stale = settings.int("FACILITATOR_STALE_SECONDS", 1)
+        self.mesh_file = mesh_mod.load(settings)          # as written, with its findings (check shows them)
+        self.mesh = mesh_mod.effective(self.mesh_file)    # what runs: standalone when the file has findings
         self._record: Record | None = None
         self._list = None
+        self._net = None
 
     # ------------------------------------------------------------ parts, made when first needed
+
+    @property
+    def net(self):
+        if self._net is None:
+            from .peers import Net
+            self._net = Net(self)
+        return self._net
 
     @property
     def record(self) -> Record:
         if self._record is None:
             self.state.ensure()
-            self._record = Record(self.state, self.signer)
+            self._record = Record(self.state, self.signer, self.net)
         return self._record
+
+    def limits_for(self, level: str) -> guard.Limits:
+        """The loop guard's limits at a level (ruling AD: the preset's, then the Feature options, then mesh.yml)."""
+        if level == "local" and not self.mesh.limits_file.get("local"):
+            return self.limits
+        g = lambda k: self.mesh.limit(level, k, self.s)[0]      # noqa: E731
+        return guard.Limits(g("hops"), g("budget"), g("rate"))
+
+    def remote(self) -> dict:
+        """handle -> what another node's admitted card says of it (empty when standalone)."""
+        return self.net.remote() if self.net.active else {}
+
+    def level_of_message(self, proj: dict, mid: str, convs: dict | None = None) -> str:
+        """A message's origin level (proposal 9): the widest level of the writers of its lineage, by reply_to
+        and refs, as far as this node holds it. A writer's level is its card's, or local for this node's own."""
+        if not self.net.active:
+            return "local"
+        level, seen, todo = "local", set(), [(None, mid)]
+        while todo:
+            c, m_id = todo.pop()
+            p = proj if c is None else (convs or {}).get(c)
+            if p is None and c is not None:
+                try:
+                    _, p, _ = self.record.read(c)
+                except RecordError:
+                    continue
+                (convs if convs is not None else {}).setdefault(c, p)
+            m = (p or {}).get("messages", {}).get(m_id)
+            if m is None or (c, m_id) in seen:
+                continue
+            seen.add((c, m_id))
+            level = mesh_mod.wider(level, self.net.level_of(m["from"], m.get("key")))
+            if m.get("reply_to"):
+                todo.append((c, m["reply_to"]))
+            for r in m.get("refs", []):
+                if "message_id" in r:
+                    todo.append((r["thread"], r["message_id"]))
+        return level
 
     def participants(self):
         if self._list is None:
@@ -70,19 +118,48 @@ class Facilitator:
         return self.participants()[1].humans
 
     def infra(self) -> Infra:
-        return Infra(self.s, self.state, self.signer)
+        return Infra(self.s, self.state, self.signer, self.mesh, self)
 
     def directory(self) -> directory.Directory:
         return directory.Directory(self.infra().binary("dir"), self.s.int("FACILITATOR_DIR_PORT", 1))
 
     def transport_for(self, me: str):
         sec = self.infra().slim_secrets() if self.s["FACILITATOR_TRANSPORT"] == "slim" else None
-        t = transport.make(self.s, sec, me)
+        from .peers import local_ns
+        t = transport.make(self.s, sec, me, local_ns(self.mesh))
         t.start()
         return t
 
     def known(self) -> set[str]:
-        return set(self.state.roster()) - {FACILITATOR}
+        """Every name the router may meet: this node's handles, and other nodes' participants by qualified name and
+        by bare handle."""
+        remote = self.remote()
+        return (set(self.state.roster()) | set(remote) | {r["handle"] for r in remote.values()}) - {FACILITATOR}
+
+    def nodes(self) -> set[str]:
+        """The nodes whose participants this node can name (`handle.node`): itself and every admitted card's."""
+        return ({self.mesh.node_id} | set(self.net.cards())) if self.net.active else set()
+
+    def p(self, conv: str, handle: str) -> str:
+        """The principal this node's `handle` is in a conversation (qualified in a shared one)."""
+        return self.record.as_principal(conv, handle)
+
+    def local_of(self, principal: str) -> str | None:
+        """This node's handle for a principal of a conversation, or None when it is another node's."""
+        h, n = router.split(principal)
+        return h if n is None or n == self.mesh.node_id else None
+
+    def resolve_one(self, name: str) -> str:
+        """One participant for a name a caller gives: this node's handle, or another node's `handle.node`. A bare
+        handle that names several is refused with their qualified names (ruling H5: no guess, no precedence)."""
+        if not self.net.active:
+            return name
+        got = self.net.resolve(name)
+        if len(got) > 1:
+            names = [g if router.split(g)[1] else router.qualify(g, self.mesh.node_id) for g in got]
+            raise FacilitatorError(f"@{name} names {len(got)} participants: {', '.join('@' + n for n in names)}; "
+                                   "name one of them")
+        return got[0] if got else name
 
     # ------------------------------------------------------------ identities (E2, E3)
 
@@ -118,17 +195,30 @@ class Facilitator:
     # ------------------------------------------------------------ conversations
 
     def new_conversation(self, creator: str, others: list[str], title: str | None = None) -> str:
+        others = [self.resolve_one(o) for o in others]
         members = [creator] + [o for o in dict.fromkeys(others) if o != creator]
         if len(members) < 2:
             raise FacilitatorError("a conversation needs at least one other member")
-        known = self.known() | set(self.humans())
+        local = (set(self.state.roster()) - {FACILITATOR}) | set(self.humans())
+        remote = {m: r for m, r in self.remote().items() if m in members and m not in local}
         for m in members:
-            if m not in known:
+            if m not in local and m not in remote:
                 raise FacilitatorError(f"{m} is not registered (facilitator register {m}; facilitator participants lists them)")
         for h in [x for x in members if x in self.humans()]:
             self.ensure_identity(h)
+        if remote:
+            # a conversation shared with another node: each local member must be exposed at least as wide as
+            # the widest level of the remote ones (the reach rule, applied again by the receiving node)
+            widest = "local"
+            for r in remote.values():
+                widest = mesh_mod.wider(widest, r["level"])
+            for m in members:
+                if m not in remote and not mesh_mod.reach_ok(widest, self.mesh.exposure(m)):
+                    raise FacilitatorError(f"{m} is exposed {self.mesh.exposure(m)} (mesh.yml expose), so it cannot be in a "
+                                           f"conversation with {', '.join(sorted(remote))} at level {widest}")
         kind = "direct" if len(members) == 2 else "group"
-        return self.record.create(kind, members, self.humans(), title)
+        humans = list(self.humans()) + [m for m, r in remote.items() if r.get("kind") == "human"]
+        return self.record.create(kind, members, humans, title, remote=remote, node=self.mesh.node_id)
 
     def conversations_of(self, handle: str) -> list[str]:
         out = []
@@ -137,7 +227,7 @@ class Facilitator:
                 _, proj, _ = self.record.read(c)
             except RecordError:
                 continue
-            if proj["thread"] and handle in proj["thread"]["members"]:
+            if proj["thread"] and self.p(c, handle) in proj["thread"]["members"]:
                 out.append(c)
         return out
 
@@ -153,18 +243,20 @@ class Facilitator:
         th = proj["thread"]
         if th is None:
             raise FacilitatorError(f"no conversation {conv}")
-        if author not in th["members"]:
+        me = self.p(conv, author)
+        if me not in th["members"]:
             raise FacilitatorError(f"{author} is not a member of {conv} (its members: {', '.join(th['members'])})")
-        human = author in th["humans"]
-        if not human and not guard.rate_ok(proj, author, self.limits, time.time()):
-            raise FacilitatorError(f"rate limit: {author} wrote {self.limits.rate_limit} messages in the last minute; "
+        human = me in th["humans"]
+        lim = self.limits_for(self.conv_level(th))
+        if not human and not guard.rate_ok(proj, me, lim, time.time()):
+            raise FacilitatorError(f"rate limit: {author} wrote {lim.rate_limit} messages in the last minute; "
                                    "this one was not written")
         mid = new_id("m")
         data = {"thread": conv, "message_id": mid, "parts": [{"kind": "text", "text": text}],
                 "root": mid if hops == 0 else root, "hops": hops}
         if reply_to:
             data["reply_to"] = reply_to
-        ms = router.mentions(text)
+        ms = router.mentions(text, self.nodes())
         if ms:
             data["mentions"] = ms
         if to:
@@ -185,9 +277,10 @@ class Facilitator:
         _, proj, _ = self.record.read(conv)
         th, m = proj["thread"], proj["messages"][mid]
         humans = set(th["humans"])
-        verdict = guard.check(proj, m["from"], m["from"] in humans, m["hops"], m["root"], self.limits)
+        verdict = guard.check(proj, m["from"], m["from"] in humans, m["hops"], m["root"],
+                              self.limits_for(self.level_of_message(proj, mid)))
         dec = router.route(th, proj["messages"], m["from"], m["text"], m.get("to"), m.get("reply_to"),
-                           self.participants()[1].fallback, self.known() | humans)
+                           self.participants()[1].fallback, self.known() | humans, self.mesh.node_id, self.nodes())
         notices = list(dec.notices)
         tasks, held, live = [], [], []
         if not verdict.deliver:
@@ -197,14 +290,18 @@ class Facilitator:
             now = time.time()
             for h in dec.to:
                 if h in humans:
-                    continue                   # a person reads it with the mail tool (no task, no delivery)
+                    continue                   # a person reads it with the mail tool (no task, no delivery), on
+                                               # this node or, from the replica, on theirs
                 t = new_id("t")
                 tasks.append({"task": t, "assignee": h})
-                if self.state.attached(h, self.stale, now):
-                    live.append(h)
+                local = self.local_of(h)
+                if local is None:
+                    continue                   # on another node: the replica carries the task; its node delivers it
+                if self.state.attached(local, self.stale, now):
+                    live.append(local)
                 else:
                     held.append({"principal": h, "reason": "stale"})
-                    notices.append(("stale", f"`{h}` has not been attached since {_ago(self.state.last_seen(h))}; "
+                    notices.append(("stale", f"`{h}` has not been attached since {_ago(self.state.last_seen(local))}; "
                                              "the message waits and is delivered when it attaches"))
         rid = self.record.add(conv, FACILITATOR, "route", {"thread": conv, "message_id": mid, "rule": dec.rule,
                                                            "to": dec.to, "tasks": tasks, "held": held})
@@ -217,7 +314,7 @@ class Facilitator:
             data = transport.payload(conv, mid, [store.get(m["entry"]), store.get(rid)])
             own = tr is None
             try:
-                tr = tr or self.transport_for(transport.ephemeral_name(m["from"]))
+                tr = tr or self.transport_for(transport.ephemeral_name(self.local_of(m["from"]) or m["from"]))
                 for h in live:
                     if tr.notify(h, data):
                         delivered.append(h)
@@ -229,6 +326,16 @@ class Facilitator:
         return {"conversation": conv, "message_id": mid, "rule": dec.rule, "to": dec.to,
                 "tasks": [t["task"] for t in tasks], "held": held, "notified": delivered,
                 "notices": [t for _, t in notices], "delivered": verdict.deliver}
+
+    def conv_level(self, thread: dict) -> str:
+        """The widest level of a conversation's members (local for this node's own)."""
+        level = "local"
+        if self.net.active:
+            remote = self.remote()
+            for m in thread["members"]:
+                if self.local_of(m) is None and m in remote:
+                    level = mesh_mod.wider(level, remote[m]["level"])
+        return level
 
     def send(self, author: str, text: str, conv: str | None = None, to: list[str] | None = None,
              tr=None) -> dict:
@@ -242,7 +349,7 @@ class Facilitator:
                                    "participants write through their MCP server")
         self.ensure_identity(author)
         if not conv or conv == "new":
-            named = [h for h in dict.fromkeys([*(to or []), *router.mentions(text)]) if h not in ("all", author)]
+            named = [h for h in dict.fromkeys([*(to or []), *router.mentions(text, self.nodes())]) if h not in ("all", author)]
             if not named:
                 raise FacilitatorError("a new conversation needs someone to talk to: @handle them, or pass to")
             conv = self.new_conversation(author, named)
@@ -279,7 +386,7 @@ class Facilitator:
             led, proj, _ = self.record.read(c)
             pos = {i: n for n, i in enumerate(led.order)}
             for t in proj["tasks"].values():
-                if t["assignee"] == handle and t["state"] == "submitted":
+                if t["assignee"] == self.p(c, handle) and t["state"] == "submitted":
                     m = proj["messages"][t["message_id"]]
                     out.append({"conv": c, "task": t["task"], "message": m, "pos": (t["at"], pos.get(t["history"][0][2], 0)),
                                 "members": proj["thread"]["members"]})
@@ -312,7 +419,7 @@ class Facilitator:
         if turn is None:
             raise FacilitatorError("a chain begins with a human: say needs a message you received (call receive first)")
         if not conv or conv == "new":
-            named = [h for h in dict.fromkeys([*(to or []), *router.mentions(text)]) if h not in ("all", handle)]
+            named = [h for h in dict.fromkeys([*(to or []), *router.mentions(text, self.nodes())]) if h not in ("all", handle)]
             if not named:
                 raise FacilitatorError("say in a new conversation needs someone to say it to: to=[handle]")
             conv = self.new_conversation(handle, named)
@@ -340,9 +447,10 @@ class Facilitator:
             recs = {}
         now = time.time()
         rows = []
+        disp = self.net.display if self.net.active else (lambda h, n=None: h)
         for p in parts:
             r = recs.get(p.name, {})
-            rows.append({"handle": p.name, "kind": "agent", "cli": p.cli,
+            rows.append({"handle": disp(p.name), "kind": "agent", "cli": p.cli,
                          "description": r.get("description") or p.description,
                          "skills": [s.get("name") for s in r.get("skills", [])] or p.skills,
                          "registered": p.name in roster, "attached": self.state.attached(p.name, self.stale, now),
@@ -351,13 +459,20 @@ class Facilitator:
         for h, ident in sorted(roster.items()):          # registered, and not in the list this process reads
             if ident.get("kind") == "agent" and h not in listed:
                 r = recs.get(h, {})
-                rows.append({"handle": h, "kind": "agent", "description": r.get("description") or ident.get("description", ""),
+                rows.append({"handle": disp(h), "kind": "agent", "description": r.get("description") or ident.get("description", ""),
                              "skills": [s.get("name") for s in r.get("skills", [])] or ident.get("skills", []),
                              "registered": True, "attached": self.state.attached(h, self.stale, now),
                              "last_seen": _ago(self.state.last_seen(h)), "in_directory": h in recs})
         humans = list(cfg.humans) + [h for h, i in sorted(roster.items()) if i.get("kind") == "human" and h not in cfg.humans]
         for h in humans:
-            rows.append({"handle": h, "kind": "human", "registered": h in roster})
+            rows.append({"handle": disp(h), "kind": "human", "registered": h in roster})
+        # participants of other nodes: only those their node exposes at least as wide as its domain's level (so a
+        # local-only agent of another node is never listed here), through the hub's roster of cards
+        for q, r in sorted(self.remote().items()):
+            rows.append({"handle": disp(r["handle"], r["node"]), "kind": r.get("kind", "agent"), "node": r["node"],
+                         "level": r["level"], "qualified": q,
+                         "description": r.get("description", ""), "skills": r.get("skills", []), "registered": True,
+                         "attached": None, "last_seen": "on another node", "in_directory": False})
         out = {"participants": rows}
         if handle:
             out["you"] = handle
@@ -377,14 +492,15 @@ class Facilitator:
             _, proj, _ = self.record.read(c)
             seen = set(marks.get(c, []))
             n = 0
+            me = self.p(c, handle)
             for mid in proj["order"]:
                 m = proj["messages"][mid]
-                if m["from"] == handle or mid in seen:
+                if m["from"] == me or mid in seen:
                     continue
                 routes = proj["routes"].get(mid, [])
                 held = sorted({h["reason"] for r in routes for h in r["held"] if h["reason"] != "stale"})
                 msgs.append({"conversation": c, "message_id": mid, "from": m["from"], "text": m["text"],
-                             "hops": m["hops"], "at": m["at"], "for_you": any(handle in r["to"] for r in routes),
+                             "hops": m["hops"], "at": m["at"], "for_you": any(me in r["to"] for r in routes),
                              "held": held[0] if held else ""})
                 n += 1
             convs.append({"conversation": c, "members": proj["thread"]["members"], "unread": n,

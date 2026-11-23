@@ -1395,3 +1395,42 @@ section 16 does not list.
   OASF badges? Recommended: drop it, and deprecate the `identity` option in 0.3.0.
 - **D1 to D10.** The review agrees with each reading taken in section 15, except D4's attribution
   (finding 2).
+
+## Rulings on slice N3 (2026-11-21)
+
+What slice N3 found where a ruling could not be built as written, and the Operator's ruling on each.
+
+- **H1, a new spoke's first certificate: option A, ruled 2026-11-21.** A spoke has no certificate before it
+  joins, so lock one keeps it off SLIM. The hub opens an HTTPS join endpoint (`node.join`) only while a join
+  token is live, and closes it 30 s after the last token is used or expires; the token (single use, 15 minutes)
+  protects the hub, and the trust bundle's hash in it protects the spoke. Rejected: carrying the certificate by
+  hand (B: no port, but `bao` and key files copied to every spoke) and a SLIM listener without client
+  certificates (C: weakens lock one for every node). It adds the join endpoint to ADR-0071's list of ports.
+  After the join, the certificate (24 h, renewed at half life) and the two locks carry the trust, and each node
+  restricts the other only through its own `mesh.yml` (`trust`, `expose`, `limits`) and, on a hub, `node revoke`.
+- **H2, Directory peering: option A, ruled 2026-11-21.** dirctl 1.9.1 has no switch for mDNS, and in the tests
+  three daemons found each other on one network segment (ruling SP5 could not be built as written). Directory
+  peering is off by default (`node.directory.peering: false`): nothing of the Directory leaves loopback, and nodes
+  learn each other's agents from the signed cards. Peering on needs `node.directory.firewall` (`auto` drops UDP
+  5353 with iptables, `external` when a person firewalls it); a hub then opens OCI and libp2p, a spoke syncs the
+  hub's records by registry. An upstream issue asks for an mDNS switch (and notes the anonymous OCI push).
+  Rejected: peering on by default (B). It amends ADR-0071 decision 4.
+- **H3, binding agents' keys to their node: option A, ruled 2026-11-23.** OpenSSH cannot export an ed25519 key
+  to PKCS8, so the node's certificate key and the packet keys stay separate (section 5.2's fallback). Each node
+  signs a card with its certificate key: its certificate, its facilitator key and the keys of the participants it
+  exposes; the hub passes every admitted card on in the roster. Lock two takes a packet's SPIFFE ID
+  (`spiffe://<domain>/node/<id>/agent/<handle>`) from its signer's key looked up in the admitted cards. Agents get
+  no certificates of their own; revoking a node cuts off all its agents. Rejected: a certificate per agent (B:
+  more issuing and renewing, and SLIM checks only the node's certificate). Per-agent identity comes with AGNTCY
+  Identity (slice N5). It refines ADR-0069 decision 5; the node's certificate key is a file on every node
+  (SLIM reads it from a file), which widens ADR-0069 decision 4.
+- **H4, a revoked node's TLS link: option A, ruled 2026-11-23.** SLIM 3.4.6 checks no revocation list and
+  reloads no certificate, so a revoked node's TLS link can still form until its certificate expires (24 h); lock
+  two refuses everything it sends, and it gets no renewal. Kept for N3; rotating the mesh's SLIM app secret on
+  every revoke is a backlog item, done before slice N5 (public trust). Rejected: rotating it in N3 (B: every
+  remaining node needs the new secret, and it delays the slice).
+- **H5, the same handle on two nodes: option B, ruled 2026-11-23.** Qualified handles are built in slice N3:
+  an agent on another node can be named with its node (for example `@b1.spoke-b`), so two nodes may expose the
+  same handle and both stay reachable. A bare handle still works when it names one agent; when it names several,
+  the facilitator refuses it and lists the qualified names. Rejected: refusing the second claim, so that neither
+  is reachable until one is renamed (A, as first built).
