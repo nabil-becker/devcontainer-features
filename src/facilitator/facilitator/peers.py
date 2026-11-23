@@ -462,10 +462,16 @@ class Daemon:
                           **({"badge": ident["badge"]} if isinstance(ident.get("badge"), str) and ident["badge"] else {})})
         return identity.make_card(self.store, domain, self.mesh.node_id, self.fac.record.facilitator_key(), parts)
 
+    def domain_for(self, node: str) -> str:
+        """The domain whose certificate key signs what this node sends to `node`: the public domain for a node that joined it
+        (that receiver holds this node's card signed with that certificate, ruling AH), else this node's own."""
+        d = (identity.roster(self.store).get("nodes", {}).get(node) or {}).get("domain")
+        return d if d and d != self.domain and self.store.key(d).is_file() else self.domain
+
     def envelope(self, to: str, body: dict, domain: str | None = None) -> bytes:
         at = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")     # ordered: a replay is older
         env = {"v": 1, "from": self.mesh.node_id, "to": to, "at": at, **body}
-        return json.dumps(identity.sign_envelope(self.store, domain or self.domain, env), separators=(",", ":")).encode()
+        return json.dumps(identity.sign_envelope(self.store, domain or self.domain_for(to), env), separators=(",", ":")).encode()
 
     # ------------------------------------------------------------ SLIM
 

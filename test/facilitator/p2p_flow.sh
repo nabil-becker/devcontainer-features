@@ -29,6 +29,12 @@ no() { echo "FAIL $1"; fail=1; }
 nodes=(a b c pub)
 # shellcheck disable=SC2329  # run by the EXIT trap
 cleanup() {
+  local rc=$?
+  if [ "$rc" != 0 ]; then
+    for n in "${nodes[@]}"; do
+      if [ "$(docker inspect -f '{{.State.Running}}' "$p-$n" 2>/dev/null)" = false ]; then echo "node $n exited:"; docker logs "$p-$n" 2>&1 | tail -15; fi
+    done
+  fi
   for n in "${nodes[@]}"; do docker rm -fv "$p-$n" >/dev/null 2>&1 || true; docker volume rm "$p-$n" >/dev/null 2>&1 || true; done
   docker network rm "$net" >/dev/null 2>&1 || true
   docker run --rm -v "$tmp:/t" --entrypoint /bin/sh -u 0 "$image" -c 'rm -rf /t/* /t/.[!.]*' >/dev/null 2>&1 || true
@@ -139,7 +145,12 @@ pair() { # <accepter> <requester>
   local tok
   tok="$(docker exec "$p-$1" facilitator node invite 2>/dev/null)"
   wait_for 60 docker exec "$p-$2" bash -c "exec 3<>/dev/tcp/$1.mesh.test/46359" || true
-  fx "$2" node peer --token "$tok" 2>&1
+  local out
+  for _ in 1 2 3 4 5 6; do   # the join endpoint may be reopening after the accepter's own restart (a pairing re-executes its peers part)
+    if out="$(fx "$2" node peer --token "$tok" 2>&1)"; then echo "$out"; return 0; fi
+    case "$out" in *"not reachable"*) sleep 5 ;; *) echo "$out"; return 1 ;; esac
+  done
+  echo "$out"; return 1
 }
 for pr in "a b" "a c" "b c"; do
   # shellcheck disable=SC2086  # the pair's two names
@@ -198,7 +209,9 @@ if fx a http approve pp.pub-1 --as pa 2>&1 | grep -q approved; then ok "a person
 r="$(agent a answer j1 60 "hello public node, j1 here")"
 if echo "$r" | grep -q 'hello from the public node'; then ok "after the approval j1 received it and answered"; else no "j1 after approval: $r"; fi
 mailed() { agent pub mail pp | grep -q 'j1 here'; }
-if wait_for 40 mailed; then ok "the answer reached pp on the public node (replicated: copy addressed)"; else no "pp did not get the answer"; fi
+if wait_for 40 mailed; then ok "the answer reached pp on the public node (replicated: copy addressed)"; else no "pp did not get the answer"; agent pub mail pp | cut -c1-600; fx pub transcript --conv "$pconv" | cut -c1-200 | tail -12
+  fx a transcript --conv "$pconv" | cut -c1-200 | tail -12; { sh_in a tail -3 "$st/mesh/refused.log"; sh_in pub tail -3 "$st/mesh/refused.log"; } 2>&1 | cut -c1-300 || true
+  if [ -n "${P2P_PAUSE_MAIL:-}" ]; then echo "paused: $p"; sleep "$P2P_PAUSE_MAIL"; fi; fi
 for n in a pub; do
   if out="$(fx "$n" verify --conv "$pconv" 2>&1)"; then ok "verify on $n: ${out##*: }"; else no "verify on $n: $out"; fi
 done

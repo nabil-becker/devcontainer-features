@@ -268,6 +268,10 @@ def test_a_public_card_is_checked_by_lock_two_and_shows_the_issuer_alone():
         identity.save_roster(st, r)
         env = json.loads(d.roster_envelope("pub-1"))
         assert env["cards"] == [] and env["hub_card"]["domain"] == "open.test" and env["hub_directory"] == {}
+        # what is sent to a node of the public domain is signed with the public certificate's key (its card is)
+        e1 = json.loads(d.envelope("pub-1", {"type": "entries"}))
+        assert identity.check_envelope(e1, json.loads(d.roster_envelope("pub-1"))["hub_card"]), "signed by the wrong key"
+        assert not identity.check_envelope(e1, d.my_card("private"))
         # an unknown node, neither a peer nor joined, is refused at hello
         c, why = d.sender_card({"type": "hello", "from": "pub-9", "card": {**card, "node": "pub-9"}})
         assert c is None
