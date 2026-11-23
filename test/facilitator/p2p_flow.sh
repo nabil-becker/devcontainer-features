@@ -136,7 +136,7 @@ for n in a b c pub; do fx "$n" register --all --no-directory >/dev/null; done
 pair() { # <accepter> <requester>
   local tok
   tok="$(docker exec "$p-$1" facilitator node invite 2>/dev/null)"
-  wait_for 15 docker exec "$p-$2" bash -c "exec 3<>/dev/tcp/$1.mesh.test/46359" || true
+  wait_for 60 docker exec "$p-$2" bash -c "exec 3<>/dev/tcp/$1.mesh.test/46359" || true
   fx "$2" node peer --token "$tok" 2>&1
 }
 for pr in "a b" "a c" "b c"; do
@@ -151,7 +151,7 @@ if [ "$sa" = "$(sh_in b cat $st/mesh/secret)" ] && [ "$sa" = "$(sh_in c cat $st/
 else no "the mesh secrets differ"; fi
 docker restart "$p-a" "$p-b" "$p-c" >/dev/null
 seen() { docker exec "$p-$1" /opt/facilitator/python/bin/python3 -I /test/mesh_agent.py who | grep -q "\"handle\": \"$2\""; }
-if wait_for 150 seen a b1 && wait_for 60 seen a c1 && wait_for 60 seen b c1 && wait_for 60 seen c a1; then ok "each node lists the others' exposed agents (cards by hello, no hub)"
+if wait_for 150 seen a b1 && wait_for 60 seen a c1 && wait_for 60 seen b c1 && wait_for 60 seen c a1 && wait_for 60 seen c b1 && wait_for 60 seen b a1 && wait_for 60 seen a b1; then ok "each node lists the others' exposed agents (cards by hello, no hub)"
 else no "the peers do not see each other"; for n in a b c; do fx "$n" check || true; docker logs "$p-$n" 2>&1 | tail -8; done; fi
 
 if [ -n "${P2P_PAUSE:-}" ]; then echo "paused: $p"; sleep "${P2P_PAUSE}"; fi

@@ -542,7 +542,7 @@ class Daemon:
     def sender_card(self, env: dict) -> tuple[dict | None, str]:
         """The admitted card of the node an envelope says it is from, and its level; a hello carries its own."""
         node = env.get("from")
-        if env.get("type") == "hello":
+        if env.get("type") in ("hello", "card"):
             card = env.get("card")
             if not isinstance(card, dict) or card.get("node") != node:
                 return None, "a hello whose card is not its sender's"
@@ -550,7 +550,8 @@ class Daemon:
             ok, level, why = identity.check_card(card, self.mesh, self.bundles(), revoked)
             if not ok:
                 return None, why
-            if self.issuing and node not in self.mesh.peers and node not in identity.roster(self.store).get("nodes", {}):
+            if self.issuing and env.get("type") == "hello" and node not in self.mesh.peers \
+                    and node not in identity.roster(self.store).get("nodes", {}):
                 return None, f"the node {node} is neither a peer of this node nor joined to it (not in node.peers or the roster)"
             return {"card": card, "level": level}, ""
         c = self.net.cards().get(node)
