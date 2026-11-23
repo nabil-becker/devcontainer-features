@@ -1465,3 +1465,22 @@ What slice N4 found where a ruling could not be built as written, and the Operat
 - **HC5, the `mcp` wheels in the bundle: option A, ruled 2026-11-23.** The bundle grows by about 40 MB; its
   `install.sh` keeps the 28 `mcp` wheels per architecture pinned by SHA-256 and URL (`--require-hashes`), and a
   task refreshes that table before the next `mcp` upgrade. Rejected: refreshing it by hand (B).
+
+## Rulings on the hub's issuer and the hub on Kubernetes (2026-11-23)
+
+- **K3, a built-in issuer by default: yes.** With no `node.issuer.openbao`, a hub issues its domain's
+  certificates itself (the local issuer N5a built for peers: a CA name-constrained to the domain's SPIFFE IDs),
+  backs its roster up to its own volume, and needs no unseal; naming an OpenBao server ("use my server") makes
+  it today's OpenBao PKI. `facilitator node issuer migrate` moves a built-in hub onto OpenBao without re-joining
+  spokes. Amends ADR-0069 decision 1 (an OpenBao PKI per trust domain).
+- **K5, an ssh-agent tier: yes, after a test.** The issuer's CA key is taken, in order, from OpenBao (when
+  configured), from an ssh-agent (`node.issuer.ssh_agent`: socket and key fingerprint; an ed25519 agent signs
+  the certificate's bytes as they are, so the key is never a readable file), and only as a last resort from a
+  file in the volume (mode 600; `check` warns). Only the CA key moves; SLIM still reads a node's own TLS key from
+  a file. A short test proves an agent-signed certificate is accepted by SLIM before it is built.
+- **K4, the built-in root: option A.** The hub (or its agent) generates the root, and
+  `facilitator node issuer export-root` lets a person take it offline later. Rejected: always bringing your own (B).
+- **K2, when: straight after N5a.** The slice "hub on Kubernetes" (backlog `hub-on-kubernetes`): a kustomize
+  base (a StatefulSet with a volume, `mesh.yml` in a ConfigMap, a Service for SLIM and the join endpoint), a
+  Rancher Desktop overlay, the `openbao:pki:*` tasks for when OpenBao is used, and a test in a throwaway cluster.
+  K1 (where the hub's OpenBao comes from) is moot under K3: the built-in issuer by default.
