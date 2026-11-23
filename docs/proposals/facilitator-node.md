@@ -1453,3 +1453,8 @@ What slice N4 found where a ruling could not be built as written, and the Operat
   `http.<home domain>` only to private or public. Refused under `solo`. Rejected: a new preset between `team`
   and `open` (B; the names are revisited when N5 defines `open`) and no public under `team`, HTTP clients mapped
   to private (C: any token holder would get private reach).
+- **HC3, the audit of tokens and approvals: option A, ruled 2026-11-23.** There is no register for enrolment
+  outside a conversation, so `token`, `approve`, `deny` and `revoke` are lines in `http/audit.jsonl`, each
+  carrying the hash of the one before (a cut or an edit shows; a whole rewrite would not); the approval and
+  denial are also signed `notice` packets in the conversations they concern. Slice N5 adds a signed audit
+  register type and replays the log into it. Rejected: the signed register in N4 (B: delays the slice).
