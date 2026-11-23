@@ -49,7 +49,6 @@ FILES = {
     "claude/skills/walkie-talkie/SKILL.md": ".claude/skills/walkie-talkie/SKILL.md",
     "claude/skills/new-adr/SKILL.md": ".claude/skills/new-adr/SKILL.md",
     "claude/skills/publish-site/SKILL.md": ".claude/skills/publish-site/SKILL.md",
-    "claude/skills/architecture-review/SKILL.md": ".claude/skills/architecture-review/SKILL.md",
     "claude/skills/shutdown-devhost/SKILL.md": ".claude/skills/shutdown-devhost/SKILL.md",
     "claude/skills/restart-devhost/SKILL.md": ".claude/skills/restart-devhost/SKILL.md",
     "devhost/gitignore": ".devhost/.gitignore",
@@ -60,6 +59,11 @@ RECORDS = {"TODO.md", "docs/adr/0000-template.md", "docs/adr/README.md"}
 SETTINGS = ("claude/settings.json", ".claude/settings.json")
 PRE_COMMIT = ("githooks/pre-commit", ".githooks/pre-commit")
 PRE_PUSH = ("githooks/pre-push", ".githooks/pre-push")
+# The architecture-review skill (1.18.0): planted from the template unless the repository's
+# component-registry layer list already names this Feature's generic layer, which resolves it.
+ARCH_TEMPLATE = ("claude/skills/architecture-review/SKILL.md", ".claude/skills/architecture-review/SKILL.md")
+REGISTRY_LAYER_PATH = "/usr/local/share/devhost/registry"
+REGISTRY_FILES = (".devcontainer/registry.yml",)
 GITIGNORE_LINES = (".devhost/redact-names.txt",)
 
 
@@ -77,6 +81,27 @@ def put(root: Path, template: str, target: str, force: bool, out: list[str]) -> 
     write_text(dest, fill(read_text(TEMPLATES / template), root))
     out.append(f"  wrote     {target}")
     return True
+
+
+def registry_resolves_architecture_review(root: Path) -> bool:
+    """True when a layer list of the repository names the devhost Feature's generic registry layer."""
+    for name in REGISTRY_FILES:
+        path = root / name
+        if path.is_file() and REGISTRY_LAYER_PATH in read_text(path):
+            return True
+    return False
+
+
+def architecture_review(root: Path, force: bool, out: list[str]) -> None:
+    """Plant the skill, or leave it to the registry; never delete a planted copy."""
+    template, target = ARCH_TEMPLATE
+    if not registry_resolves_architecture_review(root):
+        put(root, template, target, force, out)
+        return
+    if (root / target).exists():
+        out.append(f"  kept      {target} (exists; the registry now resolves architecture-review: remove this copy, its committed one shadows the registry's)")
+    else:
+        out.append("  skipped   .claude/skills/architecture-review (the component registry resolves it from the devhost layer)")
 
 
 def gitignore(root: Path, out: list[str]) -> None:
@@ -135,6 +160,7 @@ def scaffold(root: Path, force: bool = False) -> tuple[list[str], list[str]]:
     extra: list[str] = []
     for template, target in FILES.items():
         put(root, template, target, force, out)
+    architecture_review(root, force, out)
     settings(root, out, extra)
     pre_commit(root, out)
     pre_push(root, out)

@@ -1,7 +1,7 @@
 
 # Component registry (component-registry)
 
-A registry for agentic components, shaped like the Windows Registry (ADR-0063). Layers from any number of sources (a git branch, tag or commit; one .layer file over http(s) with bearer, header or basic log-in, the secret through dcf-secret and never over plain http without allow-insecure; a folder or mounted file share; a folder in the cloud folder, from the cloud-folder Feature; the rows of a SQLite or PostgreSQL table or query, rendered into a .layer file, the password through dcf-secret into the client's environment only) are fetched into local layer copies (version first, so an unchanged layer is skipped; offline, the last good copy is used and said) and merged by value type into one resolved view for who you are (COMPONENT_REGISTRY_WHOAMI, a path such as /Corp/MyDepartment/team/me): value replaces, list combines (!item takes out), text stacks in layer order (under a heading per layer, or none with the layer key heading: false), a skill's name and description values go into its SKILL.md front matter, ref points at another path; the higher layer wins, the more specific scope inside a layer, a locked key beats both, and a permission key comes from a component's lowest layer only. dcf-registry resolve and dcf-registry explain <path> [--uses] [--color auto|always|never] (task component-registry:resolve, :explain); release 1 resolves skills, and dcf-registry handover gives them to a CLI's adapter (agent-adapter-<cli> skills; Claude Code: its personal skills folder, live in running sessions), which the participant component (claude-code participants: true) does at every agent's start; a view is kept per who-you-are path, so agents with different paths each get their own skills (split, shared or off per agent), and /registry-refresh refreshes the calling agent. From 1.6.0 it also resolves agent definitions (agents/<name>: model and skills only, which replace the agents list's; the registry never sets an agent's identity, lease, folder, args or permissions), which the participant component reads at each agent's start. From 1.7.0 a layer can carry namespace: <name> (a public or community source): its components become <name>:<component>, merge only with layers of the same namespace and never reach the Operator's own; a namespaced skill is handed over as <name>--<skill>. A built-in base layer ships the utility skills /registry-refresh, /registry-explain and /registry-remember (appends to the layer marked writable: true). The layer list is .devcontainer/registry.yml (option registryFile, COMPONENT_REGISTRY_FILE). Layer copies and the resolved view live owner-only in a named volume at COMPONENT_REGISTRY_STATE_DIR=/var/lib/devcontainer-features/component-registry, made usable by component-registry-setup at start. Bash, awk and sed; nothing downloaded at build.
+A registry for agentic components, shaped like the Windows Registry (ADR-0063). Layers from any number of sources (a git branch, tag or commit; one .layer file over http(s) with bearer, header or basic log-in, the secret through dcf-secret and never over plain http without allow-insecure; a folder or mounted file share; a folder in the cloud folder, from the cloud-folder Feature; the rows of a SQLite or PostgreSQL table or query, rendered into a .layer file, the password through dcf-secret into the client's environment only) are fetched into local layer copies (version first, so an unchanged layer is skipped; offline, the last good copy is used and said) and merged by value type into one resolved view for who you are (COMPONENT_REGISTRY_WHOAMI, a path such as /Corp/MyDepartment/team/me): value replaces, list combines (!item takes out), text stacks in layer order (under a heading per layer, or none with the layer key heading: false), a skill's name and description values go into its SKILL.md front matter, ref points at another path; the higher layer wins, the more specific scope inside a layer, a locked key beats both, and a permission key comes from a component's lowest layer only. dcf-registry resolve and dcf-registry explain <path> [--uses] [--color auto|always|never] (task component-registry:resolve, :explain); release 1 resolves skills, and dcf-registry handover gives them to a CLI's adapter (agent-adapter-<cli> skills; Claude Code: its personal skills folder, live in running sessions), which the participant component (claude-code participants: true) does at every agent's start; a view is kept per who-you-are path, so agents with different paths each get their own skills (split, shared or off per agent), and /registry-refresh refreshes the calling agent. From 1.6.0 it also resolves agent definitions (agents/<name>: model and skills only, which replace the agents list's; the registry never sets an agent's identity, lease, folder, args or permissions), which the participant component reads at each agent's start. From 1.7.0 a layer can carry namespace: <name> (a public or community source): its components become <name>:<component>, merge only with layers of the same namespace and never reach the Operator's own; a namespaced skill is handed over as <name>--<skill>. From 1.11.0 (ADR-0077) each vendor's files are rendered from Jinja templates by minijinja-cli (one pinned static binary, checked against its sha256 at build) at every hand-over: templates are components (templates/<vendor>/<file>.j2 in a layer) that a higher layer replaces whole, changes one block of with extends, or adds to, under the same layer precedence, locks and namespaces; the built-in base layer ships Claude Code's SKILL.md template, which reproduces the resolved skill byte for byte; dcf-registry render previews and explain templates/<vendor> says whose template won. A built-in base layer ships the utility skills /registry-refresh, /registry-explain and /registry-remember (appends to the layer marked writable: true). The layer list is .devcontainer/registry.yml (option registryFile, COMPONENT_REGISTRY_FILE). Layer copies and the resolved view live owner-only in a named volume at COMPONENT_REGISTRY_STATE_DIR=/var/lib/devcontainer-features/component-registry, made usable by component-registry-setup at start. Bash, awk and sed, and minijinja-cli, the one download at build.
 
 ## Example Usage
 
@@ -28,10 +28,14 @@ A registry for agentic components, shaped like the Windows Registry (ADR-0063). 
     copies/<layer>/<n>/   layer copies
         | dcf-registry resolve, for COMPONENT_REGISTRY_WHOAMI or --as an agent's path
         v
-    view -> views/<stamp>/   the resolved view: skills/<name>/, agents/<name>/, meta/
+    view -> views/<stamp>/   the resolved view: skills/<name>/, agents/<name>/, meta/,
+                             templates/ (1.11.0: every vendor template that applies, by layer)
     paths/<path> -> ...      (1.8.0) the latest view of each who-you-are path
     handovers.tsv            (1.8.0) who was handed which path's skills
-        | dcf-registry handover <cli> <agent> <folder> --as <path>: agent-adapter-<cli> skills
+        | dcf-registry handover <cli> <agent> <folder> --as <path>
+        |   1. render (1.11.0, ADR-0077): minijinja-cli fills the winning templates/<cli>/*.j2
+        |      from the view into renders/<cli>.<agent>.<pid>/ (a CLI with no template: the view)
+        |   2. agent-adapter-<cli> skills with that folder
         |   (at an agent's start, by the participant component; or /registry-refresh)
         v
   the CLI's own skills folders (Claude Code: $CLAUDE_CONFIG_DIR/skills for what every agent
@@ -39,6 +43,8 @@ A registry for agentic components, shaped like the Windows Registry (ADR-0063). 
   agents/<name>/ (1.6.0): read by the participant component at the agent's start (model, skills)
 
   dcf-registry explain <path> [--uses] [--color auto|always|never]   read-only
+  dcf-registry explain templates[/<vendor>[/<file>.j2]]              read-only: whose template won
+  dcf-registry render <vendor> <folder>                               a preview of step 1
 ```
 
 | Data | Where it lives | Storage tier |
@@ -46,11 +52,12 @@ A registry for agentic components, shaped like the Windows Registry (ADR-0063). 
 | Layer list (which layers, at which paths, from which sources) | `.devcontainer/registry.yml` in the repository (option `registryFile`) | 1 git |
 | Who-you-are path (`COMPONENT_REGISTRY_WHOAMI`) | `.env` (git-ignored) or the launcher, per person | none (a setting, set again) |
 | A layer's `.layer` files and skill files | its source: a git repository, a folder, a file share | the owner's choice |
-| Layer copies, the resolved view, the lock file | named volume at `/var/lib/devcontainer-features/component-registry`, owner-only | 4 working set |
+| A layer's vendor templates (1.11.0, `templates/<vendor>/<file>.j2`) | its source, beside its `.layer` files | the owner's choice |
+| Layer copies, the resolved view (with the templates that apply), the lock file, a hand-over's rendered files while it runs | named volume at `/var/lib/devcontainer-features/component-registry`, owner-only | 4 working set |
 | Resolved skills handed to a CLI | the CLI's skills folders (Claude Code: `$CLAUDE_CONFIG_DIR/skills` and, per agent, `$CLAUDE_CONFIG_DIR/registry-agents/`, the claude-code volume), owner-only | 4 working set |
 | Hand-over records (`handovers.tsv`: CLI, agent, folder, path) | the state volume, owner-only | 4 working set |
 | Remembered lines (`/registry-remember`, deprecated: edit your layer; removed in 2.0.0) | `remembered.layer` in the writable layer's folder | the person's choice (their own layer's source) |
-| The utility skills (built-in base layer) | `/usr/local/share/component-registry-feature/base`, in the image | none (the Feature) |
+| The utility skills and the base templates (built-in base layer) | `/usr/local/share/component-registry-feature/base`, in the image | none (the Feature) |
 | Source secrets | OpenBao, read with `dcf-secret` | OpenBao's |
 
 Tiers are the four of ADR 0045: 1 git, 2 shared folder, 3 personal folder, 4 working set (rebuildable only).
@@ -83,15 +90,25 @@ It resolves **skills** and **agent definitions**; prompts and settings are not i
 section for them is reported and not resolved).
 Release 1.8.0 keeps a view per who-you-are path, so agents with different `registry-path`s each
 get their own skills (ADR-0074, below).
+Release 1.11.0 renders each vendor's files from Jinja templates with `minijinja-cli` at every
+hand-over (ADR-0077, below): the merge is unchanged; the base layer ships Claude Code's `SKILL.md`
+template, which gives exactly the files 1.10.0 gave, and any layer may replace it, change one
+block of it, or add a template of its own.
 
 ## What it installs
 
-Nothing is downloaded at build; there is nothing to verify (an `http` layer is read at run time). Bash, awk and sed only (mawk and gawk both
-work; no python3, no jq):
+One download at build (1.11.0): `minijinja-cli` 3.1.0, the template engine (ADR-0077), the static
+(musl) build for x86_64 or aarch64 from the publisher's GitHub release, through the collection's
+`dcf_curl`, checked against the sha256 pinned in `install.sh` for each architecture (taken from the
+release's `.sha256` files); a mismatch stops the build. Another architecture gets no engine, said
+at build, and a hand-over to a CLI with templates fails with one line. An `http` layer is read at
+run time. The scripts are bash, awk and sed (mawk and gawk both work; no python3, no jq):
 
 - `dcf-registry` (`/usr/local/bin`): `resolve`, `explain`, `version`, and (1.1.0) `handover`,
-  `refresh`, `remember`, `layer-list`, and (1.8.0) `forget`, `handovers`.
-- `/usr/local/share/component-registry-feature/base/`: the built-in base layer, the utility skills.
+  `refresh`, `remember`, `layer-list`, and (1.8.0) `forget`, `handovers`, and (1.11.0) `render`.
+- `minijinja-cli` (`/usr/local/bin`, 1.11.0).
+- `/usr/local/share/component-registry-feature/base/`: the built-in base layer, the utility skills
+  and (1.11.0) the base templates (`templates/claude/SKILL.md.j2`).
 - `registry-source-git`, `registry-source-path`, `registry-source-http` and (1.5.0) `registry-source-db`: the **registry sources** of this release.
 - `component-registry-setup`: the `postStartCommand`.
 - `dcf-persist`, the collection's helper behind every setup script.
@@ -335,7 +352,9 @@ when it is listed, runs `agent-adapter-<cli> skills <name> <folder>` with the cu
 view out mid-copy. The adapter copies the skills into the CLI's own skills folder, marks its copies,
 removes those no longer resolved and never touches anything else (ADR-0064 amends the CLI contract
 of ADR-0037; Claude Code: `claude-code` 1.12.0). No adapter, or one without the verb: exit 3 and one
-line, the CLI keeps its plain skills (NFR-12).
+line, the CLI keeps its plain skills (NFR-12). From 1.11.0 the folder is not the view's own
+`skills/` but the files rendered from the CLI's templates (next section); a CLI no template names
+still gets the view's `skills/`.
 
 At an agent's start the participant component (`claude-code` with `participants: true`) runs
 `dcf-registry resolve` (`--as` the agent's `registry-path` from the agents list, else
@@ -391,6 +410,136 @@ it amends ADR-0064's "one per container").
   the claude-code notes.
 - **Disk.** A view per path in use (a few kilobytes each), and in Claude Code each agent's view
   kept twice at most.
+
+## Vendor templates (1.11.0)
+
+Each vendor's files are rendered from templates by `minijinja-cli`, and the merge is unchanged
+([ADR-0077](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/adr/0077-each-vendors-files-are-rendered-from-templates-by-minijinja-cli-and-the-merge-is-unchanged.md)).
+The merge (who wins, locks, `explain`) still makes the resolved view; the last step, writing the
+files a CLI reads, is a template: the vendor's file with blanks, filled from the view. The
+collection supplies the base; you replace it, change one block of it, or bring your own. Nobody
+has to write Jinja for it to work.
+
+**Where a template lives.** In a layer, beside its `.layer` files: `templates/<vendor>/<file>.j2`,
+`<vendor>` the CLI's adapter name (`claude`), `<file>` letters, digits, `. _ -`. It is a component of
+the kind `template`, `templates/<vendor>/<file>.j2`; in a namespaced layer
+`templates/<vendor>/<ns>:<file>.j2`. It applies when the layer's `at` is the who-you-are path or an
+ancestor of it, as a `.layer` line does. No `.layer` line is needed.
+
+**The head** is the template's first Jinja comment, one `key: value` per line (other lines are
+free text):
+
+```jinja
+{#- for: skill
+    output: skills/{{ skill.dir }}/SKILL.md
+    lock: true -#}
+```
+
+| Key | Means |
+| --- | --- |
+| `for` | `skill`: rendered once per resolved skill; `once`: one file. (`agent` is planned, slice 2.) |
+| `output` | the path written, relative to the render folder, itself a template: letters, digits, `. _ -` segments, no `.` or `..` |
+| `lock` | optional, `true`: no higher layer's template of that name is used (the lowest layer that locks keeps it) |
+
+**What the built-in base layer ships**: `templates/claude/SKILL.md.j2`, a skill's `SKILL.md` as the
+resolved view holds it, in two blocks:
+
+```jinja
+{%- block front_matter %}{{ skill.front_matter }}{% endblock -%}
+{%- block body %}{{ skill.body }}{% endblock -%}
+```
+
+It reproduces the view byte for byte, so a consumer sees no change until a layer overrides a
+template (`task test:component-registry-unit` and `task test:registry-first-use` prove it, the
+latter on this repository's real layer list, and compare a hand-over through it with the 1.10.0
+hand-over in a temp Claude config folder).
+
+**The context** (one JSON document per rendering):
+
+| Name | Holds |
+| --- | --- |
+| `vendor`, `whoami` | the CLI (`claude`), the who-you-are path the view was resolved for |
+| `template` | `component`, `layer`, `file` of the template being rendered |
+| `skills` | every skill rendered for this template: `name` (registry name, `acme:tool`), `dir` (the folder, `acme--tool`), `namespace` |
+| `skill` (`for: skill`) | `name`, `dir`, `namespace`; `text` (the view's `SKILL.md`), `front_matter` (its `---` block and the blank lines after it, exactly as written, or empty) and `body` (the rest: `front_matter ~ body` is `text`); `has_skill_md`; `values` (every resolved key: a `list` as a list, any other as a string); `files` (the skill's other files, from `files = @dir`) |
+
+**Overriding: the three ways.** Precedence is layer precedence: the highest layer's template wins
+whole and never stacks with the one below; a lock in a lower layer holds; a namespace isolates.
+
+1. **Replace it whole**: the same name in your layer.
+
+   ```jinja
+   {#- templates/claude/SKILL.md.j2 in layer mine
+       for: skill
+       output: skills/{{ skill.dir }}/SKILL.md -#}
+   ---
+   name: {{ skill.dir }}
+   description: {{ skill.values.description | default("A registry skill") }}
+   ---
+   {{ skill.body }}
+   ```
+
+2. **Change one block**: extend a lower layer's template by `<layer>/<file>.j2` (the base is
+   `component-registry/SKILL.md.j2`) and override that block; `super()` is the lower text.
+
+   ```jinja
+   {#- templates/claude/SKILL.md.j2 in layer mine
+       for: skill
+       output: skills/{{ skill.dir }}/SKILL.md -#}
+   {% extends "component-registry/SKILL.md.j2" %}
+   {% block body %}{{ super() }}
+   Our ADRs live in docs/adr/.
+   {% endblock %}
+   ```
+
+   A template can extend only a layer below it (of its own namespace, or the Operator's layers and
+   the base when it has none): each candidate is kept in the view under its layer's name beside a
+   link to every lower layer, so `dept` may extend `component-registry` and `mine` may extend
+   `dept`, which extends the base.
+
+3. **Add your own**: a name the base does not have writes a file the base does not produce.
+
+   ```jinja
+   {#- templates/claude/checklist.md.j2 in layer dept
+       for: skill
+       output: skills/{{ skill.dir }}/checklist.md -#}
+   {% if "review" in skill.values.tags | default([]) %}Before you finish: run the checks.
+   {% endif %}
+   ```
+
+   An output that renders empty is not written, so `{% if %}` chooses the skills it applies to.
+
+**Namespaces** (ADR-0073): a namespaced layer's template is its own component
+(`templates/claude/acme:SKILL.md.j2`), competes only with its namespace's layers, renders only
+that namespace's skills, and writes only inside their folders (`skills/acme--<name>/`). An output
+the Operator's templates already write is never replaced (said, not written), so `acme` can add
+`skills/acme--tool/extra.md` but never changes a `SKILL.md`, its own included.
+
+**Shown by** `dcf-registry explain templates` (each template and its winner), `explain
+templates/claude` (one vendor) and `explain templates/claude/SKILL.md.j2`: every candidate,
+lowest first, `used`, `overridden` (replaced whole, or extended), `skipped` (a head that cannot be
+read, a lock) or `not-applying`, its layer, version and file, then `Winner: mine (1:templates/claude/SKILL.md.j2); extends component-registry/SKILL.md.j2, the template of layer component-registry`.
+`dcf-registry render claude <new folder>` writes what a hand-over to Claude Code would get.
+
+**When it goes wrong.**
+
+- A head that cannot be read (no head, no `for` or `output`, an unknown `for`, a bad `lock`), a
+  symlink or a file over 256 KiB: `resolve` skips it and reports it with its layer and file, as
+  it does a `.layer` line, and the template below it wins. Content never fails a resolve.
+- A template that does not render (a syntax error, an undefined name: the registry renders
+  strictly, an `{% include %}` outside the layer's templates, an output path that is not
+  relative, two templates writing one file, a loop out of fuel): the **hand-over fails** with the
+  template, its layer and file and `minijinja-cli`'s first lines; the adapter is not called, so the
+  CLI keeps the files it has (the last good ones). The new view is in place (`explain` reads it);
+  fix the template and refresh.
+- No `minijinja-cli` on PATH: the same, with `minijinja-cli is not on PATH (component-registry
+  1.11.0 installs it; rebuild the container)`. A CLI no template names is still handed the view.
+
+**What a template can do**: write text. `minijinja-cli` runs with no configuration file and no
+`MINIJINJA_*` setting from the environment, no environment variables in the template, includes
+and `extends` only inside the template's group of layers (`--safe-path`), strict undefined
+names, no escaping and a fuel limit (`COMPONENT_REGISTRY_TEMPLATE_FUEL`, default 5000000). It runs
+no command and reads no file it is not given. A new CLI still needs its adapter.
 
 ## Agent definitions (1.6.0)
 
@@ -618,6 +767,8 @@ a reader sees the old view or the new one, never half of each:
 | `meta/problems.tsv` | lines that could not be read |
 | `meta/namespaced.tsv` | (1.7.0) each namespaced component: its registry name, its namespace, where it lands in the view (`skills/<ns>--<name>`) |
 | `agent-names` | (1.6.0) the agents whose definitions were resolved for every pattern (`COMPONENT_REGISTRY_AGENTS`) |
+| `templates/own/<vendor>/<layer>/<file>.j2`, `templates/ns/<ns>/<vendor>/<layer>/<file>.j2` | (1.11.0) every template candidate that is used or overridden, by layer, each layer folder linking to the lower layers of its group (what `extends` reads) |
+| `meta/templates.tsv` | (1.11.0) every template candidate: state, component, namespace, vendor, file, layer, rank, version, `source:path`, for, output, lock, extends, why |
 | `layers.tsv`, `whoami`, `resolved` | each source's version and state (`fetched`, `unchanged`, `offline`, `missing`), who it was resolved for, when |
 
 ## State
@@ -647,9 +798,16 @@ participant start hook resolves it for `COMPONENT_REGISTRY_WHOAMI` (containerEnv
 default `/devcontainer-features/operator`; a person sets theirs in `.devcontainer/.env`) and hands
 the skills to Claude Code.
 
-**The equality check** (`task test:registry-first-use`, part of lint) resolves the real layer
-list and compares the resolved `skills/architecture-review/SKILL.md` with the committed
-`.claude/skills/architecture-review/SKILL.md`: **byte for byte equal**. What this use found, and
+**The shape check** (`task test:registry-first-use`, part of lint; since
+`architecture-skill-switch-over` this repository commits no copy to compare with) resolves the real
+layer list and asserts the shape of the resolved `skills/architecture-review/SKILL.md`: front matter
+with `name` and `description`; the devhost layer's method first; exactly one `## In this repository`
+section from the repository layer after it; no `## Layer ` heading line; `explain` attributes lines
+to both layers; and, as a drift guard, the devhost template copy that `devhost-init` plants where
+there is no registry equals the resolved skill. `heading: false` stays on both layers for
+readability (the repository layer has its own heading), no longer for byte equality with a committed
+skill (the template drift guard still compares bytes). Before the switch-over the check compared
+against the committed skill byte for byte, which is how it was proven equal. What this use found, and
 what 1.3.0 changed for it:
 
 - **A heading for every layer** (the first included) made byte equality impossible in 1.2.0;
@@ -665,7 +823,7 @@ what 1.3.0 changed for it:
 - **A relative link breaks.** The resolved copy lives in the CLI's skills folder, so a link such
   as `../../../PROCESS.md` points nowhere; the base layer names files as plain paths.
 
-### Switch-over (proposed, not done)
+### Switch-over (this repository done; consumers: `devhost-init` skips the copy)
 
 Today both the committed skill (`.claude/skills/architecture-review/`, project scope) and the
 resolved one (Claude Code's personal skills folder, handed over at the agent's start) exist; the
@@ -681,7 +839,8 @@ to the committed one byte for byte. Switching over (the Operator: it waits) woul
   component-registry Feature and a `registry.yml` naming the devhost layer (plus their own layer
   for their rules) and `devhost-init` stops copying it. Each consumer's
   `DEVCONTAINER_CONTRIBUTION.md` would say which.
-- **Nothing a reader sees**: the resolved skill already equals the committed one byte for byte.
+- **Done (`architecture-skill-switch-over`, `devhost` 1.18.0)**: this repository's committed copy is deleted. The devhost Feature does not depend on component-registry, so `devhost-init` keeps planting the template for a repository whose `.devcontainer/registry.yml` does not name `/usr/local/share/devhost/registry`, skips it when it does, and never deletes a planted copy (it prints one line suggesting removal). `task test:registry-first-use` keeps the template and the resolved skill byte-equal.
+- **Nothing a reader sees**: the resolved skill equalled the committed one byte for byte.
 
 ## Use it
 
@@ -718,6 +877,8 @@ every skipped line with its reason, and `resolved N component(s) for <W>`.
   so colour is never the only signal. `auto` (the default) colours only on a terminal and never
   when `NO_COLOR` is set; `always` wins over `NO_COLOR`. Without colour the text is byte for byte
   that of 1.3.0.
+- `component-registry:render`: `-- <vendor> <folder> [--as <path>]` (1.11.0), what a hand-over to
+  that CLI gets, rendered from its templates into a new folder.
 - `component-registry:setup`: re-run the start hook.
 - `component-registry:refresh`: resolve and hand over now (`-- --as <path>`, `-- --session <id>`);
   `/registry-refresh`.
@@ -737,7 +898,8 @@ every skipped line with its reason, and `resolved N component(s) for <W>`.
 
 ## Limits
 
-- Skills and agent definitions; other kinds (prompts, settings) are reported and not resolved. An
+- Skills, agent definitions and (1.11.0) vendor templates; other kinds (prompts, settings) are
+  reported and not resolved. An
   agent definition has two fields, `model` and `skills`, and for them the registry beats the agents
   list; a person who wants another model for one run sets it in their own layer.
 - An agent's `skills` from the registry are what it is said to use (`agents list --json`); they do
@@ -753,6 +915,11 @@ every skipped line with its reason, and `resolved N component(s) for <W>`.
 - A `path` source's version is a fingerprint of names, sizes and
   modification times, so a change that keeps all three is not seen.
 - `*` and `**` are whole segments; there are no value filters.
+- Templates (1.11.0): Claude Code's `SKILL.md` is the only base template; Copilot has none (its
+  adapter has no `skills` verb yet) and `for: agent` is not in this release (slice 2 of ADR-0077:
+  Copilot's files, agent definitions). A template is one file under `templates/<vendor>/`, no
+  sub-folders; a template is rendered at the hand-over, not at `resolve`, so a template that does
+  not render is found by the hand-over (or `render`), and only a head is checked at `resolve`.
 - The text heading is `## Layer <id>` or none (`heading: false`), per layer, never per line; a
   higher layer's text only appends. Of the front matter only `name` and `description` are values.
 - A `ref` is checked against this view only: its scope part is ignored, its component and key
@@ -773,9 +940,40 @@ its result to the CLI's own skills folder (1.1.0), so the two do not compete.
 
 Pin the major in the Feature reference (`component-registry:1`); a rebuild picks up the newest
 1.x. The layer copies and the view are rebuilt by the next `resolve`, so an upgrade needs nothing
-else; the `.layer` grammar and the layer list keys only grow within 1.x.
+else (1.11.0: a rebuild installs `minijinja-cli`; a view resolved before 1.11.0 holds no templates
+and is handed over as it is until the next `resolve`, which every agent start runs); the `.layer` grammar and the layer list keys only grow within 1.x.
 
 ## Changes
+
+### [1.11.0] - 2026-11-23
+
+#### Added
+
+- **Vendor templates** (ADR-0077, backlog `templating-build`): each vendor's files are rendered
+  from Jinja templates by `minijinja-cli` at every hand-over; the merge (precedence, locks,
+  `explain`) is unchanged. A template is a file `templates/<vendor>/<file>.j2` in a layer, a
+  component of the new kind `template`, with a head saying `for:` (`skill` or `once`), `output:`
+  (the path written, itself templated) and optionally `lock: true`. The highest layer's template
+  wins whole; a lower layer's lock holds; a namespaced layer's templates are its own, render only
+  its skills and never replace the Operator's files. Any layer may replace a template, change one
+  block with `{% extends "<layer>/<file>.j2" %}`, or add its own.
+- The built-in base layer ships `templates/claude/SKILL.md.j2`, which reproduces every resolved
+  `SKILL.md` byte for byte: Claude Code gets exactly the files 1.10.0 gave until a layer
+  overrides it. A CLI with no template is handed the view's skills as before.
+- `dcf-registry render <vendor> <folder>` (task `component-registry:render`) previews what a
+  hand-over gets; `dcf-registry explain templates[/<vendor>[/<file>.j2]]` shows each candidate,
+  the winner and the base it extends. The view keeps the templates and `meta/templates.tsv`.
+- `minijinja-cli` 3.1.0 is installed (the static build for x86_64 or aarch64, through `dcf_curl`,
+  checked against a pinned sha256): the Feature's first download at build.
+
+#### Changed
+
+- A template that does not render, or no `minijinja-cli`, fails the hand-over with the template's
+  layer and file named; the adapter is not called and the CLI keeps the skills it has. A template
+  head that cannot be read is skipped and reported by `resolve`, as an unreadable line is.
+
+Action: rebuild to get `minijinja-cli`. Nothing else; a view resolved before 1.11.0 is handed
+over as it is until the next `resolve`.
 
 ### [1.10.0] - 2026-11-23
 
@@ -802,31 +1000,6 @@ else; the `.layer` grammar and the layer list keys only grow within 1.x.
   prints one line per layer source naming them. `remember` keeps appending to an existing
   `remembered.reg` (no split) with the same line. Action: rename your layer files to `.layer`
   (`git mv x.reg x.layer`); `.reg` is removed in 2.0.0.
-
-### [1.8.0] - 2026-11-21
-
-#### Added
-
-- **A view per who-you-are path** (ADR-0074, backlog `agent-skills-folders`). `resolve` keeps the
-  latest view of every path (`paths/<path>` in the state folder) besides `view`, the latest of all;
-  `handover <cli> <name> <folder> --as <path>` hands that path's view, and without `--as` the view
-  of the who-you-are setting. `explain --as <path>` reads a path's own view. The one resolve lock
-  stays: the layer copies are shared.
-- **Hand-over records** (`dcf-registry handovers`): cli, agent, folder, path and whether the path
-  was the agent's own or the setting. `forget <cli> <name> <folder>` asks the adapter to drop the
-  agent's own copies, removes the record, and the views no record names any more.
-- **`refresh --session <id>`**: the agent whose session that is (each adapter's `list`) is
-  refreshed for its own path, alone. Without it (or with an id no agent has), `refresh` repeats
-  every recorded hand-over, each path resolved once; with no record, as before.
-- `/registry-refresh` runs `dcf-registry refresh --session "${CLAUDE_SESSION_ID}"`, so it refreshes
-  the calling agent in Claude Code.
-- **The skills mode** (`handover --skills-mode split|shared|off`, else the setting
-  `COMPONENT_REGISTRY_SKILLS_MODE`, else `split`), given to the adapter, recorded and repeated by
-  `refresh`; `off` forgets the agent. `handovers --skills` lists each agent's path, mode, own folder
-  and own skills (from the adapter's `skills-show`).
-
-Nothing to do. The adapter's `skills` verb also gets `COMPONENT_REGISTRY_PATH`; with claude-code
-1.14.0 agents of different paths keep their own skills.
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/component-registry/CHANGELOG.md).
 

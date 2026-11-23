@@ -64,6 +64,26 @@ class Init(h.RepoCase):
         self.assertTrue(all(line.startswith("  kept") for line in out), out)
         self.assertEqual(len(out), len(EXPECTED))
 
+    def test_a_registry_layer_list_naming_the_devhost_layer_skips_the_architecture_skill(self):
+        h.write(self.root / ".devcontainer" / "registry.yml",
+                "layers:\n  - id: devhost\n    at: /\n    sources:\n      - { kind: path, path: /usr/local/share/devhost/registry }\n")
+        out, extra = self.init.scaffold(self.root)
+        self.assertFalse((self.root / ".claude" / "skills" / "architecture-review").exists())
+        self.assertTrue(any(line.startswith("  skipped   .claude/skills/architecture-review") for line in out), out)
+        self.assertTrue((self.root / ".claude" / "skills" / "close-session" / "SKILL.md").exists())
+
+    def test_a_planted_architecture_skill_is_kept_and_its_removal_suggested(self):
+        h.write(self.root / ".claude" / "skills" / "architecture-review" / "SKILL.md", "mine\n")
+        h.write(self.root / ".devcontainer" / "registry.yml", "layers:\n  - { id: d, sources: [{ kind: path, path: /usr/local/share/devhost/registry }] }\n")
+        out, extra = self.init.scaffold(self.root, force=True)
+        self.assertEqual((self.root / ".claude" / "skills" / "architecture-review" / "SKILL.md").read_text(encoding="utf-8"), "mine\n")
+        self.assertTrue(any("architecture-review/SKILL.md (exists; the registry now resolves" in line for line in out), out)
+
+    def test_a_layer_list_without_the_devhost_layer_still_gets_the_skill(self):
+        h.write(self.root / ".devcontainer" / "registry.yml", "layers:\n  - { id: x, sources: [{ kind: path, path: .x }] }\n")
+        self.init.scaffold(self.root)
+        self.assertTrue((self.root / ".claude" / "skills" / "architecture-review" / "SKILL.md").exists())
+
     def test_force_rewrites_a_template_but_not_a_record(self):
         self.init.scaffold(self.root)
         h.write(self.root / "LEXICON.md", "edited\n")

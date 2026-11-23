@@ -21,13 +21,15 @@ check "the db source says what it supports" bash -c "registry-source-db supports
 check "the db source refuses an unsupported driver (exit 3)" bash -c "registry-source-db version l driver=oracle table=t; [ \$? -eq 3 ]"
 check "component-registry-setup on PATH" command -v component-registry-setup
 check "dcf-persist on PATH" command -v dcf-persist
-check "the Feature version is baked" grep -qx '1.10.0' /usr/local/share/component-registry-feature/version
+check "the Feature version is baked" grep -qx '1.11.0' /usr/local/share/component-registry-feature/version
 check "the registryFile option is baked (default)" grep -qx 'REGISTRYFILE=.devcontainer/registry.yml' /usr/local/share/component-registry-feature/options.env
 check "COMPONENT_REGISTRY_STATE_DIR set" bash -c "[ \"\$COMPONENT_REGISTRY_STATE_DIR\" = /var/lib/devcontainer-features/component-registry ]"
 check "setup makes the state folder owner-only" bash -c "component-registry-setup >/dev/null && [ \"\$(stat -c %a \"\$COMPONENT_REGISTRY_STATE_DIR\")\" = 700 ]"
 check "state folder writable by the user" test -w /var/lib/devcontainer-features/component-registry
 check "taskfile registered" test -f /usr/local/share/go-task/includes.d/component-registry.yml
 check "the built-in base layer is installed (1.1.0)" bash -c "for s in registry-refresh registry-explain registry-remember; do test -f /usr/local/share/component-registry-feature/base/\$s/SKILL.md || exit 1; done; test -f /usr/local/share/component-registry-feature/base/component-registry.layer"
+check "minijinja-cli on PATH at the pinned version (1.11.0)" bash -c "minijinja-cli --version | grep -qx 'minijinja-cli 3.1.0'"
+check "the base Claude template is installed (1.11.0)" test -f /usr/local/share/component-registry-feature/base/templates/claude/SKILL.md.j2
 check "the sources say what they support" bash -c "registry-source-path supports | grep -qx version && registry-source-git supports | grep -qx fetch"
 
 # shellcheck disable=SC2016  # expansion is meant to happen inside the inner bash
@@ -38,6 +40,7 @@ printf "layers:\n  - id: base\n    at: /Corp\n    sources:\n      - { kind: path
 export COMPONENT_REGISTRY_STATE_DIR="$t/state"; cd "$t/repo"'
 check "resolve refuses without a who-you-are path" bash -c "$setup; dcf-registry resolve 2>&1 | grep -F COMPONENT_REGISTRY_WHOAMI; [ \"\${PIPESTATUS[0]}\" -eq 2 ]"
 check "resolve merges two layers" bash -c "$setup; COMPONENT_REGISTRY_WHOAMI=/Corp/me dcf-registry resolve >/dev/null && grep -qx b \"\$t/state/view/meta/skills/demo/values/terms\" && grep -qx mine \"\$t/state/view/skills/demo/SKILL.md\""
+check "render through the base template equals the view (1.11.0)" bash -c "$setup; COMPONENT_REGISTRY_WHOAMI=/Corp/me dcf-registry resolve >/dev/null && COMPONENT_REGISTRY_WHOAMI=/Corp/me dcf-registry render claude \"\$t/out\" >/dev/null && diff -r \"\$t/state/view/skills\" \"\$t/out/skills\""
 check "explain names the layer of each line" bash -c "$setup; dcf-registry resolve --as /Corp/me >/dev/null && dcf-registry explain skills/demo | grep -F 'used         mine@tree-'"
 check "the base layer's utility skills are resolved" bash -c "$setup; dcf-registry resolve --as /Corp/me >/dev/null && test -f \"\$t/state/view/skills/registry-refresh/SKILL.md\""
 check "layer-list finds the list" bash -c "$setup; dcf-registry layer-list | grep -q registry.yml"

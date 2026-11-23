@@ -193,8 +193,14 @@ start (`Workspace not trusted`): run `claude` there once and accept.
 
 The `component-registry` Feature resolves skills from layers for who you are; this verb is how they
 reach Claude Code. `dcf-registry handover claude` (the participant component at every agent's start,
-or `/registry-refresh`) calls it with the resolved view's `skills/` folder in
-`COMPONENT_REGISTRY_SKILLS`:
+or `/registry-refresh`) calls it with the skills folder in `COMPONENT_REGISTRY_SKILLS`: from
+component-registry 1.11.0 (claude-code 1.14.1, ADR-0077) the files **rendered from the `claude`
+templates** (the base layer's `templates/claude/SKILL.md.j2`, which gives each skill's `SKILL.md`
+byte for byte as the view holds it, or a layer's template that replaces it, changes one of its
+blocks, or adds a file such as `skills/<name>/checklist.md`); before, the view's own `skills/`. The
+verb copies whatever it is given; the file format is the template's, not this adapter's. A
+template that does not render fails the hand-over before this verb runs, so the skills already
+here stay. How to override a template: the component-registry notes, "Vendor templates".
 
 - Each resolved skill is copied into `$CLAUDE_CONFIG_DIR/skills/<name>/` (this Feature's volume,
   tier 4, owner-only) with a `.component-registry` file marking it owned by the registry. An
@@ -276,8 +282,8 @@ one login and one Claude Code state ([ADR-0074](https://github.com/nabil-becker/
   sessions; the own copy stays runnable as `/registry:<name>`, and the start line names the clash.
   A plain `claude` started by hand (not through `agents`) gets no `--add-dir` and sees only the
   shared skills. Today's only real case of the first is `architecture-review` in this repository,
-  and only if agents with different paths disagree on it; the architecture-review switch-over
-  (backlog) removes the committed copy and with it the clash.
+  and only if agents with different paths disagree on it; the committed copy is gone
+  (architecture-skill-switch-over), and with it the clash here.
 - **Not chosen:** a `CLAUDE_CONFIG_DIR` per agent (separate logins, session lists and jobs), the
   `permissions.additionalDirectories` setting (file access only, it loads no skills), a plugin per
   agent (every skill renamed `/<plugin>:<skill>`). ADR-0074 has the comparison.

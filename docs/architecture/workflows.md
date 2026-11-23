@@ -220,7 +220,7 @@ flowchart LR
   repo["devcontainer-features layer (rank 2)<br/>.devcontainer/registry/repo<br/>In this repository"]
   component-registry["dcf-registry resolve<br/>body:text stacked, heading: false (no ## Layer line)<br/>name, description into the front matter"]
   personal["Claude Code personal skills<br/>architecture-review (wins the name)"]
-  project["committed .claude/skills/architecture-review<br/>(project; kept until the switch-over)"]
+  project["devhost template copy<br/>(planted by devhost-init where there is no registry)"]
   devhost --> component-registry
   repo --> component-registry
   component-registry -->|handover, skills verb| personal

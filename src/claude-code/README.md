@@ -223,8 +223,14 @@ start (`Workspace not trusted`): run `claude` there once and accept.
 
 The `component-registry` Feature resolves skills from layers for who you are; this verb is how they
 reach Claude Code. `dcf-registry handover claude` (the participant component at every agent's start,
-or `/registry-refresh`) calls it with the resolved view's `skills/` folder in
-`COMPONENT_REGISTRY_SKILLS`:
+or `/registry-refresh`) calls it with the skills folder in `COMPONENT_REGISTRY_SKILLS`: from
+component-registry 1.11.0 (claude-code 1.14.1, ADR-0077) the files **rendered from the `claude`
+templates** (the base layer's `templates/claude/SKILL.md.j2`, which gives each skill's `SKILL.md`
+byte for byte as the view holds it, or a layer's template that replaces it, changes one of its
+blocks, or adds a file such as `skills/<name>/checklist.md`); before, the view's own `skills/`. The
+verb copies whatever it is given; the file format is the template's, not this adapter's. A
+template that does not render fails the hand-over before this verb runs, so the skills already
+here stay. How to override a template: the component-registry notes, "Vendor templates".
 
 - Each resolved skill is copied into `$CLAUDE_CONFIG_DIR/skills/<name>/` (this Feature's volume,
   tier 4, owner-only) with a `.component-registry` file marking it owned by the registry. An
@@ -306,8 +312,8 @@ one login and one Claude Code state ([ADR-0074](https://github.com/nabil-becker/
   sessions; the own copy stays runnable as `/registry:<name>`, and the start line names the clash.
   A plain `claude` started by hand (not through `agents`) gets no `--add-dir` and sees only the
   shared skills. Today's only real case of the first is `architecture-review` in this repository,
-  and only if agents with different paths disagree on it; the architecture-review switch-over
-  (backlog) removes the committed copy and with it the clash.
+  and only if agents with different paths disagree on it; the committed copy is gone
+  (architecture-skill-switch-over), and with it the clash here.
 - **Not chosen:** a `CLAUDE_CONFIG_DIR` per agent (separate logins, session lists and jobs), the
   `permissions.additionalDirectories` setting (file access only, it loads no skills), a plugin per
   agent (every skill renamed `/<plugin>:<skill>`). ADR-0074 has the comparison.
@@ -579,6 +585,19 @@ the CLI) contend for `.claude.json.lock`; run one.
 
 ## Changes
 
+### [1.14.1] - 2026-11-23
+
+#### Changed
+
+- **Resolved skills arrive rendered from templates** (ADR-0077, backlog `templating-build`). With
+  component-registry 1.11.0, `dcf-registry handover claude` renders the `claude` templates with
+  `minijinja-cli` and gives the `skills` verb the result instead of the view's own `skills/`. The
+  built-in base template reproduces each `SKILL.md` byte for byte, so nothing changes until a layer
+  replaces a template, changes one of its blocks or adds one (a file such as
+  `skills/<name>/checklist.md` then reaches Claude Code). A template that does not render fails
+  the hand-over before the verb runs: the skills already in place stay. The verb itself is
+  unchanged; nothing to do.
+
 ### [1.14.0] - 2026-11-21
 
 #### Added
@@ -624,27 +643,6 @@ wake says so, and `/add-dir <folder>` in it (the line names the folder) reads it
 
 Nothing to do: without the `component-registry` Feature, or with no agent definition, sessions start
 as before.
-
-### [1.12.0] - 2026-11-20
-
-#### Added
-
-- **`agent-adapter-claude skills`**, the new optional verb of the CLI adapter contract (ADR-0064,
-  amending ADR-0037), listed by `supports`. Given the component registry's resolved skills folder in
-  `COMPONENT_REGISTRY_SKILLS` (the `component-registry` Feature hands it over), it copies each
-  resolved skill into Claude Code's personal skills folder, `$CLAUDE_CONFIG_DIR/skills` (the Feature's
-  volume), marks each copy with a `.component-registry` file, removes the copies the registry no
-  longer resolves and never touches a skill folder without that mark (a name clash is said). It never
-  writes the repository's `.claude/skills`. Claude Code picks the change up in running sessions; a
-  skill already used in a conversation keeps its old text until a new conversation.
-- **`claude-code-setup` creates `$CLAUDE_CONFIG_DIR/skills`** at every create, even empty: Claude Code
-  watches a skills folder only if it existed when the session started (otherwise `/reload-skills`).
-- With `participants: true`, the participant component 1.2.0: the component registry's resolve and
-  skills hand-over at an agent's start, bounded by `COMPONENT_REGISTRY_START_WAIT` (default 15 s; past
-  it the agent starts with the skills already in its folder), and the agents list key
-  `registry-path` (see the notes).
-
-Nothing to do: without the `component-registry` Feature nothing calls the new verb.
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/claude-code/CHANGELOG.md).
 

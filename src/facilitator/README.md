@@ -31,6 +31,40 @@ The communication layer between agents of any vendor running in the devcontainer
 | autostart | postStartCommand starts the infrastructure (facilitator infra up: the Directory, the SLIM node, the facilitator's ssh-agent), never fatally; nothing in mode leaf. Participants are never started. FACILITATOR_AUTOSTART. | boolean | true |
 | dirOnlineCheck | Check each pushed agent record against the online OASF schema server (schema.oasf.outshift.com); off, records are checked offline (the Directory's policy.operations: []). FACILITATOR_DIR_ONLINE_CHECK. | boolean | false |
 
+## Trust: how it is done and kept
+
+- **Levels.** `local` (this machine), `private` (your intranet domains) and `public` (named nodes you do not run): policy
+  profiles in `mesh.yml`; a trust domain maps to one level, a domain not listed is refused, not public. The preset
+  (`solo`, `team`, `open`) is the ceiling.
+- **Getting in, per level.** local: itself. private: a single-use join token (15 min) from a hub, or a pairing token between
+  peers; the token carries the hash of the issuer's CA bundle (no trust on first use). public: the requester's key plus a
+  person's `node approve` (signed audit entry); nothing is issued before that.
+- **Two locks on every message.** Lock one: each level has its own SLIM listener whose client CA holds only that level's
+  domains. Lock two: the application checks the SPIFFE ID of every signed message against `mesh.yml` (the ID's domain is the
+  domain whose CA signed it, the domain is trusted at a level within the preset, the node is not revoked), and takes a
+  packet's identity from its signer's key in an admitted card.
+- **Lifetimes and renewal.** Certificates last 24 h (local, private) and 1 h (public), renewed at half life while the issuer
+  allows it; short lifetimes are the revocation, because SLIM checks no revocation list.
+- **Revoke and rotation.** `node revoke`: no renewal, lock two refuses the node at once, its card is dropped, and the mesh's
+  SLIM secret rotates to the nodes that remain. What it already holds is not recalled.
+- **Who restricts what.** The receiving node enforces everything from its own `mesh.yml` (a peer's claim about its level,
+  limits or exposure is never believed); the sender applies the same rules as a courtesy. `expose` says how far an agent may
+  be reached; `limits` per level bound hops, budget, rate, size, copy and approval.
+
+- **Who can use a node locally.** A process becomes a participant only when (1) it is listed in `participants.yml` (a
+  reviewed repository change; only listed handles get a token, made at container start) and (2) its MCP entry carries its
+  handle and token (`FACILITATOR_HANDLE`, `FACILITATOR_TOKEN`; the claude-code `participants` option wires listed agents
+  only). Without both, `facilitator mcp` refuses it. The HTTP endpoint is off by default and needs a person-made bearer
+  token plus approval. Caveat: every participant runs as the same Linux user in the container, so a process that is
+  malicious on purpose can read another's token file; the container is the trust boundary (run an untrusted agent in its
+  own node and let it in at private or public); per-agent Linux users (backlog `per-identity-users`) close it.
+
+Detail: [A hub and its spokes](#a-hub-and-its-spokes-slice-n3), [Identity, and the two locks](#identity-and-the-two-locks),
+[Peer to peer and the public level](#peer-to-peer-and-the-public-level-slice-n5a); the proposal's
+[section 5](../../docs/proposals/facilitator-node.md#5-identity-spiffe-for-nodes-agntcy-identity-for-agent-badges) and its
+rulings; ADR-0069, ADR-0075, ADR-0076; [data flows](../../docs/architecture/data-flows.md) and the trust records in the
+[data inventory](../../docs/architecture/data-inventory.md).
+
 ## Deprecated in 0.3.0: `dirVersion` and `slimVersion`
 
 The node bundle fixes the versions of `dirctl` (1.9.1) and `slimctl` (3.4.6), so the two options choose
@@ -1103,8 +1137,8 @@ MCP over HTTP for CLIs (slice N4 of the facilitator-node proposal; ADR-0070, ADR
 
 - The conversation type accepts the optional `via` field on a message and a status, and the notice codes `approval`,
   `approved` and `denied`. A conversation with a `via` does not load on a 0.4.0 node.
-- `bundleVersion` defaults to `0.5.0` (unreleased: until `release-bundle` runs and `digests.txt` pins it, the Feature builds
-  the bundle from its own source).
+- `bundleVersion` defaults to `0.5.0`: the Feature installs the published node bundle `facilitator-bundle-v0.5.0`
+  (amd64 and arm64), pinned by SHA-256 in `digests.txt`.
 
 ### [0.4.0] - 2026-11-21
 

@@ -196,10 +196,14 @@ layers:
 ```
 
 The skill `devhost-init` copies (`templates/claude/skills/architecture-review/SKILL.md`) is
-unchanged in role: it is the generic method followed by this collection's own "In this
-repository" section, byte for byte what the two layers resolve to here (both `heading: false`,
-component-registry 1.3.0; `task test:registry-first-use`). Switching consumers over from the
-copy to the layer is proposed, not done (`src/component-registry/NOTES.md`, "Switch-over").
+the generic method followed by this collection's own "In this repository" section, byte for byte
+what the two layers resolve to here (both `heading: false`, component-registry 1.3.0;
+`task test:registry-first-use` fails when they drift). Since 1.18.0 this repository commits no copy
+of its own, and `devhost-init` plants the template only where it is needed: the Feature does not
+depend on component-registry, so a repository whose `.devcontainer/registry.yml` does not name
+`/usr/local/share/devhost/registry` still gets the copy; one that names it gets `skipped` in the
+listing and no copy; an existing copy is kept (never deleted) with a line suggesting its removal,
+because a committed project skill shadows the registry's.
 
 ## The iteration package
 

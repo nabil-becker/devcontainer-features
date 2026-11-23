@@ -400,6 +400,9 @@ The domain words of the project itself are not here; they live with the project'
 - **Hand-over**: `dcf-registry handover <cli>`: the step that gives the resolved view's skills to a
   CLI adapter's `skills` verb, under the view lock; exit 3 means the CLI cannot take skills
   (ADR-0064).
+- **Vendor template**: a template (rendered by `minijinja-cli`) that turns the resolved view into
+  one kind of file a vendor's CLI reads, replacing the adapter's hand-written shell for that step;
+  the merge is unchanged (ADR-0077).
 - **Owned copy**: a skill the registry copied into a CLI's skills folder, marked by a
   `.component-registry` file; only owned copies are replaced or removed, a skill without the marker
   is never touched.
@@ -596,3 +599,7 @@ renamed. Each project is a tree growing in its own ground.
   `approval_ttl` (ADR-0076).
 - **Via**: the `data.via` field on every message and status an HTTP client's turn produces, naming the
   client the node vouches for; `verify` accepts a chain root that carries it (ADR-0076).
+- **Node issuer**: what signs a trust domain's node certificates. By default the node itself (the
+  built-in issuer, no OpenBao); where its CA key lives is the first configured of an OpenBao PKI, an
+  ssh-agent (ed25519 key chosen by fingerprint) or, as a last resort, a file in the node's volume
+  (ADR-0078).

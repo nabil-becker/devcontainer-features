@@ -600,6 +600,16 @@ type = "concept"
 term = "Hand-over record"
 summary = "The record dcf-registry keeps of which agent got which who-you-are path's view and own skills folder; agents no longer listed are forgotten."
 
+[vendor-template]
+type = "concept"
+term = "Vendor template"
+summary = "A minijinja-cli template that renders the resolved view into one kind of vendor file, replacing adapter shell; the merge is unchanged (ADR-0077)."
+
+[[relation]]
+subject = "vendor-template"
+predicate = "reads"
+object = "resolved-view"
+
 [key-mode]
 type = "mechanism"
 term = "Key mode"
@@ -1456,3 +1466,8 @@ summary = "At the public level an HTTP client's first message is held until a pe
 type = "mechanism"
 term = "Via"
 summary = "The data.via field naming the HTTP client the node vouches for on a message it signed."
+
+[node-issuer]
+type = "mechanism"
+term = "Node issuer"
+summary = "What signs a domain's node certificates: the node itself by default, with the CA key in OpenBao, else an ssh-agent, else a file."
