@@ -142,10 +142,14 @@ layer brings the prefix: its `[skills/arch-review]` is `skills/acme:arch-review`
 Operator's own), so layers sharing a namespace merge exactly as layers do (order, specificity,
 locks, `@replace`, types, permission keys from the namespace's lowest layer), different namespaces
 never mix, and a namespaced layer cannot stack onto, override or lock anything outside its
-namespace. A ref resolves inside its own namespace and never crosses one (dangling). A namespaced
+namespace. References are explicit (ruled 2026-11-21): no prefix is the referrer's own
+namespace, `<ns>:<name>` namespace `<ns>` from any layer; nothing names the un-namespaced set from
+inside a namespace. A target not in the view is a missing dependency, reported while `resolve`
+goes on (as a Helm chart's dependency); `aliases: { acme: acme-public }` on a layer maps a
+namespace name in that layer's references, one hop. A namespaced
 skill is handed over as `<ns>--<name>` (folder and `SKILL.md` name; a `:` is no skill folder name),
 its registry name staying `<ns>:<name>`; a namespaced agent definition applies to no agent of the
-agents list in this release.
+agents list (ruled 2026-11-23: whether a layer is namespaced is the lister's choice).
 
 ### 3.2 A layer's content: the `.reg` format
 
@@ -165,6 +169,7 @@ data      = for value: the rest of the line
           / for ref: a path
 comment   = ";" text NL
 component = kind "/" [ namespace ":" ] name   ; the namespace comes from the layer list, never a section
+reference = [ scope "/" ] kind "/" [ namespace ":" ] name [ ":" key ]   ; no namespace: the referrer's own
 namespace = word *( "-" word )                 ; word = 1*( a-z / 0-9 ), at most 40 characters
 ```
 
@@ -440,8 +445,9 @@ compared, so the registry does not re-implement it.
   changes, is the layer owner's and the person's choice (decisions 10, 11); the registry
   authenticates as configured and never widens a permission (section 6).
 - A layer whose source the person does not control is given a namespace (1.7.0): what it brings
-  is prefixed and cannot change, lock or refer to anything outside it; the person adapts it with
-  a layer of their own in the same namespace.
+  is prefixed and cannot change or lock anything outside it, nor refer to the person's own
+  components; it may refer to other namespaces explicitly, which the person installs or not; the
+  person adapts it with a layer of their own in the same namespace.
 
 ## 10. Placement (NFR-13)
 

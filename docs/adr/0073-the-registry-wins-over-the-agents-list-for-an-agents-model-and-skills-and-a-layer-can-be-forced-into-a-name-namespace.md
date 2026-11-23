@@ -87,9 +87,30 @@ name prefix closer to what they planned, although the path jail was what they fi
   agent-definitions release.
 - Adapters gain one environment variable to honour; Claude Code and Copilot both do.
 
+## Amendment (2026-11-23): the namespace as built
+
+The Operator ruled four questions the build of decision 4 (component-registry 1.7.0) raised:
+
+- **N1, keep the folder name.** A namespaced skill is handed to a CLI as `<ns>--<name>` (folder
+  and `SKILL.md` name), since a `:` is no skill folder name for the adapters and Claude Code keeps
+  it for its own prefixes; the registry's name stays `<ns>:<name>`.
+- **N2, references are always explicit** (2026-11-21). A reference without a prefix names the
+  referrer's own namespace (the un-namespaced set for the Operator's layers); `<ns>:<name>` names
+  namespace `<ns>` from any layer, including from one namespace to another; nothing names the
+  un-namespaced set from inside a namespace, so a namespace still cannot reach the Operator's
+  components. A missing target is a missing dependency, as a Helm chart's: reported, never fatal;
+  installing it is the user's. A layer may carry `aliases: { acme: acme-public }`, applied to its
+  own references, one hop. This replaces "a ref never crosses a namespace" of the first build.
+- **N3, agent definitions as built.** Whether a layer is namespaced is the choice of whoever lists
+  it: a plain-listed layer's agent definitions override, a namespaced one's become
+  `acme:<agent>` and match no agent of the agents list.
+- **N4 (b), writing is out of the registry's scope.** No writable support for namespaced layers;
+  `writable` and `remember` stay as they are and are deprecated in a later slice.
+
 ## Change log
 
 | Date | Change |
 |---|---|
 | 2026-11-21 | First draft (as 0074 in the main checkout), accepted by the Operator in the session. |
 | 2026-11-21 | Renumbered 0073 and extended with the per-CLI model (A3), the `AGENT_MODEL` contract change and the shared-namespace rule (A4: one ADR for all of them). |
+| 2026-11-23 | Amended with the Operator's rulings N1 to N4 on the built namespace (folder name, explicit references with missing dependencies and aliases, agent definitions, no writing). |

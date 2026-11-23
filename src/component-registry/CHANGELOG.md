@@ -23,20 +23,34 @@ here; `task lint` fails when the entry is missing.
   adapters, and Claude Code keeps the `:` for the prefixes it makes); one whose folder name an
   un-namespaced skill already has is not resolved and is reported. `meta/namespaced.tsv` maps the
   registry name to it; `handover` says which skills went by their folder name.
-- Refs resolve inside their own namespace and never cross one, either way (reported dangling,
-  with why). A namespaced agent definition (`agents/<ns>:<name>/` in the view) applies to no
-  agent of the agents list in this release; the Operator's own agent may name a namespaced skill
-  as `<ns>:<name>` in its `skills`, written to the view as `<ns>--<name>`.
+- **Explicit references** (the Operator's ruling of 2026-11-21): a ref, a list `ref:` item or an
+  agent's `skills` item without a prefix names the referrer's own namespace; `<ns>:<name>` names
+  namespace `<ns>` from any layer, including one namespace to another. Nothing names the
+  un-namespaced set from inside a namespace.
+- **Missing dependencies**: a reference whose target is not in the view is reported by `resolve`
+  (the referrer, its layer, the target), shown by `explain` and `explain --uses`, and does not
+  stop `resolve`. `meta/refs.tsv` gains the state `missing` (a malformed ref stays `dangling`) and
+  two columns, the referrer's layer and the alias used.
+- **Aliases**: `aliases: { <name>: <namespace> }` on a layer; inside it, a reference to `<name>:`
+  resolves to `<namespace>:` first. One hop; an alias naming itself, the layer's own namespace,
+  another alias of the layer or a reserved name is refused with `file:line`. `layers.tsv` gains
+  an eleventh column, `aliases`.
+- A namespaced agent definition (`agents/<ns>:<name>/` in the view) matches no agent of the
+  agents list; a plain-listed layer's agent definitions override as before (the Operator's ruling
+  of 2026-11-23). The Operator's own agent names a namespaced skill as `<ns>:<name>` in its
+  `skills`, written to the view as `<ns>--<name>`.
 - `explain` shows each layer's namespace, a namespace line with the hand-over name, and
   `[namespace <ns>]` on every line of a namespaced component; it takes `kind/<ns>:<name>[:key]`
-  or the folder name; `--uses` shows a namespaced ref's resolved target.
+  or the folder name; a "References" part lists each reference as written and as resolved, then
+  the missing dependencies; `--uses` shows a namespaced or aliased ref's resolved target.
 
 ### Changed
 
 - `layers.tsv` gains a tenth column, `namespace` (`-` for none). In an agent definition's
   `skills`, a plain item `<a>:<b>` (a lower-case `<a>`) now names the namespaced skill `a:b`; it
-  was read as the skill `a` before. Nothing to do for a layer list without a namespace: it
-  resolves exactly as in 1.6.0.
+  was read as the skill `a` before. A ref to a target that is not there is reported as a
+  `missing dependency:` line instead of `dangling ref:`. Otherwise a layer list without a
+  namespace resolves exactly as in 1.6.0. `writable` and `remember` are unchanged.
 
 ## [1.6.0] - 2026-11-20
 

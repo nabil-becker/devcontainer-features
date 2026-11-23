@@ -392,16 +392,35 @@ isolated by giving it a namespace in the layer list, `namespace: <name>` (ADR-00
   The name splits at the first `--`, which a namespace never holds. A namespaced skill whose folder
   name is already an un-namespaced skill's (`skills/acme--x` in the Operator's layer) is not
   resolved and is reported; the Operator's skill keeps the name.
-- **Refs stay inside.** A ref in a namespace is written without the prefix and resolves inside
-  that namespace (`see:ref = skills/helper` in `acme` is `skills/acme:helper`). A ref never
-  crosses a namespace, either way: from a namespace to the Operator's components, or from the
-  Operator's layers into a namespace, it is reported dangling, with why.
-- **Agent definitions.** A namespaced `agents/<name>` is `agents/acme:<name>` (in the view
-  `agents/acme:<name>/`, a name no agents-list agent can have), so it **applies to no agent of the
-  agents list in this release**, and its pattern `[agents/*]` never reaches a listed agent. Its
-  `skills` items are its namespace's skills. The Operator's own agent definition may name a
-  namespaced skill as `acme:arch-review` in its `skills` list (written to the view as
-  `acme--arch-review`, the name its CLI knows).
+- **References are explicit** (the Operator's ruling of 2026-11-21). A reference (a `ref` value,
+  a list's `ref:` item, an agent definition's `skills` item) **without a prefix names the
+  referrer's own namespace**: the un-namespaced set for the Operator's layers, `acme` for a layer
+  in `acme` (`see:ref = skills/helper` in `acme` is `skills/acme:helper`). **`<ns>:<name>` names
+  namespace `<ns>`, from any layer**, the Operator's or another namespace's
+  (`ref:skills/acme:arch-review`, `skills:list = acme:arch-review`). There is no way to name the
+  un-namespaced set from inside a namespace, so a namespace still cannot reach the Operator's
+  components. In a ref path the last segment is `[<ns>:]<name>[:<key>]`; `kind/a:b` is namespace
+  `a`, name `b` when that component is in the view, else the key `b` of `a` when that one is,
+  else (neither) namespace `a` when `a` can be a namespace name. Write `kind/<ns>:<name>:<key>`
+  to name a key of a namespaced component.
+- **A missing target is a missing dependency**, like a chart's dependency in Helm: `resolve` says
+  it in one line (the referrer, its layer, the target, and that no layer of the list has the
+  namespace, when none has) and goes on; `explain` and `explain --uses` show it as a missing
+  dependency. Installing the namespace, a layer that brings it, is the user's job.
+- **Aliases**: `aliases: { acme: acme-public }` on a layer in the layer list (a one-line map).
+  Inside that layer, a reference to `acme:` resolves to `acme-public:` before lookup. Both names
+  follow the namespace rules; an alias is one hop (one whose target is another alias of the
+  layer is refused), never names itself, the layer's own namespace or a reserved name; each
+  refusal names its `file:line`. `explain` shows `acme:lint -> acme-public:lint (alias on
+  <layer>)` on the reference and the layer's aliases in the layer list.
+- **Agent definitions** (the Operator's ruling of 2026-11-23). Whether a layer is namespaced is
+  the choice of whoever lists it. A plain-listed layer's agent definitions override as any layer's
+  do; a namespaced layer's `agents/<name>` becomes `agents/acme:<name>` (in the view
+  `agents/acme:<name>/`, a name no agents-list agent can have) and matches none, and its pattern
+  `[agents/*]` never reaches a listed agent. Its `skills` items without a prefix are its
+  namespace's skills. The Operator's own agent definition names a namespaced skill as
+  `acme:arch-review` in its `skills` list (written to the view as `acme--arch-review`, the name
+  its CLI knows).
 - **Shown by** `explain`: the layers with their namespace, a line naming the namespace and the
   hand-over name, and `[namespace acme]` on every line of the component; it takes
   `skills/acme:arch-review[:key]` or the folder name `skills/acme--arch-review`. `explain --uses`
@@ -442,6 +461,43 @@ lock style                             style:value = loose          ; skipped: l
 acme-adapt` and the Operator's line, named `acme--arch-review`; the Operator's own
 `skills/arch-review`, if any, is untouched, and neither layer's `[skills/*]` reaches the other.
 To stop trusting the source, drop the layer; to pin it, its tag.
+
+**Dependencies, like Helm's.** A namespace can build on another, as a chart names the charts it
+depends on; the user installs each one by listing its layer.
+
+```yaml
+layers:
+  - id: acme-community          # depends on lint-tools
+    at: /
+    namespace: acme
+    sources:
+      - { kind: git, url: "https://git.example.invalid/acme/skills.git", tag: v2 }
+  - id: lint-tools              # the dependency, installed as its own namespace
+    at: /
+    namespace: lint-tools-public
+    sources:
+      - { kind: git, url: "https://git.example.invalid/lint/skills.git", tag: v1 }
+  - id: acme-adapt
+    at: /Corp
+    namespace: acme
+    aliases: { lint-tools: lint-tools-public }   # the community layer's name for it, here
+    sources:
+      - { kind: path, path: .registry-acme }
+```
+
+```
+; acme-community                       ; acme-adapt
+[skills/arch-review]                   [skills/arch-review]
+uses:ref = skills/lint-tools:lint      lint:ref = skills/lint-tools:lint   ; -> lint-tools-public:lint
+see:ref = skills/helper                ; no prefix: acme's own helper
+```
+
+Without the `lint-tools` layer, `resolve` still succeeds and says `missing dependency:
+skills/acme:arch-review:uses in layer acme-community -> skills/lint-tools:lint (no component
+skills/lint-tools:lint for /Corp/...; no layer of the list has namespace lint-tools)`. The alias
+applies to the references written in the layer that carries it, so `acme-adapt`'s `lint:ref`
+finds `lint-tools-public:lint`, while `acme-community`'s `uses:ref` still asks for `lint-tools`:
+list the dependency under the name the community layer uses, or alias on each layer that needs it.
 
 ## The match rule
 
@@ -619,10 +675,11 @@ every skipped line with its reason, and `resolved N component(s) for <W>`.
 - The text heading is `## Layer <id>` or none (`heading: false`), per layer, never per line; a
   higher layer's text only appends. Of the front matter only `name` and `description` are values.
 - A `ref` is checked against this view only: its scope part is ignored, its component and key
-  must resolve for the same who-you-are path. It never crosses a namespace (1.7.0).
-- A namespaced agent definition applies to no agent of the agents list (1.7.0); an agents-list
-  agent cannot opt into one. `remember` appends to the writable layer, namespaced or not, so a
-  namespace's skills are adapted through a layer in that namespace, not `--skill acme:x`.
+  must resolve for the same who-you-are path; a missing one is reported, never fetched (1.7.0).
+- A namespaced agent definition matches no agent of the agents list (1.7.0); an agents-list
+  agent cannot opt into one. A namespace's skills are adapted through a layer listed in that
+  namespace; `remember --skill` takes no namespaced name (writing is out of the registry's scope,
+  the Operator's ruling of 2026-11-23: `writable` and `remember` are to be deprecated later).
 
 ## Why it exists
 
