@@ -1111,6 +1111,9 @@ cmd_resolve() {
   resolve_settings
   resolve_whoami "$as"
   load_list
+  for ((n = 1; n <= NL; n++)); do
+    [ "${L_WR[n]:-false}" = true ] && warn "layer ${L_ID[n]}: writable is deprecated: the registry does not write layers; edit the layer; removed in 2.0.0"
+  done
   mkdir -p "$STATE_DIR" 2>/dev/null || die 1 "cannot create the state folder $STATE_DIR (run component-registry-setup)"
   chmod 700 "$STATE_DIR" 2>/dev/null || true
   [ -w "$STATE_DIR" ] || die 1 "the state folder $STATE_DIR is not writable by $(id -un) (run component-registry-setup)"
@@ -1687,7 +1690,7 @@ cmd_refresh() {
   return "$fail"
 }
 
-# remember [--skill <name>] [--] <line> (1.1.0, /registry-remember): append one text line to the
+# remember [--skill <name>] [--] <line> (1.1.0, /registry-remember; deprecated in 1.10.0, removed in 2.0.0): append one text line to the
 # layer marked writable: true (the person's own), as body:text of that skill or, without --skill,
 # of every skill ([skills/*]), into remembered.layer at the root of its path source's folder; then
 # refresh. Refused, nothing written: no writable layer, two of them, a writable layer without a
@@ -1712,6 +1715,7 @@ cmd_remember() {
     skill="${skill#/}"; skill="${skill#skills/}"
     [[ "$skill" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ ]] || die 2 "--skill '$skill' is not a skill name (letters, digits, . _ -)"
   fi
+  warn "remember is deprecated: the registry does not write layers; edit your layer; removed in 2.0.0"
   resolve_settings
   load_list
   for ((i = 1; i <= NL; i++)); do [ "${L_WR[i]:-false}" = true ] && { n=$((n + 1)); w="$i"; }; done

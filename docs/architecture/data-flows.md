@@ -378,7 +378,7 @@ from its own source at image build, with the same upstream pins.
 
 Built in slices 1 to 3 (component-registry 1.2.0, claude-code 1.12.0, cloud-folder 1.4.0): sources `git`, `path`, `http` (one `.layer` file, auth settings only), `cloud-folder` and, from component-registry 1.5.0, `db` (`sqlite`, `postgres`),
 the view in the Feature's volume, the hand-over to the CLI's skills folder through the adapter's
-`skills` verb, and `/registry-remember` appending to the person's own writable layer.
+`skills` verb, and `/registry-remember` appending to the person's own writable layer (deprecated in component-registry 1.10.0, removed in 2.0.0).
 
 ```mermaid
 flowchart LR
@@ -401,7 +401,7 @@ flowchart LR
   external-copies --> component-registry
   component-registry -->|resolve| external-view
   external-view -->|handover: the adapter's skills verb| external-cli-skills
-  component-registry -->|remember: appends a line| external-sources
+  component-registry -->|remember (deprecated): appends a line| external-sources
 ```
 
 - Who you are (`COMPONENT_REGISTRY_WHOAMI`) comes from `.env` or the launcher, never a committed file.
@@ -412,7 +412,7 @@ flowchart LR
 - Agent definitions (release 2, component-registry 1.6.0): the view's `agents/<name>/` (a model and skill names) is read by the participant component at the agent's start; the model reaches the CLI adapter only as the environment variable `AGENT_MODEL` of that call, never written elsewhere. An agent definition carries no permission, identity, lease or folder.
 - A layer pointed at a public or community source carries a namespace (component-registry 1.7.0, ADR-0073): its components reach the view and the CLI's skills folder only under its prefix (`skills/<ns>--<name>/`), and it cannot change, lock or refer to the Operator's own components; trust in that source stops at its namespace.
 - Each who-you-are path keeps its own view (`paths/<path>`, component-registry 1.8.0), and each hand-over is recorded (`handovers.tsv`: CLI, agent, folder, path; no content). In Claude Code (claude-code 1.14.0) the skills every agent's view has alike stay in `$CLAUDE_CONFIG_DIR/skills`; the rest of an agent's view goes to `$CLAUDE_CONFIG_DIR/registry-agents/<agent>/registry/.claude/skills`, which only that agent's sessions read (`--add-dir`), so one agent's personal facts never reach another agent's skills (ADR-0074).
-- `/registry-remember` writes only to the layer marked `writable: true`, and only to a folder (a `path` source): the person's own layer, wherever they keep it.
+- The registry does not write layers: edit the layer. `/registry-remember` (deprecated, removed in 2.0.0) still writes only to the layer marked `writable: true`, and only to a folder (a `path` source).
 - In this repository (slice 4) two `path` layers feed the resolve: the devhost Feature's folder in the image (`/usr/local/share/devhost/registry`) and the committed `.devcontainer/registry/repo`; both public, both `required`, so a missing one leaves the last view and never hands over half a skill.
 
 ```mermaid

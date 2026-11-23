@@ -6,6 +6,16 @@ of the Feature and whether they must act (an option renamed, a task removed, a r
 The version in `devcontainer-feature.json` is bumped in the same change that adds its entry
 here; `task lint` fails when the entry is missing.
 
+## [1.10.0] - 2026-11-23
+
+### Deprecated
+
+- The registry does not write layers (the Operator's ruling of 2026-11-23): if a change is needed,
+  edit the layer. Still accepted in 1.x, removed in 2.0.0 together with `.reg`:
+  - `writable: true` on a layer: `resolve` prints one deprecation line per such layer.
+  - `dcf-registry remember` and the built-in `/registry-remember` skill: a deprecation line before
+    writing; behaviour otherwise unchanged. Action: edit your own layer instead.
+
 ## [1.9.0] - 2026-11-23
 
 ### Changed

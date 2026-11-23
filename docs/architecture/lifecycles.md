@@ -192,7 +192,7 @@ stateDiagram-v2
 
 Nothing marks a view stale by itself: since slice 2 (component-registry 1.1.0; slice 3, 1.2.0, adds the `http` and `cloud-folder` sources) the participant
 component's start sequence runs `resolve` at every agent's start, and `/registry-refresh` (and
-`/registry-remember`, which refreshes) run it mid-session; `task component-registry:resolve` runs
+`/registry-remember`, deprecated and removed in 2.0.0, which refreshes; the registry does not write layers) run it mid-session; `task component-registry:resolve` runs
 it by hand.
 
 A layer's namespace (component-registry 1.7.0) changes no state here: a namespaced layer's copy
