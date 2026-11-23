@@ -69,6 +69,11 @@ def local_ns(m: "mesh_mod.Mesh") -> str:
     return "facilitator" if m.role == "standalone" else f"facilitator-{m.node_id}"
 
 
+def hmac_ok(want_hash: str, secret: str) -> bool:
+    import hmac
+    return hmac.compare_digest(want_hash, hashlib.sha256(secret.encode()).hexdigest())
+
+
 def _log_refusal(store: identity.Store, what: str, why: str) -> None:
     store.ensure()
     line = json.dumps({"at": identity.now_utc(), "what": what, "why": why}, sort_keys=True)
@@ -387,6 +392,8 @@ class Daemon:
         self.mesh = fac.mesh
         self.store = self.net.store
         self.domain = self.mesh.domain
+        self.issuing = self.mesh.role in mesh_mod.ISSUING_ROLES
+        self.reexec = False
         self.app = None
         self.sb = None
         self.stop = False
@@ -396,8 +403,8 @@ class Daemon:
         self.roster_stamp = 0.0
         self.status = {"role": self.mesh.role, "node": self.mesh.node_id, "connected": False, "hub_seen": None,
                        "errors": []}
-        self.join_server = None
-        self.join_thread = None
+        self.join_servers: dict[str, object] = {}
+        self.join_until: dict[str, float] = {}
         self.restart_slim = False
 
     # ------------------------------------------------------------ helpers
@@ -409,7 +416,8 @@ class Daemon:
     def write_status(self) -> None:
         self.status["at"] = identity.now_utc()
         self.status["pid"] = os.getpid()
-        self.status["join_open"] = self.join_server is not None
+        self.status["join_open"] = any(v is not None for v in self.join_servers.values())
+        self.status["join_open_kinds"] = sorted(k for k, v in self.join_servers.items() if v is not None)
         tmp = self.store.status_file.with_suffix(".tmp")
         tmp.write_text(json.dumps(self.status, indent=2, sort_keys=True))
         os.replace(tmp, self.store.status_file)
@@ -417,8 +425,16 @@ class Daemon:
     def bundles(self) -> dict[str, Path]:
         return self.store.bundles(self.mesh.trust)
 
-    def my_card(self) -> dict:
-        lv = self.mesh.level_of_domain(self.domain)
+    def revoked_set(self) -> set[str]:
+        """Nodes this node refuses: its roster's revoked, and those a hub told a spoke (revoked.json)."""
+        return identity.revoked(identity.roster(self.store)) | self.revoked_here()
+
+    def my_card(self, level: str | None = None, domain: str | None = None) -> dict:
+        """This node's card for a receiver at `level` (default: the level of this node's own domain): only the participants
+        exposed at least as wide as that level (a public receiver is shown public agents alone) and signed with the
+        certificate of `domain` (default: this node's own)."""
+        domain = domain or self.domain
+        lv = level or self.mesh.level_of_domain(domain)
         parts = []
         roster = self.fac.state.roster()
         for h, ident in sorted(roster.items()):
@@ -431,12 +447,12 @@ class Daemon:
                           "description": ident.get("description", ""), "skills": ident.get("skills", []),
                           **({"cid": ident["cid"]} if ident.get("cid") else {}),
                           **({"badge": ident["badge"]} if isinstance(ident.get("badge"), str) and ident["badge"] else {})})
-        return identity.make_card(self.store, self.domain, self.mesh.node_id, self.fac.record.facilitator_key(), parts)
+        return identity.make_card(self.store, domain, self.mesh.node_id, self.fac.record.facilitator_key(), parts)
 
-    def envelope(self, to: str, body: dict) -> bytes:
+    def envelope(self, to: str, body: dict, domain: str | None = None) -> bytes:
         at = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")     # ordered: a replay is older
         env = {"v": 1, "from": self.mesh.node_id, "to": to, "at": at, **body}
-        return json.dumps(identity.sign_envelope(self.store, self.domain, env), separators=(",", ":")).encode()
+        return json.dumps(identity.sign_envelope(self.store, domain or self.domain, env), separators=(",", ":")).encode()
 
     # ------------------------------------------------------------ SLIM
 
@@ -455,7 +471,7 @@ class Daemon:
         cfg = sb.ClientConfig(**{**vars(base), "auth": sb.ClientAuthenticationConfig.BASIC(
             config=sb.BasicAuth(username="facilitator", password=sec["password"]))})
         self.conn = await svc.connect_async(cfg)
-        secret = self.store.mesh_secret(create=self.mesh.role == "hub")
+        secret = self.store.mesh_secret(create=self.issuing)
         if not secret:
             raise PeersError("no mesh secret: this spoke has not joined (facilitator node join)")
         name = sb.Name(ORG, NODE_NS, self.mesh.node_id)
@@ -517,10 +533,12 @@ class Daemon:
             card = env.get("card")
             if not isinstance(card, dict) or card.get("node") != node:
                 return None, "a hello whose card is not its sender's"
-            revoked = identity.revoked(identity.roster(self.store)) if self.mesh.role == "hub" else self.revoked_here()
+            revoked = self.revoked_set()
             ok, level, why = identity.check_card(card, self.mesh, self.bundles(), revoked)
             if not ok:
                 return None, why
+            if self.issuing and node not in self.mesh.peers and node not in identity.roster(self.store).get("nodes", {}):
+                return None, f"the node {node} is neither a peer of this node nor joined to it (not in node.peers or the roster)"
             return {"card": card, "level": level}, ""
         c = self.net.cards().get(node)
         if c is None:
@@ -530,6 +548,13 @@ class Daemon:
                 return ({"card": card, "level": level}, "") if ok and card.get("node") == node else (None, why or "not the hub")
             return None, f"no admitted card for the node {node!r}"
         return c, ""
+
+    @staticmethod
+    def revoked_names(store) -> set[str]:
+        try:
+            return set(json.loads((store.root / "revoked.json").read_text()))
+        except (OSError, ValueError):
+            return set()
 
     def revoked_here(self) -> set[str]:
         try:
@@ -551,7 +576,7 @@ class Daemon:
         if c is None:
             _log_refusal(self.store, what, f"lock two: {why}")
             return []
-        if env.get("from") in (identity.revoked(identity.roster(self.store)) | self.revoked_here()):
+        if env.get("from") in self.revoked_set():
             _log_refusal(self.store, what, f"lock two: the node {env.get('from')} is revoked")
             return []
         if not identity.check_envelope(env, c["card"]):
@@ -562,21 +587,25 @@ class Daemon:
             _log_refusal(self.store, what, f"too large ({len(raw)} bytes)")
             return []
         t = env.get("type")
-        if t in ("hello", "roster"):
-            card = env.get("card") if t == "hello" else env.get("hub_card")
+        if t in ("hello", "roster", "card"):
+            card = env.get("hub_card") if t == "roster" else env.get("card")
             if card and card.get("at", "") < self.net.card_at(card.get("node", "")):
                 _log_refusal(self.store, what, "a replay: a card older than the one this node holds")
                 return []
         if t == "roster" and env.get("at", "") <= self.status.get("roster_at", self.last_roster_at()):
             _log_refusal(self.store, what, "a replay: a roster no newer than the last one")
             return []
-        if t == "hello" and self.mesh.role == "hub":
+        if t == "hello" and self.issuing:
             return self.on_hello(env, c)
+        if t == "card" and self.mesh.role == "peer":
+            return self.on_card(env, c)
+        if t == "secret":
+            return self.on_secret(env, c)
         if t == "roster" and self.mesh.role == "spoke":
             return self.on_roster(env, c)
         if t == "entries":
             return self.on_entries(env, c)
-        if t == "renew" and self.mesh.role == "hub":
+        if t == "renew" and self.issuing:
             return self.on_renew(env, c)
         if t == "renewed" and self.mesh.role == "spoke":
             return self.on_renewed(env, c)
@@ -593,12 +622,17 @@ class Daemon:
         node = env["from"]
         r = identity.roster(self.store)
         n = r.get("nodes", {}).get(node)
-        if n is None:
+        if n is None and not (self.mesh.role == "peer" and node in self.mesh.peers):
             _log_refusal(self.store, f"hello from {node}", "the node has not joined this hub (no roster entry)")
             return []
         self.net.save_card(c["card"], c["level"])
-        n["seen"] = identity.now_utc()
-        identity.save_roster(self.store, r)
+        if n is not None:
+            n["seen"] = identity.now_utc()
+            identity.save_roster(self.store, r)
+        if n is None or self.mesh.role == "hub":
+            return [(node, self.roster_envelope(node))] if self.mesh.role == "hub" else \
+                [(node, self.envelope(node, {"type": "card", "card": self.my_card(c["level"])}))]
+        # a peer's reply to a node that joined it (a spoke of its public or private domain): a roster of its own card alone
         return [(node, self.roster_envelope(node))]
 
     def roster_envelope(self, to: str) -> bytes:
@@ -606,9 +640,16 @@ class Daemon:
             raise IdentityError("the hub has no certificate yet")
         r = identity.roster(self.store)
         rev = sorted(identity.revoked(r))
-        cards = [c["card"] for n, c in self.net.cards().items() if n not in rev and n in r.get("nodes", {})]
-        return self.envelope(to, {"type": "roster", "hub_card": self.my_card(), "cards": cards, "revoked": rev,
-                                  "hub_directory": self.hub_directory()})
+        rn = r.get("nodes", {}).get(to) or {}
+        dom = rn.get("domain") or self.domain
+        lvl = self.mesh.level_of_domain(dom) or "private"
+        # a public receiver is shown this node's own card, restricted to what is exposed public, and no other node's
+        # (copy addressed: keys and roster, "only the sender's own entry", proposal 10)
+        cards = [] if lvl == "public" else [c["card"] for n, c in self.net.cards().items()
+                                            if n not in rev and n in r.get("nodes", {})]
+        cert_dom = dom if self.store.cert(dom).is_file() else self.domain
+        return self.envelope(to, {"type": "roster", "hub_card": self.my_card(lvl, cert_dom), "cards": cards, "revoked": rev,
+                                  "hub_directory": {} if lvl == "public" else self.hub_directory()}, cert_dom)
 
     def hub_directory(self) -> dict:
         """Where a spoke syncs the hub's records from, when the hub's Directory peers: its libp2p peer id and
@@ -652,6 +693,62 @@ class Daemon:
             (self.store.root / "hub-directory.json").write_text(json.dumps(hd, sort_keys=True))
             self.sync_from_hub(hd, env["hub_card"])
         return []
+
+    def on_card(self, env: dict, c: dict) -> list:
+        """A peer's answer to our hello: its card, already checked (lock two) by sender_card and by the envelope's
+        signature; kept, so its participants are reachable by qualified name."""
+        node = env["from"]
+        if node not in self.mesh.peers and node not in identity.roster(self.store).get("nodes", {}):
+            _log_refusal(self.store, f"card from {node}", "not a peer of this node")
+            return []
+        self.net.save_card(env["card"], c["level"])
+        self.status.setdefault("peers_seen", {})[node] = identity.now_utc()
+        return []
+
+    # ------------------------------------------------------------ the mesh secret's rotation (ruling H4)
+
+    def on_secret(self, env: dict, c: dict) -> list:
+        """The new SLIM app secret, from an admitted node that revoked one (or passed it on): applied here (after this
+        node has passed it on to the nodes it still trusts, with the old secret, which they still hold), never twice."""
+        new = env.get("new")
+        if not isinstance(new, str) or len(new) < 32 or len(new) > 200 or not isinstance(env.get("rid"), str):
+            _log_refusal(self.store, f"secret from {env['from']}", "a damaged rotation")
+            return []
+        rot = identity.rotation(self.store)
+        if rot and rot.get("rid") == env["rid"]:
+            return []                                           # passed on already
+        if rot and rot.get("at", "") >= env.get("rotated_at", ""):
+            _log_refusal(self.store, f"secret from {env['from']}", "a replay: no newer than the last rotation")
+            return []
+        nodes = [n for n in self.net.cards() if n != env["from"] and n not in self.revoked_set()] if self.mesh.role == "peer" else []
+        identity.begin_rotation(self.store, env["rid"], new, env.get("rotated_at", identity.now_utc()), env["from"], nodes,
+                                env.get("reason", ""))
+        return []
+
+    async def rotation(self) -> None:
+        """Hands the new secret to the nodes still owed it (with the secret they hold now), then swaps this node to it:
+        when every one has taken it, or after identity.ROTATION_WAIT_SECONDS. The swap restarts this part (exec), because
+        a SLIM app's secret is fixed when it is made."""
+        while not self.stop:
+            rot = identity.rotation(self.store)
+            if rot and rot.get("state") == "sending":
+                for node in list(rot["pending"]):
+                    data = await asyncio.to_thread(lambda n=node: self.envelope(n, {
+                        "type": "secret", "rid": rot["rid"], "new": rot["new"], "rotated_at": rot["at"],
+                        "reason": rot.get("reason", "")}))
+                    if await self.send(node, data):
+                        rot["pending"].remove(node)
+                if not rot["pending"] or time.time() > rot["deadline"]:
+                    if rot["pending"]:
+                        self.err(f"the new mesh secret was not delivered to {', '.join(rot['pending'])} before the deadline; "
+                                 "they need it by hand (facilitator node secret --show here, --set there)")
+                    rot["state"] = "done"
+                    identity.save_rotation(self.store, rot)
+                    self.store.set_mesh_secret(rot["new"])
+                    self.reexec = True
+                else:
+                    identity.save_rotation(self.store, rot)
+            await asyncio.sleep(2)
 
     def sync_from_hub(self, hd: dict, hub_card: dict) -> None:
         """Ruling BI: a spoke syncs the hub's records (the CIDs its card names) by registry: one-way, pulled through
@@ -705,12 +802,13 @@ class Daemon:
         node = env["from"]
         r = identity.roster(self.store)
         n = r.get("nodes", {}).get(node)
-        if n is None or n.get("revoked"):
+        if n is None or n.get("revoked") or node in self.revoked_set():
             _log_refusal(self.store, f"renew from {node}", "revoked or not joined: no renewal (node revoke stops renewal)")
             return []
+        dom = n.get("domain") or self.domain
         try:
-            iss = identity.Issuer(self.mesh.node["issuer"])
-            got = iss.sign(env["csr"], node, f"{node}.{self.domain}", self.mesh.svid_seconds(c["level"]))
+            iss = identity.make_issuer(self.mesh, self.store, dom)
+            got = iss.sign(env["csr"], node, f"{node}.{dom}", self.mesh.svid_seconds(c["level"]))
         except (IdentityError, KeyError) as e:
             self.err(f"renewal for {node}: {e}")
             return []
@@ -735,7 +833,7 @@ class Daemon:
 
     def backup(self, r: dict) -> None:
         try:
-            identity.Issuer(self.mesh.node["issuer"]).backup_roster(r)
+            identity.make_issuer(self.mesh, self.store, self.domain).backup_roster(r)
         except (IdentityError, KeyError) as e:
             self.err(f"the roster was not backed up to OpenBao: {e}")
 
@@ -786,7 +884,20 @@ class Daemon:
                 except (IdentityError, OSError) as e:
                     self.err(f"hello: {e}")
                     self.last_hello = time.time()
-            if self.mesh.role == "hub":
+            if self.mesh.role == "peer" and time.time() - self.last_hello > HELLO_SECONDS:
+                self.last_hello = time.time()
+                for node in sorted(self.mesh.peers):
+                    if node in self.revoked_set():
+                        continue
+                    lvl = (self.net.cards().get(node) or {}).get("level") or self.mesh.level_of_domain(self.domain)
+                    try:
+                        data = await asyncio.to_thread(lambda n=node, lv=lvl: self.envelope(n, {"type": "hello",
+                                                                                              "card": self.my_card(lv)}))
+                        if not await self.send(node, data):
+                            self.last_hello = time.time() - HELLO_SECONDS + RETRY_SECONDS
+                    except (IdentityError, OSError) as e:
+                        self.err(f"hello to {node}: {e}")
+            if self.issuing:
                 try:
                     stamp = self.store.roster_file.stat().st_mtime
                 except OSError:
@@ -795,7 +906,7 @@ class Daemon:
                     self.roster_stamp = stamp
                     r = identity.roster(self.store)
                     for node, n in r.get("nodes", {}).items():
-                        if not n.get("revoked") and node in self.net.cards():
+                        if not n.get("revoked") and node in self.net.cards() and self.mesh.role == "hub":
                             data = await asyncio.to_thread(self.roster_envelope, node)
                             await self.send(node, data)
             await asyncio.sleep(1)
@@ -816,11 +927,12 @@ class Daemon:
                         data = await asyncio.to_thread(self.envelope, hub, {"type": "renew", "csr": req})
                         if await self.send(hub, data):
                             self.status["renew_asked"] = time.time()
-                elif self.mesh.role == "hub":
-                    st = await asyncio.to_thread(self.store.cert_state, self.domain)
-                    if not st.get("present") or st["renew_due"]:
-                        await asyncio.to_thread(ensure_hub_cert, self.fac, st.get("present", False))
-                        self.restart_slim = True
+                elif self.issuing:
+                    for dom in self.mesh.domains_issued():
+                        st = await asyncio.to_thread(self.store.cert_state, dom)
+                        if not st.get("present") or st["renew_due"]:
+                            await asyncio.to_thread(ensure_own_cert, self.fac, dom, st.get("present", False))
+                            self.restart_slim = True
             except (IdentityError, OSError) as e:
                 self.err(f"renewal: {e}")
             if self.restart_slim:
@@ -831,25 +943,39 @@ class Daemon:
             await asyncio.sleep(2)
 
     async def joins(self) -> None:
+        """The join endpoints: the private one (tokens: a hub's spokes, a peer's pairing) while a token is live; the public
+        one (join requests, no token) while a person's request window is open or a request waits. Each closes 30 s after
+        its last reason ends."""
         while not self.stop:
-            if self.mesh.role == "hub" and self.mesh.node.get("join"):
-                live = identity.live_tokens(self.store)
-                if live:
-                    self.join_until = time.time() + 30      # stays open 30 s after the last token is used or expires
-                if (live or time.time() < getattr(self, "join_until", 0)) and self.join_server is None:
-                    try:
-                        self.open_join()
-                    except (OSError, IdentityError, ssl.SSLError) as e:
-                        self.err(f"the join endpoint did not open: {e}")
-                elif not live and time.time() >= getattr(self, "join_until", 0) and self.join_server is not None:
-                    self.close_join()
+            if self.issuing:
+                for kind in ("private", "public"):
+                    addr = self.mesh.node.get("join") if kind == "private" else (self.mesh.node.get("public") or {}).get("join")
+                    if not addr:
+                        continue
+                    live = (identity.live_tokens(self.store) if kind == "private"
+                            else identity.window_open(self.store) or identity.live_requests(self.store))
+                    if live:
+                        self.join_until[kind] = time.time() + 30
+                    if (live or time.time() < self.join_until.get(kind, 0)) and self.join_servers.get(kind) is None:
+                        try:
+                            self.open_join(kind)
+                        except (OSError, IdentityError, ssl.SSLError) as e:
+                            self.err(f"the {kind} join endpoint did not open: {e}")
+                    elif not live and time.time() >= self.join_until.get(kind, 0) and self.join_servers.get(kind) is not None:
+                        self.close_join(kind)
             self.write_status()
+            if self.reexec:
+                self.close_join()
+                self.write_status()
+                os.execv(sys.executable, [sys.executable, *sys.orig_argv[1:]])
             await asyncio.sleep(1)
 
     # ------------------------------------------------------------ the join endpoint (a hub's; HTTPS)
 
-    def open_join(self) -> None:
-        host, port = mesh_mod.parse_addr(self.mesh.node["join"])
+    def open_join(self, kind: str = "private") -> None:
+        public = kind == "public"
+        dom = self.mesh.public_domain if public else self.domain
+        host, port = mesh_mod.parse_addr((self.mesh.node.get("public") or {}).get("join") if public else self.mesh.node["join"])
         daemon = self
 
         class H(http.server.BaseHTTPRequestHandler):
@@ -866,38 +992,110 @@ class Daemon:
 
             def do_GET(self):
                 if self.path == "/v1/bundle":
-                    return self.reply(200, daemon.store.bundle(daemon.domain).read_bytes(), "application/x-pem-file")
+                    return self.reply(200, daemon.store.bundle(dom).read_bytes(), "application/x-pem-file")
                 return self.reply(404, {"error": "no such path"})
 
             def do_POST(self):
-                if self.path != "/v1/join":
+                paths = ("/v1/request", "/v1/request/status") if public else ("/v1/join", "/v1/pair")
+                if self.path not in paths:
                     return self.reply(404, {"error": "no such path"})
                 n = int(self.headers.get("Content-Length") or 0)
                 if n > 16384:
                     return self.reply(413, {"error": "too large"})
                 try:
                     req = json.loads(self.rfile.read(n))
-                    code, body = daemon.join(req)
+                    fn = {"/v1/join": daemon.join, "/v1/pair": daemon.pair, "/v1/request": daemon.request,
+                          "/v1/request/status": daemon.request_status}[self.path]
+                    code, body = fn(req)
                 except (ValueError, KeyError, TypeError):
-                    code, body = 400, {"error": "a join request is {token_id, secret, node, csr}"}
+                    code, body = 400, {"error": "a malformed request"}
                 return self.reply(code, body)
 
         srv = http.server.ThreadingHTTPServer((host, port), H)
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ctx.minimum_version = ssl.TLSVersion.TLSv1_3
-        ctx.load_cert_chain(str(self.store.cert(self.domain)), str(self.store.key(self.domain)))
+        ctx.load_cert_chain(str(self.store.cert(dom)), str(self.store.key(dom)))
         srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
-        self.join_server = srv
-        self.join_thread = threading.Thread(target=srv.serve_forever, name="join", daemon=True)
-        self.join_thread.start()
-        print(f"facilitator-peers: the join endpoint is open on {host}:{port} (a join token is live)", file=sys.stderr, flush=True)
+        self.join_servers[kind] = srv
+        threading.Thread(target=srv.serve_forever, name=f"join-{kind}", daemon=True).start()
+        print(f"facilitator-peers: the {kind} join endpoint is open on {host}:{port}", file=sys.stderr, flush=True)
 
-    def close_join(self) -> None:
-        srv, self.join_server = self.join_server, None
-        if srv is not None:
-            srv.shutdown()
-            srv.server_close()
-            print("facilitator-peers: the join endpoint is closed (no join token is live)", file=sys.stderr, flush=True)
+    def close_join(self, kind: str | None = None) -> None:
+        for k in ([kind] if kind else list(self.join_servers)):
+            srv = self.join_servers.pop(k, None)
+            if srv is not None:
+                srv.shutdown()
+                srv.server_close()
+                print(f"facilitator-peers: the {k} join endpoint is closed", file=sys.stderr, flush=True)
+
+    # ------------------------------------------------------------ pairing two peers (private, a token)
+
+    def pair(self, req: dict) -> tuple[int, dict]:
+        """A peer's pairing request (`node peer --token`): the two exchange the bundles of their own domains and the
+        accepter hands over the mesh secret; each then lists the other in node.peers and trusts its domain at private."""
+        if self.mesh.role != "peer":
+            return 400, {"error": "this node is not a peer (a hub's spokes join with a join request: node join)"}
+        node, dom = str(req["node"]), str(req["domain"])
+        if not mesh_mod.NODE_ID_RE.fullmatch(node) or node == self.mesh.node_id or not mesh_mod.DOMAIN_RE.fullmatch(dom):
+            return 400, {"error": "a node id and a domain, not this node's"}
+        ok, why = identity.consume_token(self.store, str(req["token_id"]), str(req["secret"]))
+        if not ok:
+            _log_refusal(self.store, f"a pairing by {node}", why)
+            return 403, {"error": why}
+        if dom == self.domain or dom in self.mesh.trust or node in self.mesh.peers:
+            return 409, {"error": f"{node} or {dom} is known here already (a second pairing needs a new id and domain)"}
+        if not identity.pem_blocks(str(req["bundle"])):
+            return 400, {"error": "no CA certificate in the bundle"}
+        self.store.write_bundle(dom, str(req["bundle"]))
+        mesh_mod.write_node(self.mesh.path, {"peers": {**self.mesh.peers, node: "incoming"}}, trust={dom: "private"})
+        pj = self.store.root / "peers.json"
+        try:
+            d = json.loads(pj.read_text())
+        except (OSError, ValueError):
+            d = {}
+        d[node] = {"domain": dom, "name": str(req.get("name", "")), "paired": identity.now_utc()}
+        pj.write_text(json.dumps(d, sort_keys=True))
+        (self.store.root / "reload").write_text(identity.now_utc() + "\n")
+        self.reexec = True                  # the trust and the peers list changed: SLIM and this part restart on them
+        host, port = mesh_mod.parse_addr(self.mesh.node["listen"]["private"])
+        try:
+            self.fac.audit.append("join-approved", node, "pairing token", f"peer paired in {dom}")
+        except Exception:                   # noqa: BLE001
+            pass
+        return 200, {"domain": self.domain, "node": self.mesh.node_id, "name": self.mesh.node["name"],
+                     "bundle": self.store.bundle(self.domain).read_text(), "mesh_secret": self.store.mesh_secret(),
+                     "slim": f"{self.mesh.node['name']}:{port}", "level": "private"}
+
+    # ------------------------------------------------------------ public join requests (a key, then a person)
+
+    def request(self, req: dict) -> tuple[int, dict]:
+        node = str(req["node"])
+        if not mesh_mod.NODE_ID_RE.fullmatch(node) or node == self.mesh.node_id:
+            return 400, {"error": f"node id {node!r}: lower-case letters, digits and -, not this node's"}
+        try:
+            row = identity.add_request(self.store, node, self.mesh.public_domain, str(req["csr"]), str(req["secret_hash"]))
+        except IdentityError as e:
+            _log_refusal(self.store, f"a join request by {node}", str(e))
+            return 403, {"error": str(e)}
+        try:
+            self.fac.audit.append("join-requested", node, "public request", f"key {row['fp'][:16]}")
+        except Exception:                   # noqa: BLE001
+            pass
+        return 200, {"id": row["id"], "fp": row["fp"], "status": "pending"}
+
+    def request_status(self, req: dict) -> tuple[int, dict]:
+        row = identity.get_request(self.store, str(req["id"]))
+        if row is None or not hmac_ok(row["secret_hash"], str(req["secret"])):
+            return 403, {"error": "no such request"}
+        if row["status"] != "approved":
+            return 200, {"status": row["status"]}
+        dom = self.mesh.public_domain
+        host, port = mesh_mod.parse_addr(self.mesh.node["listen"]["public"])
+        identity.update_request(self.store, row["id"], status="collected")
+        return 200, {"status": "approved", "domain": dom, "level": "public", "cert": row["cert"],
+                     "bundle": self.store.bundle(dom).read_text(), "mesh_secret": self.store.mesh_secret(),
+                     "hub": {"node": self.mesh.node_id, "name": self.mesh.node["name"], "slim": f"{self.mesh.node['name']}:{port}"},
+                     "hub_card": self.my_card("public", dom)}
 
     def join(self, req: dict) -> tuple[int, dict]:
         node = str(req["node"])
@@ -916,12 +1114,12 @@ class Daemon:
             return 409, {"error": f"the node {node} has joined already (a second node needs another id)"}
         level = self.mesh.level_of_domain(self.domain)
         try:
-            iss = identity.Issuer(self.mesh.node["issuer"])
+            iss = identity.make_issuer(self.mesh, self.store, self.domain)
             got = iss.sign(str(req["csr"]), node, f"{node}.{self.domain}", self.mesh.svid_seconds(level))
         except IdentityError as e:
             self.err(f"join of {node}: {e}")
             return 503, {"error": f"the hub's issuer: {e}"}
-        r["nodes"][node] = {"serial": got["serial"], "joined": identity.now_utc(), "revoked": False}
+        r["nodes"][node] = {"serial": got["serial"], "joined": identity.now_utc(), "revoked": False, "domain": self.domain}
         identity.save_roster(self.store, r)
         self.backup(r)
         host, port = mesh_mod.parse_addr(self.mesh.node["listen"][level])
@@ -935,6 +1133,12 @@ class Daemon:
 
     async def main(self) -> int:
         self.store.ensure()
+        marker = self.store.root / "reload"
+        if marker.exists():                 # a pairing changed mesh.yml's trust and peers: SLIM re-renders its config
+            marker.unlink(missing_ok=True)
+            inf = self.fac.infra()
+            await asyncio.to_thread(inf.down_one, "slim")
+            await asyncio.to_thread(inf.up_one, "slim")
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGTERM, signal.SIGINT):
             loop.add_signal_handler(sig, self.halt)
@@ -946,7 +1150,7 @@ class Daemon:
                 self.err(f"connecting to the node's SLIM: {e}")
                 self.write_status()
                 await asyncio.sleep(2)
-        tasks = [loop.create_task(x()) for x in (self.listen, self.outbox, self.hello, self.renew, self.joins)]
+        tasks = [loop.create_task(x()) for x in (self.listen, self.outbox, self.hello, self.renew, self.joins, self.rotation)]
         print(f"facilitator-peers: running as {ORG}/{NODE_NS}/{self.mesh.node_id} (role {self.mesh.role})",
               file=sys.stderr, flush=True)
         while not self.stop:
@@ -962,26 +1166,34 @@ class Daemon:
         self.stop = True
 
 
-def ensure_hub_cert(fac, force: bool = False) -> str:
-    """A hub's own certificate in its issuer's domain, issued by that domain's OpenBao PKI with the hub's DNS
-    name (the spokes' server_name), and the domain's trust bundle; again at half life. Returns what it did."""
+def ensure_own_cert(fac, dom: str | None = None, force: bool = False) -> str:
+    """This node's own certificate in a domain it issues in (a hub's issuer domain, a peer's own, a public one), from that
+    domain's issuer, with this node's DNS name (its dialers' server_name), and the domain's trust bundle; again at half
+    life. Returns what it did."""
     m = fac.mesh
     store = identity.Store(fac.state.home)
-    dom = m.domain
+    dom = dom or m.domain
     st = store.cert_state(dom)
     if st.get("present") and not st["renew_due"] and not force and store.bundle(dom).is_file():
         return "present"
-    iss = identity.Issuer(m.node["issuer"])
     store.ensure()
-    store.dom(dom).mkdir(parents=True, exist_ok=True)
-    if not store.key(dom).is_file():
-        identity.new_key(store.key(dom))
-    got = iss.sign(identity.csr(store.key(dom), m.node["name"]), m.node_id, m.node["name"],
-                   m.svid_seconds(m.level_of_domain(dom)))
-    store.write_bundle(dom, iss.bundle())
-    store.cert(dom).write_text(got["cert"])
+    iss = identity.make_issuer(m, store, dom)
+    ttl = m.svid_seconds(m.level_of_domain(dom))
+    if isinstance(iss, identity.LocalIssuer):
+        iss.issue_self(m.node_id, m.node["name"], ttl)
+    else:
+        store.dom(dom).mkdir(parents=True, exist_ok=True)
+        if not store.key(dom).is_file():
+            identity.new_key(store.key(dom))
+        got = iss.sign(identity.csr(store.key(dom), m.node["name"]), m.node_id, m.node["name"], ttl)
+        store.write_bundle(dom, iss.bundle())
+        store.cert(dom).write_text(got["cert"])
     store.mesh_secret(create=True)
     return "issued"
+
+
+def ensure_hub_cert(fac, force: bool = False) -> str:
+    return ensure_own_cert(fac, None, force)
 
 
 def _post_verified(host: str, port: int, name: str, bundle: str, path: str, body: bytes) -> tuple[int, dict]:
@@ -1064,3 +1276,114 @@ def join(fac, hub: str | None, token: str) -> dict:
                         trust={dom: data["level"]})
     return {"node": node, "domain": dom, "level": data["level"], "hub": data["hub"],
             "id": f"spiffe://{dom}/node/{node}", "mesh_file": str(m.path)}
+
+
+def pair_with(fac, addr: str | None, token: str) -> dict:
+    """`facilitator node peer --token`: pairs this peer with the one that made the token. The token names its join endpoint
+    and the SHA-256 of its CA bundle, which is checked before it is trusted (no trust on first use). Each side then holds
+    the other's bundle; this one adopts the accepter's mesh secret and lists it in node.peers with its SLIM address."""
+    import urllib.request
+    m = fac.mesh
+    if m.role != "peer":
+        raise PeersError("node peer: this node's role is not peer (mesh.yml role peer, node.name and node.domain first)")
+    t = identity.parse_token(token)
+    host, port = mesh_mod.parse_addr(addr or t["j"])
+    store = identity.Store(fac.state.home)
+    store.ensure()
+    ensure_own_cert(fac, m.domain)
+    unverified = ssl.create_default_context()
+    unverified.check_hostname = False
+    unverified.verify_mode = ssl.CERT_NONE
+    try:
+        with urllib.request.urlopen(f"https://{host}:{port}/v1/bundle", context=unverified, timeout=20) as r:
+            bundle = r.read().decode()
+    except OSError as e:
+        raise PeersError(f"the peer's join endpoint {host}:{port} is not reachable ({e}); a token opens it for 15 minutes") from None
+    if hashlib.sha256(bundle.encode()).hexdigest() != t["b"]:
+        raise PeersError("the peer's CA bundle does not match the token's hash: not pairing (a wrong peer, or one in between)")
+    body = json.dumps({"token_id": t["i"], "secret": t["s"], "node": m.node_id, "name": m.node["name"], "domain": m.domain,
+                       "bundle": store.bundle(m.domain).read_text()}).encode()
+    status, data = _post_verified(host, port, t["n"], bundle, "/v1/pair", body)
+    if status != 200:
+        raise PeersError(f"the peer refused the pairing: {data.get('error', status)}")
+    if hashlib.sha256(data["bundle"].encode()).hexdigest() != t["b"]:
+        raise PeersError("the bundle in the peer's answer is not the one the token names")
+    dom = data["domain"]
+    store.write_bundle(dom, data["bundle"])
+    store.set_mesh_secret(data["mesh_secret"])
+    pj = store.root / "peers.json"
+    try:
+        d = json.loads(pj.read_text())
+    except (OSError, ValueError):
+        d = {}
+    d[data["node"]] = {"domain": dom, "name": data["name"], "paired": identity.now_utc()}
+    pj.write_text(json.dumps(d, sort_keys=True))
+    mesh_mod.write_node(m.path, {"peers": {**m.peers, data["node"]: data["slim"]}}, trust={dom: "private"})
+    (store.root / "reload").write_text(identity.now_utc() + "\n")
+    return {"node": data["node"], "domain": dom, "slim": data["slim"], "mesh_file": str(m.path)}
+
+
+def request_public(fac, info: dict) -> dict:
+    """`facilitator node request <info>`: asks a node to let this one join its public domain. `info` is what the issuing node's
+    `node invite --level public` printed (its public join endpoint, DNS name, CA bundle); the bundle is trusted because a
+    person gave it over a channel of their own, and its hash is shown to compare. Sends a key (a request signed by it) and
+    keeps a secret to collect the answer; nothing is issued until a person on the other side runs `node approve`."""
+    m = fac.mesh
+    if m.role not in ("standalone", "spoke"):
+        raise PeersError(f"node request: a {m.role} issues its own certificates; a public node is a spoke of the issuer's public domain")
+    for k in ("domain", "join", "name", "node", "slim", "bundle"):
+        if not info.get(k):
+            raise PeersError(f"node request: the info lacks {k!r} (the output of `node invite --level public` on the issuing node)")
+    host, port = mesh_mod.parse_addr(info["join"])
+    store = identity.Store(fac.state.home)
+    store.ensure()
+    node = m.node.get("id") or mesh_mod.default_node_id()
+    key = store.root / "request.key"
+    identity.new_key(key)
+    secret = secrets_token()
+    body = json.dumps({"node": node, "csr": identity.csr(key, node),
+                       "secret_hash": hashlib.sha256(secret.encode()).hexdigest()}).encode()
+    status, data = _post_verified(host, port, info["name"], info["bundle"], "/v1/request", body)
+    if status != 200:
+        raise PeersError(f"the node refused the request: {data.get('error', status)}")
+    pend = {"id": data["id"], "secret": secret, "info": {k: info[k] for k in ("domain", "join", "name", "node", "slim", "bundle")},
+            "node": node, "fp": data["fp"], "at": identity.now_utc()}
+    identity._private(store.root / "pending-request.json", json.dumps(pend, sort_keys=True))
+    return {"id": data["id"], "fp": data["fp"], "node": node, "bundle_sha256": hashlib.sha256(info["bundle"].encode()).hexdigest()}
+
+
+def secrets_token() -> str:
+    import secrets as _s
+    return _s.token_urlsafe(24)
+
+
+def collect_public(fac) -> dict:
+    """`facilitator node collect`: asks the issuing node whether a person approved this node's request; when it did, installs the
+    certificate (1 h; renewed at half life while the issuer allows it), the bundle and the mesh secret, and writes mesh.yml
+    (role spoke of the public domain)."""
+    store = identity.Store(fac.state.home)
+    try:
+        pend = json.loads((store.root / "pending-request.json").read_text())
+    except (OSError, ValueError):
+        raise PeersError("node collect: no pending request (facilitator node request <info>)") from None
+    info = pend["info"]
+    host, port = mesh_mod.parse_addr(info["join"])
+    status, data = _post_verified(host, port, info["name"], info["bundle"], "/v1/request/status",
+                                  json.dumps({"id": pend["id"], "secret": pend["secret"]}).encode())
+    if status != 200:
+        raise PeersError(f"the node refused: {data.get('error', status)}")
+    if data["status"] != "approved":
+        return {"status": data["status"], "id": pend["id"]}
+    dom = data["domain"]
+    store.dom(dom).mkdir(parents=True, exist_ok=True)
+    os.chmod(store.dom(dom), 0o700)
+    os.replace(store.root / "request.key", store.key(dom))
+    store.write_bundle(dom, data["bundle"])
+    store.cert(dom).write_text(data["cert"])
+    store.set_mesh_secret(data["mesh_secret"])
+    mesh_mod.write_node(fac.mesh.path, {"id": pend["node"], "hub": data["hub"]["slim"], "hub_name": data["hub"]["name"],
+                                        "hub_node": data["hub"]["node"], "domain": dom}, role="spoke", trust={dom: "public"},
+                        preset="open")
+    (store.root / "pending-request.json").unlink(missing_ok=True)
+    return {"status": "approved", "node": pend["node"], "domain": dom, "id": f"spiffe://{dom}/node/{pend['node']}",
+            "hub": data["hub"], "mesh_file": str(fac.mesh.path)}

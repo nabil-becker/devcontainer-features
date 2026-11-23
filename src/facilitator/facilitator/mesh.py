@@ -57,7 +57,7 @@ PRESETS = {"solo": "local", "team": "private", "open": "public"}   # preset -> i
 TOP_KEYS = ("preset", "role", "node", "trust", "expose", "limits")
 NODE_KEYS = ("id", "name", "listen", "join", "issuer", "hub", "hub_name", "hub_node", "domain", "directory", "peers",
              "public")
-PUBLIC_KEYS = ("domain",)
+PUBLIC_KEYS = ("domain", "join")
 ISSUER_KEYS = ("domain", "openbao", "mount", "role", "kv", "approle")
 DIRECTORY_KEYS = ("peering", "firewall", "open_oci")
 LIMIT_KEYS = ("hops", "budget", "rate", "copy", "approval", "approval_ttl", "svid_ttl", "max_packet", "http_receive_wait")
@@ -317,6 +317,11 @@ class Mesh:
             h, p = parse_addr(self.node["join"])
             rows.append({"what": "join endpoint (HTTPS)", "address": f"{h}:{p}",
                          "when": "only while a join token is live, a request window is open or a join request waits"})
+        pj = (self.node.get("public") or {}).get("join") if self.role in ISSUING_ROLES else None
+        if pj and not self.findings:
+            h, p = parse_addr(pj)
+            rows.append({"what": "public join endpoint (HTTPS; join requests, no token)", "address": f"{h}:{p}",
+                         "when": "only while a request window is open or a request waits"})
         d = self.node.get("directory") or {}
         if d.get("peering") and not self.findings:
             if self.role in ISSUING_ROLES:
@@ -500,15 +505,23 @@ def _check(m: Mesh, raw: dict, text: str) -> None:
                 parse_addr(node["join"])
             except MeshError as e:
                 add("bad-value", f"node.join: {e}", "node", "join")
+            if node.get("public") and (node.get("public") or {}).get("join") == node["join"]:
+                add("bad-value", "node.public.join: the public join endpoint is separate from node.join (SP1)", "node", "public", "join")
         pub = node.get("public")
         if pub is not None:
             if not isinstance(pub, dict) or any(k not in PUBLIC_KEYS for k in pub) or not pub.get("domain"):
-                add("bad-value", "node.public: {domain: <the public trust domain this node issues for>}", "node", "public")
+                add("bad-value", "node.public: {domain: <the public trust domain this node issues for>, join: <host:port of the "
+                                 "separate public join endpoint>}", "node", "public")
             elif m.trust.get(pub["domain"]) != "public":
                 add("role-needs", f"node.public.domain {pub['domain']} must be in trust, mapped public (preset open)",
                     "node", "public", "domain")
             elif m.ceiling != "public":
                 add("above-ceiling", f"node.public: the preset {m.preset} does not allow public (open does)", "node", "public")
+            elif pub.get("join"):
+                try:
+                    parse_addr(pub["join"])
+                except MeshError as e:
+                    add("bad-value", f"node.public.join: {e}", "node", "public", "join")
         peers = node.get("peers") or {}
         if not isinstance(peers, dict):
             add("bad-value", "node.peers: a map of node id to host:port", "node", "peers")
@@ -592,7 +605,8 @@ def effective(m: Mesh) -> Mesh:
                 findings=list(m.findings), text=m.text)
 
 
-def write_node(path: Path, updates: dict, role: str | None = None, trust: dict | None = None) -> None:
+def write_node(path: Path, updates: dict, role: str | None = None, trust: dict | None = None,
+               preset: str | None = None) -> None:
     """Writes keys into mesh.yml's node section (and role, trust) keeping everything else as written: used by
     `node join`. The file is small and in the subset yamlite reads; the sections touched are rewritten."""
     try:
@@ -603,6 +617,8 @@ def write_node(path: Path, updates: dict, role: str | None = None, trust: dict |
     raw = raw or {}
     if role:
         raw["role"] = role
+    if preset:
+        raw["preset"] = preset
     raw.setdefault("preset", "team")
     node = dict(raw.get("node") or {})
     node.update({k: v for k, v in updates.items() if v is not None})

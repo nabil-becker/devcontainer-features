@@ -148,7 +148,7 @@ def test_mesh_http_domain_level_and_new_keys():
     for text, rule in [("preset: team\nnode:\n  id: n1\ntrust:\n  http.n1.local: local\n", "bad-value"),
                        ("preset: solo\nnode:\n  id: n1\ntrust:\n  http.n1.local: private\n", "above-ceiling"),
                        ("preset: solo\nexpose:\n  x: public\n", "above-ceiling"),
-                       ("preset: team\ntrust:\n  other.test: public\n", "not-yet"),
+                       ("preset: team\ntrust:\n  other.test: public\n", "above-ceiling"),
                        ("preset: team\nlimits:\n  public:\n    approval: sometimes\n", "bad-value"),
                        ("preset: team\nlimits:\n  public:\n    http_receive_wait: 0s\n", "bad-value")]:
         f = mesh_mod.parse(text).findings

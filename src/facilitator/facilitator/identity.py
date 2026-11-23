@@ -706,3 +706,31 @@ def live_requests(store: Store) -> int:
 def request_view(r: dict) -> dict:
     return {k: r[k] for k in ("id", "node", "domain", "fp", "at", "status") if k in r} | {
         k: r[k] for k in ("approved_by", "approved_at") if k in r}
+
+
+# ---------------------------------------------------------------- rotating the mesh's SLIM app secret (ruling H4)
+
+ROTATION_WAIT_SECONDS = 120
+
+
+def rotation(store: Store) -> dict | None:
+    try:
+        return json.loads(store.rotation_file.read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def save_rotation(store: Store, rot: dict) -> None:
+    store.ensure()
+    _private(store.rotation_file, json.dumps(rot, indent=2, sort_keys=True) + "\n")
+
+
+def begin_rotation(store: Store, rid: str | None, new: str | None, at: str | None, origin: str, pending: list[str],
+                   reason: str = "", now: float | None = None) -> dict:
+    """The record the peers part works from: the new secret, the nodes still owed it, a deadline. `node revoke` makes one
+    (a new secret, the nodes that remain); a node that takes one from another passes it on the same way."""
+    rot = {"rid": rid or secrets.token_hex(8), "new": new or secrets.token_urlsafe(36), "at": at or now_utc(),
+           "origin": origin, "pending": sorted(set(pending)), "reason": reason, "state": "sending",
+           "deadline": (time.time() if now is None else now) + ROTATION_WAIT_SECONDS}
+    save_rotation(store, rot)
+    return rot

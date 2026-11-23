@@ -3,6 +3,7 @@ or not ready, 2 bad usage."""
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -478,7 +479,8 @@ def node_run(a) -> int:
 def cmd_node(a) -> int:
     return {"run": node_run, "peers": node_peers, "invite": node_invite, "join": node_join, "revoke": node_revoke,
             "approve": node_approve, "status": node_status, "restore-roster": node_restore, "bundle": node_bundle,
-            "renew": node_renew}[a.action](a)
+            "renew": node_renew, "peer": node_peer, "request": node_request, "collect": node_collect,
+            "requests": node_requests, "deny": node_deny, "secret": node_secret}[a.action](a)
 
 
 def node_bundle(a) -> int:
@@ -526,19 +528,182 @@ def node_invite(a) -> int:
     refuse_in_agent_job("facilitator node invite")
     fac = _fac(a)
     m = fac.mesh
-    if m.role != "hub":
-        raise FacilitatorError(f"node invite: only a hub invites (this node's role is {m.role})")
+    store = identity.Store(fac.state.home)
+    level = getattr(a, "level", None) or "private"
+    if m.role not in mesh_mod.ISSUING_ROLES:
+        raise FacilitatorError(f"node invite: only a hub or a peer invites (this node's role is {m.role})")
+    if level == "public":
+        pj = (m.node.get("public") or {}).get("join")
+        dom = m.public_domain
+        if not dom or not pj:
+            raise FacilitatorError("node invite --level public: mesh.yml needs node.public.domain and node.public.join (preset open)")
+        iss = identity.make_issuer(m, store, dom)
+        ensure_cert = peers.ensure_own_cert
+        try:
+            ensure_cert(fac, dom)
+        except identity.IdentityError as e:
+            raise FacilitatorError(f"node invite: {e}") from None
+        until = identity.open_window(store)
+        _, port = mesh_mod.parse_addr(pj)
+        _, lport = mesh_mod.parse_addr(m.node["listen"]["public"])
+        bundle = iss.bundle()
+        info = {"v": 1, "domain": dom, "join": f"{m.node['name']}:{port}", "name": m.node["name"], "node": m.node_id,
+                "slim": f"{m.node['name']}:{lport}", "bundle": bundle}
+        print(json.dumps(info, indent=2, sort_keys=True))
+        print(f"facilitator: a request window for {dom} is open for 15 minutes (the public join endpoint {m.node['name']}:{port}). "
+              f"Give the info above to the person who runs the other node (a channel of your own: its bundle is what they trust; "
+              f"SHA-256 {hashlib.sha256(bundle.encode()).hexdigest()}). Nothing is issued until a person runs "
+              "facilitator node approve <request> here.", file=sys.stderr)
+        return 0
     if not m.node.get("join"):
         raise FacilitatorError("node invite: mesh.yml has no node.join (the join endpoint's address)")
-    store = identity.Store(fac.state.home)
     if not store.bundle(m.domain).is_file():
-        raise FacilitatorError("node invite: the hub has no certificate yet (unseal its OpenBao, then facilitator infra up)")
+        raise FacilitatorError("node invite: this node has no certificate yet (infra up; a hub needs its OpenBao unsealed)")
     _, port = mesh_mod.parse_addr(m.node["join"])
     tok = identity.make_token(store, f"{m.node['name']}:{port}", m.node["name"], store.bundle(m.domain).read_text())
     print(tok)
-    print(f"facilitator: a join token for {m.domain} (level {m.level_of_domain(m.domain)}), single use, valid 15 minutes; "
-          f"the join endpoint {m.node['name']}:{port} is open while it is live. On the new spoke: "
-          "facilitator node join --token <token>", file=sys.stderr)
+    how = ("facilitator node peer --token <token>" if m.role == "peer" else "facilitator node join --token <token>")
+    print(f"facilitator: a {'pairing' if m.role == 'peer' else 'join'} token for {m.domain} (level {m.level_of_domain(m.domain)}), "
+          f"single use, valid 15 minutes; the join endpoint {m.node['name']}:{port} is open while it is live. On the other node: "
+          + how, file=sys.stderr)
+    return 0
+
+
+def node_peer(a) -> int:
+    fac = _fac(a)
+    tok = a.token
+    if tok and os.path.isfile(tok):
+        tok = open(tok).read().strip()
+    if not tok:
+        raise SettingsError("node peer [<peer's join address>] --token <token or a file holding it>")
+    try:
+        r = peers.pair_with(fac, a.target, tok)
+    except (peers.PeersError, identity.IdentityError) as e:
+        raise FacilitatorError(str(e)) from None
+    _emit(a, r, f"facilitator: paired with {r['node']} ({r['domain']}) at {r['slim']}; mesh.yml updated ({r['mesh_file']}). "
+                "Restart the node's SLIM link: facilitator infra down slim, then up (or the container)")
+    return 0
+
+
+def node_request(a) -> int:
+    fac = _fac(a)
+    src = a.file or a.target
+    if not src:
+        raise SettingsError("node request <info file>  (the output of `node invite --level public` on the issuing node; - for stdin)")
+    info = json.loads(sys.stdin.read() if src == "-" else open(src).read())
+    try:
+        r = peers.request_public(fac, info)
+    except (peers.PeersError, identity.IdentityError) as e:
+        raise FacilitatorError(str(e)) from None
+    _emit(a, r, f"facilitator: request {r['id']} sent for {r['node']} (key {r['fp'][:16]}; CA bundle SHA-256 {r['bundle_sha256']}). "
+                "A person on the other node approves it; then: facilitator node collect")
+    return 0
+
+
+def node_collect(a) -> int:
+    fac = _fac(a)
+    try:
+        r = peers.collect_public(fac)
+    except (peers.PeersError, identity.IdentityError) as e:
+        raise FacilitatorError(str(e)) from None
+    if r["status"] != "approved":
+        _emit(a, r, f"facilitator: request {r['id']} is {r['status']}")
+        return 1
+    _emit(a, r, f"facilitator: approved: {r['id']} (public, 1 h certificates, renewed at half life while the issuer allows it); "
+                f"hub {r['hub']['node']} at {r['hub']['slim']}; mesh.yml written. Next: facilitator infra up")
+    return 0
+
+
+def node_requests(a) -> int:
+    fac = _fac(a)
+    rows = [identity.request_view(r) for r in identity.requests(identity.Store(fac.state.home))]
+    _emit(a, rows, "\n".join(f"facilitator: {r['id']}  {r['status']:<9} node {r['node']}  key {r['fp'][:16]}  asked {r['at']}"
+                             + (f"  by {r['approved_by']}" if r.get("approved_by") else "") for r in rows)
+          or "facilitator: no join requests")
+    return 0
+
+
+def _issuing(fac, what: str):
+    if fac.mesh.role not in mesh_mod.ISSUING_ROLES or not fac.mesh.public_domain:
+        raise FacilitatorError(f"node {what}: this node issues no public domain (mesh.yml node.public.domain, preset open)")
+    return identity.Store(fac.state.home)
+
+
+def node_approve(a) -> int:
+    """A person's act: the request's key is approved for the public domain, a certificate (1 h) is issued to it, and the
+    node joins the roster. The approval is a signed entry of the audit register, so the record shows who approved what and
+    when (proposal 8.3)."""
+    refuse_in_agent_job("facilitator node approve")
+    fac = _fac(a)
+    m = fac.mesh
+    store = _issuing(fac, "approve")
+    rid = a.target
+    row = identity.get_request(store, rid or "")
+    if row is None:
+        raise FacilitatorError(f"node approve: no join request {rid!r} (facilitator node requests)")
+    if row["status"] != "pending":
+        raise FacilitatorError(f"node approve: {rid} is {row['status']}")
+    r = identity.roster(store)
+    if row["node"] in r.get("nodes", {}):
+        raise FacilitatorError(f"node approve: the node {row['node']} is in the roster already")
+    by = _by(fac, a)
+    if not a.yes:
+        if not sys.stdin.isatty():
+            raise FacilitatorError("node approve asks to confirm: run it in a terminal, or pass --yes")
+        if input(f"approve key {row['fp'][:16]} as node {row['node']} in {row['domain']}? [y/N] ").strip().lower() != "y":
+            print("facilitator: not approved")
+            return 1
+    dom = m.public_domain
+    ttl = m.svid_seconds("public")
+    got = identity.make_issuer(m, store, dom).sign(row["csr"], row["node"], f"{row['node']}.{dom}", ttl)
+    identity.update_request(store, rid, status="approved", cert=got["cert"], approved_by=by, approved_at=identity.now_utc())
+    r.setdefault("nodes", {})[row["node"]] = {"serial": got["serial"], "joined": identity.now_utc(), "revoked": False,
+                                              "domain": dom, "key": row["fp"], "approved_by": by}
+    identity.save_roster(store, r)
+    note = ""
+    try:
+        fac.audit.append("join-approved", row["node"], by, f"key {row['fp'][:16]} for {dom}")
+    except Exception as e:                  # noqa: BLE001
+        note = f" (the audit register: {e})"
+    _emit(a, {"request": rid, "node": row["node"], "domain": dom, "by": by, "certificate_seconds": ttl},
+          f"facilitator: {row['node']} approved by {by} for {dom}: a certificate of {ttl} s is issued; it collects it with "
+          f"facilitator node collect, and renews it at half life until you revoke it{note}")
+    return 0
+
+
+def node_deny(a) -> int:
+    refuse_in_agent_job("facilitator node deny")
+    fac = _fac(a)
+    store = _issuing(fac, "deny")
+    row = identity.get_request(store, a.target or "")
+    if row is None or row["status"] != "pending":
+        raise FacilitatorError(f"node deny: no pending request {a.target!r}")
+    by = _by(fac, a)
+    identity.update_request(store, row["id"], status="denied", approved_by=by, approved_at=identity.now_utc())
+    try:
+        fac.audit.append("join-denied", row["node"], by, f"key {row['fp'][:16]}")
+    except Exception:                       # noqa: BLE001
+        pass
+    print(f"facilitator: the request of {row['node']} denied by {by}")
+    return 0
+
+
+def node_secret(a) -> int:
+    """The mesh's SLIM app secret, for a node that missed a rotation (a person carries it over a channel of their own)."""
+    refuse_in_agent_job("facilitator node secret")
+    fac = _fac(a)
+    store = identity.Store(fac.state.home)
+    if a.file:
+        sec = open(a.file).read().strip()
+        if len(sec) < 32:
+            raise FacilitatorError("node secret --file: a mesh secret is at least 32 characters")
+        store.set_mesh_secret(sec)
+        print("facilitator: the mesh secret is set; restart the node's peers part (facilitator infra down, then up)")
+        return 0
+    sec = store.mesh_secret()
+    if not sec:
+        raise FacilitatorError("node secret: this node holds no mesh secret")
+    print(sec)
     return 0
 
 
@@ -559,43 +724,57 @@ def node_join(a) -> int:
 
 
 def node_revoke(a) -> int:
+    """Cuts a node off (proposal 12.2): its certificate is not renewed and expires within the level's svid_ttl (public: 1 h),
+    lock two refuses it from now on, its card is dropped, and the mesh's SLIM app secret rotates (ruling H4): the nodes that
+    remain are handed the new one, so the revoked node's link, which a certificate alone would keep until it expires, can
+    no longer form. What it already holds is not recalled."""
     refuse_in_agent_job("facilitator node revoke")
     fac = _fac(a)
     m = fac.mesh
-    if m.role != "hub":
-        raise FacilitatorError("node revoke: only the hub that issued a node's certificate revokes it")
+    if m.role not in mesh_mod.ISSUING_ROLES:
+        raise FacilitatorError("node revoke: a hub or a peer revokes (the node that issued a certificate, or that trusts the peer)")
     store = identity.Store(fac.state.home)
     r = identity.roster(store)
     n = r.get("nodes", {}).get(a.target)
-    if n is None:
-        raise FacilitatorError(f"node revoke: {a.target} has not joined this hub")
+    if n is None and a.target not in m.peers:
+        raise FacilitatorError(f"node revoke: {a.target} has not joined this node and is not in node.peers")
     if not a.yes:
         if not sys.stdin.isatty():
             raise FacilitatorError("node revoke asks to confirm: run it in a terminal, or pass --yes")
         if input(f"revoke {a.target}? its certificate is not renewed, and it is refused from now on [y/N] ").strip().lower() != "y":
             print("facilitator: not revoked")
             return 1
-    n["revoked"] = True
-    n["revoked_at"] = identity.now_utc()
-    identity.save_roster(store, r)
+    if n is not None:
+        n["revoked"] = True
+        n["revoked_at"] = identity.now_utc()
+        identity.save_roster(store, r)
+    rv = peers.Daemon.revoked_names(store)
+    rv.add(a.target)
+    (store.root / "revoked.json").write_text(json.dumps(sorted(rv)))
     fac.net.revoke_card(a.target)
     note = ""
+    level = m.level_of_domain((n or {}).get("domain") or m.domain) or "private"
     try:
-        iss = identity.Issuer(m.node["issuer"])
-        if n.get("serial"):
+        iss = identity.make_issuer(m, store, (n or {}).get("domain") or m.domain)
+        if n and n.get("serial"):
             iss.revoke(n["serial"])
         iss.backup_roster(r)
-    except (IdentityError, KeyError) as e:
+    except (identity.IdentityError, KeyError) as e:
         note = f" (OpenBao: {e})"
+    owed = sorted(x for x in {*fac.net.cards(), *[k for k, v in r.get("nodes", {}).items() if not v.get("revoked")]}
+                  if x != a.target and x not in rv)
+    rot = identity.begin_rotation(store, None, None, None, m.node_id, owed, f"{a.target} revoked")
+    try:
+        fac.audit.append("node-revoked", a.target, _by(fac, a), f"level {level}")
+        fac.audit.append("secret-rotated", m.node_id, _by(fac, a), f"rotation {rot['rid']}, owed to {', '.join(owed) or 'nobody'}")
+    except Exception:                       # noqa: BLE001
+        pass
     print(f"facilitator: {a.target} revoked: its certificate is not renewed and expires within "
-          f"{m.limit(m.level_of_domain(m.domain), 'svid_ttl')[0]}; lock two refuses it on this hub now and on every spoke "
-          f"at its next roster. What it already holds is not recalled.{note}")
+          f"{m.limit(level, 'svid_ttl')[0]}; lock two refuses it on this node now"
+          + (" and on every spoke at its next roster" if m.role == "hub" else "")
+          + f". The mesh secret rotates: the peers part hands the new one to {', '.join(owed) or 'no other node'} within "
+          f"{identity.ROTATION_WAIT_SECONDS} s. What it already holds is not recalled.{note}")
     return 0
-
-
-def node_approve(a) -> int:
-    raise FacilitatorError("node approve: not yet: slice N5 (a public node joins by its key and a person's approval; "
-                           "a private node joins with a join token: facilitator node invite)")
 
 
 def node_status(a) -> int:
@@ -715,6 +894,24 @@ def cmd_http(a) -> int:
             f"; {r['dropped']} held message(s) not delivered" if r["dropped"] else ""))
         return 0
     raise SettingsError(f"http {act}")
+
+
+def cmd_audit(a) -> int:
+    """facilitator audit verify | replay | show: the signed register of enrolments (slice N5a, ruling HC3)."""
+    fac = _fac(a)
+    if a.action == "replay":
+        n = fac.audit.replay()
+        ok, detail = fac.audit.verify()
+        _emit(a, {"replayed": n, "ok": ok, "detail": detail}, f"facilitator: {n} line(s) of http/audit.jsonl put in the audit register; {detail}")
+        return 0 if ok else 1
+    if a.action == "show":
+        ev = fac.audit.events()
+        _emit(a, ev, "\n".join(f"{e['at']} {e['event']:<15} {e['subject']} by {e['by']}" + (f" ({e['detail']})" if e.get('detail') else "")
+                               for e in ev) or "facilitator: the audit register is empty")
+        return 0
+    ok, detail = fac.audit.verify()
+    _emit(a, {"ok": ok, "detail": detail}, f"facilitator: audit register: {'verifies' if ok else 'DOES NOT VERIFY'}: {detail}")
+    return 0 if ok else 1
 
 
 def cmd_participants(a) -> int:
@@ -949,10 +1146,16 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--all", action="store_true", help="every participant of the list and every human")
     c.add_argument("--new-key", action="store_true", help="make a new key (the old one stays valid for what it signed)")
     c.add_argument("--no-directory", action="store_true", help="do not push the OASF record")
+    c = command("audit", cmd_audit, "the signed audit register of enrolments: verify (the chain, and the http log fully replayed), "
+                                    "replay (put the lines of http/audit.jsonl in it), show")
+    c.add_argument("action", choices=["verify", "replay", "show"])
     c = command("node", cmd_node, "run (the node in the foreground: the server image's command), peers, invite, "
-                                  "join, revoke, approve (slice N5), status, restore-roster")
+                                  "join, peer, request, collect, requests, approve, deny, revoke, secret, status, restore-roster")
     c.add_argument("action", choices=["run", "peers", "invite", "join", "revoke", "approve", "status", "restore-roster",
-                                      "bundle", "renew"])
+                                      "bundle", "renew", "peer", "request", "collect", "requests", "deny", "secret"])
+    c.add_argument("--level", choices=["private", "public"], help="invite: a join or pairing token (private), or a request window for "
+                                                                  "the public domain (public)")
+    c.add_argument("--as", dest="as_", help="approve, deny: the person acting (a human of facilitator.yml)")
     c.add_argument("target", nargs="?", help="join: the hub's join address (default: the token's); revoke: the node; "
                                              "bundle: the trust domain")
     c.add_argument("--file", help="bundle: a PEM file with the domain's CA certificates")
