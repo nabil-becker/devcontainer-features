@@ -44,8 +44,8 @@ MCP over HTTP for CLIs (slice N4 of the facilitator-node proposal; ADR-0070, ADR
 
 - The conversation type accepts the optional `via` field on a message and a status, and the notice codes `approval`,
   `approved` and `denied`. A conversation with a `via` does not load on a 0.4.0 node.
-- `bundleVersion` defaults to `0.5.0` (unreleased: until `release-bundle` runs and `digests.txt` pins it, the Feature builds
-  the bundle from its own source).
+- `bundleVersion` defaults to `0.5.0`: the Feature installs the published node bundle `facilitator-bundle-v0.5.0`
+  (amd64 and arm64), pinned by SHA-256 in `digests.txt`.
 
 ## [0.4.0] - 2026-11-21
 
