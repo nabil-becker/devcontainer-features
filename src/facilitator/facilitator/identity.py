@@ -540,14 +540,16 @@ def _stamp(t: float) -> str:
 class LocalIssuer:
     """A CA this node keeps for a domain it issues in: a peer's own domain (its own certificate, and what it needs to
     be dialled) and the public domain a node issues for (1 h certificates, after a person approves a join request,
-    ruling AH). The CA key is a file in the state volume, mode 600, and the CA certificate is constrained to the
-    domain's SPIFFE URIs (name constraints), so it can vouch for nothing else. It has the same face as the OpenBao
+    ruling AH). The CA key is a file in the state volume, mode 600, and the CA certificate is constrained to DNS
+    names (the domain's and the issuing node's), not to URIs: rustls-webpki, which SLIM uses, refuses a chain with a URI name
+    constraint (NameConstraintViolation, found running slice N5a), so the SPIFFE ID's domain is checked by lock two alone. It has the same face as the OpenBao
     Issuer: sign, bundle, revoke. Short lifetimes are the revocation (proposal 12.2); no CRL exists across SLIM's
     checks. A lifetime under a day needs OpenSSL 3.4 or later (x509 -not_after)."""
 
-    def __init__(self, store: Store, domain: str):
+    def __init__(self, store: Store, domain: str, dns: tuple = ()):
         self.store = store
         self.domain = domain
+        self.dns = tuple(dns)            # DNS names its certificates may carry besides the domain's (the issuing node's name)
         self.dir = store.ca / domain
         self.ca_pem, self.ca_key = self.dir / "ca.pem", self.dir / "ca.key"
 
@@ -561,7 +563,8 @@ class LocalIssuer:
         r = _run(["req", "-x509", "-new", "-key", str(self.ca_key), "-subj", f"/O={self.domain}/CN={self.domain} CA",
                   "-days", "3650", "-addext", "basicConstraints=critical,CA:true,pathlen:0",
                   "-addext", "keyUsage=critical,keyCertSign,cRLSign",
-                  "-addext", f"nameConstraints=critical,permitted;URI:{self.domain}"])
+                  "-addext", "nameConstraints=critical," + ",".join(
+                      f"permitted;DNS:{d}" for d in dict.fromkeys((self.domain, *self.dns)))])
         self.ca_pem.write_bytes(r.stdout)
         return self.ca_pem
 
@@ -614,7 +617,7 @@ def make_issuer(m: "mesh_mod.Mesh", store: Store, domain: str):
     iss = m.node.get("issuer")
     if domain == m.domain and iss and iss.get("openbao"):
         return Issuer({**iss, "domain": domain})
-    return LocalIssuer(store, domain)
+    return LocalIssuer(store, domain, tuple(x for x in (m.node.get("name"),) if x))
 
 
 # ---------------------------------------------------------------- public join requests (a key, then a person's approval)

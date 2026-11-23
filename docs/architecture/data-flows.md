@@ -466,3 +466,18 @@ to a failed authentication carries no detail.
 - Claude Code memory sits in a tier 4 volume though it cannot be rebuilt (ADR 0049 names the move to tier 3; whether it has shipped: to verify).
 - OpenBao snapshot files were seen in the shared folder although the 2026-11-10 ruling puts them in the personal folder; the older open item `amend-openbao-local-storage` still says the shared folder. One of the two needs closing.
 - `/git-dirs` shows every git dir to every container (accepted, ADR 0020).
+
+### 3d. A public node joins, and is cut off (facilitator 0.6.0, slice N5a)
+
+```
+ public node P            issuer I (node.public)                          a person on I
+   node request  --key (TLS, I's bundle)-->  join request (pending)  --> node requests, node approve  (signed `audit` entry)
+   node collect  <-- certificate 1 h, bundle, mesh secret, I's card (public agents only)
+   P hellos I over the public SLIM listener (its own CA bundle); I shows P its card alone; copy addressed: only the
+   conversations P is a member of, in which every message is addressed to P or written by it
+   node revoke P:  no renewal -> P's certificate expires within 1 h; lock two refuses P now; the mesh secret rotates and is
+                   handed to the remaining nodes (`secret` envelope, old secret), who restart their peers part
+```
+
+Peers (no hub): each node is the issuer of its own domain; `node invite` / `node peer --token` exchange the CA bundles and the
+secret; `hello` and `card` envelopes exchange cards; replication is as in a hub mesh, node to node.

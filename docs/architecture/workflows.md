@@ -283,3 +283,9 @@ sequenceDiagram
   C->>N: receive (at most 25 s)
   N-->>C: the answer; every packet of the client says via http
 ```
+
+## 10. Peers pair and a public node is approved (facilitator 0.6.0, slice N5a)
+
+Two peers: a person runs `node invite` on one and `node peer --token` on the other; the nodes exchange CA bundles and the
+mesh secret. A public node: a person opens a request window (`node invite --level public`), the other side runs `node request`,
+the person runs `node approve <request>`, the public node `node collect`s its 1 h certificate. A revoke rotates the mesh secret.

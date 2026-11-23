@@ -1,3 +1,29 @@
+## Trust: how it is done and kept
+
+- **Levels.** `local` (this machine), `private` (your intranet domains) and `public` (named nodes you do not run): policy
+  profiles in `mesh.yml`; a trust domain maps to one level, a domain not listed is refused, not public. The preset
+  (`solo`, `team`, `open`) is the ceiling.
+- **Getting in, per level.** local: itself. private: a single-use join token (15 min) from a hub, or a pairing token between
+  peers; the token carries the hash of the issuer's CA bundle (no trust on first use). public: the requester's key plus a
+  person's `node approve` (signed audit entry); nothing is issued before that.
+- **Two locks on every message.** Lock one: each level has its own SLIM listener whose client CA holds only that level's
+  domains. Lock two: the application checks the SPIFFE ID of every signed message against `mesh.yml` (the ID's domain is the
+  domain whose CA signed it, the domain is trusted at a level within the preset, the node is not revoked), and takes a
+  packet's identity from its signer's key in an admitted card.
+- **Lifetimes and renewal.** Certificates last 24 h (local, private) and 1 h (public), renewed at half life while the issuer
+  allows it; short lifetimes are the revocation, because SLIM checks no revocation list.
+- **Revoke and rotation.** `node revoke`: no renewal, lock two refuses the node at once, its card is dropped, and the mesh's
+  SLIM secret rotates to the nodes that remain. What it already holds is not recalled.
+- **Who restricts what.** The receiving node enforces everything from its own `mesh.yml` (a peer's claim about its level,
+  limits or exposure is never believed); the sender applies the same rules as a courtesy. `expose` says how far an agent may
+  be reached; `limits` per level bound hops, budget, rate, size, copy and approval.
+
+Detail: [A hub and its spokes](#a-hub-and-its-spokes-slice-n3), [Identity, and the two locks](#identity-and-the-two-locks),
+[Peer to peer and the public level](#peer-to-peer-and-the-public-level-slice-n5a); the proposal's
+[section 5](../../docs/proposals/facilitator-node.md#5-identity-spiffe-for-nodes-agntcy-identity-for-agent-badges) and its
+rulings; ADR-0069, ADR-0075, ADR-0076; [data flows](../../docs/architecture/data-flows.md) and the trust records in the
+[data inventory](../../docs/architecture/data-inventory.md).
+
 ## Deprecated in 0.3.0: `dirVersion` and `slimVersion`
 
 The node bundle fixes the versions of `dirctl` (1.9.1) and `slimctl` (3.4.6), so the two options choose
