@@ -1434,3 +1434,16 @@ What slice N3 found where a ruling could not be built as written, and the Operat
   same handle and both stay reachable. A bare handle still works when it names one agent; when it names several,
   the facilitator refuses it and lists the qualified names. Rejected: refusing the second claim, so that neither
   is reachable until one is renamed (A, as first built).
+
+## Rulings on slice N4 (2026-11-23)
+
+What slice N4 found where a ruling could not be built as written, and the Operator's ruling on each.
+
+- **HC1, an HTTP client starting a conversation: option A, ruled 2026-11-23 ("let's start with A": the
+  starting point, to revisit with use).** An HTTP client's `say` begins a chain (hop 0) that no person wrote;
+  the node signs it on the client's behalf and marks it `via` http, and `verify` accepts such a root. It is
+  bounded by first-contact approval by a person, the public limits (rate 3 a minute across the client's
+  conversations, 2 hops, budget 10), and the reach rule (only agents exposed `public`); `continue` stays a
+  person's. Rejected: the client may only reply (B: it could never begin, so it could not talk at all) and a
+  person approves every conversation it starts (C: a person in every loop). It refines ADR-0066 and ADR-0070
+  decision 4.
