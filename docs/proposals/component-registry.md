@@ -89,6 +89,7 @@ flowchart LR
 | `regedit` | `dcf-registry explain` |
 | key permissions | the source's own access control |
 | (no wildcards) | patterns: `/**/skills/diagrams:color` |
+| (no equivalent) | a layer namespace (component-registry 1.7.0, ADR-0073): `namespace: acme` on a layer prefixes its components, `skills/acme:arch-review`; layers of one namespace merge, different namespaces never mix |
 
 ### 3.1 Settings and the layer list
 
@@ -120,6 +121,11 @@ layers:
       - { kind: path, path: .registry-mine }    # git-ignored in this repository, the person's choice
     writable: true                               # /registry-remember appends here
     heading: false                               # (1.3.0) its text stacks without "## Layer mine"
+  - id: acme-community
+    at: /
+    namespace: acme                              # (1.7.0) a public source, isolated: acme:<name>
+    sources:
+      - { kind: git, url: "https://git.example.invalid/acme/skills.git", tag: v2 }
 ```
 
 Several sources in one layer merge in their listed order. `heading` (component-registry 1.3.0,
@@ -127,6 +133,23 @@ Several sources in one layer merge in their listed order. `heading` (component-r
 heading (rule 5 of 3.3). A `required` layer that has never been
 fetched stops `resolve`; any other unreachable source falls back to its last good layer copy, and
 `resolve` and `explain` say so.
+
+**Layer namespaces** (component-registry 1.7.0, ADR-0073 decision 4). `namespace: <name>` (lower-case
+letters and digits in words joined by one `-`, at most 40; `component-registry` and
+`anthropic-skills` reserved; anything else refused with `file:line`) gives every component the
+layer brings the prefix: its `[skills/arch-review]` is `skills/acme:arch-review`. The match rule of
+3.3 runs per namespace: a section reaches only components of its own layer's namespace (none: the
+Operator's own), so layers sharing a namespace merge exactly as layers do (order, specificity,
+locks, `@replace`, types, permission keys from the namespace's lowest layer), different namespaces
+never mix, and a namespaced layer cannot stack onto, override or lock anything outside its
+namespace. References are explicit (ruled 2026-11-21): no prefix is the referrer's own
+namespace, `<ns>:<name>` namespace `<ns>` from any layer; nothing names the un-namespaced set from
+inside a namespace. A target not in the view is a missing dependency, reported while `resolve`
+goes on (as a Helm chart's dependency); `aliases: { acme: acme-public }` on a layer maps a
+namespace name in that layer's references, one hop. A namespaced
+skill is handed over as `<ns>--<name>` (folder and `SKILL.md` name; a `:` is no skill folder name),
+its registry name staying `<ns>:<name>`; a namespaced agent definition applies to no agent of the
+agents list (ruled 2026-11-23: whether a layer is namespaced is the lister's choice).
 
 ### 3.2 A layer's content: the `.reg` format
 
@@ -145,6 +168,9 @@ data      = for value: the rest of the line
           / for text: the rest of the line, or "@file <relative file>"
           / for ref: a path
 comment   = ";" text NL
+component = kind "/" [ namespace ":" ] name   ; the namespace comes from the layer list, never a section
+reference = [ scope "/" ] kind "/" [ namespace ":" ] name [ ":" key ]   ; no namespace: the referrer's own
+namespace = word *( "-" word )                 ; word = 1*( a-z / 0-9 ), at most 40 characters
 ```
 
 A path is segments separated by `/`. In a pattern, `*` matches one segment, `**` matches any
@@ -418,6 +444,10 @@ compared, so the registry does not re-implement it.
 - A layer is instructions fed to agents. Which endpoint to trust, and how its owner reviews
   changes, is the layer owner's and the person's choice (decisions 10, 11); the registry
   authenticates as configured and never widens a permission (section 6).
+- A layer whose source the person does not control is given a namespace (1.7.0): what it brings
+  is prefixed and cannot change or lock anything outside it, nor refer to the person's own
+  components; it may refer to other namespaces explicitly, which the person installs or not; the
+  person adapts it with a layer of their own in the same namespace.
 
 ## 10. Placement (NFR-13)
 

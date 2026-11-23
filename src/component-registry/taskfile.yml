@@ -31,7 +31,7 @@ tasks:
 
   refresh:
     dir: '{{.USER_WORKING_DIR}}'
-    desc: 'Resolve now (for the path the current view was resolved for, or -- --as <path>) and hand the resolved skills to every CLI adapter on PATH that takes them (agent-adapter-<cli> skills); Claude Code picks them up in running sessions, a CLI that cannot take them is named. What /registry-refresh runs.'
+    desc: 'Resolve now and hand the resolved skills over again (agent-adapter-<cli> skills): every recorded hand-over, each agent for its own path (each path resolved once); -- --session <id> the agent whose session that is, alone; -- --as <path> that path to every CLI adapter on PATH; with no record, the path the latest view was resolved for. Claude Code picks them up in running sessions, a CLI that cannot take them is named. What /registry-refresh runs (with the session id).'
     cmds:
       - '{{if .COMPONENT_REGISTRY_FILE}}COMPONENT_REGISTRY_FILE_TASK_VAR={{shellQuote .COMPONENT_REGISTRY_FILE}} {{end}}{{if .COMPONENT_REGISTRY_WHOAMI}}COMPONENT_REGISTRY_WHOAMI_TASK_VAR={{shellQuote .COMPONENT_REGISTRY_WHOAMI}} {{end}}dcf-registry refresh {{.CLI_ARGS}}'
 

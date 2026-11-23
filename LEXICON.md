@@ -415,6 +415,21 @@ The domain words of the project itself are not here; they live with the project'
   layer brings gets it as a prefix (`acme:arch-review`). Layers that share a namespace merge with
   each other as any layers do; different namespaces never mix, so a namespaced layer cannot stack
   onto, override or lock anything outside its namespace (ADR-0073).
+- **Explicit reference**: the rule for a registry reference (a `ref`, a list `ref:` item, an agent
+  definition's `skills` item): without a prefix it names the referrer's own namespace, with
+  `<ns>:` that namespace from any layer; nothing names the un-namespaced set from inside a
+  namespace (ADR-0073 amendment).
+- **Missing dependency**: a registry reference whose target is not in the resolved view, as a
+  Helm chart's missing dependency; `resolve` reports it and goes on, and installing the layer that
+  brings it is the user's job.
+- **Registry alias**: `aliases: { acme: acme-public }` on a registry layer; in that layer's
+  references `acme:` means `acme-public:`, one hop only.
+- **Own skills folder**: the directory of registry skills one agent alone reads, added to its Claude
+  Code with `--add-dir` (skills in `<dir>/.claude/skills`); it holds the skills that agent's resolved
+  view does not share with the other agents' views, the shared ones staying in the personal folder.
+- **Hand-over record**: the record `dcf-registry` keeps of which agent was handed which who-you-are
+  path's view and own skills folder (`handovers`, `forget`); an agent no longer in the agents list is
+  forgotten and its own skills folder dropped.
 
 ## Secrets
 
@@ -560,14 +575,14 @@ renamed. Each project is a tree growing in its own ground.
 - **Node card**: the document a facilitator node signs with its certificate key, holding its certificate,
   its facilitator key and the keys of the participants it exposes; lock 2 looks a packet's SPIFFE ID up
   from its signer's key in the admitted cards, and nodes learn each other's agents from cards when
-  Directory peering is off (ADR-0074).
+  Directory peering is off (ADR-0075).
 - **Peers part**: the fourth part of a node's infrastructure, beside the Directory, SLIM and the
   facilitator itself: it gets the node's certificate, sends the hello to the hub and exchanges cards and
   rosters (slice N3).
 - **Join endpoint**: the HTTPS port a hub opens only while a join token is live, plus 30 seconds after
   the last one, so that a spoke without a certificate can join; the spoke checks the trust-bundle hash
-  in the token before it trusts the hub (ADR-0074).
+  in the token before it trusts the hub (ADR-0075).
 - **Qualified handle**: `handle.node`, for example `@b1.spoke-b`, naming one agent when several nodes
-  share a handle; a bare handle works only when it names exactly one reachable agent (ADR-0074).
+  share a handle; a bare handle works only when it names exactly one reachable agent (ADR-0075).
 - **Shared handle**: a handle announced by agents on two or more nodes of a mesh; `check` lists them and
-  they are reached by qualified handle (ADR-0074).
+  they are reached by qualified handle (ADR-0075).

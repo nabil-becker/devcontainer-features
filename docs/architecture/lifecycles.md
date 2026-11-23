@@ -195,6 +195,11 @@ component's start sequence runs `resolve` at every agent's start, and `/registry
 `/registry-remember`, which refreshes) run it mid-session; `task component-registry:resolve` runs
 it by hand.
 
+A layer's namespace (component-registry 1.7.0) changes no state here: a namespaced layer's copy
+and its components live and go exactly as any other layer's; dropping the layer from the list
+removes its copy and, at the next resolve, its prefixed skills from the view and the CLI's skills
+folder.
+
 ## A skill moving into the registry
 
 From slice 4 of the [component registry](../proposals/component-registry.md) (`architecture-review`,
@@ -212,7 +217,11 @@ stateDiagram-v2
 ## A resolved skill in the CLI's skills folder
 
 From `src/claude-code/NOTES.md` (claude-code 1.12.0, the adapter's `skills` verb, ADR-0064). One per
-resolved skill, in the CLI's own skills folder.
+resolved skill, in the CLI's own skills folder. From claude-code 1.14.0 (ADR-0074) the same
+life runs in two places: the personal folder while every agent's view has the skill alike, the
+agent's own folder (read through `--add-dir`) while the views disagree; at a hand-over a skill moves
+from one to the other (added where it is needed first, removed where it is not after), and an
+agent forgotten (`dcf-registry forget`) or whose folder is gone loses its own folder.
 
 ```mermaid
 stateDiagram-v2

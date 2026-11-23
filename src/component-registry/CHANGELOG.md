@@ -6,6 +6,77 @@ of the Feature and whether they must act (an option renamed, a task removed, a r
 The version in `devcontainer-feature.json` is bumped in the same change that adds its entry
 here; `task lint` fails when the entry is missing.
 
+## [1.8.0] - 2026-11-21
+
+### Added
+
+- **A view per who-you-are path** (ADR-0074, backlog `agent-skills-folders`). `resolve` keeps the
+  latest view of every path (`paths/<path>` in the state folder) besides `view`, the latest of all;
+  `handover <cli> <name> <folder> --as <path>` hands that path's view, and without `--as` the view
+  of the who-you-are setting. `explain --as <path>` reads a path's own view. The one resolve lock
+  stays: the layer copies are shared.
+- **Hand-over records** (`dcf-registry handovers`): cli, agent, folder, path and whether the path
+  was the agent's own or the setting. `forget <cli> <name> <folder>` asks the adapter to drop the
+  agent's own copies, removes the record, and the views no record names any more.
+- **`refresh --session <id>`**: the agent whose session that is (each adapter's `list`) is
+  refreshed for its own path, alone. Without it (or with an id no agent has), `refresh` repeats
+  every recorded hand-over, each path resolved once; with no record, as before.
+- `/registry-refresh` runs `dcf-registry refresh --session "${CLAUDE_SESSION_ID}"`, so it refreshes
+  the calling agent in Claude Code.
+- **The skills mode** (`handover --skills-mode split|shared|off`, else the setting
+  `COMPONENT_REGISTRY_SKILLS_MODE`, else `split`), given to the adapter, recorded and repeated by
+  `refresh`; `off` forgets the agent. `handovers --skills` lists each agent's path, mode, own folder
+  and own skills (from the adapter's `skills-show`).
+
+Nothing to do. The adapter's `skills` verb also gets `COMPONENT_REGISTRY_PATH`; with claude-code
+1.14.0 agents of different paths keep their own skills.
+
+## [1.7.0] - 2026-11-21
+
+### Added
+
+- **Layer namespaces** (ADR-0073, decision 4): `namespace: <name>` on a layer in the layer list
+  prefixes every component the layer brings (`skills/acme:arch-review`, `agents/acme:reviewer`).
+  Layers that share a namespace merge with each other as layers do (order, specificity, locks,
+  `@replace`, types, permission keys from the namespace's lowest layer); different namespaces
+  never mix, and the un-namespaced layers (the Operator's own) never reach a namespaced component,
+  nor it theirs. A name is lower-case letters and digits in words joined by one `-`, at most 40;
+  anything else, and the reserved `component-registry` and `anthropic-skills`, is refused with
+  `file:line`.
+- A namespaced skill lands in the view, and in a CLI's skills folder, as `skills/<ns>--<name>/`,
+  its `SKILL.md` named the same whatever its text says (a `:` is no skill folder name for the
+  adapters, and Claude Code keeps the `:` for the prefixes it makes); one whose folder name an
+  un-namespaced skill already has is not resolved and is reported. `meta/namespaced.tsv` maps the
+  registry name to it; `handover` says which skills went by their folder name.
+- **Explicit references** (the Operator's ruling of 2026-11-21): a ref, a list `ref:` item or an
+  agent's `skills` item without a prefix names the referrer's own namespace; `<ns>:<name>` names
+  namespace `<ns>` from any layer, including one namespace to another. Nothing names the
+  un-namespaced set from inside a namespace.
+- **Missing dependencies**: a reference whose target is not in the view is reported by `resolve`
+  (the referrer, its layer, the target), shown by `explain` and `explain --uses`, and does not
+  stop `resolve`. `meta/refs.tsv` gains the state `missing` (a malformed ref stays `dangling`) and
+  two columns, the referrer's layer and the alias used.
+- **Aliases**: `aliases: { <name>: <namespace> }` on a layer; inside it, a reference to `<name>:`
+  resolves to `<namespace>:` first. One hop; an alias naming itself, the layer's own namespace,
+  another alias of the layer or a reserved name is refused with `file:line`. `layers.tsv` gains
+  an eleventh column, `aliases`.
+- A namespaced agent definition (`agents/<ns>:<name>/` in the view) matches no agent of the
+  agents list; a plain-listed layer's agent definitions override as before (the Operator's ruling
+  of 2026-11-23). The Operator's own agent names a namespaced skill as `<ns>:<name>` in its
+  `skills`, written to the view as `<ns>--<name>`.
+- `explain` shows each layer's namespace, a namespace line with the hand-over name, and
+  `[namespace <ns>]` on every line of a namespaced component; it takes `kind/<ns>:<name>[:key]`
+  or the folder name; a "References" part lists each reference as written and as resolved, then
+  the missing dependencies; `--uses` shows a namespaced or aliased ref's resolved target.
+
+### Changed
+
+- `layers.tsv` gains a tenth column, `namespace` (`-` for none). In an agent definition's
+  `skills`, a plain item `<a>:<b>` (a lower-case `<a>`) now names the namespaced skill `a:b`; it
+  was read as the skill `a` before. A ref to a target that is not there is reported as a
+  `missing dependency:` line instead of `dangling ref:`. Otherwise a layer list without a
+  namespace resolves exactly as in 1.6.0. `writable` and `remember` are unchanged.
+
 ## [1.6.0] - 2026-11-20
 
 ### Added

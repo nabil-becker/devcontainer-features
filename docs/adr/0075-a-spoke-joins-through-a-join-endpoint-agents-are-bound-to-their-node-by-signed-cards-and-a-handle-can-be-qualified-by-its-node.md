@@ -1,4 +1,4 @@
-# ADR-0074: A spoke joins through a join endpoint, agents are bound to their node by signed cards, and a handle can be qualified by its node
+# ADR-0075: A spoke joins through a join endpoint, agents are bound to their node by signed cards, and a handle can be qualified by its node
 
 | | |
 |---|---|

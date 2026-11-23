@@ -40,6 +40,9 @@
 #       skills: [review]      #   (a flow or block list), never acted on by agents itself
 #       registry-path: /Corp/MyDepartment/team/review   # who this agent is in the component
 #                             # registry (participant 1.2.0); default COMPONENT_REGISTRY_WHOAMI
+#       registry-skills: split  # (participant 1.4.0, ADR-0074) split | shared | off: how its CLI
+#                             # keeps the agent's resolved skills; default
+#                             # COMPONENT_REGISTRY_SKILLS_MODE, else split
 #
 # The session name (2.1). The handle (the name above) stays the address: it keys the lease, the
 # record and every verb. The session name is the label the CLI shows, rendered from a template
@@ -79,8 +82,10 @@
 # The component registry (participant 1.2.0, ADR-0064). When dcf-registry (the component-registry
 # Feature) is on PATH and its layer list exists, starting an agent first runs
 # `dcf-registry resolve` (--as the entry's registry-path, else COMPONENT_REGISTRY_WHOAMI) and then
-# `dcf-registry handover <cli> <name> <folder>`, which calls the adapter's optional `skills` verb
-# when its `supports` lists it. Never blocking: a failed resolve, a CLI that cannot take resolved
+# `dcf-registry handover <cli> <name> <folder>` (with --as the registry-path, participant 1.4.0:
+# each agent its own path's view, ADR-0074), which calls the adapter's optional `skills` verb
+# when its `supports` lists it. `agents up` forgets (dcf-registry forget) an agent the registry
+# handed skills to that is no longer in the list. Never blocking: a failed resolve, a CLI that cannot take resolved
 # skills (exit 3) or no layer list each say so in one line, and the agent starts with the skills
 # it has. Without dcf-registry nothing is said or run. Resolve and the hand-over get at most
 # COMPONENT_REGISTRY_START_WAIT seconds (default 15); past it the CLI starts with the last good
@@ -185,7 +190,7 @@ resolve_file() {
 
 # The parser: the YAML subset above, one record per line out:
 #   I <n> <line>             an entry starts
-#   K <n> <key> <value>      name, cli, kind, folder, lifecycle, identity, lease, definition, default, session-name, attachment, description, registry-path
+#   K <n> <key> <value>      name, cli, kind, folder, lifecycle, identity, lease, definition, default, session-name, attachment, description, registry-path, registry-skills
 #   L <n> <line>             the line of the entry's session-name key
 #   A <n>                    the entry has args
 #   G <n> <value>            one arg
@@ -276,7 +281,7 @@ function keyline(t,   k, v) {
     if (substr(v, 1, 1) == "[") { flow(v); return }
     fail("skills must be a list: skills: [review, plan], or one - value per line below it")
   }
-  if (k == "name" || k == "cli" || k == "kind" || k == "folder" || k == "lifecycle" || k == "identity" || k == "lease" || k == "definition" || k == "default" || k == "session-name" || k == "attachment" || k == "description" || k == "registry-path") {
+  if (k == "name" || k == "cli" || k == "kind" || k == "folder" || k == "lifecycle" || k == "identity" || k == "lease" || k == "definition" || k == "default" || k == "session-name" || k == "attachment" || k == "description" || k == "registry-path" || k == "registry-skills") {
     if (v == "" || substr(v, 1, 1) == "#") fail("'" k "' has no value")
     if (k == "session-name" && substr(v, 1, 1) == "{") fail("a session-name that starts with { must be quoted: session-name: \"{machine} {handle}\"")
     if (k == "lease" && substr(v, 1, 1) == "{") fail("lease is one word, not a map: lease: container (or none)")
@@ -355,7 +360,7 @@ load_list() {
     die 2 "no agent list at $AF_ABS (from $AF_SOURCE); write one (see the agents Feature notes) (.devcontainer/participants.yml is the name to use) or set PARTICIPANTS_FILE (or AGENTS_FILE) to its path relative to $ROOT."
   fi
   out="$(awk "$PARSER" "$AF_ABS")"; rc=$?
-  N=0 ATTACH=() DESCR=() SKILLS=() NAME=() CLI=() KIND=() FOLDER=() ARGS=() LINE=() HASARGS=() LIFE=() IDENT=() LEASE=() DEF=() DFLT=() SNKEY=() SNSET=() SNLINE=() SNAME=() REGPATH=() SKSRC=() LSKILLS=() RMODEL=() RFROM=() RNOTE=()
+  N=0 ATTACH=() DESCR=() SKILLS=() NAME=() CLI=() KIND=() FOLDER=() ARGS=() LINE=() HASARGS=() LIFE=() IDENT=() LEASE=() DEF=() DFLT=() SNKEY=() SNSET=() SNLINE=() SNAME=() REGPATH=() SKSRC=() LSKILLS=() RMODEL=() RFROM=() RNOTE=() REGSK=()
   resolve_template
   while IFS=$'\t' read -r rec a b c; do
     case "$rec" in
@@ -366,6 +371,7 @@ load_list() {
            session-name) SNKEY[a]="$c" SNSET[a]=1 ;;
            attachment) ATTACH[a]="$c" ;; description) DESCR[a]="$c" ;;
            registry-path) REGPATH[a]="$c" ;;
+           registry-skills) REGSK[a]="$c" ;;
          esac ;;
       L) SNLINE[a]="$b" ;;
       A) HASARGS[a]=1 ;;
@@ -462,6 +468,11 @@ check_v2() {
       warn "$at: registry-path '${REGPATH[i]}' must be an absolute path like /Corp/MyDepartment/team/me (segments of letters, digits, . _ and -, no wildcards)"; V2ERRS=$((V2ERRS + 1))
     fi
   fi
+  # registry-skills (participant 1.4.0, ADR-0074): split, shared or off
+  case "${REGSK[i]:-}" in
+    '' | split | shared | off) ;;
+    *) warn "$at: registry-skills '${REGSK[i]}' must be split, shared or off"; V2ERRS=$((V2ERRS + 1)) ;;
+  esac
   case "${DFLT[i]:-}" in
     '' | false) DFLT[i]='' ;;
     true)
@@ -1063,6 +1074,22 @@ registry_run() {
 registry_timed_out() { # <exit code>: the limit was reached (timeout, or the lock not had in time)
   [ "$1" -eq 124 ] || [ "$1" -eq 137 ] || { [ "$1" -eq 1 ] && case "$OUT" in *"resolve.lock for"*) true ;; *) false ;; esac; }
 }
+# registry_mode <i> (participant 1.4.0, ADR-0074): REGMODE, how the agent's CLI keeps its resolved
+# skills, and REGMODE_SRC, where that came from: the entry's registry-skills, else the setting
+# COMPONENT_REGISTRY_SKILLS_MODE (task variable, .env, .devcontainer/.env, environment), else split.
+#   split   what every agent's view has alike is shared, the rest is the agent's own (the default)
+#   shared  its whole view into the shared folder, as before 1.4.0: the latest start wins
+#   off     no resolve, no hand-over, its own copies dropped
+registry_mode() {
+  local i="$1"
+  if [ -n "${REGSK[i]:-}" ]; then REGMODE="${REGSK[i]}" REGMODE_SRC="registry-skills in the list"; return 0; fi
+  setting_value COMPONENT_REGISTRY_SKILLS_MODE
+  case "$SV" in
+    split | shared | off) REGMODE="$SV" REGMODE_SRC="$SV_SRC" ;;
+    '') REGMODE=split REGMODE_SRC='the default' ;;
+    *) warn "${NAME[i]}: $SV_SRC is '$SV', not split, shared or off; using split."; REGMODE=split REGMODE_SRC='the default' ;;
+  esac
+}
 registry_step() {
   local j
   command -v dcf-registry >/dev/null 2>&1 || return 0
@@ -1074,6 +1101,14 @@ registry_step() {
 }
 registry_resolve_handover() {
   local i="$1" nm="${NAME[$1]}" as="${REGPATH[$1]:-}" key out rc last limit start left
+  registry_mode "$i"
+  if [ "$REGMODE" = off ]; then
+    # (participant 1.4.0, ADR-0074) nothing resolved or handed over; copies an earlier hand-over
+    # left for it are dropped
+    out="$(cd "$ROOT" && timeout -k 2 "$(registry_wait)" dcf-registry forget "${CLI[i]}" "$nm" "$DIR" </dev/null 2>&1)" || true
+    echo "$nm: registry skills off (from $REGMODE_SRC): nothing handed to ${CLI[i]} for it; its sessions still read the skills every ${CLI[i]} session reads."
+    return 0
+  fi
   out="$(cd "$ROOT" && dcf-registry layer-list </dev/null 2>/dev/null)"; rc=$?
   if [ "$rc" -eq 1 ]; then
     echo "$nm: the component registry has no layer list (${out:-none}); starting with the plain skills."
@@ -1109,9 +1144,13 @@ registry_resolve_handover() {
     warn "$nm: the ${limit}s for the component registry were used by resolve; starting with the last good skills already in ${CLI[i]}'s skills folder (/registry-refresh hands the new ones over)."
     return 0
   fi
-  registry_run "$left" handover "${CLI[i]}" "$nm" "$DIR"; rc=$?
+  # (participant 1.4.0, ADR-0074) the view of the agent's own path: another agent's resolve in between
+  # never hands it the wrong one, and its CLI keeps each agent's skills apart
+  if [ -n "$as" ]; then registry_run "$left" handover "${CLI[i]}" "$nm" "$DIR" --as "$as" --skills-mode "$REGMODE"
+  else registry_run "$left" handover "${CLI[i]}" "$nm" "$DIR" --skills-mode "$REGMODE"; fi
+  rc=$?
   case "$rc" in
-    0) echo "$nm: the registry's resolved skills handed to ${CLI[i]}${as:+ (as $as)}." ;;
+    0) echo "$nm: the registry's resolved skills handed to ${CLI[i]}${as:+ (as $as)}, registry skills $REGMODE (from $REGMODE_SRC)." ;;
     3) echo "$nm: ${CLI[i]} takes no resolved skills (its adapter has no skills verb); starting with its plain skills." ;;
     *) if registry_timed_out "$rc"; then
          warn "$nm: handing the registry's skills to ${CLI[i]} did not finish within ${limit}s; starting with the last good skills already in its skills folder."
@@ -1120,6 +1159,35 @@ registry_resolve_handover() {
          warn "$nm: handing the registry's skills to ${CLI[i]} failed (${last:-exit $rc}); starting with the skills as they were."
        fi ;;
   esac
+  return 0
+}
+
+# registry_forget_gone (participant 1.4.0, ADR-0074): at agents up, an agent the registry handed
+# skills to (dcf-registry handovers) that is no longer in the agent list, in a folder of this
+# repository, is forgotten (dcf-registry forget: its CLI drops the agent's own skills folder, so its
+# view no longer splits the shared one). The sessions no agent started (component-registry) and
+# other repositories' agents are left alone. Never fatal; without dcf-registry nothing is run.
+registry_forget_gone() {
+  command -v dcf-registry >/dev/null 2>&1 || return 0
+  local recs c n f out i d root
+  recs="$(cd "$ROOT" && dcf-registry handovers </dev/null 2>/dev/null)" || return 0
+  [ -n "$recs" ] || return 0
+  root="$(cd "$ROOT" && pwd -P)"
+  declare -A listed=()
+  for ((i = 1; i <= N; i++)); do
+    d="$(cd "$ROOT/${FOLDER[i]}" 2>/dev/null && pwd -P)" || continue
+    listed["${CLI[i]}"$'\t'"${NAME[i]}"$'\t'"$d"]=1
+  done
+  while IFS=$'\t' read -r c n f _; do
+    [ -n "$c" ] && [ -n "$n" ] && [ "$n" != component-registry ] || continue
+    case "$f/" in "$root"/*) ;; *) continue ;; esac
+    [ -z "${listed["$c"$'\t'"$n"$'\t'"$f"]:-}" ] || continue
+    if out="$(cd "$ROOT" && timeout -k 2 30 dcf-registry forget "$c" "$n" "$f" </dev/null 2>&1)"; then
+      echo "$n: no longer in the agent list; its own registry skills are removed."
+    else
+      warn "$n: no longer in the agent list, but its own registry skills could not be removed ($(printf '%s\n' "$out" | awk 'NF { l = $0 } END { print l }' | sed 's/^dcf-registry: //' | cut -c1-200))."
+    fi
+  done <<< "$recs"
   return 0
 }
 
@@ -1411,6 +1479,7 @@ cmd_up_body() {
   local wait="$1" i rc=0 r
   PASS=()
   load_list
+  registry_forget_gone
   declare -A settled=()
   for ((i = 1; i <= N; i++)); do
     if [ "${KIND[i]}" != resident ]; then
@@ -1680,7 +1749,7 @@ cmd_check() {
       printf '  %s: no adapter (agent-adapter-%s is not on PATH; add %s to devcontainer.json)\n' "$c" "$c" "$(feature_of "$c")"
       continue
     fi
-    sup="$("$a" supports </dev/null 2>/dev/null)"; rc=$?
+    supports_of "$c" "$a"; rc=$?; sup="$SUP"
     if [ "$rc" -ne 0 ]; then
       printf '  %s: supports failed (exit %s); the verbs answer for themselves\n' "$c" "$rc"
     else
@@ -1703,7 +1772,42 @@ check_line() {
   [ -z "${REGPATH[i]:-}" ] || printf ', registry path %s' "${REGPATH[i]}"
   [ -z "${RFROM[i]:-}" ] || printf ', %s' "${RFROM[i]}"
   [ -z "${RNOTE[i]:-}" ] || printf ', registry: %s' "${RNOTE[i]}"
+  if command -v dcf-registry >/dev/null 2>&1; then
+    registry_mode "$i"
+    printf ', registry skills %s (from %s)' "$REGMODE" "$REGMODE_SRC"
+  fi
   printf '\n'
+  command -v dcf-registry >/dev/null 2>&1 && registry_show "$i"
+  return 0
+}
+
+# registry_show <i> (participant 1.4.0, ADR-0074): what the agent's CLI holds for it, from the
+# adapter's optional skills-show verb (its own folder and the skills in it, and how many are shared);
+# nothing when the adapter has no such verb
+declare -A SUP_OF=() SUP_RC=()
+# supports_of <cli> <adapter>: SUP, the adapter's supports, asked once per run (SUP_RC its exit)
+supports_of() {
+  if [ -z "${SUP_RC[$1]:-}" ]; then
+    SUP_OF[$1]="$("$2" supports </dev/null 2>/dev/null)"; SUP_RC[$1]=$?
+  fi
+  SUP="${SUP_OF[$1]}"
+  return "${SUP_RC[$1]}"
+}
+registry_show() {
+  local i="$1" a d out own skills shared
+  a="$(command -v "agent-adapter-${CLI[i]}" 2>/dev/null)" || return 0
+  supports_of "${CLI[i]}" "$a" || return 0
+  printf '%s\n' "$SUP" | grep -qx skills-show || return 0
+  d="$(cd "$ROOT/${FOLDER[i]}" 2>/dev/null && pwd -P)" || return 0
+  out="$("$a" skills-show "${NAME[i]}" "$d" </dev/null 2>/dev/null)" || return 0
+  own="$(printf '%s\n' "$out" | awk -F'\t' '$1 == "own" { print $2 }')"
+  skills="$(printf '%s\n' "$out" | awk -F'\t' '$1 == "own-skills" { print $2 }')"
+  shared="$(printf '%s\n' "$out" | awk -F'\t' '$1 == "shared-skills" { print $2 }')"
+  if [ -z "$own" ] || [ "$own" = - ]; then
+    printf '    registry skills: no own folder (%s shared skill(s) in %s'"'"'s shared folder)\n' "$(wc -w <<< "${shared#-}" | tr -d ' ')" "${CLI[i]}"
+  else
+    printf '    registry skills: own folder %s: %s (%s shared skill(s) besides)\n' "$own" "${skills:--}" "$(wc -w <<< "${shared#-}" | tr -d ' ')"
+  fi
 }
 
 # ------------------------------------------------------------------- reset ----

@@ -17,7 +17,7 @@ check "task agents:check" bash -c "$setup; task agents:check | grep -F 'pair: cl
 check "task agents:check AGENTS_FILE=... (a task variable)" bash -c "$setup; task agents:check AGENTS_FILE=ops/agents.yml | grep -F 'from the task variable AGENTS_FILE'"
 check "task agents -- <name> runs the start verb (refused without a terminal)" bash -c "$setup; ! task agents -- pair </dev/null"
 check "task agents:list -- --json" bash -c "$setup; task agents:list -- --json | grep -F '\"name\":\"pair\"'"
-check "task agents:version" bash -c "$setup; task agents:version 2>/dev/null | grep -x 2.5.0"
+check "task agents:version" bash -c "$setup; task agents:version 2>/dev/null | grep -x 2.6.0"
 check "task agents:version prints one deprecation line" bash -c "$setup; task agents:version 2>&1 >/dev/null | grep -cx 'deprecated: use claude-code participants: true' | grep -qx 1"
 check "task agents:check prints one deprecation line" bash -c "$setup; task agents:check 2>&1 >/dev/null | grep -cx 'deprecated: use claude-code participants: true' | grep -qx 1"
 

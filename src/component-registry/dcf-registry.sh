@@ -11,13 +11,23 @@
 #   dcf-registry version                        the Feature version and the layer list in use
 #   dcf-registry layer-list                     print the layer list's path; exit 0 when it is
 #                                               there, 1 when not (the agents start hook asks)
-#   dcf-registry handover <cli> [<name> <folder>]
-#                                               hand the resolved view's skills to that CLI's adapter
+#   dcf-registry handover <cli> [<name> <folder>] [--as <path>] [--skills-mode split|shared|off]
+#                                               hand the view resolved for that path (default: the
+#                                               who-you-are setting's) to that CLI's adapter
 #                                               (agent-adapter-<cli> skills, when its supports lists
-#                                               it; exit 3 when it cannot take them)
-#   dcf-registry refresh [--as <path>]          resolve, then hand over to every CLI adapter on PATH
-#                                               (/registry-refresh); for the path the current view
-#                                               was resolved for unless --as names another
+#                                               it; exit 3 when it cannot take them) and record it;
+#                                               the mode (default COMPONENT_REGISTRY_SKILLS_MODE,
+#                                               else split) says how the CLI keeps them
+#   dcf-registry forget <cli> <name> <folder>   (1.8.0) the adapter drops that agent's own copies
+#                                               and the record goes
+#   dcf-registry handovers [--skills]           (1.8.0) the records: cli, name, folder, path, path
+#                                               mode, skills mode; --skills: each agent's own
+#                                               skills too (the adapter's skills-show)
+#   dcf-registry refresh [--as <path>] [--session <id>]
+#                                               resolve, then hand over (/registry-refresh): --as
+#                                               one path to every CLI adapter on PATH; --session the
+#                                               agent whose session that is (an adapter's list);
+#                                               else every recorded hand-over, each path resolved once
 #   dcf-registry remember [--skill <name>] [--] <line>
 #                                               append the line to the layer marked writable: true
 #                                               (a path source), then refresh (/registry-remember)
@@ -34,6 +44,10 @@
 #       required: true            # optional: never fetched stops resolve (on a source too)
 #       writable: true            # optional: where remember appends (one layer, a path source)
 #       heading: false            # optional (1.3.0): stack its text without a "## Layer <id>" line
+#       namespace: acme           # optional (1.7.0): its components are acme:<name>, and it merges
+#                                 # only with layers of the same namespace (see below)
+#       aliases: { acme: acme-public }   # optional (1.7.0): in this layer's references, acme: is
+#                                 # acme-public: (one hop; never the layer's own namespace)
 #       sources:                  # merged in this order
 #         - kind: git             # registry-source-git on PATH
 #           url: https://git.example.invalid/corp/registry.git
@@ -55,12 +69,37 @@
 # (/var/lib/devcontainer-features/component-registry):
 #   copies/<layer>/<n>/        the layer copy of the layer's n-th source; <n>.meta its pin,
 #                              version and fetch time
-#   views/<stamp>/ and view    the resolved views; `view` is a symlink swapped in one rename
-#   resolve.lock               flock, so two resolves never interleave
+#   views/<stamp>/ and view    the resolved views; `view` is a symlink swapped in one rename,
+#                              to the latest resolve
+#   paths/<key>                (1.8.0) one symlink per who-you-are path (/ becomes +), to that
+#                              path's latest view, swapped the same way: agents with different
+#                              paths each keep their own view
+#   handovers.tsv              (1.8.0) cli, name, folder, path, path mode (as: the agent's own path;
+#                              whoami: the who-you-are setting), skills mode (split, shared) of
+#                              every hand-over, for refresh
+#   resolve.lock               flock, so two resolves never interleave (one lock for every path:
+#                              the layer copies are shared); handovers.lock guards the records
 # The resolved view: skills/<name>/ (SKILL.md and its files, what a consumer copies),
 # agents/<name>/ (1.6.0, an agent definition: model, skills and from.tsv, what the participant
 # reads at the agent's start), meta/<kind>/<name>/ (provenance.tsv, keys.tsv, values/<key>),
-# meta/refs.tsv, meta/problems.tsv, layers.tsv, whoami and agent-names.
+# meta/refs.tsv, meta/problems.tsv, meta/namespaced.tsv (1.7.0), layers.tsv, whoami and agent-names.
+#
+# Layer namespaces (1.7.0, ADR-0073 decision 4): a layer with namespace: acme brings acme:<name> for
+# every component it names (its [skills/arch-review] is skills/acme:arch-review), so a layer pointed
+# at a public or community source cannot change anything outside its namespace. Its sections match,
+# lock, @replace and set types only among the layers of the same namespace, which merge with each
+# other exactly as layers do (order, specificity, locks, permission keys from the namespace's lowest
+# layer); the layers without a namespace are the Operator's own and never merge into a namespaced
+# component, nor it into theirs. References are explicit (the Operator's ruling of 2026-11-21): a ref,
+# a list ref: item or an agent's skills item without a prefix names the referrer's own namespace,
+# <ns>:<name> namespace <ns> from any layer (after the layer's alias); nothing names the
+# un-namespaced set from inside a namespace. A target not in the view is a missing dependency:
+# resolve says it and goes on; installing the namespace is the user's. Each layer's aliases
+# ({ acme: acme-public }) map a namespace name in its own references, one hop. In the view a
+# namespaced skill is skills/<ns>--<name>/ (a ':' is no skill folder name; its SKILL.md is named
+# the same, whatever its text says), its metadata under its registry name,
+# meta/skills/<ns>:<name>/; a namespaced agent definition is agents/<ns>:<name>/ and matches no
+# agent of the agents list. explain takes either name.
 #
 # Agent definitions (1.6.0): an agents/<name> component holds two fields, model:value and
 # skills:list, and model.<cli>:value, a model for agents of that CLI only; a line for any other key
@@ -165,10 +204,11 @@ resolve_whoami() { # $1: the --as value, may be empty
 # ------------------------------------------------------------- the layer list ----
 # The parser: the YAML subset above, one record per line out (tab-separated):
 #   Y <n> <line>                      layer n starts
-#   K <n> <key> <value> <line>        id, at, required, writable, heading
+#   K <n> <key> <value> <line>        id, at, required, writable, heading, namespace
 #   S <n> <m> <line>                  source m of layer n starts
 #   P <n> <m> <key> <value> <line>    kind, url, branch, tag, commit, path, remote, required,
 #                                     driver, host, port, database, user, sslmode, table, query, allow-insecure, auth.type, auth.secret, auth.user, auth.header
+#   A <n> <alias> <namespace> <line> an alias of layer n (1.7.0)
 #   E <line> <message>                an error (the last line)
 # Written for mawk as well as gawk: no gensub, no regex intervals.
 read -r -d '' LIST_PARSER <<'AWK'
@@ -204,10 +244,16 @@ function scalar(s, what) {
 function setkey(where, k, v,   id) {
   if (v ~ /\t/) fail("a tab in the value of '" k "'")
   if (where == "layer") {
-    if (k !~ /^(id|at|required|writable|heading)$/) fail("unknown key '" k "' in a layer (id, at, sources, required, writable, heading)")
+    if (k !~ /^(id|at|required|writable|heading|namespace)$/) fail("unknown key '" k "' in a layer (id, at, sources, required, writable, heading, namespace, aliases)")
     if ((n, k) in seen) fail("'" k "' appears twice in one layer")
     seen[n, k] = 1
     printf "K\t%d\t%s\t%s\t%d\n", n, k, v, NR
+    return
+  }
+  if (where == "aliases") {
+    if ((n, "alias", k) in seen) fail("alias '" k "' appears twice in one layer")
+    seen[n, "alias", k] = 1
+    printf "A\t%d\t%s\t%s\t%d\n", n, k, v, NR
     return
   }
   if (where == "source") {
@@ -239,7 +285,7 @@ function flowmap(s, where,   k, v, ch) {
       flowmap(s, "auth"); s = FR
     } else if (ch == "\"" || ch == "'") { quoted(s); setkey(where, k, QV); s = QR }
     else {
-      if (k == "auth") fail("auth must be a map: auth: { type: basic, secret: <name> }")
+      if (k == "auth" && where == "source") fail("auth must be a map: auth: { type: basic, secret: <name> }")
       v = s; sub(/[,}].*$/, "", v); s = substr(s, length(v) + 1); sub(/[ \t]+$/, "", v)
       if (v == "") fail("'" k "' has no value")
       if (s == "") fail("a { map must close on the same line")
@@ -267,6 +313,12 @@ function keyline(t, where,   k, v) {
     if (v == "" || substr(v, 1, 1) == "#") { ctx = "srcwait"; return }
     if (plain(v) ~ /^\[[ ]*\]$/) return
     fail("sources must be a list: one '- kind: ...' entry per line below it")
+  }
+  if (where == "layer" && k == "aliases") {
+    if ((n, "aliases") in seen) fail("'aliases' appears twice in one layer")
+    seen[n, "aliases"] = 1
+    if (substr(v, 1, 1) == "{") { flowmap(v, "aliases"); after(FR); return }
+    fail("aliases must be a one-line map: aliases: { acme: acme-public }")
   }
   if (where == "source" && k == "auth") {
     if ((n, m, "auth") in seen) fail("'auth' appears twice in one source")
@@ -355,18 +407,26 @@ END {
 }
 AWK
 
-# load_list: parse and check RF_ABS into NL and the arrays L_ID, L_AT, L_REQ, L_LINE, L_NSRC and,
+# Layer namespaces (1.7.0, ADR-0073 decision 4): a name of lower-case letters and digits in words
+# joined by one -, at most 40 characters (so <ns>--<name>, a namespaced skill's folder, splits at its
+# first --). component-registry (the built-in base layer) and anthropic-skills (Claude Code's
+# synced skills) are reserved.
+NS_RE='^[a-z0-9]+(-[a-z0-9]+)*$'
+NS_RESERVED="$BASE_ID anthropic-skills"
+
+# load_list: parse and check RF_ABS into NL and the arrays L_ID, L_AT, L_REQ, L_LINE, L_NSRC, L_NS and,
 # keyed "<n>.<m>", S_KIND, S_REQ, S_LINE, S_ARGS (key=value lines handed to the source).
 load_list() {
   local out rc rec a b c d errs=0 i j at k v
   [ -f "$RF_ABS" ] || die 2 "no layer list at $RF_ABS (from $RF_SOURCE); write one (see the component-registry Feature notes) or set COMPONENT_REGISTRY_FILE to its path relative to $ROOT."
   out="$(awk "$LIST_PARSER" "$RF_ABS")"; rc=$?
-  NL=0; L_ID=() L_AT=() L_WR=() L_HD=() L_REQ=() L_LINE=() L_NSRC=() S_KIND=() S_REQ=() S_LINE=() S_ARGS=() S_PIN=()
+  NL=0; L_ID=() L_AT=() L_WR=() L_HD=() L_NS=() L_NSL=() L_AL=() L_ALL=() L_REQ=() L_LINE=() L_NSRC=() S_KIND=() S_REQ=() S_LINE=() S_ARGS=() S_PIN=()
   while IFS=$'\t' read -r rec a b c d _; do
     case "$rec" in
       Y) NL="$a"; L_LINE[a]="$b" L_NSRC[a]=0 L_REQ[a]=false ;;
-      K) case "$b" in id) L_ID[a]="$c" ;; at) L_AT[a]="$c" ;; required) L_REQ[a]="$c" ;; writable) L_WR[a]="$c" ;; heading) L_HD[a]="$c" ;; esac ;;
+      K) case "$b" in id) L_ID[a]="$c" ;; at) L_AT[a]="$c" ;; required) L_REQ[a]="$c" ;; writable) L_WR[a]="$c" ;; heading) L_HD[a]="$c" ;; namespace) L_NS[a]="$c" L_NSL[a]="$d" ;; esac ;;
       S) L_NSRC[a]="$b"; S_LINE["$a.$b"]="$c" S_REQ["$a.$b"]=false S_ARGS["$a.$b"]='' ;;
+      A) L_AL[a]+="$b=$c " L_ALL[a]="$d" ;;
       P) case "$c" in
            kind) S_KIND["$a.$b"]="$d" ;;
            required) S_REQ["$a.$b"]="$d" ;;
@@ -393,6 +453,32 @@ load_list() {
     case "${L_REQ[i]}" in true | false) ;; *) warn "$at: required is true or false"; errs=$((errs + 1)) ;; esac
     case "${L_WR[i]:-false}" in true | false) ;; *) warn "$at: writable is true or false"; errs=$((errs + 1)) ;; esac
     case "${L_HD[i]:-true}" in true | false) ;; *) warn "$at: heading is true or false"; errs=$((errs + 1)) ;; esac
+    if [ -n "${L_NS[i]+x}" ]; then
+      v="${L_NS[i]}"
+      if ! [[ "$v" =~ $NS_RE ]] || [ "${#v}" -gt 40 ]; then
+        warn "$RF:${L_NSL[i]}: layer ${L_ID[i]:-$i}: namespace '$v' may hold only lower-case letters and digits, in words joined by one - (like acme or acme-tools), at most 40 characters"; errs=$((errs + 1))
+      elif [[ " $NS_RESERVED " == *" $v "* ]]; then
+        warn "$RF:${L_NSL[i]}: layer ${L_ID[i]:-$i}: namespace '$v' is reserved; pick another"; errs=$((errs + 1))
+      fi
+    fi
+    # aliases (1.7.0): <alias>: <namespace>, both namespace names, one hop, never the layer's own
+    local al an at2
+    for al in ${L_AL[i]:-}; do
+      an="${al%%=*}" at2="${al#*=}"
+      for v in "$an" "$at2"; do
+        if ! [[ "$v" =~ $NS_RE ]] || [ "${#v}" -gt 40 ]; then
+          warn "$RF:${L_ALL[i]}: layer ${L_ID[i]:-$i}: alias '$an: $at2': '$v' is not a namespace name (lower-case letters and digits in words joined by one -, at most 40)"; errs=$((errs + 1)); continue 2
+        fi
+      done
+      if [[ " $NS_RESERVED " == *" $at2 "* ]]; then warn "$RF:${L_ALL[i]}: layer ${L_ID[i]:-$i}: alias '$an: $at2': namespace '$at2' is reserved"; errs=$((errs + 1)); continue; fi
+      if [ "$an" = "$at2" ]; then warn "$RF:${L_ALL[i]}: layer ${L_ID[i]:-$i}: alias '$an: $at2' names itself"; errs=$((errs + 1)); continue; fi
+      if [ -n "${L_NS[i]:-}" ] && { [ "$an" = "${L_NS[i]}" ] || [ "$at2" = "${L_NS[i]}" ]; }; then
+        warn "$RF:${L_ALL[i]}: layer ${L_ID[i]:-$i}: alias '$an: $at2' involves the layer's own namespace ${L_NS[i]}; a name without a prefix already means it"; errs=$((errs + 1)); continue
+      fi
+      if [[ " ${L_AL[i]} " == *" $at2="* ]]; then
+        warn "$RF:${L_ALL[i]}: layer ${L_ID[i]:-$i}: alias '$an: $at2' leads to another alias ($at2); an alias is one hop, name the namespace itself"; errs=$((errs + 1)); continue
+      fi
+    done
     [ "${L_NSRC[i]}" -gt 0 ] || { warn "$at has no sources"; errs=$((errs + 1)); }
     for ((j = 1; j <= L_NSRC[i]; j++)); do
       k="$i.$j"; at="$RF:${S_LINE[$k]}: layer ${L_ID[i]:-$i} source $j"
@@ -509,6 +595,13 @@ function q(s) { gsub(/'/, "'\\''", s); return "'" s "'" }
 function tsv(s) { gsub(/[\t\r\n]/, " ", s); return s == "" ? "-" : s }
 function first(s,   i) { i = index(s, "/"); return i ? substr(s, 1, i - 1) : s }
 function rest(s,   i) { i = index(s, "/"); return i ? substr(s, i + 1) : "" }
+# Layer namespaces (1.7.0): a namespaced component is <kind>/<ns>:<name>. cns(c) is its namespace
+# ("" for the Operator's own), cbare(c) the <kind>/<name> its layers' sections match, disk(c) where
+# it lands in the view: a skill as skills/<ns>--<name> (the folder and SKILL.md name Claude Code and
+# the adapters take; a ':' is no skill folder name), anything else under its registry name.
+function cns(c,   n) { n = c; sub(/^[^\/]*\//, "", n); return index(n, ":") ? substr(n, 1, index(n, ":") - 1) : "" }
+function cbare(c,   k, n) { k = c; sub(/\/.*$/, "", k); n = c; sub(/^[^\/]*\//, "", n); sub(/^[^:]*:/, "", n); return k "/" n }
+function disk(c,   ns) { ns = cns(c); if (ns == "" || c !~ /^skills\//) return c; return "skills/" ns "--" substr(cbare(c), 8) }
 # segmatch(p, s): pattern p matches path s; both without a leading /, "" is the root.
 # * is one segment, ** any number (none included).
 function segmatch(p, s,   ph) {
@@ -557,7 +650,7 @@ function section(raw, loc,   path, excl, a, n, k, scope, comp, found, seg) {
   Sscope[NS] = scope; Scomp[NS] = comp; Sexcl[NS] = excl; Sfile[NS] = FILEID; Srank[NS] = RANK
   Slayer[NS] = CURLAYER; Sloc[NS] = loc; Sord[NS] = ++ORD; Swild[NS] = wildcards(scope) + wildcards(comp)
   Sraw[NS] = (excl ? "!" : "") raw
-  Sreplace[NS] = 0
+  Sreplace[NS] = 0; Sns[NS] = NSP
   SECOK = 1
 }
 function entry(t, loc,   k, ty, data, p) {
@@ -650,7 +743,7 @@ function agentwhy(k, t, d) {
 # model.<the agent's cli> line by layer, then specificity, then fewer wildcards; on a tie there the
 # suffixed key wins, then the later line.
 function agentout(c, n, cand, cs,   dir, a, i, x, nit, it, items, out, seen, cli, mk, best, bbase, bsuf, base, suf) {
-  dir = VIEW "/" c
+  dir = VIEW "/" c; CNSA = cns(c)
   system("mkdir -p " q(dir))
   cli = (c in ACLI) ? ACLI[c] : ""
   if (cli != "") { print cli > (dir "/cli"); close(dir "/cli") }
@@ -665,9 +758,21 @@ function agentout(c, n, cand, cs,   dir, a, i, x, nit, it, items, out, seen, cli
   if (("skills" in RES) && KT["skills"] == "list" && RES["skills"] != "") {
     nit = split(RES["skills"], items, "\n"); out = ""; split("", seen)
     for (x = 1; x <= nit; x++) {
-      it = items[x]; sub(/^ref:/, "", it); sub(/:.*$/, "", it)
-      if (it ~ /(^|\/)skills\//) sub(/^.*skills\//, "", it)
-      if (it !~ /^[A-Za-z0-9._-]+$/) { printf "R\t%s\t-\t-\tskills\titem '%s' names no skill (a name or ref:skills/<name>)\n", c, items[x]; continue }
+      # 1.7.0: an item is the skill's name as the CLI knows it, <ns>--<name> for a namespaced one.
+      # References are explicit: a name without a prefix is a skill of the agent definition's own
+      # namespace, <ns>:<name> one of namespace <ns> (after the alias of the item's layer), from any
+      # layer; a ref: item reads the same way (refparse).
+      it = items[x]; ins = CNSA; ilay = ITL[c, "skills", it]
+      if (it ~ /^ref:/) {
+        refparse(substr(it, 5), CNSA, ilay)
+        if (RT_WHY != "" || RT_KIND != "skills") { printf "R\t%s\t-\t-\tskills\titem '%s' names no skill (a name, <namespace>:<name> or ref:skills/[<namespace>:]<name>)\n", c, items[x]; continue }
+        ins = RT_NS; it = RT_NAME
+      } else {
+        if (it ~ /(^|\/)skills\//) sub(/^.*skills\//, "", it)
+        if (match(it, /^[a-z0-9]+(-[a-z0-9]+)*:/)) { ins = aliased(ilay, substr(it, 1, RLENGTH - 1)); it = substr(it, RLENGTH + 1) }
+      }
+      if (it !~ /^[A-Za-z0-9._-]+$/) { printf "R\t%s\t-\t-\tskills\titem '%s' names no skill (a name, <namespace>:<name> or ref:skills/[<namespace>:]<name>)\n", c, items[x]; continue }
+      if (ins != "") it = ins "--" it
       if (it in seen) continue
       seen[it] = 1; out = out it "\n"
     }
@@ -695,35 +800,55 @@ function prov(state, i, reason) {
   print state "\t" Lkey[i] "\t" Ltype[i] "\t" Llayer[i] "\t" Lrank[i] "\t" Lver[i] "\t" Lloc[i] "\t" tsv(Ldata[i]) "\t" tsv(reason) > PROV
 }
 function report(c, i, reason) { printf "R\t%s\t%s\t%s\t%s\t%s\n", c, Llayer[i], Lloc[i], Lkey[i], reason }
-# ref target: [scope/]kind/name[:key] -> RT_COMP, RT_KEY, RT_WHY ("" when well formed)
-function reftarget(s,   p, a, n, k, found, comp) {
-  RT_COMP = ""; RT_KEY = ""; RT_WHY = ""
-  p = index(s, ":")
-  if (p) { RT_KEY = substr(s, p + 1); s = substr(s, 1, p - 1) }
+# refparse(s, rns, lay) (1.7.0): a reference [scope/]kind/[ns:]name[:key], made by a line of layer
+# lay in a component of namespace rns ("" for the Operator's own). References are explicit: no
+# prefix is the referrer's own namespace; ns:name is namespace ns from any layer (after the layer's
+# alias, one hop). Nothing names the un-namespaced set from inside a namespace. kind/a:b is ns a,
+# name b when that component is in the view, else name a, key b when that one is, else (neither)
+# ns a when a can be a namespace. Sets RT_COMP, RT_KEY, RT_NS, RT_NAME, RT_KIND, RT_ALIAS (the
+# alias note, "" for none) and RT_WHY ("" when well formed).
+function aliased(lay, x) { return ((lay, x) in AL) ? AL[lay, x] : x }
+function mkcomp(k, ns, nm) { return k "/" (ns == "" ? "" : ns ":") nm }
+function refparse(s, rns, lay,   a, n, k, found, kind, rst, pt, np, ans, acomp, bcomp, nsre, nsread) {
+  RT_COMP = ""; RT_KEY = ""; RT_WHY = ""; RT_NS = ""; RT_NAME = ""; RT_KIND = ""; RT_ALIAS = ""
   sub(/^\//, "", s)
-  n = split(s, a, "/"); found = 0; comp = ""
+  n = split(s, a, "/"); found = 0; rst = ""
   for (k = 1; k <= n; k++) {
-    if (!found && (a[k] in KIND)) found = 1
-    if (found) comp = comp (comp == "" ? "" : "/") a[k]
+    if (!found && (a[k] in KIND)) { found = 1; kind = a[k]; continue }
+    if (found) rst = rst (rst == "" ? "" : "/") a[k]
   }
   if (!found) { RT_WHY = "names no component"; return }
-  RT_COMP = comp
+  RT_KIND = kind
+  if (rst == "" || index(rst, "/")) { RT_WHY = "names no component (" kind "/[<namespace>:]<name>[:<key>])"; RT_COMP = kind (rst == "" ? "" : "/" rst); return }
+  np = split(rst, pt, ":"); nsread = 0
+  nsre = "^[a-z0-9]+(-[a-z0-9]+)*$"
+  if (np == 1) { RT_NS = rns; RT_NAME = pt[1] }
+  else if (np == 3) { RT_NS = aliased(lay, pt[1]); RT_NAME = pt[2]; RT_KEY = pt[3]; nsread = 1 }
+  else if (np == 2) {
+    ans = aliased(lay, pt[1]); acomp = mkcomp(kind, ans, pt[2]); bcomp = mkcomp(kind, rns, pt[1])
+    if ((acomp in INCOMP) || (!(bcomp in INCOMP) && pt[1] ~ nsre)) { RT_NS = ans; RT_NAME = pt[2]; nsread = 1 }
+    else { RT_NS = rns; RT_NAME = pt[1]; RT_KEY = pt[2] }
+  } else { RT_WHY = "names no component (" kind "/[<namespace>:]<name>[:<key>])"; RT_COMP = kind "/" rst; return }
+  if (nsread && RT_NS != pt[1]) RT_ALIAS = pt[1] ":" RT_NAME " -> " RT_NS ":" RT_NAME " (alias on " lay ")"
+  RT_COMP = mkcomp(kind, RT_NS, RT_NAME)
 }
 function resolve(c,   i, j, n, d, x, y, cand, cs, lowrank, rmax, rloc, rlay, k, ty, tmp, parts, kd, out, items, it, nit, a, na, b, w, blk, lastlay, fm, p, base, nkeys) {
   base = META "/" c
+  CNS = cns(c); CB = cbare(c)
   system("mkdir -p " q(base "/values"))
   PROV = base "/provenance.tsv"
   printf "" > PROV
   n = 0; split("", cand); split("", cs)
   for (i = 1; i <= NLN; i++) {
     j = Lsec[i]
-    if (!segmatch(Scomp[j], c)) continue
+    # 1.7.0: a line reaches a component of its own namespace only (none: the Operator's own)
+    if (Sns[j] != CNS || !segmatch(Scomp[j], CB)) continue
     d = deepest(Sscope[j])
-    if (d < 0) { if (Scomp[j] == c) NA[++nna] = i; continue }
+    if (d < 0) { if (Scomp[j] == CB) NA[++nna] = i; continue }
     x = 0
     for (y = j + 1; y <= NS; y++) {
       if (!Sexcl[y] || Sfile[y] != Sfile[j]) continue
-      if ((Scomp[y] == "" || segmatch(Scomp[y], c)) && deepest(Sscope[y]) >= 0) { x = y; break }
+      if ((Scomp[y] == "" || segmatch(Scomp[y], CB)) && deepest(Sscope[y]) >= 0) { x = y; break }
     }
     if (x) { EX[++nex] = i; EXBY[nex] = x; continue }
     cand[++n] = i; cs[n] = strength(Lrank[i], d, Swild[j], Lord[i])
@@ -746,10 +871,10 @@ function resolve(c,   i, j, n, d, x, y, cand, cs, lowrank, rmax, rloc, rlay, k, 
   # @replace: the strongest replacing section that applies drops every weaker line
   rmax = -1
   for (j = 1; j <= NS; j++) {
-    if (!Sreplace[j] || !segmatch(Scomp[j], c)) continue
+    if (!Sreplace[j] || Sns[j] != CNS || !segmatch(Scomp[j], CB)) continue
     d = deepest(Sscope[j]); if (d < 0) continue
     x = 0
-    for (y = j + 1; y <= NS; y++) if (Sexcl[y] && Sfile[y] == Sfile[j] && (Scomp[y] == "" || segmatch(Scomp[y], c)) && deepest(Sscope[y]) >= 0) { x = y; break }
+    for (y = j + 1; y <= NS; y++) if (Sexcl[y] && Sfile[y] == Sfile[j] && (Scomp[y] == "" || segmatch(Scomp[y], CB)) && deepest(Sscope[y]) >= 0) { x = y; break }
     if (x) continue
     w = strength(Srank[j], d, Swild[j], Sord[j])
     if (w > rmax) { rmax = w; rloc = Sloc[j]; rlay = Slayer[j] }
@@ -787,7 +912,7 @@ function resolve(c,   i, j, n, d, x, y, cand, cs, lowrank, rmax, rloc, rlay, k, 
           p = Ldata[i]; sub(/^@dir[ \t]+/, "", p); sub(/\/+$/, "", p)
           if (!inside(p) || !isdir(Lcopy[i] "/" p)) { ST[i] = "skipped"; WHY[i] = "no folder " p " in the layer copy"; continue }
           ST[i] = "used"; WHY[i] = (i == w ? "the strongest files line; its files replace weaker ones of the same name" : "files overlaid, a stronger line's file of the same name replaces it")
-          printf "C\t%s\t%s\n", c, Lcopy[i] "/" p
+          printf "C\t%s\t%s\n", disk(c), Lcopy[i] "/" p
           RES[k] = p
         }
         continue
@@ -797,7 +922,7 @@ function resolve(c,   i, j, n, d, x, y, cand, cs, lowrank, rmax, rloc, rlay, k, 
         if (i == w) { ST[i] = "used"; WHY[i] = "the strongest line" } else { ST[i] = "overridden"; WHY[i] = "a stronger line wins: " Lloc[w] }
       }
       RES[k] = Ldata[w]
-      if (ty == "ref") REFS[++nrefs] = c SUBSEP k SUBSEP Ldata[w]
+      if (ty == "ref") REFS[++nrefs] = c SUBSEP k SUBSEP Ldata[w] SUBSEP Llayer[w]
     } else if (ty == "list") {
       nit = 0; split("", items)
       for (a = 1; a <= n; a++) {
@@ -814,12 +939,13 @@ function resolve(c,   i, j, n, d, x, y, cand, cs, lowrank, rmax, rloc, rlay, k, 
           }
           for (x = 1; x <= nit; x++) if (items[x] == it) break
           if (x > nit) items[++nit] = it
+          ITL[c, k, it] = Llayer[i]
         }
       }
       out = ""
       for (x = 1; x <= nit; x++) {
         out = out (x > 1 ? "\n" : "") items[x]
-        if (items[x] ~ /^ref:/) REFS[++nrefs] = c SUBSEP k SUBSEP substr(items[x], 5)
+        if (items[x] ~ /^ref:/) REFS[++nrefs] = c SUBSEP k SUBSEP substr(items[x], 5) SUBSEP ITL[c, k, items[x]]
       }
       RES[k] = out
     } else {
@@ -856,9 +982,16 @@ function resolve(c,   i, j, n, d, x, y, cand, cs, lowrank, rmax, rloc, rlay, k, 
       for (x = 1; x <= 2; x++) {
         k = (x == 1 ? "name" : "description")
         if (!(k in RES) || KT[k] != "value" || RES[k] == "") continue
+        if (k == "name" && CNS != "") {
+          for (a = 1; a <= n; a++) { i = cand[a]; if (Lkey[i] == k && ST[i] == "used" && WHY[i] == "the strongest line") WHY[i] = "the strongest line; not written into SKILL.md: a namespaced skill is named " substr(disk(c), 8) " there" }
+          continue
+        }
         fm = setfm(fm, k, RES[k])
         for (a = 1; a <= n; a++) { i = cand[a]; if (Lkey[i] == k && ST[i] == "used" && WHY[i] == "the strongest line") WHY[i] = "the strongest line; written into SKILL.md's front matter" }
       }
+      # 1.7.0: a namespaced skill's SKILL.md is always named <ns>--<name>, whatever its text says, so
+      # it can never take the name of a skill outside its namespace
+      if (CNS != "") fm = setfm(fm, "name", substr(disk(c), 8))
     }
     # a bare first block (heading: false) keeps the blank line between the front matter and the text
     printf "%s%s\n", (fm == "" ? "" : fm (BODYBARE ? "\n\n" : "\n")), BODYOUT > (base "/body.md"); close(base "/body.md")
@@ -885,7 +1018,7 @@ function resolve(c,   i, j, n, d, x, y, cand, cs, lowrank, rmax, rloc, rlay, k, 
   }
   close(base "/keys.tsv")
   if (c ~ /^agents\//) agentout(c, n, cand, cs)
-  printf "N\t%s\n", c
+  printf "N\t%s\t%s\n", c, disk(c)
 }
 BEGIN {
   FS = "\t"
@@ -895,23 +1028,43 @@ BEGIN {
   NW = (WHO == "/" ? 0 : split(substr(WHO, 2), WSEG, "/"))
   PROBLEMS = META "/problems.tsv"
   printf "" > PROBLEMS
+  # 1.7.0: ALIASES is "<layer>:<alias>=<namespace> ...", NSLIST the namespaces of the list's layers
+  na_ = split(ALIASES, tmp, " ")
+  for (i = 1; i <= na_; i++) { p_ = index(tmp[i], ":"); q_ = index(tmp[i], "="); AL[substr(tmp[i], 1, p_ - 1), substr(tmp[i], p_ + 1, q_ - p_ - 1)] = substr(tmp[i], q_ + 1) }
+  na_ = split(NSLIST, tmp, " "); for (i = 1; i <= na_; i++) NSKNOWN[tmp[i]] = 1
 }
 {
-  RANK = $1; CURLAYER = $2; AT = $3; SRC = $4; VER = $5; COPY = $6; REL = $7
+  RANK = $1; CURLAYER = $2; AT = $3; SRC = $4; VER = $5; COPY = $6; REL = $7; NSP = ($8 == "-" ? "" : $8)
   parse(COPY "/" REL)
 }
 END {
   # The components: the literal component paths of the sections that apply to W.
   nc = 0
   for (j = 1; j <= NS; j++) {
-    c = Scomp[j]
-    if (Sexcl[j] || c == "" || wildcards(c) > 0 || (c in SEEN)) continue
+    b = Scomp[j]
+    if (Sexcl[j] || b == "" || wildcards(b) > 0) continue
+    split(b, cp, "/")
+    # 1.7.0: a namespaced layer's component is <kind>/<ns>:<name>
+    c = (Sns[j] == "" ? b : cp[1] "/" Sns[j] ":" substr(b, length(cp[1]) + 2))
+    if (c in SEEN) continue
     if (deepest(Sscope[j]) < 0) continue
-    split(c, cp, "/")
     if (!(cp[1] in ACT)) { CURLAYER = Slayer[j]; problem(Sloc[j], "kind " cp[1] " is not in this release; [" Sraw[j] "] is not resolved"); SEEN[c] = 1; continue }
-    if (c !~ /^[a-z]+\/[A-Za-z0-9_-][A-Za-z0-9._-]*$/) { CURLAYER = Slayer[j]; problem(Sloc[j], "a " cp[1] " component is " cp[1] "/<name>, one segment: [" Sraw[j] "]"); SEEN[c] = 1; continue }
-    SEEN[c] = 1; COMP[++nc] = c
+    if (b !~ /^[a-z]+\/[A-Za-z0-9_-][A-Za-z0-9._-]*$/) { CURLAYER = Slayer[j]; problem(Sloc[j], "a " cp[1] " component is " cp[1] "/<name>, one segment: [" Sraw[j] "]"); SEEN[c] = 1; continue }
+    SEEN[c] = 1; COMP[++nc] = c; FIRSTJ[c] = j
   }
+  # 1.7.0: a namespaced skill whose folder name (<ns>--<name>) is already an un-namespaced skill's
+  # is not resolved: the Operator's own skill keeps the name.
+  x = 0
+  for (y = 1; y <= nc; y++) {
+    c = COMP[y]
+    if (cns(c) != "" && disk(c) != c && (disk(c) in SEEN)) {
+      CURLAYER = Slayer[FIRSTJ[c]]
+      problem(Sloc[FIRSTJ[c]], c " would be handed over as " substr(disk(c), 8) ", the name of the un-namespaced skill " disk(c) "; that one keeps it and " c " is not resolved")
+      continue
+    }
+    COMP[++x] = c
+  }
+  nc = x
   # agents the participant asked for (1.6.0): resolved even when only a pattern names them
   na = split(AGENTNAMES, an, " ")
   for (x = 1; x <= na; x++) {
@@ -920,24 +1073,26 @@ END {
     if (!(c in SEEN)) { SEEN[c] = 1; COMP[++nc] = c }
   }
   for (a = 2; a <= nc; a++) { t = COMP[a]; for (b = a - 1; b >= 1 && COMP[b] > t; b--) COMP[b + 1] = COMP[b]; COMP[b + 1] = t }
+  for (y = 1; y <= nc; y++) INCOMP[COMP[y]] = 1
   for (x = 1; x <= nc; x++) resolve(COMP[x])
-  # refs: each with its target, ok or dangling
+  # refs: each with its target: ok, missing (a missing dependency, 1.7.0) or dangling (malformed)
   printf "" > (META "/refs.tsv")
+  # 1.7.0: the namespaced components and the names they are handed over by
+  printf "" > (META "/namespaced.tsv")
+  for (y = 1; y <= nc; y++) if (cns(COMP[y]) != "") print COMP[y] "\t" cns(COMP[y]) "\t" disk(COMP[y]) >> (META "/namespaced.tsv")
+  close(META "/namespaced.tsv")
   for (x = 1; x <= nrefs; x++) {
     split(REFS[x], rf, SUBSEP)
-    reftarget(rf[3])
+    refparse(rf[3], cns(rf[1]), rf[4])
     st = "ok"; why = ""
     if (RT_WHY != "") { st = "dangling"; why = RT_WHY }
-    else {
-      split(RT_COMP, cp, "/")
-      if (!(cp[1] in ACT)) { st = "dangling"; why = "kind " cp[1] " is not in this release" }
+    else if (!(RT_KIND in ACT)) { st = "dangling"; why = "kind " RT_KIND " is not in this release" }
+    else if (!(RT_COMP in INCOMP)) {
+      st = "missing"; why = "no component " RT_COMP " for " WHO
+      if (RT_NS != "" && !(RT_NS in NSKNOWN)) why = why "; no layer of the list has namespace " RT_NS
     }
-    if (st == "ok") {
-      found = 0; for (y = 1; y <= nc; y++) if (COMP[y] == RT_COMP) found = 1
-      if (!found) { st = "dangling"; why = "no component " RT_COMP " for " WHO }
-      else if (RT_KEY != "" && !((RT_COMP, RT_KEY) in RK)) { st = "dangling"; why = RT_COMP " has no key " RT_KEY }
-    }
-    print rf[1] "\t" rf[2] "\t" tsv(rf[3]) "\t" tsv(RT_COMP) "\t" tsv(RT_KEY) "\t" st "\t" tsv(why) >> (META "/refs.tsv")
+    else if (RT_KEY != "" && !((RT_COMP, RT_KEY) in RK)) { st = "missing"; why = RT_COMP " has no key " RT_KEY }
+    print rf[1] "\t" rf[2] "\t" tsv(rf[3]) "\t" tsv(RT_COMP) "\t" tsv(RT_KEY) "\t" st "\t" tsv(why) "\t" tsv(rf[4]) "\t" tsv(RT_ALIAS) >> (META "/refs.tsv")
   }
   close(META "/refs.tsv")
 }
@@ -971,14 +1126,14 @@ cmd_resolve() {
   stage="$STATE_DIR/views/$stamp"
   mkdir -p "$stage/meta" "$stage/skills"
   : > "$TMP/manifest"
-  printf 'rank\tlayer\tat\tsource\tkind\tversion\tstate\tfetched\tnote\n' > "$stage/layers.tsv"
+  printf 'rank\tlayer\tat\tsource\tkind\tversion\tstate\tfetched\tnote\tnamespace\taliases\n' > "$stage/layers.tsv"
   # The built-in base layer first (rank 0): the utility skills, read where the Feature installed
   # them, never fetched.
   if [ -d "$BASE_DIR" ]; then
     v="$(cat "$SHARE_DIR/version" 2>/dev/null || echo unknown)"
-    printf '0\t%s\t/\t1\tbuiltin\t%s\tbuiltin\t-\tthe Feature'"'"'s utility skills, %s\n' "$BASE_ID" "$v" "$BASE_DIR" >> "$stage/layers.tsv"
+    printf '0\t%s\t/\t1\tbuiltin\t%s\tbuiltin\t-\tthe Feature'"'"'s utility skills, %s\t-\t-\n' "$BASE_ID" "$v" "$BASE_DIR" >> "$stage/layers.tsv"
     while IFS= read -r f; do
-      [ -n "$f" ] && printf '0\t%s\t/\t1\t%s\t%s\t%s\n' "$BASE_ID" "$v" "$BASE_DIR" "$f" >> "$TMP/manifest"
+      [ -n "$f" ] && printf '0\t%s\t/\t1\t%s\t%s\t%s\t-\n' "$BASE_ID" "$v" "$BASE_DIR" "$f" >> "$TMP/manifest"
     done < <(cd "$BASE_DIR" && find . -maxdepth 1 -type f -name '*.reg' | sed 's|^\./||' | LC_ALL=C sort)
   fi
   for ((n = 1; n <= NL; n++)); do
@@ -998,10 +1153,11 @@ cmd_resolve() {
             warn "layer $id source $m ($kind): not read, no copy yet: $SRC_NOTE"
           fi ;;
       esac
-      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$n" "$id" "${L_AT[n]}" "$m" "$kind" "${SRC_VER:--}" "$SRC_STATE" "${SRC_AT:--}" "${SRC_NOTE:--}" | tr -d '\r' >> "$stage/layers.tsv"
+      v="${L_AL[n]:-}"; v="${v% }"
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$n" "$id" "${L_AT[n]}" "$m" "$kind" "${SRC_VER:--}" "$SRC_STATE" "${SRC_AT:--}" "${SRC_NOTE:--}" "${L_NS[n]:--}" "${v:--}" | tr -d '\r' >> "$stage/layers.tsv"
       [ "$SRC_STATE" = missing ] && continue
       while IFS= read -r f; do
-        [ -n "$f" ] && printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$n" "$id" "${L_AT[n]}" "$m" "$SRC_VER" "$dir" "$f" >> "$TMP/manifest"
+        [ -n "$f" ] && printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$n" "$id" "${L_AT[n]}" "$m" "$SRC_VER" "$dir" "$f" "${L_NS[n]:--}" >> "$TMP/manifest"
       done < <(cd "$dir" && find . -maxdepth 1 -type f -name '*.reg' | sed 's|^\./||' | LC_ALL=C sort)
     done
   done
@@ -1038,28 +1194,45 @@ cmd_resolve() {
   date -u +%Y-%m-%dT%H:%M:%SZ > "$stage/resolved"
   # The layers that stack their text without a heading (heading: false), space-separated.
   nohead=' '; for ((n = 1; n <= NL; n++)); do [ "${L_HD[n]:-true}" = false ] && nohead+="${L_ID[n]} "; done
-  out="$(awk -v WHO="$WHOAMI" -v KINDLIST="$KINDS" -v ACTIVE="$ACTIVE_KINDS" -v META="$stage/meta" -v VIEW="$stage" -v NOHEAD="$nohead" \
+  # 1.7.0: each layer's aliases as <layer>:<alias>=<namespace>, and the namespaces of the list
+  local aliases='' nslist='' al
+  for ((n = 1; n <= NL; n++)); do
+    for al in ${L_AL[n]:-}; do aliases+="${L_ID[n]}:$al "; done
+    [ -z "${L_NS[n]:-}" ] || nslist+="${L_NS[n]} "
+  done
+  out="$(awk -v WHO="$WHOAMI" -v KINDLIST="$KINDS" -v ACTIVE="$ACTIVE_KINDS" -v META="$stage/meta" -v VIEW="$stage" -v NOHEAD="$nohead" -v ALIASES="$aliases" -v NSLIST="$nslist" \
     -v AGENTNAMES="$(tr '\n' ' ' < "$stage/agent-names")" "$RESOLVER" "$TMP/manifest")"; rc=$?
   [ "$rc" -eq 0 ] || { rm -rf "$stage"; die 1 "the merge failed (awk exit $rc); the resolved view was left as it was"; }
   local nres=0 nskip=0 nprob=0
   while IFS=$'\t' read -r line c layer loc key why; do
     case "$line" in
       C) mkdir -p "$stage/$c"; cp -R "$layer/." "$stage/$c/" ;;
-      N) nres=$((nres + 1)); mkdir -p "$stage/$c"
-         [ -f "$stage/meta/$c/body.md" ] && cp "$stage/meta/$c/body.md" "$stage/$c/SKILL.md" ;;
+      # N <component> <where it lands in the view>: a namespaced skill as skills/<ns>--<name> (1.7.0)
+      N) nres=$((nres + 1)); mkdir -p "$stage/$layer"
+         [ -f "$stage/meta/$c/body.md" ] && cp "$stage/meta/$c/body.md" "$stage/$layer/SKILL.md" ;;
       R) nskip=$((nskip + 1)); warn "skipped $layer $loc $c:$key: $why" ;;
       Q) nprob=$((nprob + 1)); warn "skipped $c $layer: $loc" ;;
     esac
   done <<< "$out"
-  while IFS=$'\t' read -r c key v loc line st why; do
-    [ "$st" = dangling ] && warn "dangling ref: $c:$key -> $v ($why)"
+  local nmiss=0 rlay note
+  while IFS=$'\t' read -r c key v loc line st why rlay note; do
+    [ "$note" != - ] || note=''
+    case "$st" in
+      dangling) warn "dangling ref: $c:$key -> $v ($why)" ;;
+      # 1.7.0: a missing dependency, like a chart's: said, never fatal; installing it is the user's
+      missing) nmiss=$((nmiss + 1)); warn "missing dependency: $c:$key in layer ${rlay:--} -> $v${note:+ [$note]} ($why)" ;;
+    esac
   done < "$stage/meta/refs.tsv"
 
   # Swap in: `view` is a symlink replaced in one rename, so a reader sees the old or the new.
   ln -s "views/$stamp" "$STATE_DIR/view.new.$$"
   mv -Tf "$STATE_DIR/view.new.$$" "$STATE_DIR/view"
-  for dir in "$STATE_DIR"/views/*; do [ "$(basename "$dir")" = "$stamp" ] || rm -rf "$dir"; done
-  say "resolved $nres component(s) for $WHOAMI into $STATE_DIR/view ($nskip line(s) skipped, $nprob unreadable; dcf-registry explain <path> says why)"
+  # (1.8.0) the same for this path's own pointer, so an agent of another path keeps its view
+  mkdir -p "$STATE_DIR/paths"
+  ln -s "../views/$stamp" "$STATE_DIR/paths/$(path_key "$WHOAMI").new.$$"
+  mv -Tf "$STATE_DIR/paths/$(path_key "$WHOAMI").new.$$" "$STATE_DIR/paths/$(path_key "$WHOAMI")"
+  prune_views
+  say "resolved $nres component(s) for $WHOAMI into $STATE_DIR/view ($nskip line(s) skipped, $nprob unreadable; $nmiss missing dependenc$([ "$nmiss" -eq 1 ] && echo y || echo ies); dcf-registry explain <path> says why)"
 }
 
 # view_path: the current view or die
@@ -1068,18 +1241,97 @@ view_path() {
   [ -f "$VIEW/whoami" ] || die 1 "no resolved view in $STATE_DIR yet; run dcf-registry resolve (task component-registry:resolve)"
 }
 
-# normalise <path>: [scope/]kind/name[:key] -> NP_COMP, NP_KEY
+# path_key <path> (1.8.0): the file name of a who-you-are path's pointer under paths/ (/ becomes +;
+# a path holds letters, digits, . _ - and /, so the key is one file name and never collides)
+path_key() { printf '%s' "${1//\//+}"; }
+
+# prune_views [--pointers] (1.8.0, under the resolve lock held exclusive): every view that neither
+# `view` nor a path pointer names goes. With --pointers (forget), first the pointers of paths no
+# hand-over record names, but the latest view's; a resolve never drops a pointer, so a path resolved
+# for an agent that has not been handed its skills yet keeps its view.
+prune_views() {
+  local p k t d
+  declare -A keep=() inuse=()
+  t="$(cat "$STATE_DIR/view/whoami" 2>/dev/null)" && keep["$(path_key "$t")"]=1
+  if [ "${1:-}" != --pointers ]; then for d in "$STATE_DIR"/paths/*; do keep["$(basename "$d")"]=1; done; fi
+  if [ -f "$STATE_DIR/handovers.tsv" ]; then
+    while IFS=$'\t' read -r _ _ _ p _; do [ -n "$p" ] && keep["$(path_key "$p")"]=1; done < "$STATE_DIR/handovers.tsv"
+  fi
+  for d in "$STATE_DIR"/paths/*; do
+    [ -L "$d" ] || { [ -e "$d" ] && rm -rf "$d"; continue; }
+    k="$(basename "$d")"
+    if [ -z "${keep[$k]:-}" ]; then rm -f "$d"; continue; fi
+    t="$(readlink "$d")"; inuse["${t##*/}"]=1
+  done
+  t="$(readlink "$STATE_DIR/view" 2>/dev/null)" && inuse["${t##*/}"]=1
+  for d in "$STATE_DIR"/views/*; do
+    [ -d "$d" ] || continue
+    [ -n "${inuse[$(basename "$d")]:-}" ] || rm -rf "$d"
+  done
+}
+
+# view_for [<path>] (1.8.0): VIEW, the view to read, and VPATH and VMODE, what a hand-over records.
+# A path given: that path's own view (or die). None: the view of the who-you-are setting when it has
+# one, else the latest view.
+view_for() {
+  local as="${1:-}" s
+  if [ -n "$as" ]; then
+    as="${as%/}"; [ -n "$as" ] || as=/
+    valid_path "$as" || die 2 "'$as' is not a who-you-are path (absolute, segments of letters, digits, . _ and -)"
+    VIEW="$STATE_DIR/paths/$(path_key "$as")" VMODE=as
+    [ -f "$VIEW/whoami" ] || die 1 "no view resolved for $as yet; run dcf-registry resolve --as $as"
+  else
+    VMODE=whoami VIEW="$STATE_DIR/view"
+    s="$(setting COMPONENT_REGISTRY_WHOAMI)"
+    if [ -n "$s" ]; then
+      s="${s%%$'\t'*}"; s="${s%/}"; [ -n "$s" ] || s=/
+      valid_path "$s" && [ -f "$STATE_DIR/paths/$(path_key "$s")/whoami" ] && VIEW="$STATE_DIR/paths/$(path_key "$s")"
+    fi
+    [ -f "$VIEW/whoami" ] || die 1 "no resolved view in $STATE_DIR yet; run dcf-registry resolve (task component-registry:resolve)"
+  fi
+  VPATH="$(cat "$VIEW/whoami")"
+}
+
+# record_handover <cli> <name> <folder> <path> <mode> [<skills mode>] | forget: one line per cli,
+# name and folder
+record_handover() {
+  local cli="$1" name="$2" folder="$3" path="${4:-}" mode="${5:-}" smode="${6:-split}" f="$STATE_DIR/handovers.tsv"
+  exec 6>>"$STATE_DIR/handovers.lock"
+  flock -w 30 6 || { warn "the hand-over records are busy ($STATE_DIR/handovers.lock); not recorded"; exec 6>&-; return 0; }
+  (umask 077
+   { [ -f "$f" ] && awk -F'\t' -v c="$cli" -v n="$name" -v d="$folder" '!($1 == c && $2 == n && $3 == d)' "$f"
+     [ "$mode" = forget ] || printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$cli" "$name" "$folder" "$path" "$mode" "$smode"
+   } > "$f.new.$$" && mv -f "$f.new.$$" "$f")
+  exec 6>&-
+}
+
+# normalise <path>: [scope/]kind/[ns:]name[:key] -> NP_COMP, NP_KEY. The name may be a namespaced
+# one (1.7.0): kind/ns:name:key is plain; kind/a:b is the namespaced component a:b when the view
+# (VIEW) holds one or a ref names it (a missing dependency), else the key b of a; a skill's folder
+# name ns--name is taken for ns:name too.
 normalise() {
-  local s="$1" k found='' seg comp=''
+  local s="$1" k found='' seg comp='' last pre
+  local -a parts
   NP_KEY=''
-  case "$s" in *:*) NP_KEY="${s##*:}"; s="${s%:*}" ;; esac
   s="${s#/}"
   IFS=/ read -r -a segs <<< "$s"
   for seg in "${segs[@]}"; do
-    if [ -z "$found" ]; then for k in $KINDS; do [ "$seg" = "$k" ] && found=1; done; fi
+    if [ -z "$found" ]; then for k in $KINDS; do [ "${seg%%:*}" = "$k" ] && found=1; done; fi
     [ -n "$found" ] && comp="${comp:+$comp/}$seg"
   done
-  NP_COMP="$comp"
+  case "$comp" in */*) pre="${comp%/*}/" last="${comp##*/}" ;; *) pre='' last="$comp" ;; esac
+  IFS=: read -r -a parts <<< "$last"
+  case "${#parts[@]}" in
+    2) if [ -n "${VIEW:-}" ] && { [ -d "$VIEW/meta/$pre$last" ] || awk -F'\t' -v c="$pre$last" '$4 == c { f = 1; exit } END { exit !f }' "$VIEW/meta/refs.tsv" 2>/dev/null; }; then :
+       else last="${parts[0]}" NP_KEY="${parts[1]}"; fi ;;
+    3) last="${parts[0]}:${parts[1]}" NP_KEY="${parts[2]}" ;;
+    0 | 1) ;;
+    *) last="${parts[0]}:${parts[1]}" NP_KEY="${last#*:*:}" ;;
+  esac
+  if [[ "$last" == *--* && "$last" != *:* ]] && [ -n "${VIEW:-}" ] && [ ! -d "$VIEW/meta/$pre$last" ] && [ -d "$VIEW/meta/$pre${last%%--*}:${last#*--}" ]; then
+    last="${last%%--*}:${last#*--}"
+  fi
+  NP_COMP="$pre$last"
 }
 
 # Colour for explain (1.4.0): six colours of the Okabe-Ito set (distinguishable with the usual
@@ -1119,18 +1371,34 @@ cmd_explain() {
   view_path
   who="$(cat "$VIEW/whoami")"
   if [ -n "$as" ] && [ "${as%/}" != "$who" ]; then
-    die 1 "the resolved view is for $who, not $as; run dcf-registry resolve --as $as first (explain never resolves)"
+    # (1.8.0) that path's own view, when one was resolved
+    if valid_path "${as%/}" && [ -f "$STATE_DIR/paths/$(path_key "${as%/}")/whoami" ]; then
+      VIEW="$STATE_DIR/paths/$(path_key "${as%/}")"; who="$(cat "$VIEW/whoami")"
+    else
+      die 1 "no view is resolved for $as (the latest is for $who); run dcf-registry resolve --as $as first (explain never resolves)"
+    fi
   fi
   normalise "$path"
   [ -n "$NP_COMP" ] || die 2 "'$path' names no component (a path with a ${KINDS// /, } segment, like skills/diagrams)"
   if [ "$uses" -eq 1 ]; then
     printf 'What refers to %s%s (resolved for %s):\n' "$NP_COMP" "${NP_KEY:+:$NP_KEY}" "$who"
-    s="$(awk -F'\t' -v c="$NP_COMP" -v k="$NP_KEY" '$4 == c && (k == "" || $5 == k) { printf "  %s:%s -> %s (%s)\n", $1, $2, $3, $6 }' "$VIEW/meta/refs.tsv")"
+    # 1.7.0: the resolved target when a namespace or an alias is involved, and a missing dependency
+    s="$(awk -F'\t' -v c="$NP_COMP" -v k="$NP_KEY" 'function ns(x,  n) { n = x; sub(/^[^\/]*\//, "", n); return index(n, ":") ? " [namespace " substr(n, 1, index(n, ":") - 1) "]" : "" }
+      $4 == c && (k == "" || $5 == k) { printf "  %s:%s -> %s%s (%s)%s%s\n", $1, $2, $3, (ns($1) != "" || ns($4) != "" || ($9 != "" && $9 != "-") ? " = " $4 : ""), ($6 == "missing" ? "missing dependency" : $6), ($9 != "" && $9 != "-" ? " [" $9 "]" : ""), ns($1) }' "$VIEW/meta/refs.tsv")"
     if [ -n "$s" ]; then printf '%s\n' "$s"; else echo "  nothing"; fi
     return 0
   fi
   [ -f "$VIEW/meta/$NP_COMP/provenance.tsv" ] || die 1 "no component $NP_COMP in the view resolved for $who (dcf-registry resolve, or check the path)"
-  printf '%s, resolved for %s at %s\n' "$NP_COMP" "$who" "$(cat "$VIEW/resolved")"
+  # 1.7.0: a namespaced component says its namespace on every line of its own
+  local ns='' nsl='' disk
+  case "${NP_COMP#*/}" in *:*) ns="${NP_COMP#*/}"; ns="${ns%%:*}"; nsl=" [namespace $ns]" ;; esac
+  if [ -n "$ns" ]; then
+    disk="$(awk -F'\t' -v c="$NP_COMP" '$1 == c { print $3; exit }' "$VIEW/meta/namespaced.tsv" 2>/dev/null)"
+    printf '%s, resolved for %s at %s\n' "$NP_COMP" "$who" "$(cat "$VIEW/resolved")"
+    printf 'Namespace %s: only the layers with namespace: %s reach it%s.\n' "$ns" "$ns" "$([ "$disk" != "$NP_COMP" ] && [ -n "$disk" ] && printf '; handed over as %s' "${disk#*/}")"
+  else
+    printf '%s, resolved for %s at %s\n' "$NP_COMP" "$who" "$(cat "$VIEW/resolved")"
+  fi
   if [ "$EX_COLOUR" -eq 1 ]; then
     i=0
     while IFS=$'\t' read -r n id _; do
@@ -1149,26 +1417,35 @@ cmd_explain() {
   while IFS= read -r s; do
     id="$(printf '%s' "$s" | awk '{ print $2 }')"
     pline "$(lcolour "$id")" "$s"
-  done < <(awk -F'\t' 'NR > 1 { printf "  %s %s at %s, source %s (%s): %s, %s%s\n", $1, $2, $3, $4, $5, $7, $6, ($7 == "offline" ? ", the last good copy from " $8 : "") }' "$VIEW/layers.tsv")
+  done < <(awk -F'\t' 'NR > 1 { printf "  %s %s at %s, source %s (%s): %s, %s%s%s%s\n", $1, $2, $3, $4, $5, $7, $6, ($7 == "offline" ? ", the last good copy from " $8 : ""), ($10 != "" && $10 != "-" ? ", namespace " $10 : ""), ($11 != "" && $11 != "-" ? ", aliases " $11 : "") }' "$VIEW/layers.tsv")
   while IFS=$'\t' read -r k t s; do
     [ -n "$NP_KEY" ] && [ "$k" != "$NP_KEY" ] && continue
-    printf '\n%s:%s = %s\n' "$k" "$t" "$s"
+    printf '\n%s:%s = %s%s\n' "$k" "$t" "$s" "$nsl"
     while IFS=$'\t' read -r st key type layer _ ver loc data why; do
       [ "$key" = "$k" ] || continue
       [ "$why" != - ] || why=''
       if [ "$type" = lock ]; then s="lock $key"; else s="$key:$type = $data"; fi
-      printf -v s '  %-12s %s@%s %s  %s%s' "$st" "$layer" "$ver" "$loc" "$s" "${why:+  ($why)}"
+      printf -v s '  %-12s %s@%s%s %s  %s%s' "$st" "$layer" "$ver" "$nsl" "$loc" "$s" "${why:+  ($why)}"
       case "$st" in used) sgr="$(lcolour "$layer")" ;; *) sgr='2;9' ;; esac
       pline "$sgr" "$s"
     done < "$VIEW/meta/$NP_COMP/provenance.tsv"
   done < "$VIEW/meta/$NP_COMP/keys.tsv"
   # Lines that did not make a key: skipped, dropped, excluded, not applying, locks.
-  s="$(awk -F'\t' -v k="$NP_KEY" 'FILENAME == ARGV[1] { has[$1] = 1; next } (k == "" || $2 == k) && !($2 in has) { printf "  %-12s %s@%s %s  %s  (%s)\n", $1, $4, $6, $7, ($3 == "lock" ? "lock " $2 : $2 ":" $3 " = " $8), $9 }' "$VIEW/meta/$NP_COMP/keys.tsv" "$VIEW/meta/$NP_COMP/provenance.tsv")"
+  s="$(awk -F'\t' -v k="$NP_KEY" -v nsl="$nsl" 'FILENAME == ARGV[1] { has[$1] = 1; next } (k == "" || $2 == k) && !($2 in has) { printf "  %-12s %s@%s%s %s  %s  (%s)\n", $1, $4, $6, nsl, $7, ($3 == "lock" ? "lock " $2 : $2 ":" $3 " = " $8), $9 }' "$VIEW/meta/$NP_COMP/keys.tsv" "$VIEW/meta/$NP_COMP/provenance.tsv")"
   if [ -n "$s" ]; then
     printf '\nOther lines:\n'
     while IFS= read -r t; do pline "$([ "$EX_COLOUR" -eq 1 ] && echo '2;9')" "$t"; done <<< "$s"
   fi
-  s="$(awk -F'\t' -v c="$NP_COMP" -v k="$NP_KEY" '$1 == c && $6 == "dangling" && (k == "" || $2 == k) { printf "  %s:%s -> %s (%s)\n", $1, $2, $3, $7 }' "$VIEW/meta/refs.tsv")"
+  # 1.7.0: every reference of the component, as written and as resolved (an alias said); then the
+  # missing dependencies (a target not in the view: the user installs it) and the malformed ones
+  s="$(awk -F'\t' -v c="$NP_COMP" -v k="$NP_KEY" -v nsl="$nsl" '$1 == c && (k == "" || $2 == k) { printf "  %s:%s -> %s = %s%s (%s)%s%s\n", $1, $2, $3, $4, ($5 != "-" ? ":" $5 : ""), ($6 == "missing" ? "missing dependency" : $6), ($9 != "" && $9 != "-" ? " [" $9 "]" : ""), nsl }' "$VIEW/meta/refs.tsv")"
+  [ -z "$s" ] || printf '\nReferences (1.7.0: no prefix is the own namespace, <ns>:<name> namespace <ns>):\n%s\n' "$s"
+  s="$(awk -F'\t' -v c="$NP_COMP" -v k="$NP_KEY" -v nsl="$nsl" '$1 == c && $6 == "missing" && (k == "" || $2 == k) { printf "  %s:%s -> %s%s (%s)%s, in layer %s\n", $1, $2, $3, nsl, $7, ($9 != "" && $9 != "-" ? " [" $9 "]" : ""), $8 }' "$VIEW/meta/refs.tsv")"
+  if [ -n "$s" ]; then
+    printf '\nMissing dependencies (resolve goes on without them; add the layer that brings them):\n'
+    while IFS= read -r t; do pline "$([ "$EX_COLOUR" -eq 1 ] && echo '2;9')" "$t"; done <<< "$s"
+  fi
+  s="$(awk -F'\t' -v c="$NP_COMP" -v k="$NP_KEY" -v nsl="$nsl" '$1 == c && $6 == "dangling" && (k == "" || $2 == k) { printf "  %s:%s -> %s%s (%s)\n", $1, $2, $3, nsl, $7 }' "$VIEW/meta/refs.tsv")"
   if [ -n "$s" ]; then
     printf '\nDangling refs:\n'
     while IFS= read -r t; do pline "$([ "$EX_COLOUR" -eq 1 ] && echo '2;9')" "$t"; done <<< "$s"
@@ -1178,7 +1455,8 @@ cmd_explain() {
     if [ -f "$VIEW/$NP_COMP/model" ]; then
       awk -F'\t' -v m="$(head -n 1 "$VIEW/$NP_COMP/model")" -v cli="$(cat "$VIEW/$NP_COMP/cli" 2>/dev/null)" '$1 == "model" { printf "Effective model%s: %s (%s from %s at %s)\n", (cli == "" ? "" : " for its CLI, " cli), m, $4, $2, $3 }' "$VIEW/$NP_COMP/from.tsv"
     fi
-    echo "The registry wins: its skills replace the agents list's, and its model a model chosen in the agent's CLI arguments." ;;
+    echo "The registry wins: its skills replace the agents list's, and its model a model chosen in the agent's CLI arguments."
+    [ -z "$ns" ] || echo "A namespaced agent definition (namespace $ns) applies to no agent of the agents list in this release." ;;
   esac
   return 0
 }
@@ -1191,6 +1469,10 @@ cmd_version() {
   s="$(setting COMPONENT_REGISTRY_WHOAMI)"
   if [ -n "$s" ]; then echo "who you are: ${s%%$'\t'*} (from ${s#*$'\t'})"; else echo "who you are: not set (COMPONENT_REGISTRY_WHOAMI)"; fi
   if [ -f "$STATE_DIR/view/whoami" ]; then echo "resolved view: for $(cat "$STATE_DIR/view/whoami") at $(cat "$STATE_DIR/view/resolved")"; else echo "resolved view: none yet"; fi
+  for s in "$STATE_DIR"/paths/*; do
+    [ -f "$s/whoami" ] && echo "  a view for $(cat "$s/whoami") at $(cat "$s/resolved")"
+  done
+  return 0
 }
 
 cmd_layer_list() {
@@ -1200,55 +1482,191 @@ cmd_layer_list() {
   [ -f "$RF_ABS" ]
 }
 
-# handover <cli> [<name> <folder>] (1.1.0): the consumer step of release 1, skills. The CLI's
-# adapter (agent-adapter-<cli>, installed by that CLI's Feature) copies the resolved view's skills
-# into the CLI's own skills folder with its optional `skills` verb (ADR-0064, amending the CLI
-# contract of ADR-0037), given the folder in COMPONENT_REGISTRY_SKILLS. The view is read under a
-# shared hold of resolve.lock, so a resolve never swaps it out mid-copy. <name> and <folder> are
-# the agent's, as every adapter verb takes them (default: component-registry and the repository
-# root). Exit 0 handed over, 1 failed or no view, 2 bad use, 3 the CLI cannot take resolved skills
-# (no adapter, or its supports does not list skills, or the verb answers 3): its sessions keep
-# their plain skills (NFR-12), and one line says so.
-cmd_handover() {
-  local cli="${1:-}" name="${2:-$BASE_ID}" folder="${3:-}" ad sup real rc
-  [ -n "$cli" ] || die 2 "handover needs a CLI: dcf-registry handover <cli> [<name> <folder>]"
-  [[ "$cli" =~ ^[A-Za-z0-9_-]+$ ]] || die 2 "handover: '$cli' is not a CLI name"
-  [ -n "$folder" ] || { resolve_settings; folder="$ROOT"; }
-  ad="$(command -v "agent-adapter-$cli" 2>/dev/null)" || ad=''
-  if [ -z "$ad" ]; then say "$cli: no agent-adapter-$cli on PATH; its sessions keep their plain skills"; return 3; fi
-  sup="$("$ad" supports </dev/null 2>/dev/null)" || sup=''
+# handover <cli> [<name> <folder>] [--as <path>] (1.1.0; --as and the record 1.8.0): the consumer
+# step of release 1, skills. The CLI's adapter (agent-adapter-<cli>, installed by that CLI's
+# Feature) copies the resolved view's skills into the CLI's own skills folders with its optional
+# `skills` verb (ADR-0064, amending the CLI contract of ADR-0037), given the folder in
+# COMPONENT_REGISTRY_SKILLS and the path in COMPONENT_REGISTRY_PATH. The view is the one resolved for
+# --as (an agent's registry-path), else for the who-you-are setting, else the latest (1.8.0, ADR-0074:
+# agents with different paths each get their own). It is read under a shared hold of resolve.lock,
+# so a resolve never swaps it out mid-copy. <name> and <folder> are the agent's, as every adapter verb
+# takes them (default: component-registry and the repository root, the sessions no agent started).
+# A hand-over is recorded in handovers.tsv (refresh repeats it). Exit 0 handed over, 1 failed or no
+# view, 2 bad use, 3 the CLI cannot take resolved skills (no adapter, or its supports does not list
+# skills, or the verb answers 3): its sessions keep their plain skills (NFR-12), and one line says so.
+skills_adapter() { # skills_adapter <cli>: AD, the adapter that takes skills; returns 3 (said) when none
+  AD="$(command -v "agent-adapter-$1" 2>/dev/null)" || AD=''
+  if [ -z "$AD" ]; then say "$1: no agent-adapter-$1 on PATH; its sessions keep their plain skills"; return 3; fi
+  # read whole first: grep -q stops early, and under pipefail the adapter's SIGPIPE would fail it
+  local sup; sup="$("$AD" supports </dev/null 2>/dev/null)" || sup=''
   if ! printf '%s\n' "$sup" | grep -qx skills; then
-    say "$cli: its adapter takes no resolved skills (no skills verb); its sessions keep their plain skills"
+    say "$1: its adapter takes no resolved skills (no skills verb); its sessions keep their plain skills"
     return 3
   fi
+}
+cmd_handover() {
+  local cli name folder as='' real rc smode='' s
+  local -a pos=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --as) [ $# -ge 2 ] || die 2 "--as needs a path"; as="$2"; shift 2 ;;
+      --as=*) as="${1#--as=}"; shift ;;
+      --skills-mode) [ $# -ge 2 ] || die 2 "--skills-mode needs split, shared or off"; smode="$2"; shift 2 ;;
+      --skills-mode=*) smode="${1#--skills-mode=}"; shift ;;
+      -*) die 2 "handover: unknown option '$1' (handover <cli> [<name> <folder>] [--as <path>])" ;;
+      *) pos+=("$1"); shift ;;
+    esac
+  done
+  cli="${pos[0]:-}" name="${pos[1]:-$BASE_ID}" folder="${pos[2]:-}"
+  [ -n "$cli" ] || die 2 "handover needs a CLI: dcf-registry handover <cli> [<name> <folder>] [--as <path>]"
+  [[ "$cli" =~ ^[A-Za-z0-9_-]+$ ]] || die 2 "handover: '$cli' is not a CLI name"
+  [[ "$name" =~ ^[A-Za-z0-9_-]+$ ]] || die 2 "handover: '$name' is not an agent name"
+  resolve_settings
+  [ -n "$folder" ] || folder="$ROOT"
+  # (1.8.0, ADR-0074) how the CLI keeps the agent's skills: --skills-mode (the agents list's
+  # registry-skills), else the setting COMPONENT_REGISTRY_SKILLS_MODE, else split
+  if [ -z "$smode" ]; then s="$(setting COMPONENT_REGISTRY_SKILLS_MODE)"; smode="${s%%$'\t'*}"; fi
+  case "${smode:=split}" in
+    split | shared) ;;
+    off) cmd_forget "$cli" "$name" "$folder"; return $? ;;
+    *) die 2 "skills mode '$smode' is not split, shared or off (--skills-mode, COMPONENT_REGISTRY_SKILLS_MODE)" ;;
+  esac
+  skills_adapter "$cli" || return 3
   [ -d "$STATE_DIR" ] || die 1 "no state folder $STATE_DIR; run dcf-registry resolve first"
   command -v flock >/dev/null 2>&1 || die 1 "flock (util-linux) is needed to read the view while no resolve swaps it"
   exec 8>>"$STATE_DIR/resolve.lock"
   flock -s -w "${COMPONENT_REGISTRY_LOCK_WAIT:-120}" 8 || die 1 "a resolve has held $STATE_DIR/resolve.lock for ${COMPONENT_REGISTRY_LOCK_WAIT:-120}s; try again"
-  view_path
+  view_for "$as"
   real="$(readlink -f "$VIEW")"
   [ -d "$real/skills" ] || die 1 "the resolved view $real has no skills folder; run dcf-registry resolve"
-  COMPONENT_REGISTRY_SKILLS="$real/skills" "$ad" skills "$name" "$folder" </dev/null; rc=$?
+  COMPONENT_REGISTRY_SKILLS="$real/skills" COMPONENT_REGISTRY_PATH="$VPATH" COMPONENT_REGISTRY_SKILLS_MODE="$smode" "$AD" skills "$name" "$folder" </dev/null; rc=$?
+  [ "$rc" -eq 0 ] && record_handover "$cli" "$name" "$folder" "$VPATH" "$VMODE" "$smode"
+  # 1.7.0: a namespaced skill goes to the CLI by its folder name, <ns>--<name>; say which
+  local nsk
+  nsk="$(awk -F'\t' '$1 ~ /^skills\// { printf "%s%s as %s", (n++ ? ", " : ""), substr($1, 8), substr($3, 8) }' "$real/meta/namespaced.tsv" 2>/dev/null)"
+  [ "$rc" -ne 0 ] || [ -z "$nsk" ] || say "$cli: namespaced skills are handed over by their folder name, <namespace>--<name>: $nsk"
   exec 8>&-
   if [ "$rc" -eq 3 ]; then say "$cli: its adapter answered that it cannot take resolved skills; its sessions keep their plain skills"; fi
   return "$rc"
 }
 
-# refresh [--as <path>] (1.1.0, /registry-refresh): resolve now, for the path the current view was
-# resolved for (a refresh repeats what the agent's start did, a per-agent path included), else
-# the who-you-are setting; then hand the skills to every CLI adapter on PATH. A CLI whose adapter
-# cannot take them is named (exit 3 of handover); the refresh still succeeds.
+# forget <cli> <name> <folder> (1.8.0): the agent is gone (the participant component calls it for an
+# agent no longer in the agents list); the adapter's skills verb with COMPONENT_REGISTRY_FORGET=1
+# drops the agent's own copies, the record goes, and a path no record names any more loses its view.
+cmd_forget() {
+  local cli="${1:-}" name="${2:-}" folder="${3:-}" rc=0
+  [ $# -eq 3 ] && [ -n "$cli" ] && [ -n "$name" ] && [ -n "$folder" ] || die 2 "forget needs <cli> <name> <folder>"
+  [[ "$cli" =~ ^[A-Za-z0-9_-]+$ ]] || die 2 "forget: '$cli' is not a CLI name"
+  [ -d "$STATE_DIR" ] || { say "nothing recorded"; return 0; }
+  if skills_adapter "$cli" >/dev/null; then
+    COMPONENT_REGISTRY_FORGET=1 "$AD" skills "$name" "$folder" </dev/null; rc=$?
+    [ "$rc" -ne 3 ] || rc=0
+  fi
+  [ "$rc" -eq 0 ] || { warn "$cli: the adapter could not drop $name's copies (exit $rc); its record is kept"; return "$rc"; }
+  record_handover "$cli" "$name" "$folder" '' forget
+  if command -v flock >/dev/null 2>&1; then
+    exec 9>>"$STATE_DIR/resolve.lock"
+    if flock -w "${COMPONENT_REGISTRY_LOCK_WAIT:-120}" 9; then prune_views --pointers; fi
+    exec 9>&-
+  fi
+  say "forgot $name ($cli, $folder)"
+}
+
+cmd_handovers() {
+  local show='' c n f p m sm out sup
+  case "${1:-}" in '') ;; --skills) show=1 ;; *) die 2 "handovers takes no arguments but --skills" ;; esac
+  [ -f "$STATE_DIR/handovers.tsv" ] || return 0
+  if [ -z "$show" ]; then cat "$STATE_DIR/handovers.tsv"; return 0; fi
+  # --skills (1.8.0, ADR-0074): one block per agent, with what its CLI holds for it
+  while IFS=$'\t' read -r c n f p m sm; do
+    [ -n "$c" ] || continue
+    printf '%s (%s, %s): path %s (%s), registry skills %s\n' "$n" "$c" "$f" "$p" "$([ "$m" = as ] && echo its registry-path || echo the who-you-are setting)" "${sm:-split}"
+    out='' sup="$(agent-adapter-"$c" supports </dev/null 2>/dev/null)" || sup=''
+    if printf '%s\n' "$sup" | grep -qx skills-show; then out="$(agent-adapter-"$c" skills-show "$n" "$f" </dev/null 2>/dev/null)" || out=''; fi
+    if [ -z "$out" ]; then echo "  $c does not say where it keeps them (no skills-show)"; continue; fi
+    printf '%s\n' "$out" | awk -F'\t' '
+      $1 == "own" { own = $2 } $1 == "own-skills" { os = $2 } $1 == "shared-skills" { ss = $2 } $1 == "shared" { sf = $2 }
+      END { printf "  own folder: %s\n  own skills: %s\n  shared (%s): %s\n", own, os, sf, ss }'
+  done < "$STATE_DIR/handovers.tsv"
+}
+
+# refresh [--as <path>] [--session <id>] (1.1.0; per agent 1.8.0, /registry-refresh): resolve now and
+# hand over again.
+#   --as <path>     that path, handed to every CLI adapter on PATH for the sessions no agent started
+#   --session <id>  the agent whose session that is (the id in an adapter's list): its own path
+#                   (its record), resolved and handed to it alone; an unknown id refreshes everything
+#   neither         every recorded hand-over, each distinct path resolved once (an agent of the
+#                   who-you-are setting: the setting now); with no record, the path the latest view
+#                   was resolved for, to every CLI adapter on PATH (1.1.0)
+# A CLI whose adapter cannot take them is named (exit 3 of handover); the refresh still succeeds.
+refresh_paths() { # refresh_paths <path>...: resolve each once; RESOLVED[path]=ok or failed
+  local p rc
+  for p in "$@"; do
+    [ -n "${RESOLVED[$p]:-}" ] && continue
+    bash "$0" resolve --as "$p"; rc=$?
+    if [ "$rc" -eq 0 ]; then RESOLVED[$p]=ok; else RESOLVED[$p]=failed; warn "resolve for $p failed (exit $rc); the skills of that path stay as they were"; fi
+  done
+}
 cmd_refresh() {
-  local as='' cli n=0 rc fail=0
+  local as='' sid='' cli n=0 rc fail=0 s c nm fo p mode sm who cur=''
+  local -a recs=()
+  declare -gA RESOLVED=()
   while [ $# -gt 0 ]; do
     case "$1" in
       --as) [ $# -ge 2 ] || die 2 "--as needs a path"; as="$2"; shift 2 ;;
       --as=*) as="${1#--as=}"; shift ;;
-      *) die 2 "refresh: unknown argument '$1' (refresh [--as <path>])" ;;
+      --session) [ $# -ge 2 ] || die 2 "--session needs a session id"; sid="$2"; shift 2 ;;
+      --session=*) sid="${1#--session=}"; shift ;;
+      *) die 2 "refresh: unknown argument '$1' (refresh [--as <path>] [--session <id>])" ;;
     esac
   done
-  if [ -z "$as" ] && [ -f "$STATE_DIR/view/whoami" ]; then
+  # a session id the CLI did not substitute (another CLI reads ${CLAUDE_SESSION_ID} as it is) is none
+  [[ "$sid" =~ ^[A-Za-z0-9_-]+$ ]] || sid=''
+  resolve_settings
+  s="$(setting COMPONENT_REGISTRY_WHOAMI)"; [ -z "$s" ] || { cur="${s%%$'\t'*}"; cur="${cur%/}"; [ -n "$cur" ] || cur=/; }
+  [ -f "$STATE_DIR/handovers.tsv" ] && mapfile -t recs < "$STATE_DIR/handovers.tsv"
+  if [ -z "$as" ] && [ -n "$sid" ]; then
+    for cli in $(compgen -c agent-adapter- 2>/dev/null | sed 's/^agent-adapter-//' | LC_ALL=C sort -u); do
+      [[ "$cli" =~ ^[A-Za-z0-9_-]+$ ]] || continue
+      s="$(agent-adapter-"$cli" list </dev/null 2>/dev/null | awk -F'\t' -v w="$sid" '$2 == w { print $1 "\t" $4; exit }')"
+      [ -n "$s" ] || continue
+      nm="${s%%$'\t'*}" fo="${s#*$'\t'}"
+      for s in "${recs[@]+"${recs[@]}"}"; do
+        IFS=$'\t' read -r c n2 f2 p mode sm <<< "$s"
+        [ "$c" = "$cli" ] && [ "$n2" = "$nm" ] && [ "$f2" = "$fo" ] || continue
+        [ "$mode" = whoami ] && [ -n "$cur" ] && p="$cur"
+        say "refreshing $nm ($cli) for $p, its own path"
+        refresh_paths "$p"
+        [ "${RESOLVED[$p]}" = ok ] || die 1 "resolve failed; nothing was handed over, the skills stay as they were"
+        if [ "$mode" = as ] || [ -z "$cur" ]; then ( cmd_handover "$cli" "$nm" "$fo" --as "$p" --skills-mode "${sm:-split}" ); else ( cmd_handover "$cli" "$nm" "$fo" --skills-mode "${sm:-split}" ); fi
+        rc=$?
+        say "a CLI that does not watch its skills folder reads the new skills when its session is restarted"
+        return "$rc"
+      done
+    done
+    say "session $sid is no agent the registry has handed skills to; refreshing every recorded hand-over"
+  fi
+  if [ -z "$as" ] && [ "${#recs[@]}" -gt 0 ]; then
+    for s in "${recs[@]}"; do
+      IFS=$'\t' read -r c nm fo p mode sm <<< "$s"
+      [ "$mode" = whoami ] && [ -n "$cur" ] && p="$cur"
+      [ -n "$p" ] || continue
+      refresh_paths "$p"
+      [ "${RESOLVED[$p]}" = ok ] || { fail=1; continue; }
+      if [ "$mode" = as ] || [ -z "$cur" ]; then ( cmd_handover "$c" "$nm" "$fo" --as "$p" --skills-mode "${sm:-split}" ); else ( cmd_handover "$c" "$nm" "$fo" --skills-mode "${sm:-split}" ); fi
+      rc=$?
+      case "$rc" in 0 | 3) ;; *) fail=1; warn "$c: the handover to $nm failed (exit $rc)" ;; esac
+    done
+    who="$(printf '%s\n' "${!RESOLVED[@]}" | LC_ALL=C sort | tr '\n' ' ')"
+    say "refreshed ${#recs[@]} hand-over(s) for ${who% }"
+    say "a CLI that does not watch its skills folder reads the new skills when its session is restarted"
+    return "$fail"
+  fi
+  local -a hv=()
+  if [ -n "$as" ]; then hv=(--as "$as")
+  elif [ -f "$STATE_DIR/view/whoami" ]; then
     as="$(cat "$STATE_DIR/view/whoami")"
+    [ "$as" = "$cur" ] || hv=(--as "$as")
     say "refreshing for $as, the path the current view was resolved for (--as names another)"
   fi
   if [ -n "$as" ]; then bash "$0" resolve --as "$as"; else bash "$0" resolve; fi
@@ -1257,7 +1675,7 @@ cmd_refresh() {
   for cli in $(compgen -c agent-adapter- 2>/dev/null | sed 's/^agent-adapter-//' | LC_ALL=C sort -u); do
     [[ "$cli" =~ ^[A-Za-z0-9_-]+$ ]] || continue
     n=$((n + 1))
-    ( cmd_handover "$cli" ); rc=$?
+    ( cmd_handover "$cli" "${hv[@]+"${hv[@]}"}" ); rc=$?
     case "$rc" in 0 | 3) ;; *) fail=1; warn "$cli: the handover failed (exit $rc)" ;; esac
   done
   [ "$n" -gt 0 ] || say "no CLI adapter on PATH (agent-adapter-<cli>); the resolved view is ready, nothing was handed over"
@@ -1319,8 +1737,10 @@ case "${1:-}" in
   version) shift; cmd_version ;;
   layer-list) shift; cmd_layer_list "$@" ;;
   handover) shift; cmd_handover "$@" ;;
+  forget) shift; cmd_forget "$@" ;;
+  handovers) shift; cmd_handovers "$@" ;;
   refresh) shift; cmd_refresh "$@" ;;
   remember) shift; cmd_remember "$@" ;;
   -h | --help | help | '') usage ;;
-  *) die 2 "unknown verb '$1' (resolve, explain, version, layer-list, handover, refresh, remember)" ;;
+  *) die 2 "unknown verb '$1' (resolve, explain, version, layer-list, handover, forget, handovers, refresh, remember)" ;;
 esac

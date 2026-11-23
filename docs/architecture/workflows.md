@@ -188,17 +188,18 @@ sequenceDiagram
       R-->>person: fail, the view left as it was; the agent still starts, said
     end
   end
-  R->>R: match for who you are, merge by value type
+  R->>R: match for who you are, merge by value type, per namespace (1.7.0: a namespaced layer only among its own)
   opt a higher line breaks a lock, a type or a permission
     R->>R: skip the line, report it
   end
-  R->>R: write a new view, swap the symlink, drop copies no layer names
+  R->>R: write a new view, swap the symlink and the path's own pointer, drop copies no layer names
   R-->>person: resolved N components, lines skipped
-  person->>R: handover <cli> <name> <folder>
+  person->>R: handover <cli> <name> <folder> --as <the agent's path>
   R->>C: supports
   alt skills listed
-    R->>C: skills, COMPONENT_REGISTRY_SKILLS = the view's skills (lock held shared)
-    C->>C: copy, mark owned, remove owned copies no longer resolved
+    R->>C: skills, COMPONENT_REGISTRY_SKILLS = that path's view (lock held shared)
+    C->>C: copy, mark owned, remove owned copies no longer resolved; per agent (ADR-0074): what every agent's view shares personal, the rest in the agent's own folder (--add-dir)
+    R->>R: record the hand-over (handovers.tsv)
   else not listed or exit 3
     R-->>person: one line, the CLI keeps its plain skills
   end
@@ -206,7 +207,7 @@ sequenceDiagram
     person->>person: read view/agents/<name>/: model, skills (they replace the list's)
   end
   person->>C: start, AGENT_MODEL = the definition's model (it replaces a model in the CLI args)
-  Note over R,C: /registry-refresh runs resolve and handover to every adapter, mid-session
+  Note over R,C: /registry-refresh: resolve and handover for the calling agent's own path (its session id), mid-session; with no agent, every recorded hand-over
 ```
 
 In this repository (slice 4, the first real use) the list has two required layers, and the

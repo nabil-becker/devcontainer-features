@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | accepted (amended by [ADR 0074](0074-a-spoke-joins-through-a-join-endpoint-agents-are-bound-to-their-node-by-signed-cards-and-a-handle-can-be-qualified-by-its-node.md): decisions 1 and 4) |
+| **Status** | accepted (amended by [ADR 0075](0075-a-spoke-joins-through-a-join-endpoint-agents-are-bound-to-their-node-by-signed-cards-and-a-handle-can-be-qualified-by-its-node.md): decisions 1 and 4) |
 | **Date** | 2026-11-20 |
 | **Deciders** | the Operator; proposed by the host |
 
@@ -65,4 +65,4 @@ Zero configuration, but any host on the network that dials the bootstrap address
 |---|---|
 | 2026-11-20 | First draft, proposed; SP5 ruled by the Operator, the rest awaiting confirmation. |
 | 2026-11-20 | Accepted by the Operator. |
-- 2026-11-23: decisions 1 and 4 amended by ADR 0074 (rulings on slice N3).
+- 2026-11-23: decisions 1 and 4 amended by ADR 0075 (rulings on slice N3).

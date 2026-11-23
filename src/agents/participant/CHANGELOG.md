@@ -9,6 +9,30 @@ change here, add the entry below, run `task components:sync`, and bump every Fea
 copy. Backward compatible within a major (NFR-5): `agents.yml` and `AGENTS_FILE` stay (as aliases of
 `participants.yml` and `PARTICIPANTS_FILE` from 1.1.0) until the next major.
 
+## [1.4.0] - 2026-11-21
+
+### Changed
+
+- **Each agent its own path's skills** (ADR-0074). The hand-over at an agent's start names the
+  agent's `registry-path` (`dcf-registry handover <cli> <name> <folder> --as <path>`), so another
+  agent's resolve in between never hands it the wrong view, and the CLI keeps each agent's skills
+  apart (claude-code 1.14.0).
+
+### Added
+
+- **The key `registry-skills: split | shared | off`**, with the container default
+  `COMPONENT_REGISTRY_SKILLS_MODE` (task variable, `.env`, `.devcontainer/.env`, environment; else
+  `split`): `shared` keeps the 1.2.0 behaviour for that agent (its whole view shared, the latest start
+  wins), `off` resolves and hands over nothing for it and drops its own copies. Each start says the
+  mode and where it came from; `agents check` prints it per agent with the agent's own folder and
+  skills (from the adapter's `skills-show`).
+- `agents up` forgets (`dcf-registry forget`) an agent the registry handed skills to that is no
+  longer in the agent list (in this repository; the sessions no agent started are left alone): its
+  CLI drops the agent's own skills folder. Never fatal.
+
+Nothing to do. With `component-registry` older than 1.8.0, `--as` is ignored by `handover` and
+nothing is forgotten (its `handovers` verb does not exist).
+
 ## [1.3.0] - 2026-11-20
 
 ### Added

@@ -1,7 +1,7 @@
 
 # Component registry (component-registry)
 
-A registry for agentic components, shaped like the Windows Registry (ADR-0063). Layers from any number of sources (a git branch, tag or commit; one .reg file over http(s) with bearer, header or basic log-in, the secret through dcf-secret and never over plain http without allow-insecure; a folder or mounted file share; a folder in the cloud folder, from the cloud-folder Feature; the rows of a SQLite or PostgreSQL table or query, rendered into a .reg file, the password through dcf-secret into the client's environment only) are fetched into local layer copies (version first, so an unchanged layer is skipped; offline, the last good copy is used and said) and merged by value type into one resolved view for who you are (COMPONENT_REGISTRY_WHOAMI, a path such as /Corp/MyDepartment/team/me): value replaces, list combines (!item takes out), text stacks in layer order (under a heading per layer, or none with the layer key heading: false), a skill's name and description values go into its SKILL.md front matter, ref points at another path; the higher layer wins, the more specific scope inside a layer, a locked key beats both, and a permission key comes from a component's lowest layer only. dcf-registry resolve and dcf-registry explain <path> [--uses] [--color auto|always|never] (task component-registry:resolve, :explain); release 1 resolves skills, and dcf-registry handover gives them to a CLI's adapter (agent-adapter-<cli> skills; Claude Code: its personal skills folder, live in running sessions), which the participant component (claude-code participants: true) does at every agent's start. From 1.6.0 it also resolves agent definitions (agents/<name>: model and skills only, which replace the agents list's; the registry never sets an agent's identity, lease, folder, args or permissions), which the participant component reads at each agent's start. A built-in base layer ships the utility skills /registry-refresh, /registry-explain and /registry-remember (appends to the layer marked writable: true). The layer list is .devcontainer/registry.yml (option registryFile, COMPONENT_REGISTRY_FILE). Layer copies and the resolved view live owner-only in a named volume at COMPONENT_REGISTRY_STATE_DIR=/var/lib/devcontainer-features/component-registry, made usable by component-registry-setup at start. Bash, awk and sed; nothing downloaded at build.
+A registry for agentic components, shaped like the Windows Registry (ADR-0063). Layers from any number of sources (a git branch, tag or commit; one .reg file over http(s) with bearer, header or basic log-in, the secret through dcf-secret and never over plain http without allow-insecure; a folder or mounted file share; a folder in the cloud folder, from the cloud-folder Feature; the rows of a SQLite or PostgreSQL table or query, rendered into a .reg file, the password through dcf-secret into the client's environment only) are fetched into local layer copies (version first, so an unchanged layer is skipped; offline, the last good copy is used and said) and merged by value type into one resolved view for who you are (COMPONENT_REGISTRY_WHOAMI, a path such as /Corp/MyDepartment/team/me): value replaces, list combines (!item takes out), text stacks in layer order (under a heading per layer, or none with the layer key heading: false), a skill's name and description values go into its SKILL.md front matter, ref points at another path; the higher layer wins, the more specific scope inside a layer, a locked key beats both, and a permission key comes from a component's lowest layer only. dcf-registry resolve and dcf-registry explain <path> [--uses] [--color auto|always|never] (task component-registry:resolve, :explain); release 1 resolves skills, and dcf-registry handover gives them to a CLI's adapter (agent-adapter-<cli> skills; Claude Code: its personal skills folder, live in running sessions), which the participant component (claude-code participants: true) does at every agent's start; a view is kept per who-you-are path, so agents with different paths each get their own skills (split, shared or off per agent), and /registry-refresh refreshes the calling agent. From 1.6.0 it also resolves agent definitions (agents/<name>: model and skills only, which replace the agents list's; the registry never sets an agent's identity, lease, folder, args or permissions), which the participant component reads at each agent's start. From 1.7.0 a layer can carry namespace: <name> (a public or community source): its components become <name>:<component>, merge only with layers of the same namespace and never reach the Operator's own; a namespaced skill is handed over as <name>--<skill>. A built-in base layer ships the utility skills /registry-refresh, /registry-explain and /registry-remember (appends to the layer marked writable: true). The layer list is .devcontainer/registry.yml (option registryFile, COMPONENT_REGISTRY_FILE). Layer copies and the resolved view live owner-only in a named volume at COMPONENT_REGISTRY_STATE_DIR=/var/lib/devcontainer-features/component-registry, made usable by component-registry-setup at start. Bash, awk and sed; nothing downloaded at build.
 
 ## Example Usage
 
@@ -26,13 +26,16 @@ A registry for agentic components, shaped like the Windows Registry (ADR-0063). 
         v
   volume: COMPONENT_REGISTRY_STATE_DIR
     copies/<layer>/<n>/   layer copies
-        | dcf-registry resolve, for COMPONENT_REGISTRY_WHOAMI
+        | dcf-registry resolve, for COMPONENT_REGISTRY_WHOAMI or --as an agent's path
         v
     view -> views/<stamp>/   the resolved view: skills/<name>/, agents/<name>/, meta/
-        | dcf-registry handover <cli>: agent-adapter-<cli> skills (at an agent's start,
-        |   by the participant component; or /registry-refresh)
+    paths/<path> -> ...      (1.8.0) the latest view of each who-you-are path
+    handovers.tsv            (1.8.0) who was handed which path's skills
+        | dcf-registry handover <cli> <agent> <folder> --as <path>: agent-adapter-<cli> skills
+        |   (at an agent's start, by the participant component; or /registry-refresh)
         v
-  the CLI's own skills folder (Claude Code: $CLAUDE_CONFIG_DIR/skills, marked owned)
+  the CLI's own skills folders (Claude Code: $CLAUDE_CONFIG_DIR/skills for what every agent
+  shares, and each agent's own folder read through --add-dir; marked owned)
   agents/<name>/ (1.6.0): read by the participant component at the agent's start (model, skills)
 
   dcf-registry explain <path> [--uses] [--color auto|always|never]   read-only
@@ -44,7 +47,8 @@ A registry for agentic components, shaped like the Windows Registry (ADR-0063). 
 | Who-you-are path (`COMPONENT_REGISTRY_WHOAMI`) | `.env` (git-ignored) or the launcher, per person | none (a setting, set again) |
 | A layer's `.reg` files and skill files | its source: a git repository, a folder, a file share | the owner's choice |
 | Layer copies, the resolved view, the lock file | named volume at `/var/lib/devcontainer-features/component-registry`, owner-only | 4 working set |
-| Resolved skills handed to a CLI | the CLI's skills folder (Claude Code: `$CLAUDE_CONFIG_DIR/skills`, the claude-code volume), owner-only | 4 working set |
+| Resolved skills handed to a CLI | the CLI's skills folders (Claude Code: `$CLAUDE_CONFIG_DIR/skills` and, per agent, `$CLAUDE_CONFIG_DIR/registry-agents/`, the claude-code volume), owner-only | 4 working set |
+| Hand-over records (`handovers.tsv`: CLI, agent, folder, path) | the state volume, owner-only | 4 working set |
 | Remembered lines (`/registry-remember`) | `remembered.reg` in the writable layer's folder | the person's choice (their own layer's source) |
 | The utility skills (built-in base layer) | `/usr/local/share/component-registry-feature/base`, in the image | none (the Feature) |
 | Source secrets | OpenBao, read with `dcf-secret` | OpenBao's |
@@ -77,6 +81,8 @@ Release 1.6.0 adds the second component kind, **agent definitions** (`agents/<na
 `skills`, read by the participant component at the agent's start; below).
 It resolves **skills** and **agent definitions**; prompts and settings are not in this release (a
 section for them is reported and not resolved).
+Release 1.8.0 keeps a view per who-you-are path, so agents with different `registry-path`s each
+get their own skills (ADR-0074, below).
 
 ## What it installs
 
@@ -84,7 +90,7 @@ Nothing is downloaded at build; there is nothing to verify (an `http` layer is r
 work; no python3, no jq):
 
 - `dcf-registry` (`/usr/local/bin`): `resolve`, `explain`, `version`, and (1.1.0) `handover`,
-  `refresh`, `remember`, `layer-list`.
+  `refresh`, `remember`, `layer-list`, and (1.8.0) `forget`, `handovers`.
 - `/usr/local/share/component-registry-feature/base/`: the built-in base layer, the utility skills.
 - `registry-source-git`, `registry-source-path`, `registry-source-http` and (1.5.0) `registry-source-db`: the **registry sources** of this release.
 - `component-registry-setup`: the `postStartCommand`.
@@ -112,6 +118,7 @@ Settings are plain variables (NFR-6), each from the task variable, then the root
 | `COMPONENT_REGISTRY_STATE_DIR` | `/var/lib/devcontainer-features/component-registry` (`containerEnv`) | The state folder. |
 | `COMPONENT_REGISTRY_LOCK_WAIT` | `120` | Seconds a `resolve` waits for another one to finish. |
 | `COMPONENT_REGISTRY_AGENTS` | the current view's names | 1.6.0: agents, comma-separated `name` or `name:cli` items, whose definitions `resolve` makes even when only a pattern names them, the effective model picked for the CLI. The participant component sets it to the listed agents; a person seldom does. Empty clears the names. |
+| `COMPONENT_REGISTRY_SKILLS_MODE` | `split` | (1.8.0, ADR-0074) How a CLI keeps an agent's skills, for every agent whose agents list entry has no `registry-skills`: `split` (shared plus the agent's own), `shared` (the whole view shared, the latest hand-over wins), `off` (nothing handed over). `handover --skills-mode` beats it. |
 
 ## The layer list
 
@@ -138,6 +145,11 @@ layers:
       - { kind: path, path: .registry-mine }   # git-ignored in this repository
     writable: true              # /registry-remember appends here (one layer, a path source)
     heading: false              # 1.3.0: its text stacks with no "## Layer mine" line
+  - id: acme-community
+    at: /
+    namespace: acme             # 1.7.0: its components are acme:<name>; see Layer namespaces
+    sources:
+      - { kind: git, url: "https://git.example.invalid/acme/skills.git", tag: v2 }
 ```
 
 `heading` (1.3.0, `true` by default) says whether a layer's `text` lines are stacked under a
@@ -308,7 +320,7 @@ list using it is refused with its line. A listed layer adapts a utility skill li
 
 | Skill | Runs | Does |
 | --- | --- | --- |
-| `/registry-refresh` | `dcf-registry refresh` | resolve now, for the path the current view was resolved for (so an agent's own `registry-path` is kept; `--as` names another), then `handover` to every CLI adapter on PATH. Claude Code picks the change up in the running session; a CLI that does not watch its skills folder needs its session restarted; a skill already used in a conversation keeps its old text until a new conversation |
+| `/registry-refresh` | `dcf-registry refresh --session "${CLAUDE_SESSION_ID}"` | (1.8.0) resolve now for the calling agent's own path and hand over to it alone (its session id, found in each adapter's `list`); an unknown or unsubstituted id refreshes every recorded hand-over, each path once; with no record, for the path the latest view was resolved for, to every CLI adapter on PATH. Claude Code picks the change up in the running session; a CLI that does not watch its skills folder needs its session restarted; a skill already used in a conversation keeps its old text until a new conversation |
 | `/registry-explain <path>` | `dcf-registry explain <path> [--uses] [--color auto|always|never]` | read-only, shown to the person |
 | `/registry-remember [skills/<name>] <line>` | `dcf-registry remember [--skill <name>] -- <line>` | appends `body:text = <line>` under `[skills/<name>]` (or `[skills/*]`, every skill) to `remembered.reg` in the folder of the layer marked `writable: true`, then refreshes. Refused, nothing written: no writable layer, two, a writable layer without a `path` source (a git or http layer changes through its owner's release), a folder that is not there or not writable, an empty line, a line starting with `@`. Only when the person asks (`disable-model-invocation`) |
 
@@ -329,6 +341,53 @@ start: no layer list, a failed resolve or a CLI that cannot take skills is one l
 the hand-over together get at most `COMPONENT_REGISTRY_START_WAIT` seconds there (default 15, a
 hanging fetch and a held lock included); past it the CLI starts with the last good skills already
 in its folder, said in one line. `/registry-refresh` keeps `COMPONENT_REGISTRY_LOCK_WAIT`.
+
+## A view per agent path (1.8.0)
+
+Agents with different `registry-path`s in one container each get the skills their path resolves
+([ADR-0074](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/adr/0074-each-agent-reads-the-skills-its-registry-path-resolves-through-an-added-directory-and-the-personal-folder-keeps-what-every-agent-shares.md),
+it amends ADR-0064's "one per container").
+
+```text
+  agents start rev   resolve --as /Corp/review  ->  paths/+Corp+review -> views/<a>/
+                     handover claude rev <folder> --as /Corp/review
+  agents start host  resolve (who-you-are /Corp/me) -> paths/+Corp+me -> views/<b>/
+                     handover claude host <folder>       (the setting's view, never <a>)
+  Claude Code:  $CLAUDE_CONFIG_DIR/skills              what <a> and <b> have alike
+                registry-agents/rev.<sum>/registry     the rest of <a>, --add-dir for rev
+                registry-agents/host.<sum>/registry    the rest of <b>, --add-dir for host
+```
+
+- **Views.** `resolve` points `paths/<path, / as +>` at the view it made, besides `view` (the
+  latest). A resolve removes only the views no pointer names; `forget` also drops the pointers of
+  paths no hand-over record names (but the latest view's).
+- **The lock.** One `resolve.lock` for every path, as before: the layer copies under `copies/` are
+  shared between paths, so two resolves never interleave; a hand-over holds it shared while it
+  reads a view. A second agent's resolve waits for the first (the start limit,
+  `COMPONENT_REGISTRY_START_WAIT`, bounds it); a lock per path would let two fetches write one copy.
+- **Records.** `handovers.tsv`: CLI, agent, folder, path, and `as` (the agent's own path) or
+  `whoami` (the setting, followed when it changes). `dcf-registry handovers` prints it; `refresh`
+  repeats it; `forget <cli> <name> <folder>` removes a line after the adapter dropped the agent's
+  copies (the adapter's `skills` verb with `COMPONENT_REGISTRY_FORGET=1`). `agents up` forgets an
+  agent no longer in the list. The sessions no agent started are recorded as the agent
+  `component-registry` in the repository root (a `refresh --as <path>` or a `handover` with no
+  agent); nothing forgets it on its own: `dcf-registry forget claude component-registry <root>`.
+- **Mid-session refresh.** `/registry-refresh` passes the session id Claude Code substitutes; the
+  agent is found by that id in each adapter's `list` (name, id, state, folder) and its record, so
+  its own path is refreshed and nothing else. A changed layer that other agents also read reaches
+  them at their next start or refresh; meanwhile Claude Code moves that skill out of the shared
+  folder into each agent's own (the views no longer agree), so no agent reads another's text.
+- **What you will see and how to override it.** `dcf-registry handovers --skills` lists each
+  agent's path, its skills mode and, from the adapter's read-only `skills-show`, its own folder,
+  its own skills and the shared ones. The mode is the agents list's `registry-skills`
+  (`handover --skills-mode`), else `COMPONENT_REGISTRY_SKILLS_MODE`, else `split`; `shared` puts an
+  agent's whole view in the shared folder as before 1.8.0 (the latest hand-over wins), `off` hands
+  nothing over and forgets the agent. `refresh` repeats each agent's recorded mode.
+- **Where the CLI keeps them** is the adapter's (NFR-13). Claude Code (claude-code 1.14.0): what
+  every agent's view has alike stays personal, the rest goes to an added directory per agent; see
+  the claude-code notes.
+- **Disk.** A view per path in use (a few kilobytes each), and in Claude Code each agent's view
+  kept twice at most.
 
 ## Agent definitions (1.6.0)
 
@@ -378,6 +437,142 @@ skills:list = ref:skills/architecture-review
   `agents check` (`model gpt-5.4 (registry: corp, model.copilot)`, and the list's values it
   replaced).
 
+## Layer namespaces (1.7.0)
+
+A layer pointed at a source the Operator does not control (a public or community repository) is
+isolated by giving it a namespace in the layer list, `namespace: <name>` (ADR-0073, decision 4).
+
+- **Every component it brings gets the prefix.** Its `[skills/arch-review]` is the component
+  `skills/acme:arch-review`; its `[agents/reviewer]` is `agents/acme:reviewer`. It writes its
+  section paths without the prefix; a `:` in a section path is refused, so no layer can write one.
+- **Layers that share a namespace merge with each other** exactly as layers do: layer order,
+  specificity, locks, `@replace`, types, merge by value type, and the permission keys taken from
+  the namespace's lowest layer. **Different namespaces never mix**, and the layers without a
+  namespace are the Operator's own: an un-namespaced `[skills/*]` never reaches `acme:*`, and a
+  namespaced layer can only add prefixed components, never stack onto, override or lock anything
+  outside its namespace.
+- **The name**: lower-case letters and digits in words joined by one `-` (`acme`, `acme-tools`),
+  at most 40 characters; anything else is refused with `file:line` and nothing is resolved.
+  `component-registry` (the built-in base layer) and `anthropic-skills` (Claude Code's synced
+  skills) are reserved. The base layer itself has no namespace.
+- **On disk and for Claude.** Claude Code names a personal skill by its folder (and its
+  `SKILL.md` `name`), and the documentation gives a `:` only to the prefixes it makes itself
+  (plugins, added directories); the adapters take a folder of letters, digits, `. _ -` only. So
+  a namespaced skill lands in the view, and in the CLI's skills folder, as `skills/<ns>--<name>/`,
+  its `SKILL.md` front matter `name` set to that folder name whatever its text or a `name:value`
+  says (so it can never take a name outside its namespace); in Claude Code it is
+  `/acme--arch-review`. The registry's name stays `acme:arch-review`: `meta/skills/acme:arch-review/`,
+  `explain`, refs and `resolve`'s lines use it, and `meta/namespaced.tsv` maps one to the other.
+  The name splits at the first `--`, which a namespace never holds. A namespaced skill whose folder
+  name is already an un-namespaced skill's (`skills/acme--x` in the Operator's layer) is not
+  resolved and is reported; the Operator's skill keeps the name.
+- **References are explicit** (the Operator's ruling of 2026-11-21). A reference (a `ref` value,
+  a list's `ref:` item, an agent definition's `skills` item) **without a prefix names the
+  referrer's own namespace**: the un-namespaced set for the Operator's layers, `acme` for a layer
+  in `acme` (`see:ref = skills/helper` in `acme` is `skills/acme:helper`). **`<ns>:<name>` names
+  namespace `<ns>`, from any layer**, the Operator's or another namespace's
+  (`ref:skills/acme:arch-review`, `skills:list = acme:arch-review`). There is no way to name the
+  un-namespaced set from inside a namespace, so a namespace still cannot reach the Operator's
+  components. In a ref path the last segment is `[<ns>:]<name>[:<key>]`; `kind/a:b` is namespace
+  `a`, name `b` when that component is in the view, else the key `b` of `a` when that one is,
+  else (neither) namespace `a` when `a` can be a namespace name. Write `kind/<ns>:<name>:<key>`
+  to name a key of a namespaced component.
+- **A missing target is a missing dependency**, like a chart's dependency in Helm: `resolve` says
+  it in one line (the referrer, its layer, the target, and that no layer of the list has the
+  namespace, when none has) and goes on; `explain` and `explain --uses` show it as a missing
+  dependency. Installing the namespace, a layer that brings it, is the user's job.
+- **Aliases**: `aliases: { acme: acme-public }` on a layer in the layer list (a one-line map).
+  Inside that layer, a reference to `acme:` resolves to `acme-public:` before lookup. Both names
+  follow the namespace rules; an alias is one hop (one whose target is another alias of the
+  layer is refused), never names itself, the layer's own namespace or a reserved name; each
+  refusal names its `file:line`. `explain` shows `acme:lint -> acme-public:lint (alias on
+  <layer>)` on the reference and the layer's aliases in the layer list.
+- **Agent definitions** (the Operator's ruling of 2026-11-23). Whether a layer is namespaced is
+  the choice of whoever lists it. A plain-listed layer's agent definitions override as any layer's
+  do; a namespaced layer's `agents/<name>` becomes `agents/acme:<name>` (in the view
+  `agents/acme:<name>/`, a name no agents-list agent can have) and matches none, and its pattern
+  `[agents/*]` never reaches a listed agent. Its `skills` items without a prefix are its
+  namespace's skills. The Operator's own agent definition names a namespaced skill as
+  `acme:arch-review` in its `skills` list (written to the view as `acme--arch-review`, the name
+  its CLI knows).
+- **Shown by** `explain`: the layers with their namespace, a line naming the namespace and the
+  hand-over name, and `[namespace acme]` on every line of the component; it takes
+  `skills/acme:arch-review[:key]` or the folder name `skills/acme--arch-review`. `explain --uses`
+  shows a namespaced ref's resolved target, and `handover` says which skills went by their folder
+  name.
+
+A worked example: the Operator takes a community skill and adapts it with a layer of their own in
+the same namespace.
+
+```yaml
+layers:
+  - id: mine                    # the Operator's own: no namespace
+    at: /Corp
+    sources:
+      - { kind: path, path: .registry-mine }
+  - id: acme-community          # the public source, isolated
+    at: /
+    namespace: acme
+    sources:
+      - { kind: git, url: "https://git.example.invalid/acme/skills.git", tag: v2 }
+  - id: acme-adapt              # the Operator's adaptation of it: same namespace, a path they own
+    at: /Corp
+    namespace: acme
+    sources:
+      - { kind: path, path: .registry-acme }
+```
+
+```
+; acme-community (v2)                  ; acme-adapt (.registry-acme/adapt.reg)
+[skills/arch-review]                   [skills/arch-review]
+body:text = @file arch-review/SKILL.md body:text = Our ADRs live in docs/adr/.
+allowed-tools:value = Read             allowed-tools:value = Bash   ; skipped: the namespace's lowest layer's stands
+style:value = strict
+lock style                             style:value = loose          ; skipped: locked by acme-community
+```
+
+`resolve` writes `skills/acme--arch-review/SKILL.md`: the community text, then `## Layer
+acme-adapt` and the Operator's line, named `acme--arch-review`; the Operator's own
+`skills/arch-review`, if any, is untouched, and neither layer's `[skills/*]` reaches the other.
+To stop trusting the source, drop the layer; to pin it, its tag.
+
+**Dependencies, like Helm's.** A namespace can build on another, as a chart names the charts it
+depends on; the user installs each one by listing its layer.
+
+```yaml
+layers:
+  - id: acme-community          # depends on lint-tools
+    at: /
+    namespace: acme
+    sources:
+      - { kind: git, url: "https://git.example.invalid/acme/skills.git", tag: v2 }
+  - id: lint-tools              # the dependency, installed as its own namespace
+    at: /
+    namespace: lint-tools-public
+    sources:
+      - { kind: git, url: "https://git.example.invalid/lint/skills.git", tag: v1 }
+  - id: acme-adapt
+    at: /Corp
+    namespace: acme
+    aliases: { lint-tools: lint-tools-public }   # the community layer's name for it, here
+    sources:
+      - { kind: path, path: .registry-acme }
+```
+
+```
+; acme-community                       ; acme-adapt
+[skills/arch-review]                   [skills/arch-review]
+uses:ref = skills/lint-tools:lint      lint:ref = skills/lint-tools:lint   ; -> lint-tools-public:lint
+see:ref = skills/helper                ; no prefix: acme's own helper
+```
+
+Without the `lint-tools` layer, `resolve` still succeeds and says `missing dependency:
+skills/acme:arch-review:uses in layer acme-community -> skills/lint-tools:lint (no component
+skills/lint-tools:lint for /Corp/...; no layer of the list has namespace lint-tools)`. The alias
+applies to the references written in the layer that carries it, so `acme-adapt`'s `lint:ref`
+finds `lint-tools-public:lint`, while `acme-community`'s `uses:ref` still asks for `lint-tools`:
+list the dependency under the name the community layer uses, or alias on each layer that needs it.
+
 ## The match rule
 
 For who you are, `W`:
@@ -411,13 +606,14 @@ a reader sees the old view or the new one, never half of each:
 
 | Path | What it holds |
 | --- | --- |
-| `skills/<name>/` | `SKILL.md` and the skill's files: what a consumer copies |
+| `skills/<name>/` | `SKILL.md` and the skill's files: what a consumer copies; a namespaced skill as `skills/<ns>--<name>/` (1.7.0) |
 | `agents/<name>/` | (1.6.0) an agent definition: `model` (one line, the effective model for its CLI), `cli` (the CLI it was resolved for), `skills` (one name per line), `from.tsv` (field, layer, `source:file:line`, key of each line used); what the participant component reads |
 | `meta/<kind>/<name>/values/<key>` | each resolved value (a list one item per line; text as stacked) |
 | `meta/<kind>/<name>/keys.tsv` | key, type, one-line summary |
 | `meta/<kind>/<name>/provenance.tsv` | every line considered: state (`used`, `overridden`, `skipped`, `dropped`, `excluded`, `not-applying`), key, type, layer, rank, version, `source:file:line`, data, why; `-` for an empty field |
 | `meta/refs.tsv` | every ref: from, key, target, its component and key, `ok` or `dangling`, why |
 | `meta/problems.tsv` | lines that could not be read |
+| `meta/namespaced.tsv` | (1.7.0) each namespaced component: its registry name, its namespace, where it lands in the view (`skills/<ns>--<name>`) |
 | `agent-names` | (1.6.0) the agents whose definitions were resolved for every pattern (`COMPONENT_REGISTRY_AGENTS`) |
 | `layers.tsv`, `whoami`, `resolved` | each source's version and state (`fetched`, `unchanged`, `offline`, `missing`), who it was resolved for, when |
 
@@ -520,7 +716,8 @@ every skipped line with its reason, and `resolved N component(s) for <W>`.
   when `NO_COLOR` is set; `always` wins over `NO_COLOR`. Without colour the text is byte for byte
   that of 1.3.0.
 - `component-registry:setup`: re-run the start hook.
-- `component-registry:refresh`: resolve and hand over now (`-- --as <path>`); `/registry-refresh`.
+- `component-registry:refresh`: resolve and hand over now (`-- --as <path>`, `-- --session <id>`);
+  `/registry-refresh`.
 - `component-registry:remember`: `-- [--skill <name>] -- <line>`; `/registry-remember`.
 
 ## Pairs with
@@ -542,9 +739,11 @@ every skipped line with its reason, and `resolved N component(s) for <W>`.
   list; a person who wants another model for one run sets it in their own layer.
 - An agent's `skills` from the registry are what it is said to use (`agents list --json`); they do
   not limit which resolved skills its CLI receives (every resolved skill is handed over).
-- One resolved view per container, and one skills folder per CLI configuration: agents with
-  different who-you-are paths do not each keep their own skills; the latest resolve is what every
-  session of that CLI reads.
+- Agents with different who-you-are paths each keep their own skills only where the CLI's adapter
+  keeps them apart (Claude Code from claude-code 1.14.0, ADR-0074); another CLI reads the latest
+  hand-over. In Claude Code a session not started through `agents` reads only the skills every
+  agent's view has alike, and a project skill of the same name beats an agent's own copy (the
+  registry's then runs as `/registry:<name>`).
 - `remember` writes to a `path` source only, appends, and never edits or removes a line; to take
   one back, edit `remembered.reg` in your layer.
 - A `path` source's version is a fingerprint of names, sizes and
@@ -553,7 +752,11 @@ every skipped line with its reason, and `resolved N component(s) for <W>`.
 - The text heading is `## Layer <id>` or none (`heading: false`), per layer, never per line; a
   higher layer's text only appends. Of the front matter only `name` and `description` are values.
 - A `ref` is checked against this view only: its scope part is ignored, its component and key
-  must resolve for the same who-you-are path.
+  must resolve for the same who-you-are path; a missing one is reported, never fetched (1.7.0).
+- A namespaced agent definition matches no agent of the agents list (1.7.0); an agents-list
+  agent cannot opt into one. A namespace's skills are adapted through a layer listed in that
+  namespace; `remember --skill` takes no namespaced name (writing is out of the registry's scope,
+  the Operator's ruling of 2026-11-23: `writable` and `remember` are to be deprecated later).
 
 ## Why it exists
 
@@ -569,6 +772,77 @@ Pin the major in the Feature reference (`component-registry:1`); a rebuild picks
 else; the `.reg` grammar and the layer list keys only grow within 1.x.
 
 ## Changes
+
+### [1.8.0] - 2026-11-21
+
+#### Added
+
+- **A view per who-you-are path** (ADR-0074, backlog `agent-skills-folders`). `resolve` keeps the
+  latest view of every path (`paths/<path>` in the state folder) besides `view`, the latest of all;
+  `handover <cli> <name> <folder> --as <path>` hands that path's view, and without `--as` the view
+  of the who-you-are setting. `explain --as <path>` reads a path's own view. The one resolve lock
+  stays: the layer copies are shared.
+- **Hand-over records** (`dcf-registry handovers`): cli, agent, folder, path and whether the path
+  was the agent's own or the setting. `forget <cli> <name> <folder>` asks the adapter to drop the
+  agent's own copies, removes the record, and the views no record names any more.
+- **`refresh --session <id>`**: the agent whose session that is (each adapter's `list`) is
+  refreshed for its own path, alone. Without it (or with an id no agent has), `refresh` repeats
+  every recorded hand-over, each path resolved once; with no record, as before.
+- `/registry-refresh` runs `dcf-registry refresh --session "${CLAUDE_SESSION_ID}"`, so it refreshes
+  the calling agent in Claude Code.
+- **The skills mode** (`handover --skills-mode split|shared|off`, else the setting
+  `COMPONENT_REGISTRY_SKILLS_MODE`, else `split`), given to the adapter, recorded and repeated by
+  `refresh`; `off` forgets the agent. `handovers --skills` lists each agent's path, mode, own folder
+  and own skills (from the adapter's `skills-show`).
+
+Nothing to do. The adapter's `skills` verb also gets `COMPONENT_REGISTRY_PATH`; with claude-code
+1.14.0 agents of different paths keep their own skills.
+
+### [1.7.0] - 2026-11-21
+
+#### Added
+
+- **Layer namespaces** (ADR-0073, decision 4): `namespace: <name>` on a layer in the layer list
+  prefixes every component the layer brings (`skills/acme:arch-review`, `agents/acme:reviewer`).
+  Layers that share a namespace merge with each other as layers do (order, specificity, locks,
+  `@replace`, types, permission keys from the namespace's lowest layer); different namespaces
+  never mix, and the un-namespaced layers (the Operator's own) never reach a namespaced component,
+  nor it theirs. A name is lower-case letters and digits in words joined by one `-`, at most 40;
+  anything else, and the reserved `component-registry` and `anthropic-skills`, is refused with
+  `file:line`.
+- A namespaced skill lands in the view, and in a CLI's skills folder, as `skills/<ns>--<name>/`,
+  its `SKILL.md` named the same whatever its text says (a `:` is no skill folder name for the
+  adapters, and Claude Code keeps the `:` for the prefixes it makes); one whose folder name an
+  un-namespaced skill already has is not resolved and is reported. `meta/namespaced.tsv` maps the
+  registry name to it; `handover` says which skills went by their folder name.
+- **Explicit references** (the Operator's ruling of 2026-11-21): a ref, a list `ref:` item or an
+  agent's `skills` item without a prefix names the referrer's own namespace; `<ns>:<name>` names
+  namespace `<ns>` from any layer, including one namespace to another. Nothing names the
+  un-namespaced set from inside a namespace.
+- **Missing dependencies**: a reference whose target is not in the view is reported by `resolve`
+  (the referrer, its layer, the target), shown by `explain` and `explain --uses`, and does not
+  stop `resolve`. `meta/refs.tsv` gains the state `missing` (a malformed ref stays `dangling`) and
+  two columns, the referrer's layer and the alias used.
+- **Aliases**: `aliases: { <name>: <namespace> }` on a layer; inside it, a reference to `<name>:`
+  resolves to `<namespace>:` first. One hop; an alias naming itself, the layer's own namespace,
+  another alias of the layer or a reserved name is refused with `file:line`. `layers.tsv` gains
+  an eleventh column, `aliases`.
+- A namespaced agent definition (`agents/<ns>:<name>/` in the view) matches no agent of the
+  agents list; a plain-listed layer's agent definitions override as before (the Operator's ruling
+  of 2026-11-23). The Operator's own agent names a namespaced skill as `<ns>:<name>` in its
+  `skills`, written to the view as `<ns>--<name>`.
+- `explain` shows each layer's namespace, a namespace line with the hand-over name, and
+  `[namespace <ns>]` on every line of a namespaced component; it takes `kind/<ns>:<name>[:key]`
+  or the folder name; a "References" part lists each reference as written and as resolved, then
+  the missing dependencies; `--uses` shows a namespaced or aliased ref's resolved target.
+
+#### Changed
+
+- `layers.tsv` gains a tenth column, `namespace` (`-` for none). In an agent definition's
+  `skills`, a plain item `<a>:<b>` (a lower-case `<a>`) now names the namespaced skill `a:b`; it
+  was read as the skill `a` before. A ref to a target that is not there is reported as a
+  `missing dependency:` line instead of `dangling ref:`. Otherwise a layer list without a
+  namespace resolves exactly as in 1.6.0. `writable` and `remember` are unchanged.
 
 ### [1.6.0] - 2026-11-20
 
@@ -596,38 +870,6 @@ else; the `.reg` grammar and the layer list keys only grow within 1.x.
 Nothing to do for a layer list or a layer that holds skills only: they resolve as before. A
 section for `agents/...`, reported as "not in this release" until now, is resolved from this
 release.
-
-### [1.5.0] - 2026-11-20
-
-#### Added
-
-- **The `db` source.** A layer can be the rows of a database: `kind: db` with `driver: sqlite`
-  (`path`) or `driver: postgres` (`host`, `port`, `database`, `user`, `sslmode`, and the password
-  as `auth.secret`, a `dcf-secret` name), and one of `table` or `query`, returning the columns
-  `section`, `key`, `type`, `data`, `locked`. The source (`registry-source-db`) renders them into a
-  `.reg` file in the layer copy (a multi-line `text` into a file read with `@file`); its version is
-  a hash of the rendered files; a bad row or an empty result fails the fetch with the reason, and
-  `resolve` keeps the last good copy. The database is opened read-only; the password reaches
-  `psql` in its environment only. Any other driver exits 3. The contract is in the Feature's notes.
-
-#### Changed
-
-- A layer list naming `kind: db` is no longer reported as "not in this release".
-
-Needs `sqlite3` or `psql` in the image for the driver in use (this Feature does not install them;
-the source says how). Nothing to do for a layer list without a `db` source. Rebuild to get it.
-
-### [1.4.0] - 2026-11-20
-
-#### Added
-
-- **`dcf-registry explain --color auto|always|never`.** `explain` paints each resolved line by the
-  layer it came from, with a legend at the top (layer id and colour name), and shows skipped lines
-  and dangling refs dim and struck through. Six colours of the Okabe-Ito set, chosen to stay
-  distinguishable with the usual colour-vision deficiencies; the layer id is on every line, so
-  colour is never the only signal. The default, `auto`, colours only when stdout is a terminal and
-  `NO_COLOR` is unset; `always` colours regardless (also over `NO_COLOR`); `never` does not. Without
-  colour the output is byte for byte that of 1.3.0, so scripts keep working. Nothing to act on.
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/component-registry/CHANGELOG.md).
 
