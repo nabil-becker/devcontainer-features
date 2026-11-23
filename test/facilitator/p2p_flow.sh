@@ -179,7 +179,8 @@ if [[ "$(docker exec -e CLAUDECODE=1 "$p-a" facilitator node approve "$rid" --ye
 if out="$(fx a node approve "$rid" --yes --as pa 2>&1)"; then ok "a person approved: ${out#facilitator: }"; else no "approve: $out"; fi
 if out="$(fx pub node collect 2>&1)"; then ok "pub-1 collected: ${out#facilitator: }"; else no "collect: $out"; fi
 docker restart "$p-pub" >/dev/null
-if wait_for 120 seen pub j1; then ok "the public node is shown j1, which node-a exposes public"; else no "pub does not see j1"; fx pub check || true; docker logs "$p-pub" 2>&1 | tail -10; fi
+if wait_for 120 seen pub j1; then ok "the public node is shown j1, which node-a exposes public"; else no "pub does not see j1"; fx pub check || true; docker logs "$p-pub" 2>&1 | tail -10
+  if [ -n "${P2P_PAUSE_PUB:-}" ]; then echo "paused: $p"; sleep "$P2P_PAUSE_PUB"; fi; fi
 for h in a1 b1 c1 j2x; do
   if seen pub "$h"; then no "the public node lists $h"; fi
 done

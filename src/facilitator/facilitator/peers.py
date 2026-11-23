@@ -960,6 +960,10 @@ class Daemon:
                 inf = self.fac.infra()
                 await asyncio.to_thread(inf.down_one, "slim")
                 await asyncio.to_thread(inf.up_one, "slim")
+                # this part's connection to its SLIM node died with it, and a SLIM app cannot be re-attached: start again
+                # (found running the flow: with certificates renewed at half life, every renewal otherwise left this part
+                # deaf and mute until the container restarted)
+                self.reexec = True
             await asyncio.sleep(2)
 
     async def joins(self) -> None:
