@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | accepted |
+| **Status** | accepted (decision 4 refined by [ADR 0076](0076-an-http-client-may-begin-a-conversation-under-a-persons-approval-and-public-under-team-reaches-only-a-nodes-own-http-clients.md)) |
 | **Date** | 2026-11-20 |
 | **Deciders** | the Operator; proposed by the host |
 
@@ -73,3 +73,4 @@ Leaves a hole in the loop guard: a cloud AI could count as a person and reset th
 | Date | Change |
 |---|---|
 | 2026-11-20 | First draft, accepted on the Operator's rulings AH, SP4 and BA to BG of the same day. |
+- 2026-11-23: decision 4 refined by ADR 0076 (rulings on slice N4).

@@ -633,6 +633,12 @@ tasks:
           if cmp -s bundles/facilitator/install.sh src/facilitator/bundle-build.sh; then echo "the bundle script copy is up to date"; exit 0; fi
           echo "stale copy: src/facilitator/bundle-build.sh differs from bundles/facilitator/install.sh (task bundle:sync)"; exit 1
 
+  bundle:mcp-wheels:
+    desc: 'Regenerate the pinned `mcp` wheel table (HTTP_WHEELS) of bundles/facilitator/install.sh for MCP=<version> (the dependency closure from pip for CPython 3.13, then each wheel''s SHA-256 and URL from PyPI''s JSON API: pure wheels once, native ones per architecture, the cp313 or abi3 manylinux wheel of glibc 2_28 or older), then copies the script over src/facilitator/bundle-build.sh. CHECK=1 only compares and exits 1 on a difference (it reproduces the table for 2.3.0). Needs network; bump the facilitator Feature after a change.'
+    cmds:
+      - python3 -I bundles/facilitator/mcp-wheels.py "{{.MCP}}"{{if .CHECK}} --check{{end}}
+      - '{{if not .CHECK}}install -m 0755 bundles/facilitator/install.sh src/facilitator/bundle-build.sh{{else}}true{{end}}'
+
   bundle:sync:
     desc: 'Copy bundles/facilitator/install.sh over src/facilitator/bundle-build.sh after a change to the bundle script; bump the facilitator Feature.'
     silent: true

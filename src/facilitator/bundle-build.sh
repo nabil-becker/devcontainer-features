@@ -91,8 +91,8 @@ for tool in tar gzip sha256sum; do command -v "$tool" >/dev/null 2>&1 || die "ne
 # mcp 2.3.0 (MIT) and the 27 wheels `pip download mcp==2.3.0` resolved for CPython 3.13 on 2026-11-23: PyPI's sha256 and
 #   URL for each (pypi.org/pypi/<name>/<version>/json). Pure wheels are the same on both architectures ("any"); the
 #   four with native code (cffi, cryptography, pydantic_core, rpds_py) have one wheel per architecture, the oldest
-#   manylinux tag PyPI offers (2014 or 2_17: under the bundle's glibc floor). To move to another mcp version: pip
-#   download it into an empty folder, then regenerate this table from PyPI's JSON; an unlisted wheel is never fetched.
+#   manylinux tag PyPI offers (2014 or 2_17: under the bundle's glibc floor). To move to another mcp version or to
+#   check this table: task bundle:mcp-wheels (bundles/facilitator/mcp-wheels.py); an unlisted wheel is never fetched.
 HTTP_WHEELS="$(cat <<'WHEELS'
 any|annotated_types-0.8.0-py3-none-any.whl|f072f4d804ea359e4eaf198b1af7a8b0943881a87f31bb764f8bf219bb9419e0|https://files.pythonhosted.org/packages/99/91/8acff4f5e50511b911bbccb72b8628a49c68ce14148cd9f6431094859a90/annotated_types-0.8.0-py3-none-any.whl
 any|anyio-4.16.0-py3-none-any.whl|c66ae634e0b8228396b801741beb3294326d4b6102f7bba4041c0dfb58c29026|https://files.pythonhosted.org/packages/a9/16/7757fb84c819accc7d7e9af5291b261e4abb8627ee040f99e7d35ef2457a/anyio-4.16.0-py3-none-any.whl

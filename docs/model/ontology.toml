@@ -1436,3 +1436,23 @@ summary = "handle.node, naming one agent when nodes share a handle; a bare handl
 type = "concept"
 term = "Shared handle"
 summary = "A handle announced by agents on two or more nodes of a mesh, reached by qualified handle."
+
+[http-client]
+type = "mechanism"
+term = "HTTP client"
+summary = "A CLI reaching a facilitator node over MCP over HTTP with a bearer token; signed for by the node, never a person."
+
+[bearer-token]
+type = "mechanism"
+term = "Bearer token"
+summary = "The <client>.<secret> token a person makes for an HTTP client; the node keeps only its SHA-256."
+
+[first-contact-approval]
+type = "mechanism"
+term = "First-contact approval"
+summary = "At the public level an HTTP client's first message is held until a person approves the client."
+
+[via]
+type = "mechanism"
+term = "Via"
+summary = "The data.via field naming the HTTP client the node vouches for on a message it signed."
