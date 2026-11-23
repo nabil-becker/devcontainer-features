@@ -1,4 +1,4 @@
-"""The peers module (proposal facilitator-node, sections 4, 5.3, 8, 10 and 12; slice N3): what crosses from one
+"""The peers module (proposal facilitator-node, sections 4, 5.3, 8, 10 and 12; slices N3 and N5a): what crosses from one
 node to another, and the long-running part that carries it (`facilitator node peers`, the infrastructure part
 `peers`, started by `infra up` when the role is spoke or hub).
 
@@ -19,6 +19,20 @@ the other member nodes (outbox) and the whole register is sent again until it is
 an entry's id is its hash), so a node that was away catches up, and a held message waits (12.2). An @handle on
 another node is reached through the hub: the spokes' SLIM nodes link only to the hub, which routes between them
 (static `peer` links, SP3), and the hub's own application holds no copy unless one of its participants is a member.
+
+Slice N5a adds, to the same parts:
+- role `peer` (no hub): each node is the issuer of its own domain (a CA it keeps, identity.LocalIssuer) and lists the nodes
+  it links to (node.peers); `node invite` on one and `node peer --token` on the other pair them (the two exchange CA
+  bundles, so each one's listener trusts the other's domain, and the accepter hands over the mesh secret); the peers
+  exchange cards by `hello` and `card` envelopes, with no roster to relay.
+- the public level across nodes: a node that issues for a public domain (node.public) opens a separate join endpoint for
+  join *requests* (a key, no token) and a separate public SLIM listener; a person's `node approve` issues the requester's
+  certificate (1 h); the requester is a spoke of that domain, and what it is shown is the issuer's card alone, restricted to
+  what is exposed public (copy `addressed`: it replicates only the conversations it is a member of, in which every message
+  is addressed to it or written by it, enforced when written and checked again before sending, Net.addressed_ok).
+- cut-off: `node revoke` stops renewal, drops the card, and rotates the mesh's SLIM app secret (ruling H4): the rotation
+  is handed, by the nodes that remain, to the nodes that remain (the `secret` envelope), each of which restarts its peers
+  part on the new secret; a revoked node holds the old one and can no longer connect.
 """
 from __future__ import annotations
 
@@ -208,13 +222,44 @@ class Net:
 
     # ------------------------------------------------------------ conversations shared with other nodes
 
+    def copy_of(self, node: str) -> str:
+        """What this node replicates to `node`: the `copy` of the level its card puts it at (ruling AH: addressed at public)."""
+        c = self.cards().get(node)
+        return self.mesh.limit(c["level"], "copy")[0] if c else "member"
+
+    def addressed_ok(self, conv: str, node: str) -> tuple[bool, str]:
+        """Copy `addressed` (proposal 10), checked before a register is sent to a node that gets only what is addressed to it:
+        every message in it is by a member on that node, or its route names one (and the members are only this node's and
+        that node's). register-engine cannot hold a sub-DAG (an entry whose `prev` is absent is refused, sign-packet
+        graph.order), so the policy is on the conversation: the write refuses what is not addressed (Facilitator.write),
+        and this refuses to send a register that holds more."""
+        try:
+            _, proj, _ = self.fac.record.read(conv)
+        except Exception as e:           # noqa: BLE001
+            return False, f"the register cannot be read: {e}"
+        th = proj["thread"]
+        if th is None:
+            return False, "no thread entry"
+        mine = {m for m in th["members"] if self.node_of(m) == node}
+        if not mine:
+            return False, f"{node} has no member in {conv}"
+        for mid in proj["order"]:
+            m = proj["messages"][mid]
+            if m["from"] in mine:
+                continue
+            routed = {t for r in proj["routes"].get(mid, []) for t in r["to"]}
+            if not (routed & mine):
+                return False, (f"the message {mid} is not addressed to {', '.join(sorted(mine))}: a conversation shared with a "
+                               f"node at copy addressed carries only what is addressed to it")
+        return True, "ok"
+
     def meta(self, conv: str) -> dict | None:
         try:
             return json.loads((self.store.convs / f"{conv}.json").read_text())
         except (OSError, ValueError):
             return None
 
-    def save_meta(self, conv: str, members: dict[str, str], home: str) -> None:
+    def save_meta(self, conv: str, members: dict[str, str], home: str, copy: str | None = None) -> None:
         """A shared conversation's members and their nodes. Once known, a member's node never changes and no
         member is removed by a later envelope (a member node cannot drop or move another node's members)."""
         self.store.ensure()
@@ -222,7 +267,10 @@ class Net:
         merged = {**members, **old.get("members", {})}
         p = self.store.convs / f"{conv}.json"
         tmp = p.with_suffix(".tmp")
-        tmp.write_text(json.dumps({"members": merged, "home": old.get("home") or home}, sort_keys=True))
+        meta = {"members": merged, "home": old.get("home") or home}
+        if copy or old.get("copy"):
+            meta["copy"] = copy or old["copy"]       # what the sender replicates to this node: `addressed` makes the replica partial
+        tmp.write_text(json.dumps(meta, sort_keys=True))
         os.replace(tmp, p)
 
     def nodes_of(self, conv: str) -> set[str]:
@@ -381,7 +429,8 @@ class Daemon:
                 continue                        # a local-only participant never leaves this node
             parts.append({"handle": h, "key": ident["key"], "kind": ident["kind"], "exposure": exp,
                           "description": ident.get("description", ""), "skills": ident.get("skills", []),
-                          **({"cid": ident["cid"]} if ident.get("cid") else {})})
+                          **({"cid": ident["cid"]} if ident.get("cid") else {}),
+                          **({"badge": ident["badge"]} if isinstance(ident.get("badge"), str) and ident["badge"] else {})})
         return identity.make_card(self.store, self.domain, self.mesh.node_id, self.fac.record.facilitator_key(), parts)
 
     def envelope(self, to: str, body: dict) -> bytes:

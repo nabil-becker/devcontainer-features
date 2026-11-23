@@ -18,6 +18,9 @@ ca-certificates on Debian): Python's standard library has no X.509 parser.
     mesh/ca/<domain>/                                      a CA this node keeps for a domain it issues in (a peer's own, a public one)
     mesh/requests.json                                     public join requests: a key, waiting for a person's approval (slice N5a)
 
+A participant entry of a card may carry an opaque `badge` (ruling ID2, AGNTCY Identity, slice N5a): a string the card's
+signature covers and lock two ignores; a later slice verifies it (see the NOTES, "Agent badges").
+
 A **card** is how a node says who it is and which of its participants the mesh may reach: its certificate,
 its facilitator's packet key, and each participant exposed at least as wide as its domain's level, with its
 packet key; signed with the node's certificate key. Lock two (mesh.Mesh.admit) runs on the certificate, and
@@ -333,6 +336,8 @@ def check_card(card: dict, m: "mesh_mod.Mesh", bundles: dict[str, Path], revoked
     for p in card.get("participants", []):
         if not mesh_mod.HANDLE_RE.fullmatch(str(p.get("handle", ""))) or p.get("exposure") not in mesh_mod.LEVELS:
             return False, "", f"a participant entry is malformed: {p!r}"
+        if "badge" in p and not (isinstance(p["badge"], str) and len(p["badge"]) <= 8192):
+            return False, "", f"a participant's badge is malformed (an opaque string up to 8 KiB): {p.get('handle')}"
         if not mesh_mod.reach_ok(level, p["exposure"]):
             return False, "", f"the card lists {p['handle']} exposed {p['exposure']}, narrower than {level}"
     return True, level, why
