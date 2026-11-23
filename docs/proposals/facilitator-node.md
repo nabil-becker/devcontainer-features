@@ -1465,3 +1465,18 @@ What slice N4 found where a ruling could not be built as written, and the Operat
 - **HC5, the `mcp` wheels in the bundle: option A, ruled 2026-11-23.** The bundle grows by about 40 MB; its
   `install.sh` keeps the 28 `mcp` wheels per architecture pinned by SHA-256 and URL (`--require-hashes`), and a
   task refreshes that table before the next `mcp` upgrade. Rejected: refreshing it by hand (B).
+
+## Rulings before slice N5 (2026-11-23)
+
+- **PB1, the AGNTCY Identity spike comes first.** The short hands-on spike (backlog `agntcy-identity-spike`)
+  runs before slice N5, as section 13 schedules it; its findings decide the badge layer and whether public
+  nodes need agent badges.
+- **PB2, the hub's OpenBao stays unsealed by hand** (ruling AB stands). After a restart, public certificates (1 h)
+  lapse within the hour, so public links fail closed until a person unseals; private and local survive a day.
+  Revisited when a hub runs unattended.
+- **PB3, slice N5 is split.** **N5a** (`facilitator` 0.6.0): peer-to-peer (`role: peer`, a peers list), the
+  cross-node public rules (join by key plus approval, a separate public listener, `copy: addressed`, partial
+  replicas in `verify`, revoke and cut-off, `preset: open`), rotating the mesh's SLIM secret on revoke (H4),
+  and the signed audit register (HC3). **N5b** (`facilitator` 0.7.0): the OAuth 2.1 resource server and cloud
+  AIs (protected-resource metadata, the issuer allow list, a named authorization server, a public HTTPS
+  address).
