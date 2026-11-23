@@ -277,7 +277,7 @@ class Store:
         r = _run(["req", "-x509", "-new", "-key", str(cak), "-subj", f"/O={home_domain}/CN={home_domain} local CA",
                   "-days", "3650", "-addext", "basicConstraints=critical,CA:true,pathlen:0",
                   "-addext", "keyUsage=critical,keyCertSign,cRLSign",
-                  "-addext", f"nameConstraints=critical,permitted;URI:{home_domain},permitted;DNS:{home_domain}"])
+                  "-addext", f"nameConstraints=critical,permitted;DNS:{home_domain}"])
         cap.write_bytes(r.stdout)
         return cap
 

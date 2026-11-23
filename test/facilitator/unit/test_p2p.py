@@ -91,6 +91,20 @@ def test_peer_open_and_public_parse_and_the_rules_around_them():
         assert any(x.rule == rule for x in f), (rule, text, f)
 
 
+def test_no_ca_we_make_carries_a_uri_name_constraint():
+    with tempfile.TemporaryDirectory() as t:
+        st = identity.Store(Path(t))
+        st.ensure()
+        st.ensure_local_ca("n1.local")
+        identity.LocalIssuer(st, "d.test", ("n.d.test",)).ensure()
+        for pem in (st.ca / "ca.pem", st.ca / "d.test" / "ca.pem"):
+            txt = subprocess.run(["openssl", "x509", "-noout", "-text"], input=pem.read_text(), capture_output=True, text=True).stdout
+            nc = txt.split("Name Constraints")[1].split("X509v3")[0]
+            assert "DNS:" in nc and "URI:" not in nc, (pem, nc)
+        st.issue_local("n1.local", "n1", "n1.local")      # a certificate under it still verifies
+        assert identity.chain_ok(st.cert("n1.local").read_text(), st.bundle("n1.local"))
+
+
 # ---------------------------------------------------------------- the issuer a node keeps, pairing, public requests
 
 def test_a_peer_is_its_own_issuer_and_certificates_are_name_constrained():
