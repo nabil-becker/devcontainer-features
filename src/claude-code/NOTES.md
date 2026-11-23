@@ -269,6 +269,8 @@ one login and one Claude Code state ([ADR-0074](https://github.com/nabil-becker/
   An `--add-dir` to the agent's own folder already in its `args` (`--add-dir <it>`, `--add-dir=<it>`,
   or among several folders after one `--add-dir`) is never added twice; an `--add-dir` to another
   folder is kept as it is, and the agent's own is added after it.
+- **Namespaced skills** (component-registry 1.7.0) arrive by their folder name, `<namespace>--<name>`,
+  and are split, shown and checked for clashes by that name like any other skill.
 - **Limits** (accepted by the Operator, 2026-11-21). A committed project skill
   (`<folder>/.claude/skills/<name>`) with the same name as an agent's own copy wins in that agent's
   sessions; the own copy stays runnable as `/registry:<name>`, and the start line names the clash.

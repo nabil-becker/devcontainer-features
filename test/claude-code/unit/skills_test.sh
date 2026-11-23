@@ -186,6 +186,28 @@ mkdir -p "$R/fz"
 (cd "$R/fz" && PATH="$T/bin:/usr/bin:/bin" CLAUDE_CONFIG_DIR="$R/cfg" bash "$adapter" new zed "$R/fz" >/dev/null 2>&1)
 check 'new: an agent never handed skills gets no --add-dir' 0 "$(grep -c -- '--add-dir' "$T/claude-calls")"
 
+# namespaced skills (component-registry 1.7.0) arrive by their folder name, <namespace>--<name>:
+# split like any other skill, and the clash check uses that folder name
+mkdir -p "$R/na" "$R/nb"
+view nsx 'acme--review=acme for x' 'plain=same'
+view nsy 'acme--review=acme for y' 'plain=same'
+NC="$R/ncfg"; mkdir -p "$NC"
+nhand() { (cd "$2" && PATH="$T/bin:/usr/bin:/bin" CLAUDE_CONFIG_DIR="$NC" COMPONENT_REGISTRY_SKILLS="$R/view-$3" bash "$adapter" skills "$1" "$2" 2>&1); }
+nown() { printf '%s/registry-agents/%s/registry/.claude/skills' "$NC" "$(key "$1" "$2")"; }
+nhand na "$R/na" nsx >/dev/null; nhand nb "$R/nb" nsy >/dev/null
+check 'namespaced: a contested acme--review in each own folder' "acme for x|acme for y" "$(cat "$(nown na "$R/na")/acme--review/SKILL.md" 2>/dev/null)|$(cat "$(nown nb "$R/nb")/acme--review/SKILL.md" 2>/dev/null)"
+check 'namespaced: not in the shared folder' no "$([ -e "$NC/skills/acme--review" ] && echo yes || echo no)"
+check 'namespaced: the plain skill shared' same "$(cat "$NC/skills/plain/SKILL.md" 2>/dev/null)"
+view nsy 'acme--review=acme for x' 'plain=same'
+nhand nb "$R/nb" nsy >/dev/null
+check 'namespaced: views agreeing again, acme--review shared' 'acme for x' "$(cat "$NC/skills/acme--review/SKILL.md" 2>/dev/null)"
+view nsy 'acme--review=acme for y' 'plain=same'; nhand nb "$R/nb" nsy >/dev/null
+mkdir -p "$R/na/.claude/skills/acme--review"; echo 'project copy' > "$R/na/.claude/skills/acme--review/SKILL.md"
+out="$(cd "$R/na" && PATH="$T/bin:/usr/bin:/bin" CLAUDE_CONFIG_DIR="$NC" bash "$adapter" new na "$R/na" 2>&1)"
+contains 'namespaced: a project clash named by the folder name' "$out" "the project's $R/na/.claude/skills/acme--review wins in its sessions; its own acme--review runs as /registry:acme--review."
+out="$(cd "$R/na" && PATH="$T/bin:/usr/bin:/bin" CLAUDE_CONFIG_DIR="$NC" bash "$adapter" skills-show na "$R/na")"
+check 'namespaced: skills-show lists it by its folder name' acme--review "$(printf '%s\n' "$out" | awk -F'\t' '$1 == "own-skills" { print $2 }')"
+
 # ------------------------------- transparency and control (claude-code 1.14.0, ADR-0074) ----
 AD="$R/cfg/registry-agents/$(key ana "$R/fa")/registry"
 newcall() { : > "$T/claude-calls"; (cd "$R/fa" && PATH="$T/bin:/usr/bin:/bin" CLAUDE_CONFIG_DIR="$R/cfg" bash "$adapter" "$@" 2>&1); }

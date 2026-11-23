@@ -195,6 +195,11 @@ component's start sequence runs `resolve` at every agent's start, and `/registry
 `/registry-remember`, which refreshes) run it mid-session; `task component-registry:resolve` runs
 it by hand.
 
+A layer's namespace (component-registry 1.7.0) changes no state here: a namespaced layer's copy
+and its components live and go exactly as any other layer's; dropping the layer from the list
+removes its copy and, at the next resolve, its prefixed skills from the view and the CLI's skills
+folder.
+
 ## A skill moving into the registry
 
 From slice 4 of the [component registry](../proposals/component-registry.md) (`architecture-review`,

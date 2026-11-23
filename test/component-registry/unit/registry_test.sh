@@ -14,7 +14,9 @@
 # release 1.1.0: the built-in base layer of utility skills, layer-list, handover to a CLI adapter's
 # skills verb (fake adapters with and without it), refresh, and remember into the writable layer;
 # and release 1.6.0: agent definitions (model and skills, the fields the registry never sets,
-# COMPONENT_REGISTRY_AGENTS, the view's agents/<name>/, explain).
+# COMPONENT_REGISTRY_AGENTS, the view's agents/<name>/, explain); and release 1.7.0: layer
+# namespaces (two never mixing, two layers of one merging with a lock and @replace, the Operator's
+# layers unaffected, refs kept inside, agent definitions, <ns>--<name> on disk, bad names refused).
 # Part of `task lint` (`task test:component-registry-unit`).
 set -u
 
@@ -326,12 +328,14 @@ contains "a bad section header is reported" "$out" "1:z-broken.reg:2: a section 
 contains "a kind not in this release is reported" "$out" "kind prompts is not in this release"
 check "a kind not in this release is not resolved" no "$([ -e "$(V)/prompts" ] && echo yes || echo no)"
 check "ref: the strongest line's path" /skills/x "$(val skills/w w)"
-contains "a ref to nothing is reported by resolve" "$out" "dangling ref: skills/w:gone -> skills/missing (no component skills/missing for $W)"
+contains "a ref to nothing is reported by resolve as a missing dependency" "$out" "missing dependency: skills/w:gone in layer"
+contains "a ref to nothing: the target and why" "$out" "-> skills/missing (no component skills/missing for $W)"
 ex="$(dcf-registry explain skills/w)"
 contains "explain lists a dangling ref" "$ex" "skills/w:gone -> skills/missing (no component skills/missing"
 contains "a list ref: item to nothing is dangling" "$ex" "skills/w:lines -> /skills/nowhere"
 contains "a ref to a missing key is dangling" "$ex" "skills/w:nokey -> skills/x:nothere (skills/x has no key nothere)"
-lacks "a ref to an existing key is not dangling" "$ex" "skills/w:key ->"
+check "a ref to an existing key is ok" ok "$(awk -F'\t' '$1 == "skills/w" && $2 == "key" { print $6 }' "$(V)/meta/refs.tsv")"
+contains "explain lists every reference as written and as resolved" "$ex" "References (1.7.0"
 uses="$(dcf-registry explain skills/x --uses)"
 contains "--uses lists a ref value" "$uses" "skills/w:w -> /skills/x (ok)"
 contains "--uses lists a ref to one of its keys" "$uses" "skills/w:key -> skills/x:color (ok)"
@@ -644,6 +648,17 @@ contains "handovers --skills: the agent, its path and mode" "$out" "ax (rec, /fx
 contains "handovers --skills: its own folder" "$out" "  own folder: /own/ax"
 contains "handovers --skills: its own skills" "$out" "  own skills: mine"
 contains "handovers --skills: the shared ones" "$out" "  shared (/shared): shared"
+# a namespaced layer (1.7.0): each path's view holds the namespaced skill by its folder name, and the
+# hand-over of that path gives it to the agent
+new_case perpathns
+ln="$(layer acme)"
+printf '[/Corp/x/skills/review]\nbody:text = acme for x\n[/Corp/y/skills/review]\nbody:text = acme for y\n' > "$ln/a.reg"
+printf 'layers:\n  - id: acme\n    at: /Corp\n    namespace: acme\n    sources:\n      - { kind: path, path: "%s" }\n' "$ln" > .devcontainer/registry.yml
+dcf-registry resolve --as /Corp/x >/dev/null 2>&1; dcf-registry resolve --as /Corp/y >/dev/null 2>&1
+check "namespaced, per path: /Corp/x's view holds acme--review" "acme for x" "$(tail -n 1 "$(P +Corp+x)/skills/acme--review/SKILL.md" 2>/dev/null)"
+check "namespaced, per path: /Corp/y's view holds its own" "acme for y" "$(tail -n 1 "$(P +Corp+y)/skills/acme--review/SKILL.md" 2>/dev/null)"
+out="$(PATH="$RP" dcf-registry handover rec nx /fx --as /Corp/x 2>&1)"
+contains "namespaced, per path: the hand-over names it by its folder name" "$out" "namespaced skills are handed over by their folder name"
 # the lock: two resolves for two paths at once both finish, each with its own view
 new_case perpathlock
 l="$(layer a)"; printf '[/**/skills/shared]\nbody:text = same\n' > "$l/a.reg"; path_list "a:/Corp:$l"
@@ -836,6 +851,187 @@ model:value = deeper-same-layer
 EOF
 out="$(COMPONENT_REGISTRY_AGENTS=pair:copilot dcf-registry resolve --as "$W" 2>&1)"
 check "model.<cli>: a more specific path's plain model beats a less specific suffixed one (same layer)" deeper-same-layer "$(cat "$(V)/agents/pair/model" 2>/dev/null)"
+
+# ------------------------------------------------- release 1.7.0: layer namespaces ----
+new_case namespace
+nm_="$(layer mine)"; nc_="$(layer community)"; na_="$(layer adapt)"; nb_="$(layer beta)"; nt_="$(layer top)"
+cat > "$nm_/m.reg" <<'EOF'
+[skills/arch-review]
+body:text = Mine.
+[skills/*]
+tone:value = mine
+[skills/plain]
+body:text = Plain.
+back:ref = skills/acme:arch-review
+[skills/acme--x]
+body:text = The Operator's own acme--x.
+[skills/plain]
+own:ref = skills/arch-review
+[agents/reviewer]
+skills:list = acme:arch-review, plain, pub:helper
+EOF
+mkdir -p "$nc_/ar"
+printf '%s\n' '---' 'name: arch-review' 'description: community review' '---' '' 'Community text.' > "$nc_/ar/SKILL.md"
+cat > "$nc_/c.reg" <<'EOF'
+[skills/*]
+color:value = community
+[skills/arch-review]
+body:text = @file ar/SKILL.md
+style:value = strict
+lock style
+allowed-tools:value = Read
+see:ref = skills/helper
+out:ref = skills/plain
+[skills/helper]
+body:text = Community helper.
+[skills/x]
+body:text = Community x.
+[agents/reviewer]
+model:value = evil-model
+skills:list = arch-review, other:thing
+[skills/arch-review]
+cross:ref = skills/beta:arch-review
+dep:ref = skills/lint-tools:lint
+EOF
+cat > "$na_/a.reg" <<'EOF'
+[skills/arch-review]
+body:text = Adapted.
+style:value = loose
+allowed-tools:value = Bash
+name:value = arch-review
+[skills/helper] @replace
+body:text = Replaced helper.
+[skills/arch-review]
+al:ref = skills/pub:arch-review
+EOF
+printf '[skills/arch-review]\nbody:text = Beta.\n' > "$nb_/b.reg"
+printf '[skills/arch-review]\nbody:text = Top.\n' > "$nt_/t.reg"
+cat > .devcontainer/registry.yml <<EOF
+layers:
+  - id: mine
+    at: /Corp
+    aliases: { pub: acme }
+    sources:
+      - { kind: path, path: "$nm_" }
+  - id: community
+    at: /
+    namespace: acme
+    sources:
+      - { kind: path, path: "$nc_" }
+  - id: beta
+    at: /
+    namespace: beta
+    sources:
+      - { kind: path, path: "$nb_" }
+  - id: adapt
+    at: /Corp
+    namespace: acme
+    aliases: { pub: beta }
+    sources:
+      - { kind: path, path: "$na_" }
+  - id: top
+    at: /Corp
+    sources:
+      - { kind: path, path: "$nt_" }
+EOF
+out="$(COMPONENT_REGISTRY_AGENTS=reviewer:claude dcf-registry resolve --as "$W" 2>&1)"; rc=$?
+check "namespace: resolve succeeds" 0 "$rc"
+check "namespace: the Operator's own skill is untouched by the namespaced layers" "$(printf '%s\n' '## Layer mine' '' 'Mine.' '' '## Layer top' '' 'Top.')" "$(cat "$(V)/skills/arch-review/SKILL.md")"
+check "namespace: a namespaced skill lands as <ns>--<name>, two layers of one namespace stacked in order, its SKILL.md named by its folder" \
+  "$(printf '%s\n' '---' 'name: acme--arch-review' 'description: community review' '---' '## Layer community' '' 'Community text.' '' '## Layer adapt' '' 'Adapted.')" "$(cat "$(V)/skills/acme--arch-review/SKILL.md")"
+check "namespace: two namespaces never mix (beta has only its own text)" "$(printf '%s\n' '---' 'name: beta--arch-review' '---' '## Layer beta' '' 'Beta.')" "$(cat "$(V)/skills/beta--arch-review/SKILL.md")"
+check "namespace: no folder with a ':' in the view's skills" "" "$(find "$(V)/skills" -name '*:*')"
+check "namespace: the metadata keeps the registry name" strict "$(val skills/acme:arch-review style)"
+contains "namespace: a lock inside the namespace holds against its higher layer" "$out" "adapt 1:a.reg:3 skills/acme:arch-review:style: locked by community"
+check "namespace: a permission key comes from the namespace's lowest layer" Read "$(val skills/acme:arch-review allowed-tools)"
+contains "namespace: a higher layer's permission key in the namespace is skipped" "$out" "skills/acme:arch-review:allowed-tools: a permission key is taken from the component's lowest layer only"
+check "namespace: @replace inside the namespace drops the weaker line" "$(printf '%s\n' '## Layer adapt' '' 'Replaced helper.')" "$(val skills/acme:helper body)"
+check "namespace: an un-namespaced [skills/*] never reaches a namespaced skill" "" "$(val skills/acme:arch-review tone)"
+check "namespace: a namespaced [skills/*] never reaches the Operator's skill" "" "$(val skills/arch-review color)"
+check "namespace: the un-namespaced [skills/*] still reaches the Operator's own" mine "$(val skills/plain tone)"
+check "namespace: the namespaced [skills/*] reaches its own namespace's skills" community "$(val skills/acme:arch-review color)"
+contains "namespace: name:value in a namespace is never written into SKILL.md" "$(dcf-registry explain skills/acme:arch-review:name)" "not written into SKILL.md: a namespaced skill is named acme--arch-review there"
+refs="$(cat "$(V)/meta/refs.tsv")"
+contains "namespace: a ref inside a namespace resolves inside it" "$refs" "$(printf 'skills/acme:arch-review\tsee\tskills/helper\tskills/acme:helper\t-\tok')"
+contains "namespace: a plain ref inside a namespace is its own namespace's, never the Operator's" "$refs" "$(printf 'skills/acme:arch-review\tout\tskills/plain\tskills/acme:plain\t-\tmissing')"
+contains "namespace: an explicit ref from the Operator's layer into a namespace resolves" "$refs" "$(printf 'skills/plain\tback\tskills/acme:arch-review\tskills/acme:arch-review\t-\tok')"
+contains "namespace: a namespaced skill named like an un-namespaced one's folder is not resolved" "$out" "skills/acme:x would be handed over as acme--x, the name of the un-namespaced skill skills/acme--x"
+check "namespace: the Operator's skill keeps that folder" "$(printf '%s\n' '## Layer mine' '' "The Operator's own acme--x.")" "$(cat "$(V)/skills/acme--x/SKILL.md")"
+check "namespace: an agent definition in a namespace never reaches the listed agent" no "$([ -e "$(V)/agents/reviewer/model" ] && echo yes || echo no)"
+check "namespace: a namespaced agent definition is <ns>:<name> in the view" evil-model "$(cat "$(V)/agents/acme:reviewer/model" 2>/dev/null)"
+check "namespace: the Operator's agent names a namespaced skill as <ns>:<name> (and through its layer's alias), handed over as <ns>--<name>" "$(printf '%s\n' acme--arch-review plain acme--helper)" "$(cat "$(V)/agents/reviewer/skills")"
+check "namespace: a namespaced agent's plain skills are its namespace's, an explicit one another's" "$(printf '%s\n' acme--arch-review other--thing)" "$(cat "$(V)/agents/acme:reviewer/skills")"
+check "namespace: namespaced.tsv maps the registry name to the folder" "$(printf 'skills/acme:arch-review\tacme\tskills/acme--arch-review')" "$(grep '^skills/acme:arch-review' "$(V)/meta/namespaced.tsv")"
+# explicit references (the Operator's ruling N2, 2026-11-21): no prefix is the own namespace,
+# <ns>:<name> any namespace from any layer; a missing target is a missing dependency; aliases
+check "refs: a plain ref in the Operator's layer is the Operator's own" "skills/arch-review|ok" "$(awk -F'\t' '$1 == "skills/plain" && $2 == "own" { print $4 "|" $6 }' "$(V)/meta/refs.tsv")"
+check "refs: an explicit ref from one namespace to another resolves" "skills/beta:arch-review|ok" "$(awk -F'\t' '$1 == "skills/acme:arch-review" && $2 == "cross" { print $4 "|" $6 }' "$(V)/meta/refs.tsv")"
+check "refs: a missing namespace is a missing dependency" missing "$(awk -F'\t' '$1 == "skills/acme:arch-review" && $2 == "dep" { print $6 }' "$(V)/meta/refs.tsv")"
+contains "refs: resolve names the referrer, the layer and the target of a missing dependency" "$out" "missing dependency: skills/acme:arch-review:dep in layer community -> skills/lint-tools:lint (no component skills/lint-tools:lint for $W; no layer of the list has namespace lint-tools)"
+check "refs: a missing dependency does not stop resolve" 0 "$rc"
+check "refs: an alias resolves before lookup" "skills/beta:arch-review|ok" "$(awk -F'\t' '$1 == "skills/acme:arch-review" && $2 == "al" { print $4 "|" $6 }' "$(V)/meta/refs.tsv")"
+ex="$(dcf-registry explain skills/acme:arch-review)"
+contains "refs: explain shows the alias" "$ex" "[pub:arch-review -> beta:arch-review (alias on adapt)]"
+contains "refs: explain shows a plain ref resolved in the own namespace" "$ex" "out:ref = skills/plain"
+contains "refs: explain shows the missing dependency of a namespace's plain ref" "$ex" "skills/acme:arch-review:out -> skills/plain = skills/acme:plain (missing dependency)"
+contains "refs: explain lists missing dependencies with their layer" "$ex" "skills/acme:arch-review:dep -> skills/lint-tools:lint [namespace acme] (no component skills/lint-tools:lint"
+contains "refs: explain --uses on a missing target says missing dependency" "$(dcf-registry explain skills/lint-tools:lint --uses)" "skills/acme:arch-review:dep -> skills/lint-tools:lint = skills/lint-tools:lint (missing dependency) [namespace acme]"
+contains "refs: explain --uses shows an alias" "$(dcf-registry explain skills/beta:arch-review --uses)" "skills/acme:arch-review:al -> skills/pub:arch-review = skills/beta:arch-review (ok) [pub:arch-review -> beta:arch-review (alias on adapt)] [namespace acme]"
+contains "refs: explain lists a layer's aliases" "$ex" "adapt at /Corp, source 1 (path):"
+contains "refs: explain lists a layer's aliases (marker)" "$ex" ", aliases pub=beta"
+ex="$(dcf-registry explain skills/acme:arch-review)"
+contains "namespace: explain says the namespace and the hand-over name" "$ex" "Namespace acme: only the layers with namespace: acme reach it; handed over as acme--arch-review"
+contains "namespace: explain shows the namespace on each line" "$ex" "used         adapt@"
+contains "namespace: explain shows the namespace on each line (marker)" "$ex" "[namespace acme] 1:a.reg:2  body:text = Adapted."
+contains "namespace: explain lists the layers with their namespace" "$ex" "adapt at /Corp, source 1 (path): fetched"
+contains "namespace: explain lists the layers with their namespace (marker)" "$ex" ", namespace acme"
+check "namespace: explain takes the folder name too" "$(dcf-registry explain skills/acme:arch-review:style)" "$(dcf-registry explain skills/acme--arch-review:style)"
+contains "namespace: explain ns:name:key picks the key" "$(dcf-registry explain skills/acme:arch-review:style)" "style:value = strict [namespace acme]"
+contains "namespace: explain --uses shows the resolved target and namespace" "$(dcf-registry explain skills/acme:helper --uses)" "skills/acme:arch-review:see -> skills/helper = skills/acme:helper (ok) [namespace acme]"
+contains "namespace: explain of a namespaced agent says it applies to no listed agent" "$(dcf-registry explain agents/acme:reviewer)" "applies to no agent of the agents list"
+lacks "namespace: explain of the Operator's skill shows no namespace" "$(dcf-registry explain skills/arch-review)" "[namespace"
+printf '[skills/acme:arch-review]\nbody:text = Sneaking in.\n' > "$nt_/t2.reg"
+out="$(dcf-registry resolve --as "$W" 2>&1)"
+contains "namespace: an un-namespaced section cannot name a namespaced component" "$out" "segment 'acme:arch-review' of [skills/acme:arch-review]"
+lacks "namespace: ...and its text never reaches it" "$(cat "$(V)/skills/acme--arch-review/SKILL.md")" "Sneaking"
+rm -f "$nt_/t2.reg"
+# hand-over: the adapter gets the folders, and the line says the mapping
+cat > "$bin/agent-adapter-nsfake" <<EOF
+#!/usr/bin/env bash
+case "\$1" in supports) echo skills ;; skills) ls "\$COMPONENT_REGISTRY_SKILLS" > "$C/handed" ;; esac
+EOF
+chmod +x "$bin/agent-adapter-nsfake"
+out="$(dcf-registry handover nsfake 2>&1)"; rc=$?
+check "namespace: handover succeeds" 0 "$rc"
+contains "namespace: handover hands the folder name over" "$(cat "$C/handed")" "acme--arch-review"
+contains "namespace: handover says the mapping" "$out" "nsfake: namespaced skills are handed over by their folder name, <namespace>--<name>: acme:arch-review as acme--arch-review"
+rm -f "$bin/agent-adapter-nsfake"
+# the namespace name: refused with file:line
+nsbad() { # <name> <namespace> <expected>
+  printf 'layers:\n  - id: a\n    at: /\n    namespace: %s\n    sources:\n      - { kind: path, path: "%s" }\n' "$2" "$nc_" > .devcontainer/registry.yml
+  out="$(dcf-registry resolve --as "$W" 2>&1)"; rc=$?
+  check "namespace: $1 is refused (exit 2)" 2 "$rc"; contains "namespace: $1 names the line" "$out" "$3"
+}
+nsbad "upper case" Acme ".devcontainer/registry.yml:4: layer a: namespace 'Acme' may hold only lower-case letters and digits"
+nsbad "a double hyphen" a--b "namespace 'a--b' may hold only"
+nsbad "a colon" "a:b" "namespace 'a:b' may hold only"
+nsbad "a trailing hyphen" acme- "namespace 'acme-' may hold only"
+nsbad "the base layer's id" component-registry "namespace 'component-registry' is reserved"
+albad() { # <name> <aliases line> <expected>
+  printf 'layers:\n  - id: a\n    at: /\n    namespace: acme\n    aliases: %s\n    sources:\n      - { kind: path, path: "%s" }\n' "$2" "$nc_" > .devcontainer/registry.yml
+  out="$(dcf-registry resolve --as "$W" 2>&1)"; rc=$?
+  check "aliases: $1 is refused (exit 2)" 2 "$rc"; contains "aliases: $1 names the line" "$out" "$3"
+}
+albad "a bad target name" "{ pub: Beta }" ".devcontainer/registry.yml:5: layer a: alias 'pub: Beta': 'Beta' is not a namespace name"
+albad "the layer's own namespace as target" "{ pub: acme }" "alias 'pub: acme' involves the layer's own namespace acme"
+albad "the layer's own namespace as alias" "{ acme: beta }" "alias 'acme: beta' involves the layer's own namespace acme"
+albad "a chain" "{ pub: mid, mid: beta }" "alias 'pub: mid' leads to another alias (mid); an alias is one hop"
+albad "a reserved target" "{ pub: component-registry }" "namespace 'component-registry' is reserved"
+albad "itself" "{ pub: pub }" "alias 'pub: pub' names itself"
+albad "a block map" "" "aliases must be a one-line map"
+albad "twice" "{ pub: beta, pub: gamma }" "alias 'pub' appears twice in one layer"
+printf 'layers:\n  - id: a\n    at: /\n    namespace: acme\n    namespace: beta\n    sources:\n      - { kind: path, path: "%s" }\n' "$nc_" > .devcontainer/registry.yml
+contains "namespace: twice in one layer is refused" "$(dcf-registry resolve --as "$W" 2>&1)" "'namespace' appears twice in one layer"
 
 echo "component-registry unit: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

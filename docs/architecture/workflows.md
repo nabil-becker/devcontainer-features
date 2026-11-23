@@ -188,7 +188,7 @@ sequenceDiagram
       R-->>person: fail, the view left as it was; the agent still starts, said
     end
   end
-  R->>R: match for who you are, merge by value type
+  R->>R: match for who you are, merge by value type, per namespace (1.7.0: a namespaced layer only among its own)
   opt a higher line breaks a lock, a type or a permission
     R->>R: skip the line, report it
   end

@@ -415,6 +415,15 @@ The domain words of the project itself are not here; they live with the project'
   layer brings gets it as a prefix (`acme:arch-review`). Layers that share a namespace merge with
   each other as any layers do; different namespaces never mix, so a namespaced layer cannot stack
   onto, override or lock anything outside its namespace (ADR-0073).
+- **Explicit reference**: the rule for a registry reference (a `ref`, a list `ref:` item, an agent
+  definition's `skills` item): without a prefix it names the referrer's own namespace, with
+  `<ns>:` that namespace from any layer; nothing names the un-namespaced set from inside a
+  namespace (ADR-0073 amendment).
+- **Missing dependency**: a registry reference whose target is not in the resolved view, as a
+  Helm chart's missing dependency; `resolve` reports it and goes on, and installing the layer that
+  brings it is the user's job.
+- **Registry alias**: `aliases: { acme: acme-public }` on a registry layer; in that layer's
+  references `acme:` means `acme-public:`, one hop only.
 - **Own skills folder**: the directory of registry skills one agent alone reads, added to its Claude
   Code with `--add-dir` (skills in `<dir>/.claude/skills`); it holds the skills that agent's resolved
   view does not share with the other agents' views, the shared ones staying in the personal folder.

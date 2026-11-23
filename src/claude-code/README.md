@@ -299,6 +299,8 @@ one login and one Claude Code state ([ADR-0074](https://github.com/nabil-becker/
   An `--add-dir` to the agent's own folder already in its `args` (`--add-dir <it>`, `--add-dir=<it>`,
   or among several folders after one `--add-dir`) is never added twice; an `--add-dir` to another
   folder is kept as it is, and the agent's own is added after it.
+- **Namespaced skills** (component-registry 1.7.0) arrive by their folder name, `<namespace>--<name>`,
+  and are split, shown and checked for clashes by that name like any other skill.
 - **Limits** (accepted by the Operator, 2026-11-21). A committed project skill
   (`<folder>/.claude/skills/<name>`) with the same name as an agent's own copy wins in that agent's
   sessions; the own copy stays runnable as `/registry:<name>`, and the start line names the clash.
@@ -595,6 +597,8 @@ the CLI) contend for `.claude.json.lock`; run one.
   `<agent>: registry skills: <n> shared, <m> own -> --add-dir <folder>`; the new read-only verb
   `skills-show <name> <folder>` (in `supports`) gives the agent's own folder and skills, which
   `agents check` and `dcf-registry handovers --skills` print.
+- Namespaced skills (component-registry 1.7.0, folder name `<namespace>--<name>`) are split, shown and
+  checked for clashes by that folder name like any other skill.
 - **You can override it:** `COMPONENT_REGISTRY_SKILLS_MODE` (`split`, `shared`, `off`), set by the
   agents list's `registry-skills` or the container default of the same name. `shared` is the 1.12.0
   behaviour (whole view personal, no flag); `off` drops the agent's folder. An `--add-dir` to the

@@ -26,6 +26,8 @@ Entries from 1.0.0 to 1.9.7 were generated from the commit history (`.github/scr
   `<agent>: registry skills: <n> shared, <m> own -> --add-dir <folder>`; the new read-only verb
   `skills-show <name> <folder>` (in `supports`) gives the agent's own folder and skills, which
   `agents check` and `dcf-registry handovers --skills` print.
+- Namespaced skills (component-registry 1.7.0, folder name `<namespace>--<name>`) are split, shown and
+  checked for clashes by that folder name like any other skill.
 - **You can override it:** `COMPONENT_REGISTRY_SKILLS_MODE` (`split`, `shared`, `off`), set by the
   agents list's `registry-skills` or the container default of the same name. `shared` is the 1.12.0
   behaviour (whole view personal, no flag); `off` drops the agent's folder. An `--add-dir` to the
