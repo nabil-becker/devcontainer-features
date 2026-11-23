@@ -211,8 +211,8 @@ No file is `preset: solo`, `role: standalone`. Sections: `preset`, `role`, `node
 (the slice's brief put `role` and `node` here, where the proposal had them in `facilitator.yml`).
 
 ```yaml
-preset: team                     # solo (only this machine) | team (plus your intranet domains); open: slice N5
-role: spoke                      # standalone | spoke | hub; peer: slice N5
+preset: team                     # solo (only this machine) | team (plus your intranet domains) | open (plus public, N5a)
+role: spoke                      # standalone | spoke | hub | peer (no hub, slice N5a)
 node:
   id: laptop-nb                  # default: the host name; node join writes it
   hub: hub.corp.example:46358    # these four are written by `facilitator node join`
@@ -407,6 +407,93 @@ anonymous push. So:
 | The hub's OpenBao is sealed | no certificate issued or renewed; a hub without one runs on loopback and opens nothing |
 | A wrong `server_name` or CA | the dialer's SLIM log says `not valid for name` or `UnknownIssuer`; `check` names it |
 | An invalid `mesh.yml` | the node runs standalone (fail narrow); `check` lists the findings |
+
+## Peer to peer and the public level (slice N5a)
+
+Settings, all in `mesh.yml` (a setting here is in the NOTES by the standard; `facilitator check` lints them):
+
+| Setting | What |
+| --- | --- |
+| `role: peer` | No hub. The node is the issuer of its own domain (`node.domain`, mapped `private` in `trust`) with a CA it keeps (`mesh/ca/<domain>/`, key mode 600, name-constrained to the domain's SPIFFE URIs); `node.name` is the DNS name in its certificate. |
+| `node.peers` | node id to `host:port` of that peer's SLIM listener, or `incoming` (the peer dials this node). `node peer` and the pairing write it. A pair has one link: the node that paired from the other's token dials. |
+| `preset: open` | The ceiling is `public`: `trust` may map named domains `public`, `expose: public` means reachable from them. `team` and `solo` refuse it (HTTP clients of this node stay as in 0.5.0). |
+| `node.public.domain`, `node.public.join` | A hub or peer that issues a **public domain**: its own CA for it, certificates of `limits.public.svid_ttl` (1 h), issued only after a person approves. `join` is the **separate** public join endpoint (join requests, no token; refused if equal to `node.join`). Needs a `public` entry in `node.listen`. |
+| `node.listen.public` | The separate public SLIM listener: its CA bundle holds the public domains only, and it presents a certificate of the public domain (SP1). |
+| `limits.public.copy` | Only `addressed` (the default); `full` and `member` are refused at public. |
+| `limits.<level>.svid_ttl` | 1 minute to 7 days now (a test shortens it). |
+| `node.directory.peering` | Refused beside a public domain in `trust` (the libp2p port would admit any dialer, R3). |
+
+### Peer to peer
+
+```
+ node A  (peer: domain a.mesh.example, its own CA)          node B  (peer: b.mesh.example)
+   facilitator node invite  ----- token (hash of A's CA bundle) ----->   facilitator node peer --token <t>
+   A trusts b.mesh.example (private), peers: {B: incoming}   <--- B's bundle, A's bundle and the mesh secret ---> B trusts a.mesh.example, peers: {A: host:port}
+   restart SLIM on both: each listener's client CA holds the other's domain; B dials A; hello and card envelopes
+```
+
+Lock two is as in a hub mesh (the certificate's domain is the domain whose CA signed it, the domain is in `trust`, the node is
+not revoked) and in addition a hello is admitted only from a node in `node.peers` or in this node's roster. There is no
+roster to relay, so each node decides alone: **`node revoke` on one node refuses that node there**; the others still trust it
+until they revoke it too. A third peer pairs with either; for three nodes with no hub, each pair is paired once.
+
+### The public level across nodes
+
+```
+ public node P                                                  issuer I  (node.public, preset open)
+   node request <info>  ---- a key (signed request), TLS to the public join endpoint, checked against the bundle in <info> ---->  waits
+   (info: `node invite --level public` on I, handed over by a channel of the person's own: its CA bundle is what P trusts)
+                                                               a person: node requests ; node approve <id>  (signed audit entry)
+   node collect  <---- certificate (1 h), bundle, mesh secret, I's card (public agents only) ----
+   P is a spoke of the public domain: mesh.yml role spoke, trust {open.example: public}, preset open
+   renews at half life while I allows; node revoke P on I: no renewal, lock two refuses it, the mesh secret rotates
+```
+
+- A public node sees the issuer's own card, restricted to agents `expose`d `public`, and no other node's card. An agent that is
+  not marked public is unreachable (a message to it is refused as to an unknown handle) and unlisted.
+- **Copy addressed.** What the issuer replicates to a public node: only the conversations that node has a member in, and in
+  them only messages addressed to it. register-engine cannot hold a *part* of a register: an entry's `prev` and the heads it
+  `saw` must be present, or the entry is refused (sign-packet `graph.order`), and the proposal's "ancestors' ids, not bodies"
+  has no form in the engine. So the policy is on the conversation (the closest thing that holds): a conversation with a member
+  on a node at `copy: addressed` carries only messages addressed to that node's members: **the write is refused** otherwise
+  (`say` and `reply` say so), and `peers` **withholds the register before sending** if it holds more
+  (`mesh/refused.log`). A message to others is a message in another conversation. `verify` on a replica says
+  `partial` where the lineage leaves it, naming the node to verify on (exit 0); a signature or chain break in what is present
+  is a break (exit 1).
+- **First contact.** A task whose message is by an agent of a public node waits (it is not given to `receive`, and `mail`
+  shows it) until a person approves that agent: `approve` (a person's MCP tool) or `facilitator http approve <handle>.<node>`.
+  The approval lasts `approval_ttl` (30 d) and is an entry of the audit register.
+- **Cut-off, as run.** Public certificates last 1 h (`limits.public.svid_ttl`; shorten it to test). `node revoke` stops
+  renewal, so the node's certificate expires within the hour and no new handshake succeeds after; lock two refuses what it
+  sends from the moment of the revoke. What it already holds is not recalled.
+
+### The mesh secret's rotation (ruling H4)
+
+SLIM checks no revocation list, so a revoked node's link could still form until its certificate expired. On every `node revoke`
+the peers part makes a new SLIM app secret and hands it, over the links, to the nodes that remain, each with the secret
+the node holds now (so it still verifies); a node that takes it passes it on to the nodes it still trusts, then every one
+restarts its peers part on the new secret. It waits up to 120 s for a node that is away; one that missed it holds the old
+secret and is refused at SLIM until a person runs `facilitator node secret` on any node and `facilitator node secret --file
+<file>` there. The rotation is an entry of the audit register (`secret-rotated`).
+
+### The signed audit register (ruling HC3)
+
+`audit-enrolment`, a register of the type `audit` (the second type in `types.d/facilitator.py`, the engine's own type mechanism):
+`enrolment` entries {event, subject, by, claimed?, detail?, line?} signed by the facilitator key, an anchor. Every HTTP token,
+approval, denial and revocation, a public node's join request, approval, denial, a revocation and a rotation, and a first
+contact approval is one. `facilitator audit replay` puts the lines of `http/audit.jsonl` in once each (an entry names the
+SHA-256 of its line) so a node that ran 0.5.0 loses nothing; `facilitator audit verify` checks every entry, the chain
+(no gap, fork or foreign writer) and that the whole log is in the register, in order.
+
+### Agent badges: a seam, not a feature (ruling ID2)
+
+The `identity` option stays refused. Each participant entry of a card may carry an opaque `badge` string (up to 8 KiB): the card
+is signed with the node's certificate key, so a badge travels signed, and lock two ignores it. Lock two is where a badge check
+would sit: after `Mesh.admit` on the certificate, before a participant's key is bound to its handle (`identity.check_card`).
+A badge (AGNTCY Identity, a W3C verifiable credential) would carry a **binding record**: the agent's SPIFFE ID
+(`spiffe://<domain>/node/<node>/agent/<handle>`), its packet key (the ssh-ed25519 line that signs its messages) and the hash of the
+card that lists it (SHA-256 of the card's canonical JSON without `sig`), so a verifier can tell that this credential vouches
+for this key on this node; the spike is `docs/spikes/2026-11-23-agntcy-identity.md`.
 
 ## MCP over HTTP for CLIs (slice N4)
 
@@ -709,7 +796,8 @@ mistake, not an attacker.
 | `facilitator:node-invite` | `facilitator node invite` | On a hub: a join token (single use, 15 minutes). Refused inside an agent's job. |
 | `facilitator:node-join` | `facilitator node join --token <token or file> [<join address>]` | On a spoke: its certificate from the hub's issuer; the hub into `mesh.yml`. |
 | `facilitator:node-revoke` | `facilitator node revoke <node> [--yes]` | On a hub: no renewal, refused by lock two. Asks to confirm; refused inside an agent's job. |
-| `facilitator:node-approve` | `facilitator node approve` | Not yet: slice N5 (a public node joins by key and a person's approval). |
+| `facilitator:node-approve` | `facilitator node approve <request> [--yes]` | On an issuer of a public domain: approve a public node's join request (its key, for the public domain); issues its certificate. Refused inside an agent's job. |
+| `facilitator:node-requests`, `node-deny`, `node-peer`, `node-request`, `node-collect`, `node-secret`, `audit` | `facilitator node requests\|deny <request>\|peer --token <t>\|request <info>\|collect\|secret`, `facilitator audit verify\|replay\|show` | Slice N5a: public join requests, pairing two peers, a public node's request and collection, the mesh secret, the signed audit register. |
 | `facilitator:node-status` | `facilitator node status` | The peers part, the admitted cards, a hub's roster, the last refusals (JSON). |
 | (no task) | `facilitator node bundle <domain> --file <pem>`, `node renew`, `node restore-roster`, `node peers` | A federated domain's trust bundle; renew this spoke's certificate now; a hub's roster back from OpenBao; the peers part in the foreground (`infra up` starts it). |
 | `facilitator:http-token` | `facilitator http token <client> [--label ..] [--as <person>]` | A bearer token for an HTTP client, shown once (only its hash is kept). A person's act: refused inside an agent's job. |

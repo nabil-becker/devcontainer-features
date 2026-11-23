@@ -1060,12 +1060,13 @@ class Daemon:
         if not ok:
             _log_refusal(self.store, f"a pairing by {node}", why)
             return 403, {"error": why}
-        if dom == self.domain or dom in self.mesh.trust or node in self.mesh.peers:
+        cur = mesh_mod.load(self.fac.s)          # what mesh.yml says now (an earlier pairing may have changed it)
+        if dom == self.domain or dom in cur.trust or node in cur.peers:
             return 409, {"error": f"{node} or {dom} is known here already (a second pairing needs a new id and domain)"}
         if not identity.pem_blocks(str(req["bundle"])):
             return 400, {"error": "no CA certificate in the bundle"}
         self.store.write_bundle(dom, str(req["bundle"]))
-        mesh_mod.write_node(self.mesh.path, {"peers": {**self.mesh.peers, node: "incoming"}}, trust={dom: "private"})
+        mesh_mod.write_node(self.mesh.path, {"peers": {**cur.peers, node: "incoming"}}, trust={dom: "private"})
         pj = self.store.root / "peers.json"
         try:
             d = json.loads(pj.read_text())

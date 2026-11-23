@@ -6,6 +6,46 @@ of the Feature and whether they must act (an option renamed, a task removed, a r
 The version in `devcontainer-feature.json` is bumped in the same change that adds its entry
 here; `task lint` fails when the entry is missing.
 
+## [0.6.0] - 2026-11-23
+
+Peer to peer and the cross-node public rules (slice N5a of the facilitator-node proposal; rulings AH, H4, HC3, ID2, PB3). Nothing
+changes unless `mesh.yml` says `role: peer`, `preset: open` or `node.public`: no port opens. Rebuild the container.
+
+### Added
+
+- **`role: peer`** (nodes linked with no hub) and **`preset: open`** (the public level may be used). A peer is the issuer of
+  its own domain with a CA it keeps (name-constrained to that domain; no OpenBao needed), lists the nodes it links to in
+  `node.peers` (`host:port`, or `incoming` when the peer dials it) and pairs with another peer by a token:
+  `facilitator node invite` on one, `facilitator node peer --token` on the other. Cards are exchanged by `hello`.
+- **The cross-node public rules.** A node with `node.public` (`domain`, `join`) and a `public` entry in `node.listen`
+  issues certificates for a public domain; a public node joins by its **key plus a person's approval**:
+  `node invite --level public` (a 15 minute request window, prints the info), `node request` and `node collect` on the
+  public node, `node requests` and `node approve <request>` (or `node deny`) on the issuer. A public certificate lasts
+  `limits.public.svid_ttl` (1 h), renewed at half life while the issuer allows it; the public listener and the public join
+  endpoint are separate from the private ones (one CA bundle each). A public node is shown the issuer's own card, restricted
+  to what is exposed `public`, and no other node's.
+- **`copy: addressed`** (the public default): the node replicates only the conversations a public node is a member of, and a
+  conversation with a member on such a node carries only messages addressed to it: the write is refused otherwise, and the
+  register is withheld before sending if it holds more. `verify` reports a lineage that leaves such a replica as partial
+  (exit 0). **Did not hold as written:** register-engine cannot hold a part of a register (see the NOTES).
+- **First contact across nodes:** a message from a public node's agent waits until a person approves that agent (`approve`
+  tool or `facilitator http approve handle.node`), for `approval_ttl` (30 d).
+- **Revoke and cut-off:** `node revoke` on a hub or a peer: no renewal, lock two refuses the node at once, and **the mesh's
+  SLIM app secret rotates** (ruling H4): the nodes that remain are handed the new one and restart their peers part on it;
+  `node secret` shows or sets it for a node that missed a rotation.
+- **A signed audit register** of the type `audit` (the second type of `types.d/facilitator.py`): every HTTP enrolment event
+  and every join request, approval, denial, revocation and rotation is a signed entry; `facilitator audit verify|replay|show`;
+  the lines of `http/audit.jsonl` are replayed into it once each (ruling HC3).
+- **`badge`**, an opaque optional field of each participant entry of a node card (ruling ID2): carried and signed with the card,
+  ignored by lock two. The `identity` option stays refused.
+- `limits.<level>.svid_ttl` may be as short as 1 minute (tests); `check` shows the public certificate, waiting requests,
+  peers and the secret rotation.
+
+### Changed
+
+- `node approve` works (it was refused until now); `node invite`, `node revoke` also serve a peer; `trust` may map a domain
+  `public` under `preset: open`; `copy: addressed` is accepted (and the only value at public).
+
 ## [0.5.0] - 2026-11-23
 
 MCP over HTTP for CLIs (slice N4 of the facilitator-node proposal; ADR-0070, ADR-0071, ADR-0068). Nothing changes unless
