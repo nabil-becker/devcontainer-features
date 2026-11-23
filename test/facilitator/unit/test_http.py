@@ -395,6 +395,30 @@ def test_public_limits_rate_hops_and_size():
         e.close()
 
 
+def test_the_rate_is_the_clients_across_conversations_and_a_refusal_leaves_no_empty_conversation():
+    e = env()
+    try:
+        fac = e.register_all()
+        _, s = enrol(fac)
+        fac.approve_client("cli-one", "you")
+        for n in range(3):
+            s.say("new", f"@jester conversation {n}")           # a new conversation each time does not get round the rate
+        before = len(fac.record.conversations())
+        try:
+            s.say("new", "@jester a fourth conversation")
+            raise AssertionError("the rate across conversations")
+        except FacilitatorError as err:
+            assert "rate limit" in str(err) and "across all its conversations" in str(err), err
+        assert len(fac.record.conversations()) == before         # refused before anything was made
+        try:
+            s.say("new", "@jester " + "x" * 20000)
+        except FacilitatorError as err:
+            assert "too large" in str(err)
+        assert len(fac.record.conversations()) == before
+    finally:
+        e.close()
+
+
 def test_the_level_of_a_conversation_with_a_client_bounds_the_agents_too():
     e = env()
     try:
@@ -408,14 +432,12 @@ def test_the_level_of_a_conversation_with_a_client_bounds_the_agents_too():
         assert fac.level_of_message(proj, proj["order"][0]) == "public"
         j = e.session(fac, "jester")
         j.receive(0)
-        for n in range(3):                                               # the public rate (3 a minute) bounds jester too
-            if n < 3:
-                try:
-                    j.say(None, "x") if False else None
-                except Exception:
-                    pass
-        r1 = j.reply("one")
-        assert r1["delivered"] is not False
+        assert j.reply("one")["delivered"] is not False           # a reply at hop 1 of the public limit of 2
+        s.receive(0)
+        s.reply("two")                                            # hop 2
+        j.receive(0)
+        r = j.reply("three")                                      # hop 3: past the public hop limit, held
+        assert r["delivered"] is False and r["held"][0]["reason"] == "hop-limit", r
     finally:
         e.close()
 

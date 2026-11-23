@@ -185,6 +185,7 @@ class Daemon:
         self.lock = threading.RLock()
         self.sessions: dict[str, HttpSession] = {}
         self.receiving: dict[str, int] = defaultdict(int)
+        self.server = None
         self.abuse = abuse or Abuse()
         self.level = fac.mesh.http_level()
         self.wait_cap = mesh_mod.seconds(fac.mesh.limit(self.level, "http_receive_wait")[0])
@@ -230,7 +231,6 @@ class Daemon:
         from mcp.server.transport_security import TransportSecuritySettings
 
         base = base_url(self.cfg)
-        wait_default = min(self.wait_cap, 25)
         server = MCPServer(
             "facilitator", version=__version__,
             instructions=(f"The facilitator's conversations with agents, as an HTTP client of this node (level {self.level}). "
@@ -244,11 +244,19 @@ class Daemon:
         def me() -> str:
             t = get_access_token()
             if t is None:
-                raise FacilitatorError("not authenticated")
+                raise ToolError("not authenticated")
             return t.client_id
 
+        from mcp.server.mcpserver.exceptions import ToolError
+
         async def run(fn):
-            return await anyio.to_thread.run_sync(fn)
+            """The call in a thread; what it refuses is said to the client in the refusal's own words."""
+            try:
+                return await anyio.to_thread.run_sync(fn)
+            except ToolError:
+                raise
+            except Exception as e:             # noqa: BLE001 - every failure is the caller's to read
+                raise ToolError(str(e)) from None
 
         def locked(client, fn):
             def go():
@@ -271,7 +279,7 @@ class Daemon:
                                              "person's approval on your first contact.", structured_output=False)
         async def say(text: str, conversation: str | None = None, to: list[str] | None = None) -> str:
             if not text.strip():
-                raise FacilitatorError("say needs text")
+                raise ToolError("say needs text")
             r = await run(locked(me(), lambda s: s.say(conversation, text, to)))
             return _routed(r)
 
@@ -280,7 +288,7 @@ class Daemon:
                      structured_output=False)
         async def reply(text: str, to: list[str] | None = None) -> str:
             if not text.strip():
-                raise FacilitatorError("reply needs text")
+                raise ToolError("reply needs text")
             r = await run(locked(me(), lambda s: s.reply(text, to)))
             return _routed(r)
 
@@ -290,11 +298,11 @@ class Daemon:
             client = me()
             wait = self.wait_cap if wait_seconds is None else wait_seconds
             if not isinstance(wait, int) or wait < 0:
-                raise FacilitatorError("wait_seconds: a whole number of seconds, 0 or more")
+                raise ToolError("wait_seconds: a whole number of seconds, 0 or more")
             wait = min(wait, self.wait_cap)
             with self.lock:
                 if self.receiving[client] >= MAX_RECEIVES:
-                    raise FacilitatorError(f"at most {MAX_RECEIVES} receive calls at a time per client")
+                    raise ToolError(f"at most {MAX_RECEIVES} receive calls at a time per client")
                 self.receiving[client] += 1
             try:
                 end = time.time() + wait
@@ -316,14 +324,14 @@ class Daemon:
                                               "are then marked read. Never waits.", structured_output=False)
         async def mail(limit: int = 20) -> str:
             if not 1 <= limit <= MAX_LIST:
-                raise FacilitatorError(f"limit: a whole number, 1 to {MAX_LIST}")
+                raise ToolError(f"limit: a whole number, 1 to {MAX_LIST}")
             return mail_text(await run(locked(me(), lambda s: s.mail(limit))))
 
         @server.tool(name="transcript", description="A conversation you are in, read only: every message with its routes, "
                                                     "notices and how each was signed (via).", structured_output=False)
         async def transcript(conversation: str, limit: int = 50) -> str:
             if not 1 <= limit <= 500:
-                raise FacilitatorError("limit: a whole number, 1 to 500")
+                raise ToolError("limit: a whole number, 1 to 500")
             return "\n".join(await run(locked(me(), lambda s: s.transcript(conversation, limit))))
 
         sec = TransportSecuritySettings(enable_dns_rebinding_protection=True, allowed_hosts=allowed_hosts(self.cfg),
@@ -348,8 +356,9 @@ class Daemon:
                               ssl_certfile=self.cfg.tls_cert, ssl_keyfile=self.cfg.tls_key,
                               proxy_headers=self.cfg.behind_proxy, forwarded_allow_ips="*" if self.cfg.behind_proxy else None,
                               timeout_keep_alive=5)
+        self.server = uvicorn.Server(conf)
         try:
-            uvicorn.Server(conf).run()
+            self.server.run()
         finally:
             try:
                 status.unlink()

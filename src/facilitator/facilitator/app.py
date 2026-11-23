@@ -109,6 +109,27 @@ class Facilitator:
             return k
         return {h for h in k if self.visible(author, h)}
 
+    def http_precheck(self, handle: str, text: str) -> None:
+        """The abuse limits of an HTTP client, before anything is written (so a refusal leaves no empty conversation):
+        the level's max_packet, and its rate counted for the client across all its conversations (proposal 11.3: per
+        client, however many conversations or connections it opens)."""
+        if not self.is_http(handle):
+            return
+        level = self.mesh.http_level()
+        cap = mesh_mod.size(self.mesh.limit(level, "max_packet")[0])
+        n = len((text or "").encode())
+        if n > cap:
+            raise FacilitatorError(f"message too large: {n} bytes; the {level} level's max_packet is {cap}; "
+                                   "this message was not written")
+        rate = self.limits_for(level).rate_limit
+        now, count = time.time(), 0
+        for c in self.conversations_of(handle):
+            _, proj, _ = self.record.read(c)
+            count += sum(1 for m in proj["messages"].values() if m["from"] == handle and now - guard._t(m["at"]) < 60)
+        if count >= rate:
+            raise FacilitatorError(f"rate limit: {handle} wrote {count} messages in the last minute; the {level} level allows "
+                                   f"{rate} a minute for a client, counted across all its conversations; this one was not written")
+
     def approval_gate(self, handle: str, now: float) -> guard.Verdict | None:
         """First-contact approval (proposal 7, limits.<level>.approval): a Verdict that holds an HTTP client's message
         until a person approves the client; None when no approval is needed or it stands."""
@@ -445,10 +466,7 @@ class Facilitator:
             for mm in th["members"]:
                 if mm != me and not self.visible(author, router.split(mm)[0]):
                     raise FacilitatorError(f"{mm} is no longer reachable from your level; this message was not written")
-            cap = mesh_mod.size(self.mesh.limit(self.mesh.http_level(), "max_packet")[0])
-            if len(text.encode()) > cap:
-                raise FacilitatorError(f"message too large: {len(text.encode())} bytes; the {self.mesh.http_level()} level's "
-                                       f"max_packet is {cap}; this message was not written")
+            self.http_precheck(author, text)
         if not human and not guard.rate_ok(proj, me, lim, time.time()):
             raise FacilitatorError(f"rate limit: {author} wrote {lim.rate_limit} messages in the last minute; "
                                    "this one was not written")
@@ -566,6 +584,7 @@ class Facilitator:
         return self._begin_or_write(client, text, conv, to, tr)
 
     def _begin_or_write(self, author: str, text: str, conv: str | None, to: list[str] | None, tr=None) -> dict:
+        self.http_precheck(author, text)
         if not conv or conv == "new":
             named = [h for h in dict.fromkeys([*(to or []), *router.mentions(text, self.nodes())]) if h not in ("all", author)]
             if not named:
@@ -629,6 +648,7 @@ class Facilitator:
     def reply(self, handle: str, turn: Turn | None, text: str, to: list[str] | None = None, tr=None) -> dict:
         if turn is None:
             raise FacilitatorError("nothing to reply to: call receive first (or say, in a conversation you are in)")
+        self.http_precheck(handle, text)
         mid = self.write(turn.conv, handle, text, to, turn.message_id, turn.root, turn.root_thread, turn.hops + 1)
         self.finish(handle, turn)
         return self.dispatch(turn.conv, mid, tr)
@@ -636,6 +656,7 @@ class Facilitator:
     def say(self, handle: str, turn: Turn | None, conv: str | None, text: str, to: list[str] | None = None, tr=None) -> dict:
         if turn is None:
             raise FacilitatorError("a chain begins with a human: say needs a message you received (call receive first)")
+        self.http_precheck(handle, text)
         if not conv or conv == "new":
             named = [h for h in dict.fromkeys([*(to or []), *router.mentions(text, self.nodes())]) if h not in ("all", handle)]
             if not named:
