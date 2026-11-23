@@ -77,6 +77,13 @@ class Record:
             self.facilitator_key()
         return adapters.load_anchors(self.state.anchors_file)
 
+    def as_principal(self, conv: str, handle: str) -> str:
+        """The principal a handle of this node writes as in a conversation: in one shared with other nodes,
+        `handle.node` (ruling H5); in one this node keeps alone, the handle, as before."""
+        if handle == FACILITATOR or self.net is None or self.net.meta(conv) is None:
+            return handle
+        return f"{handle}.{self.net.mesh.node_id}"
+
     def anchors_for(self, conv: str) -> dict:
         """The anchors of one conversation: this node's facilitator, and in a conversation shared with other
         nodes, theirs (lock two admitted their cards)."""
@@ -130,7 +137,7 @@ class Record:
         if principal != FACILITATOR:
             self.ensure_member_key(conv, principal)
         try:
-            i = adapters.add(self.store(conv), self.signer.signing_path(principal), principal, kind, data,
+            i = adapters.add(self.store(conv), self.signer.signing_path(principal), self.as_principal(conv, principal), kind, data,
                              self.anchors_for(conv), checked=self.checked, register=conv, kinds=self.kinds)
         except core.Refused as e:
             raise RecordError(f"the record refused a {kind} by {principal}: {e}") from None
@@ -146,31 +153,36 @@ class Record:
             raise RecordError(f"{principal} has no key: facilitator register {principal}")
         led = core.read(adapters.raws(self.store(conv)), self.anchors_for(conv), self.checked, conv, self.kinds)
         keys = self.roster_keys(led)
-        if keys.get(principal) == pub:
+        as_ = self.as_principal(conv, principal)
+        if keys.get(as_) == pub:
             return
-        change = {"add": [{"key": pub, "as": principal, "role": "agent"}]}
-        if principal in keys:
-            change["remove"] = [{"key": keys[principal]}]
+        change = {"add": [{"key": pub, "as": as_, "role": "agent"}]}
+        if as_ in keys:
+            change["remove"] = [{"key": keys[as_]}]
         self.add(conv, FACILITATOR, "roster", change)
 
     def create(self, kind: str, members: list[str], humans: list[str], title: str | None = None,
                remote: dict | None = None, node: str | None = None) -> str:
         """A new conversation: the facilitator's roster entry (every member's key), then its thread. `remote`:
-        handle -> {node, key} of members on other nodes (their keys from admitted cards); the conversation is
-        then shared with those nodes (`node` is this one)."""
+        `handle.node` -> {node, key} of members on other nodes (their keys from admitted cards); the conversation
+        is then shared with those nodes (`node` is this one), and every member is named `handle.node`."""
         self.facilitator_key()
         conv = new_id("c", 4)
         remote = remote or {}
-        if remote and self.net is not None:
-            self.net.save_meta(conv, {m: remote[m]["node"] if m in remote else node for m in members}, node)
+        shared = bool(remote) and self.net is not None
+        if shared:
+            self.net.save_meta(conv, {(m if m in remote else f"{m}.{node}"): (remote[m]["node"] if m in remote else node)
+                                      for m in members}, node)
+        principal = (lambda m: m if m in remote else f"{m}.{node}") if shared else (lambda m: m)
         adds = []
         for m in members:
             pub = remote[m]["key"] if m in remote else self.signer.public(m)
             if not pub:
                 raise RecordError(f"{m} has no key: facilitator register {m}")
-            adds.append({"key": pub, "as": m, "role": "agent"})
+            adds.append({"key": pub, "as": principal(m), "role": "agent"})
         self.add(conv, FACILITATOR, "roster", {"add": adds})
-        thread = {"thread": conv, "kind": kind, "members": list(members), "humans": [h for h in humans if h in members]}
+        thread = {"thread": conv, "kind": kind, "members": [principal(m) for m in members],
+                  "humans": [principal(h) for h in humans if h in members]}
         if title:
             thread["title"] = title
         self.add(conv, FACILITATOR, "thread", thread)

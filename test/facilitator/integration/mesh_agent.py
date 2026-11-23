@@ -12,7 +12,7 @@ import sys
 
 sys.path.insert(0, "/opt/facilitator/lib")
 from facilitator import settings  # noqa: E402
-from facilitator.app import Facilitator, Session  # noqa: E402
+from facilitator.app import Facilitator, FacilitatorError, Session  # noqa: E402
 
 
 def session(fac, handle):
@@ -21,6 +21,14 @@ def session(fac, handle):
 
 
 def main(argv):
+    try:
+        return step(argv)
+    except FacilitatorError as e:
+        print(json.dumps({"error": str(e)}))
+        return 1
+
+
+def step(argv):
     fac = Facilitator(settings.load())
     cmd = argv[0]
     if cmd == "open":

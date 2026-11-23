@@ -180,9 +180,10 @@ def mesh_parts(fac) -> list[tuple]:
     cards = fac.net.cards()
     out.append(("peers", True, ", ".join(f"{n} ({c['level']})" for n, c in sorted(cards.items())) or "no card admitted yet",
                 False))
-    clash = fac.net.clashes()
-    if clash:
-        out.append(("handles", True, f"announced by two nodes, reachable on neither: {', '.join(sorted(clash))}", False))
+    shared = fac.net.shared_handles()
+    if shared:
+        out.append(("handles", True, "shared, so named with their node: " + "; ".join(
+            f"{h}: {', '.join(v)}" for h, v in sorted(shared.items())), False))
     tls = tls_refusals(fac)
     out.append(("tls refusals", True, "; ".join(f"{k} x{v}: {dict(TLS_REFUSALS)[k]}" for k, v in tls.items())
                 or "none in the SLIM log", False))
@@ -289,10 +290,17 @@ def cmd_explain(a) -> int:
             out["reaches"] = sorted(h for h in set(fac.state.roster()) - {"facilitator"}
                                     if mesh_mod.reach_ok(lv, m.exposure(h)))
     else:
+        if fac.net.active:
+            got = fac.net.resolve(x)
+            if len(got) > 1:
+                raise FacilitatorError(f"@{x} names {len(got)} participants: "
+                                       + ", ".join("@" + (g if "." in g else f"{g}.{m.node_id}") for g in got) + "; name one")
+            x = got[0] if got else x
+            out["what"] = x
         r = fac.remote().get(x)
         if r:
-            out.update({"handle": x, "node": r["node"], "level": r["level"], "exposure": r["exposure"],
-                        "id": f"spiffe://{r['domain']}/node/{r['node']}/agent/{x}"})
+            out.update({"handle": r["handle"], "node": r["node"], "level": r["level"], "exposure": r["exposure"],
+                        "id": f"spiffe://{r['domain']}/node/{r['node']}/agent/{r['handle']}"})
         else:
             out.update({"handle": x, "node": m.node_id, "exposure": m.exposure(x),
                         "id": f"spiffe://{m.domain or m.home_domain}/node/{m.node_id}/agent/{x}"})

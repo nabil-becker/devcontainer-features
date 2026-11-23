@@ -131,7 +131,35 @@ class Facilitator:
         return t
 
     def known(self) -> set[str]:
-        return (set(self.state.roster()) | set(self.remote())) - {FACILITATOR}
+        """Every name the router may meet: this node's handles, and other nodes' participants by qualified name and
+        by bare handle."""
+        remote = self.remote()
+        return (set(self.state.roster()) | set(remote) | {r["handle"] for r in remote.values()}) - {FACILITATOR}
+
+    def nodes(self) -> set[str]:
+        """The nodes whose participants this node can name (`handle.node`): itself and every admitted card's."""
+        return ({self.mesh.node_id} | set(self.net.cards())) if self.net.active else set()
+
+    def p(self, conv: str, handle: str) -> str:
+        """The principal this node's `handle` is in a conversation (qualified in a shared one)."""
+        return self.record.as_principal(conv, handle)
+
+    def local_of(self, principal: str) -> str | None:
+        """This node's handle for a principal of a conversation, or None when it is another node's."""
+        h, n = router.split(principal)
+        return h if n is None or n == self.mesh.node_id else None
+
+    def resolve_one(self, name: str) -> str:
+        """One participant for a name a caller gives: this node's handle, or another node's `handle.node`. A bare
+        handle that names several is refused with their qualified names (ruling H5: no guess, no precedence)."""
+        if not self.net.active:
+            return name
+        got = self.net.resolve(name)
+        if len(got) > 1:
+            names = [g if router.split(g)[1] else router.qualify(g, self.mesh.node_id) for g in got]
+            raise FacilitatorError(f"@{name} names {len(got)} participants: {', '.join('@' + n for n in names)}; "
+                                   "name one of them")
+        return got[0] if got else name
 
     # ------------------------------------------------------------ identities (E2, E3)
 
@@ -167,6 +195,7 @@ class Facilitator:
     # ------------------------------------------------------------ conversations
 
     def new_conversation(self, creator: str, others: list[str], title: str | None = None) -> str:
+        others = [self.resolve_one(o) for o in others]
         members = [creator] + [o for o in dict.fromkeys(others) if o != creator]
         if len(members) < 2:
             raise FacilitatorError("a conversation needs at least one other member")
@@ -198,7 +227,7 @@ class Facilitator:
                 _, proj, _ = self.record.read(c)
             except RecordError:
                 continue
-            if proj["thread"] and handle in proj["thread"]["members"]:
+            if proj["thread"] and self.p(c, handle) in proj["thread"]["members"]:
                 out.append(c)
         return out
 
@@ -214,11 +243,12 @@ class Facilitator:
         th = proj["thread"]
         if th is None:
             raise FacilitatorError(f"no conversation {conv}")
-        if author not in th["members"]:
+        me = self.p(conv, author)
+        if me not in th["members"]:
             raise FacilitatorError(f"{author} is not a member of {conv} (its members: {', '.join(th['members'])})")
-        human = author in th["humans"]
+        human = me in th["humans"]
         lim = self.limits_for(self.conv_level(th))
-        if not human and not guard.rate_ok(proj, author, lim, time.time()):
+        if not human and not guard.rate_ok(proj, me, lim, time.time()):
             raise FacilitatorError(f"rate limit: {author} wrote {lim.rate_limit} messages in the last minute; "
                                    "this one was not written")
         mid = new_id("m")
@@ -226,7 +256,7 @@ class Facilitator:
                 "root": mid if hops == 0 else root, "hops": hops}
         if reply_to:
             data["reply_to"] = reply_to
-        ms = router.mentions(text)
+        ms = router.mentions(text, self.nodes())
         if ms:
             data["mentions"] = ms
         if to:
@@ -250,8 +280,7 @@ class Facilitator:
         verdict = guard.check(proj, m["from"], m["from"] in humans, m["hops"], m["root"],
                               self.limits_for(self.level_of_message(proj, mid)))
         dec = router.route(th, proj["messages"], m["from"], m["text"], m.get("to"), m.get("reply_to"),
-                           self.participants()[1].fallback, self.known() | humans)
-        remote = self.remote()
+                           self.participants()[1].fallback, self.known() | humans, self.mesh.node_id, self.nodes())
         notices = list(dec.notices)
         tasks, held, live = [], [], []
         if not verdict.deliver:
@@ -265,13 +294,14 @@ class Facilitator:
                                                # this node or, from the replica, on theirs
                 t = new_id("t")
                 tasks.append({"task": t, "assignee": h})
-                if h in remote:
+                local = self.local_of(h)
+                if local is None:
                     continue                   # on another node: the replica carries the task; its node delivers it
-                if self.state.attached(h, self.stale, now):
-                    live.append(h)
+                if self.state.attached(local, self.stale, now):
+                    live.append(local)
                 else:
                     held.append({"principal": h, "reason": "stale"})
-                    notices.append(("stale", f"`{h}` has not been attached since {_ago(self.state.last_seen(h))}; "
+                    notices.append(("stale", f"`{h}` has not been attached since {_ago(self.state.last_seen(local))}; "
                                              "the message waits and is delivered when it attaches"))
         rid = self.record.add(conv, FACILITATOR, "route", {"thread": conv, "message_id": mid, "rule": dec.rule,
                                                            "to": dec.to, "tasks": tasks, "held": held})
@@ -284,7 +314,7 @@ class Facilitator:
             data = transport.payload(conv, mid, [store.get(m["entry"]), store.get(rid)])
             own = tr is None
             try:
-                tr = tr or self.transport_for(transport.ephemeral_name(m["from"]))
+                tr = tr or self.transport_for(transport.ephemeral_name(self.local_of(m["from"]) or m["from"]))
                 for h in live:
                     if tr.notify(h, data):
                         delivered.append(h)
@@ -303,7 +333,7 @@ class Facilitator:
         if self.net.active:
             remote = self.remote()
             for m in thread["members"]:
-                if m in remote:
+                if self.local_of(m) is None and m in remote:
                     level = mesh_mod.wider(level, remote[m]["level"])
         return level
 
@@ -319,7 +349,7 @@ class Facilitator:
                                    "participants write through their MCP server")
         self.ensure_identity(author)
         if not conv or conv == "new":
-            named = [h for h in dict.fromkeys([*(to or []), *router.mentions(text)]) if h not in ("all", author)]
+            named = [h for h in dict.fromkeys([*(to or []), *router.mentions(text, self.nodes())]) if h not in ("all", author)]
             if not named:
                 raise FacilitatorError("a new conversation needs someone to talk to: @handle them, or pass to")
             conv = self.new_conversation(author, named)
@@ -356,7 +386,7 @@ class Facilitator:
             led, proj, _ = self.record.read(c)
             pos = {i: n for n, i in enumerate(led.order)}
             for t in proj["tasks"].values():
-                if t["assignee"] == handle and t["state"] == "submitted":
+                if t["assignee"] == self.p(c, handle) and t["state"] == "submitted":
                     m = proj["messages"][t["message_id"]]
                     out.append({"conv": c, "task": t["task"], "message": m, "pos": (t["at"], pos.get(t["history"][0][2], 0)),
                                 "members": proj["thread"]["members"]})
@@ -389,7 +419,7 @@ class Facilitator:
         if turn is None:
             raise FacilitatorError("a chain begins with a human: say needs a message you received (call receive first)")
         if not conv or conv == "new":
-            named = [h for h in dict.fromkeys([*(to or []), *router.mentions(text)]) if h not in ("all", handle)]
+            named = [h for h in dict.fromkeys([*(to or []), *router.mentions(text, self.nodes())]) if h not in ("all", handle)]
             if not named:
                 raise FacilitatorError("say in a new conversation needs someone to say it to: to=[handle]")
             conv = self.new_conversation(handle, named)
@@ -417,9 +447,10 @@ class Facilitator:
             recs = {}
         now = time.time()
         rows = []
+        disp = self.net.display if self.net.active else (lambda h, n=None: h)
         for p in parts:
             r = recs.get(p.name, {})
-            rows.append({"handle": p.name, "kind": "agent", "cli": p.cli,
+            rows.append({"handle": disp(p.name), "kind": "agent", "cli": p.cli,
                          "description": r.get("description") or p.description,
                          "skills": [s.get("name") for s in r.get("skills", [])] or p.skills,
                          "registered": p.name in roster, "attached": self.state.attached(p.name, self.stale, now),
@@ -428,17 +459,18 @@ class Facilitator:
         for h, ident in sorted(roster.items()):          # registered, and not in the list this process reads
             if ident.get("kind") == "agent" and h not in listed:
                 r = recs.get(h, {})
-                rows.append({"handle": h, "kind": "agent", "description": r.get("description") or ident.get("description", ""),
+                rows.append({"handle": disp(h), "kind": "agent", "description": r.get("description") or ident.get("description", ""),
                              "skills": [s.get("name") for s in r.get("skills", [])] or ident.get("skills", []),
                              "registered": True, "attached": self.state.attached(h, self.stale, now),
                              "last_seen": _ago(self.state.last_seen(h)), "in_directory": h in recs})
         humans = list(cfg.humans) + [h for h, i in sorted(roster.items()) if i.get("kind") == "human" and h not in cfg.humans]
         for h in humans:
-            rows.append({"handle": h, "kind": "human", "registered": h in roster})
+            rows.append({"handle": disp(h), "kind": "human", "registered": h in roster})
         # participants of other nodes: only those their node exposes at least as wide as its domain's level (so a
         # local-only agent of another node is never listed here), through the hub's roster of cards
-        for h, r in sorted(self.remote().items()):
-            rows.append({"handle": h, "kind": r.get("kind", "agent"), "node": r["node"], "level": r["level"],
+        for q, r in sorted(self.remote().items()):
+            rows.append({"handle": disp(r["handle"], r["node"]), "kind": r.get("kind", "agent"), "node": r["node"],
+                         "level": r["level"], "qualified": q,
                          "description": r.get("description", ""), "skills": r.get("skills", []), "registered": True,
                          "attached": None, "last_seen": "on another node", "in_directory": False})
         out = {"participants": rows}
@@ -460,14 +492,15 @@ class Facilitator:
             _, proj, _ = self.record.read(c)
             seen = set(marks.get(c, []))
             n = 0
+            me = self.p(c, handle)
             for mid in proj["order"]:
                 m = proj["messages"][mid]
-                if m["from"] == handle or mid in seen:
+                if m["from"] == me or mid in seen:
                     continue
                 routes = proj["routes"].get(mid, [])
                 held = sorted({h["reason"] for r in routes for h in r["held"] if h["reason"] != "stale"})
                 msgs.append({"conversation": c, "message_id": mid, "from": m["from"], "text": m["text"],
-                             "hops": m["hops"], "at": m["at"], "for_you": any(handle in r["to"] for r in routes),
+                             "hops": m["hops"], "at": m["at"], "for_you": any(me in r["to"] for r in routes),
                              "held": held[0] if held else ""})
                 n += 1
             convs.append({"conversation": c, "members": proj["thread"]["members"], "unread": n,

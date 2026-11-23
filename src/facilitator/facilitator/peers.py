@@ -36,7 +36,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import identity, mesh as mesh_mod
+from . import identity, mesh as mesh_mod, router
 from .identity import IdentityError
 
 ORG, NODE_NS = "agntcy", "facilitator-node"
@@ -141,29 +141,51 @@ class Net:
             pass
 
     def remote(self) -> dict[str, dict]:
-        """handle -> {node, key, kind, exposure, level, description, skills} of every participant another node's
-        admitted card lists. A handle this node has too stays this node's (the remote one is not reachable)."""
-        local = set(self.fac.state.roster()) | set(self.fac.humans())
+        """`handle.node` -> {handle, node, key, kind, exposure, level, domain, description, skills} of every
+        participant another node's admitted card lists (ruling H5: two nodes may announce one handle; each is
+        reachable by its qualified name)."""
         out: dict[str, dict] = {}
-        clash: set[str] = set()
         for node, c in sorted(self.cards().items()):
             for p in c["card"].get("participants", []):
-                h = p["handle"]
-                if h in local or h == FACILITATOR:
+                if p["handle"] == FACILITATOR:
                     continue
-                if h in out:
-                    clash.add(h)
-                    continue
-                out[h] = {**p, "node": node, "level": c["level"], "domain": c["card"]["domain"]}
-        return {h: r for h, r in out.items() if h not in clash}
+                out[router.qualify(p["handle"], node)] = {**p, "node": node, "level": c["level"],
+                                                          "domain": c["card"]["domain"]}
+        return out
 
-    def clashes(self) -> set[str]:
-        """Handles two other nodes both announce: neither is reachable from here (check names them)."""
-        seen, clash = set(), set()
-        for _, c in self.cards().items():
-            for p in c["card"].get("participants", []):
-                (clash if p["handle"] in seen else seen).add(p["handle"])
-        return clash
+    def local_names(self) -> set[str]:
+        return (set(self.fac.state.roster()) | set(self.fac.humans())) - {FACILITATOR}
+
+    def resolve(self, name: str) -> list[str]:
+        """What a name given by a person or an agent names: this node's own handle (bare), or `handle.node` of
+        another node's participant. A bare handle names every reachable one with that handle, this node's and other
+        nodes' alike (several: the caller refuses, listing them; no precedence for this node's own)."""
+        name = name.lower().lstrip("@")
+        local, remote = self.local_names(), self.remote()
+        h, n = router.split(name)
+        if n is not None:
+            if n == self.mesh.node_id:
+                return [h] if h in local else []
+            return [name] if name in remote else []
+        out = [name] if name in local else []
+        return out + sorted(q for q, r in remote.items() if r["handle"] == name)
+
+    def display(self, handle: str, node: str | None = None) -> str:
+        """How `who` names a participant: its bare handle, or `handle.node` where another reachable participant
+        has that handle too."""
+        node = node or self.mesh.node_id
+        if len(self.resolve(handle)) > 1:
+            return router.qualify(handle, node)
+        return handle
+
+    def shared_handles(self) -> dict[str, list[str]]:
+        """handle -> its qualified names, for every handle more than one reachable participant has."""
+        names: dict[str, list[str]] = {}
+        for h in self.local_names():
+            names.setdefault(h, []).append(router.qualify(h, self.mesh.node_id))
+        for q, r in self.remote().items():
+            names.setdefault(r["handle"], []).append(q)
+        return {h: sorted(v) for h, v in names.items() if len(v) > 1}
 
     def binding(self, key: str) -> tuple[str, str, str] | None:
         """(node, principal, level) a card binds this packet key to, or None (revoked nodes' too: history)."""
@@ -231,6 +253,10 @@ class Net:
         r = self.remote().get(principal)
         return r["level"] if r else "local"
 
+    def node_of(self, principal: str) -> str:
+        """The node a principal of a conversation is on: its qualifier, else this node."""
+        return router.split(principal)[1] or self.mesh.node_id
+
     # ------------------------------------------------------------ lock two on entries
 
     def check_entries(self, conv: str, members: dict[str, str], raws: list[bytes], sender: str,
@@ -246,10 +272,13 @@ class Net:
         if not core.REGISTER_RE.fullmatch(conv or ""):
             return False, f"{conv!r} is not a conversation id"
         old = (self.meta(conv) or {}).get("members", {})
-        for h, n in members.items():
-            if h in old and old[h] != n:
-                return False, f"the members put {h} on {n}; it is on {old[h]}"
-        for h, n in members.items():
+        for q, n in members.items():
+            if q in old and old[q] != n:
+                return False, f"the members put {q} on {n}; it is on {old[q]}"
+        for q, n in members.items():
+            h, qn = router.split(q)
+            if qn != n:
+                return False, f"the member {q} is not qualified with its node {n} (a shared conversation names handle.node)"
             if n == me:
                 if h not in self.fac.state.roster() and h not in self.fac.humans():
                     return False, f"the members name {h} on this node, which has no such participant"
@@ -264,14 +293,18 @@ class Net:
             return False, f"the sender {sender} has no member in {conv}"
 
         def bound(key: str, principal: str) -> bool:
-            if local.get(key) == principal:
-                return True
-            for n, c in cards.items():
-                if principal == FACILITATOR and c["card"].get("facilitator") == key and n in set(members.values()):
+            if principal == FACILITATOR:
+                if local.get(key) == FACILITATOR:
                     return True
-                if any(p.get("key") == key and p["handle"] == principal for p in c["card"].get("participants", [])):
-                    return True
-            return False
+                return any(c["card"].get("facilitator") == key and n in set(members.values()) for n, c in cards.items())
+            h, n = router.split(principal)
+            if n is None:
+                return False               # in a shared conversation every member is handle.node
+            if n == me:
+                return local.get(key) == h
+            c = cards.get(n)
+            return c is not None and any(p.get("key") == key and p["handle"] == h
+                                         for p in c["card"].get("participants", []))
 
         have = set(self.fac.record.store(conv).ids()) if self.fac.record.exists(conv) else set()
         for raw in raws:
@@ -509,13 +542,6 @@ class Daemon:
 
     def on_hello(self, env: dict, c: dict) -> list:
         node = env["from"]
-        mine = {p["handle"] for x, cc in self.net.cards().items() if x != node for p in cc["card"].get("participants", [])}
-        mine |= set(self.fac.state.roster()) | set(self.fac.humans())
-        taken = sorted(mine & {p["handle"] for p in c["card"].get("participants", [])})
-        if taken:
-            _log_refusal(self.store, f"hello from {node}", f"its card announces {', '.join(taken)}, which another node "
-                                                           "announced first (a handle is the mesh's once)")
-            return []
         r = identity.roster(self.store)
         n = r.get("nodes", {}).get(node)
         if n is None:

@@ -13,7 +13,9 @@
 # (lock one) and the spike's impostor (a partner.test certificate claiming corp.test: lock two) are refused; the
 # hub restarts and the spokes reconnect; a spoke that goes away gets its held message when it comes back; check
 # names a TLS refusal from the SLIM log; a revoked spoke is refused, by the hub and by the other spoke, and gets no
-# renewal. Removes every container, volume and network it made, whatever happens.
+# renewal; and both spokes run an agent named echo: each is reached by its qualified name (@echo.spoke-a,
+# @echo.spoke-b), and the bare @echo is refused with both names (ruling H5). Removes every container, volume and
+# network it made, whatever happens.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 version="$(bash "$root/bundles/facilitator/install.sh" --version)"
@@ -164,6 +166,7 @@ expose:
   "*": local
   pa: private
   a1: private
+  echo: private
 EOF
 cat >"$tmp/spoke-a/participants.yml" <<'EOF'
 participants:
@@ -177,6 +180,11 @@ participants:
     kind: resident
     attachment: mcp
     description: spoke A's local-only agent
+  - name: echo
+    cli: claude
+    kind: resident
+    attachment: mcp
+    description: spoke A's echo
 EOF
 printf 'facilitator:\n  humans: [pa]\n' >"$tmp/spoke-a/facilitator.yml"
 cat >"$tmp/spoke-b/mesh.yml" <<'EOF'
@@ -191,6 +199,7 @@ expose:
   "*": local
   b1: private
   pb: private
+  echo: private
 EOF
 cat >"$tmp/spoke-b/participants.yml" <<'EOF'
 participants:
@@ -199,6 +208,11 @@ participants:
     kind: resident
     attachment: mcp
     description: spoke B's agent
+  - name: echo
+    cli: claude
+    kind: resident
+    attachment: mcp
+    description: spoke B's echo
 EOF
 printf 'facilitator:\n  humans: [pb]\n' >"$tmp/spoke-b/facilitator.yml"
 chmod -R a+rwX "$tmp/hub" "$tmp/spoke-a" "$tmp/spoke-b"
@@ -278,9 +292,9 @@ else ok "spoke-a listens on loopback only (a spoke dials out, its Directory too)
 # ---------------------------------------------------------------- a conversation across nodes, through the hub
 conv="$(agent spoke-a open pa a1 b1 -- "@a1 please ask b1 for a joke" | jget 'd["conversation"]')"
 r1="$(agent spoke-a answer a1 30 "@b1 tell us a joke about hubs")"
-if [ "$(echo "$r1" | jget 'd["dispatch"]["to"]')" = "['b1']" ]; then ok "a1 (spoke-a) mentioned b1 (spoke-b) in $conv: routed to b1"; else no "a1's mention: $r1"; fi
+if [ "$(echo "$r1" | jget 'd["dispatch"]["to"]')" = "['b1.spoke-b']" ]; then ok "a1 (spoke-a) mentioned b1 (spoke-b) in $conv: routed to b1"; else no "a1's mention: $r1"; fi
 r2="$(agent spoke-b answer b1 60 "why did the packet go through the hub? it had no other peer")"
-if [ "$(echo "$r2" | jget 'd["received"]["from"]')" = a1 ]; then ok "b1 received a1's message on spoke-b, through the hub's SLIM node"; else no "b1 received: $r2"; fi
+if [ "$(echo "$r2" | jget 'd["received"]["from"]')" = a1.spoke-a ]; then ok "b1 received a1's message on spoke-b, through the hub's SLIM node"; else no "b1 received: $r2"; fi
 r3="$(agent spoke-a answer a1 60 "@pa here is b1's joke")"
 case "$r3" in *"no other peer"*) ok "b1's answer reached a1 on spoke-a (rule 3, to the asker)" ;; *) no "a1 did not get b1's answer: $r3" ;; esac
 sleep 3
@@ -291,6 +305,34 @@ if fx spoke-b verify --conv "$conv" | grep -q 'spiffe://corp.test/node/spoke-a (
 else no "verify's signer IDs on spoke-b"; fi
 if docker exec "$p-hub" sh -c "test -d /var/lib/devcontainer-features/facilitator/conversations/$conv"; then no "the hub holds a copy of $conv"
 else ok "the hub holds no copy of $conv (none of its participants is a member: copy member)"; fi
+
+# ---------------------------------------------------------------- one handle on two spokes (ruling H5)
+if wait_for 60 seen spoke-a echo.spoke-b && seen spoke-a echo.spoke-a; then
+  ok "who on spoke-a names both echos with their node: echo.spoke-a, echo.spoke-b (the hub admitted both cards)"
+else no "who on spoke-a with two echos: $(agent spoke-a who)"; fi
+out="$(agent spoke-a open pa echo -- "hello echo" 2>&1 || true)"
+case "$out" in *"@echo.spoke-a, @echo.spoke-b"*) ok "the bare @echo is refused with both qualified names: $(echo "$out" | jget 'd["error"]')" ;;
+  *) no "the bare @echo: $out" ;; esac
+d2="$(agent spoke-a open pa echo.spoke-a echo.spoke-b -- "@echo hello both")"
+conv2="$(echo "$d2" | jget 'd["conversation"]')"
+case "$(echo "$d2" | jget 'd["to"]') $(echo "$d2" | jget 'd["notices"]')" in
+  "[] "*"@echo.spoke-a, @echo.spoke-b"*) ok "in $conv2 a bare @echo is delivered to neither, the notice lists both" ;;
+  *) no "a bare @echo in a conversation with both: $d2" ;; esac
+d3="$(agent spoke-a say pa "$conv2" "@echo.spoke-b tell a joke")"
+if [ "$(echo "$d3" | jget 'd["to"]')" = "['echo.spoke-b']" ] && r="$(agent spoke-b answer echo 60 "a joke from spoke-b")" \
+   && [ "$(echo "$r" | jget 'd["received"]["from"]')" = pa.spoke-a ]; then
+  ok "@echo.spoke-b reached spoke-b's echo through the hub"
+else no "@echo.spoke-b: $d3 / ${r:-}"; fi
+d4="$(agent spoke-a say pa "$conv2" "@echo.spoke-a your turn")"
+if [ "$(echo "$d4" | jget 'd["to"]')" = "['echo.spoke-a']" ] && r="$(agent spoke-a answer echo 30 "a joke from spoke-a")" \
+   && echo "$r" | grep -q 'your turn'; then
+  ok "@echo.spoke-a reached spoke-a's own echo"
+else no "@echo.spoke-a: $d4 / ${r:-}"; fi
+sleep 3
+for n in spoke-a spoke-b; do
+  if out="$(fx "$n" verify --conv "$conv2" 2>&1)"; then ok "verify of $conv2 on $n: ${out##*: }"; else no "verify of $conv2 on $n: $out"; fi
+done
+if fx spoke-a check | grep -q 'handles .*echo: echo.spoke-a, echo.spoke-b'; then ok "check on spoke-a lists the shared handle"; else no "check's shared handles"; fi
 
 # ---------------------------------------------------------------- lock one and lock two
 docker run -d --name "$p-probe" --network "$net" -v "$tmp/root:/certs:ro" -v "$root/test/facilitator/integration:/test:ro" \
@@ -331,7 +373,7 @@ if seen spoke-b b1 && docker exec "$p-hub" sh -c 'cat /var/lib/devcontainer-feat
 docker restart "$p-hub" >/dev/null
 t0="$(date +%s)"
 agent spoke-a say pa "$conv" "@b1 one more, after the hub came back" >/dev/null
-if r="$(agent spoke-b answer b1 90 "the hub is back")" && [ "$(echo "$r" | jget 'd["received"]["from"]')" = pa ]; then
+if r="$(agent spoke-b answer b1 90 "the hub is back")" && [ "$(echo "$r" | jget 'd["received"]["from"]')" = pa.spoke-a ]; then
   ok "after the hub's restart the spokes reconnected and pa's message reached b1 ($(( $(date +%s) - t0 )) s)"
 else no "after the hub's restart: $r"; docker logs "$p-spoke-a" 2>&1 | tail -10; fi
 docker stop "$p-spoke-b" >/dev/null
