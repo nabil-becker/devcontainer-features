@@ -1,6 +1,6 @@
 # Reference architectures
 
-Four ways the Features of this collection are assembled, each with what runs where, where its data lives and what
+Eight ways the Features of this collection are assembled, each with what runs where, where its data lives and what
 has gone wrong in the combination. They are for an engineer or a consumer's maintainer who wants to assemble an
 environment from the Features without working out how they combine. The rules behind them are in the root
 [README](../../README.md) ("How the pieces fit") and in [CONTRIBUTING.md](../../CONTRIBUTING.md); the decisions are
@@ -12,14 +12,22 @@ the [ADRs](../adr/README.md).
 | [Secrets with OpenBao](secrets-with-openbao.md) | keys and tokens in one place behind one gate (unseal once per server start, log in once per sitting); phase 1 of ADR 0048 | `openbao`, `ssh-agent`, `gh`, `az` |
 | [Agentic devhost](agentic-devhost.md) | agents do the work and keep the records, with guards and a bot identity | `agents`, `claude-code`, `git`, `gh`, `phi-check`, `go-task`, and the local `devhost` and `agentic-register` |
 | [Kubernetes toolbox](kubernetes-toolbox.md) | rendering and validating manifests, operating Argo CD and Velero, one kubeconfig | `kustomize`, `kubeconform`, `argocd`, `velero`, `kube-state` |
+| [Facilitator, solo](facilitator-solo.md) | agents of any vendor and one person talking through one standalone node in one devcontainer; nothing open | `facilitator`, `claude-code`, `copilot`, `go-task` |
+| [Facilitator: a hub on the workstation](facilitator-workstation-hub.md) | a hub beside the machine's devcontainers, which are its spokes; no OpenBao by default (hub on Kubernetes and the built-in issuer are planned) | `facilitator`, `claude-code`, `go-task`; planned `kustomize`, `kubeconform`, `helm` |
+| [Facilitator: a team intranet hub](facilitator-team-hub.md) | a hub on a server with its OpenBao PKI, spokes on engineers' machines, CLIs over MCP on HTTP with bearer tokens and approval | `facilitator`, `claude-code`, `copilot`, `go-task` |
+| [Facilitator: peer to peer and public](facilitator-peer-and-public.md) | nodes with no hub, a public domain, approval of a stranger's node; cloud AIs later (mostly not released) | `facilitator`, `claude-code`, `go-task` |
 
 They combine. This repository's own devhost is the Windows workstation devhost with the agentic devhost on top, and
 the secrets architecture is the next layer for the keys both of them use. The Kubernetes toolbox stands apart: none
-of its Features depends on another, and it needs only the launcher from the Windows page.
+of its Features depends on another, and it needs only the launcher from the Windows page. The four facilitator pages are a ladder: solo first, then a hub on
+the workstation, then a team's hub, then nodes with no hub and the public level; each says what is released, being built
+and planned, because the node's later slices are not all published.
 
 ## What every page has
 
 - who it is for and when to use it, and when not;
+- a "What exists today" table (built, being built, planned, with versions and a date) on a page whose design is not all
+  published, as the secrets and facilitator pages do;
 - an ASCII diagram: the workstation (host), the launcher, the container, the Features, the volumes and the external
   services;
 - a complete `devcontainer.json` fragment in a `jsonc` block, using the published ids
