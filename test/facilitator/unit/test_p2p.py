@@ -105,6 +105,12 @@ def test_a_peer_is_its_own_issuer_and_certificates_are_name_constrained():
         assert 3 * 3600 < own["not_after"] - time.time() < 25 * 3600 and 60 < pub["not_after"] - time.time() <= 125   # 24 h, and 2 m
         assert identity.chain_ok(st.cert("open.test").read_text(), st.bundle("open.test"))
         assert not identity.chain_ok(st.cert("open.test").read_text(), st.bundle("a.mesh.test"))   # one CA each
+        # SLIM 3.4.6 (rustls-webpki) refuses every leaf under a CA with a URI name constraint (NameConstraintViolation): the
+        # CA has DNS constraints only; p2p_flow.sh links real SLIM nodes over it
+        txt = subprocess.run(["openssl", "x509", "-noout", "-text"], input=st.bundle("open.test").read_text(), capture_output=True,
+                             text=True).stdout
+        nc = txt.split("Name Constraints")[1].split("X509v3")[0]
+        assert "DNS:" in nc and "URI:" not in nc, nc
         # the CA of one domain cannot vouch for another's SPIFFE ID (name constraints)
         with tempfile.TemporaryDirectory() as t:
             k = Path(t) / "k"
