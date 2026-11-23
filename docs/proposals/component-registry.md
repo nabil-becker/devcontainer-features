@@ -57,8 +57,8 @@ of agentic component; the first release does it for skills.
     from OpenBao). No manifest or signature is required; reading an open endpoint is the layer
     owner's choice.
 12. **`resolve` and `explain`** are the two verbs; `explain --uses` answers "who uses this?".
-13. **The adapter step and the utility skills** (`/registry-refresh`, `/registry-explain`,
-    `/registry-remember`); a refresh is picked up live where the CLI supports it.
+13. **The adapter step and the utility skills** (`/registry-refresh`, `/registry-explain`;
+    `/registry-remember` was removed in 2.0.0: the registry does not write layers); a refresh is picked up live where the CLI supports it.
 14. **Release 1 ships skills only.** Agent definitions, prompts and settings come later.
 15. **No RDF graph**: no agent tool uses RDF, and one resolved tree answers the same questions.
 16. **Name**: the Feature is `component-registry`, the command `dcf-registry`.
@@ -119,7 +119,7 @@ layers:
     at: /Corp/MyDepartment/team/me
     sources:
       - { kind: path, path: .registry-mine }    # git-ignored in this repository, the person's choice
-    writable: true                               # deprecated in 1.10.0, removed in 2.0.0: /registry-remember appends here
+    writable: true                               # ignored since 2.0.0: the registry does not write layers
     heading: false                               # (1.3.0) its text stacks without "## Layer mine"
   - id: acme-community
     at: /
@@ -301,7 +301,6 @@ Utility skills, shipped by the Feature in its own base layer:
 |---|---|
 | `/registry-refresh` | `resolve` now; Claude picks up changed skill files in the running session; another CLI gets the files and a note that it needs a restart |
 | `/registry-explain <path>` | `explain`, shown to the person |
-| `/registry-remember <line>` (deprecated in 1.10.0, removed in 2.0.0: the registry does not write layers) | appends a line to the layer marked `writable` (the person's own), then refreshes |
 
 A skill already used in a conversation keeps its old text until it is used in a new conversation;
 `/registry-refresh` says so.
@@ -582,7 +581,6 @@ flowchart LR
   bao["OpenBao"] -->|"dcf-secret: source secrets"| copies
   copies --> res["resolve"] --> view["resolved view, tier 4"]
   view --> cli["CLI skills folder, tier 4"]
-  host["host session"] -->|"/registry-remember"| own["the writable layer's source"]
 ```
 
 **Data Inventory and Models**:

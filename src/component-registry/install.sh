@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Installs the component-registry Feature: the dcf-registry command (resolve, explain, handover,
-# refresh, remember, render), minijinja-cli (1.11.0, ADR-0077: the template engine that renders each
+# refresh, render), minijinja-cli (1.11.0, ADR-0077: the template engine that renders each
 # vendor's files, one pinned static binary checked against its sha256), the registry sources this release ships (registry-source-git,
 # registry-source-path, registry-source-http, which reads dcf-curl.sh from the share folder, and
 # registry-source-db, 1.5.0, which needs sqlite3 or psql in the image for its driver), the built-in base layer with the utility skills, the postStartCommand
@@ -98,8 +98,8 @@ else
   /usr/local/bin/minijinja-cli --version
 fi
 
-# The built-in base layer (1.1.0): the utility skills /registry-refresh, /registry-explain and
-# /registry-remember, read by dcf-registry resolve as layer rank 0 (id component-registry, at /);
+# The built-in base layer (1.1.0): the utility skills /registry-refresh and
+# /registry-explain, read by dcf-registry resolve as layer rank 0 (id component-registry, at /);
 # and (1.11.0, ADR-0077) the base templates, templates/<vendor>/<file>.j2.
 rm -rf "$share/base"
 cp -R "$feature_dir/base" "$share/base"

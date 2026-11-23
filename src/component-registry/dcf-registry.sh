@@ -33,9 +33,6 @@
 #                                               templates from the view into a new folder: what a
 #                                               hand-over to its CLI gets; explain templates/<vendor>
 #                                               says whose template won
-#   dcf-registry remember [--skill <name>] [--] <line>
-#                                               append the line to the layer marked writable: true
-#                                               (a path source), then refresh (/registry-remember)
 #
 # Who you are is a path (/Corp/MyDepartment/team/me): --as, else COMPONENT_REGISTRY_WHOAMI from
 # the task variable, the root .env, .devcontainer/.env or the environment (NFR-6); never in a
@@ -47,7 +44,7 @@
 #     - id: corp-base             # unique; letters, digits, - and _
 #       at: /Corp                 # where its relative section paths are mounted
 #       required: true            # optional: never fetched stops resolve (on a source too)
-#       writable: true            # optional: where remember appends (one layer, a path source)
+#       writable: true            # ignored since 2.0.0 (the registry does not write layers)
 #       heading: false            # optional (1.3.0): stack its text without a "## Layer <id>" line
 #       namespace: acme           # optional (1.7.0): its components are acme:<name>, and it merges
 #                                 # only with layers of the same namespace (see below)
@@ -67,7 +64,7 @@
 # Only that subset of YAML is read (comments, plain and quoted scalars, block entries, one-line
 # { } maps); unknown keys are refused with file:line. The parser is awk (NFR-7).
 #
-# A layer's content is one or more *.layer files (*.reg is still read, deprecated, removed in 2.0.0) at the root of its copy (the grammar is in the
+# A layer's content is one or more *.layer files (*.reg is not read since 2.0.0) at the root of its copy (the grammar is in the
 # Feature NOTES and docs/proposals/component-registry.md section 3.2); the merge is section 3.3.
 #
 # State (owner-only, never committed) in COMPONENT_REGISTRY_STATE_DIR
@@ -115,7 +112,7 @@
 # without it the current view's names are kept.
 #
 # The built-in base layer (1.1.0): the Feature's own utility skills (registry-refresh,
-# registry-explain, registry-remember), read from $SHARE_DIR/base, are layer rank 0 with the id
+# registry-explain), read from $SHARE_DIR/base, are layer rank 0 with the id
 # component-registry at /, below every listed layer and always present when a list is resolved;
 # explain shows it as "0 component-registry at /, source 1 (builtin)". The id is reserved.
 #
@@ -587,7 +584,7 @@ offline_or_missing() {
 }
 
 # ------------------------------------------------------------------- merge ----
-# The resolver: reads the manifest (rank, layer, at, source, version, copy folder, .reg file per
+# The resolver: reads the manifest (rank, layer, at, source, version, copy folder, .layer file per
 # line), parses every .layer file, applies the match rule for W and merges by type (proposal 3.3).
 # Writes meta/ in VIEW itself and prints to stdout:
 #   C <component> <folder>             copy the folder's files into the component (in order)
@@ -1426,7 +1423,7 @@ cmd_resolve() {
   resolve_whoami "$as"
   load_list
   for ((n = 1; n <= NL; n++)); do
-    [ "${L_WR[n]:-false}" = true ] && warn "layer ${L_ID[n]}: writable is deprecated: the registry does not write layers; edit the layer; removed in 2.0.0"
+    [ "${L_WR[n]:-false}" = true ] && warn "layer ${L_ID[n]}: writable is ignored since 2.0.0: the registry does not write layers; edit the layer"
   done
   mkdir -p "$STATE_DIR" 2>/dev/null || die 1 "cannot create the state folder $STATE_DIR (run component-registry-setup)"
   chmod 700 "$STATE_DIR" 2>/dev/null || true
@@ -1453,7 +1450,7 @@ cmd_resolve() {
     printf '0\t%s\t/\t1\tbuiltin\t%s\tbuiltin\t-\tthe Feature'"'"'s utility skills, %s\t-\t-\n' "$BASE_ID" "$v" "$BASE_DIR" >> "$stage/layers.tsv"
     while IFS= read -r f; do
       [ -n "$f" ] && printf '0\t%s\t/\t1\t%s\t%s\t%s\t-\n' "$BASE_ID" "$v" "$BASE_DIR" "$f" >> "$TMP/manifest"
-    done < <(cd "$BASE_DIR" && find . -maxdepth 1 -type f \( -name '*.layer' -o -name '*.reg' \) | sed 's|^\./||' | LC_ALL=C sort)
+    done < <(cd "$BASE_DIR" && find . -maxdepth 1 -type f -name '*.layer' | sed 's|^\./||' | LC_ALL=C sort)
   fi
   for ((n = 1; n <= NL; n++)); do
     id="${L_ID[n]}"
@@ -1480,9 +1477,9 @@ cmd_resolve() {
       while IFS= read -r f; do
         [ -n "$f" ] || continue
         printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$n" "$id" "${L_AT[n]}" "$m" "$SRC_VER" "$dir" "$f" "${L_NS[n]:--}" >> "$TMP/manifest"
-        case "$f" in *.reg) oldreg="${oldreg:+$oldreg, }$f" ;; esac
-      done < <(cd "$dir" && find . -maxdepth 1 -type f \( -name '*.layer' -o -name '*.reg' \) | sed 's|^\./||' | LC_ALL=C sort)
-      [ -z "$oldreg" ] || warn "layer $id source $m: reads $oldreg; rename to .layer; .reg is removed in 2.0.0"
+      done < <(cd "$dir" && find . -maxdepth 1 -type f -name '*.layer' | sed 's|^\./||' | LC_ALL=C sort)
+      while IFS= read -r f; do [ -n "$f" ] && oldreg="${oldreg:+$oldreg, }$f"; done < <(cd "$dir" && find . -maxdepth 1 -type f -name '*.reg' | sed 's|^\./||' | LC_ALL=C sort)
+      [ -z "$oldreg" ] || warn "layer $id source $m: not read since 2.0.0: $oldreg; rename to .layer"
     done
   done
   if [ "$failed" -ne 0 ]; then
@@ -2092,57 +2089,10 @@ cmd_refresh() {
   return "$fail"
 }
 
-# remember [--skill <name>] [--] <line> (1.1.0, /registry-remember; deprecated in 1.10.0, removed in 2.0.0): append one text line to the
-# layer marked writable: true (the person's own), as body:text of that skill or, without --skill,
-# of every skill ([skills/*]), into remembered.layer at the root of its path source's folder; then
-# refresh. Refused, nothing written: no writable layer, two of them, a writable layer without a
-# path source (git, http and the others are the owner's release process, not a file to append
-# to), a folder that is not there or not writable, an empty line, a line starting with @ (it
-# would read as @file).
+# remember (removed in 2.0.0): the registry does not write layers.
 cmd_remember() {
-  local skill='' line='' i n=0 w=0 j folder='' file sect
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --skill) [ $# -ge 2 ] || die 2 "--skill needs a skill name"; skill="$2"; shift 2 ;;
-      --skill=*) skill="${1#--skill=}"; shift ;;
-      --) shift; line="$*"; break ;;
-      -*) die 2 "remember: unknown option '$1' (remember [--skill <name>] [--] <line>)" ;;
-      *) line="$*"; break ;;
-    esac
-  done
-  line="$(printf '%s' "$line" | tr '\r\n\t' '   ' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
-  [ -n "$line" ] || die 2 "remember needs a line: dcf-registry remember [--skill <name>] -- <line>"
-  case "$line" in @*) die 2 "a remembered line cannot start with @ (it would read as @file); rephrase it" ;; esac
-  if [ -n "$skill" ]; then
-    skill="${skill#/}"; skill="${skill#skills/}"
-    [[ "$skill" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ ]] || die 2 "--skill '$skill' is not a skill name (letters, digits, . _ -)"
-  fi
-  warn "remember is deprecated: the registry does not write layers; edit your layer; removed in 2.0.0"
-  resolve_settings
-  load_list
-  for ((i = 1; i <= NL; i++)); do [ "${L_WR[i]:-false}" = true ] && { n=$((n + 1)); w="$i"; }; done
-  [ "$n" -gt 0 ] || die 1 "no layer in $RF is marked writable: true; mark your own layer (one with a path source) writable: true in the layer list, then try again. Nothing was written."
-  if [ "$n" -gt 1 ]; then
-    die 2 "$n layers in $RF are marked writable: true ($(for ((i = 1; i <= NL; i++)); do [ "${L_WR[i]:-false}" = true ] && printf '%s ' "${L_ID[i]}"; done)); mark one. Nothing was written."
-  fi
-  # the strongest path source of that layer (the later source wins inside a layer)
-  for ((j = L_NSRC[w]; j >= 1; j--)); do
-    if [ "${S_KIND[$w.$j]}" = path ]; then folder="$(sed -n 's/^path=//p' <<< "${S_ARGS[$w.$j]}")"; break; fi
-  done
-  [ -n "$folder" ] || die 1 "layer ${L_ID[w]} is writable: true but has no path source; remember appends to a folder only (a git or http layer changes through its owner's release process). Nothing was written."
-  [ -d "$folder" ] || die 1 "layer ${L_ID[w]}: its folder $folder is not there; create it (git-ignored, or outside the repository) and try again. Nothing was written."
-  [ -w "$folder" ] || die 1 "layer ${L_ID[w]}: its folder $folder is not writable by $(id -un). Nothing was written."
-  if [ -n "$skill" ]; then sect="skills/$skill"; else sect='skills/*'; fi
-  file="$folder/remembered.layer"
-  if [ ! -e "$file" ] && [ -e "$folder/remembered.reg" ]; then
-    file="$folder/remembered.reg"
-    warn "layer ${L_ID[w]}: appending to the existing remembered.reg; rename to .layer; .reg is removed in 2.0.0"
-  fi
-  [ ! -s "$file" ] || [ -z "$(tail -c 1 "$file")" ] || printf '\n' >> "$file"
-  printf '; remembered %s\n[%s]\nbody:text = %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$sect" "$line" >> "$file" ||
-    die 1 "could not write $file. Nothing was written."
-  say "remembered in layer ${L_ID[w]} ($file): [$sect] body:text = $line"
-  cmd_refresh
+  warn "remember is removed in 2.0.0: edit your layer (the registry does not write layers)"
+  exit 1
 }
 
 case "${1:-}" in
