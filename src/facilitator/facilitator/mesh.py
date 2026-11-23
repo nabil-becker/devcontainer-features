@@ -23,7 +23,7 @@ from, whether a caller may reach an agent, which ports the role opens, and lock 
       domain: corp.example
       directory:
         peering: false           # the Directory's libp2p and OCI beyond loopback (SP5: no mDNS switch exists)
-      peers:                     # peer (and hub): node id -> host:port of the peer's SLIM listener (`node peer` writes it)
+      peers:                     # peer (and hub): node id -> host:port of the peer's SLIM listener, or `incoming` (it dials us)
         node-b: b.mesh.test:46358
       public:                    # hub or peer: the public domain this node issues certificates for (1 h, by approval)
         domain: open.example
@@ -530,10 +530,12 @@ def _check(m: Mesh, raw: dict, text: str) -> None:
                 if not NODE_ID_RE.fullmatch(str(pid)) or pid == m.node_id:
                     add("bad-value", f"node.peers: {pid!r} is not another node's id", "node", "peers", pid)
                     continue
+                if addr == "incoming":
+                    continue                    # the peer dials this node (written by `node invite` and the pairing)
                 try:
                     parse_addr(addr)
                 except MeshError as e:
-                    add("bad-value", f"node.peers.{pid}: {e}", "node", "peers", pid)
+                    add("bad-value", f"node.peers.{pid}: {e} (or `incoming`: the peer dials this node)", "node", "peers", pid)
         if r_ == "peer" and not peers and not node.get("join"):
             add("role-needs", "role peer: node.peers (the nodes it dials) or node.join (so that a peer can pair with it) "
                               "is needed", "role")

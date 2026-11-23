@@ -106,7 +106,7 @@ class Net:
 
     @property
     def active(self) -> bool:
-        return self.mesh.role in ("spoke", "hub")
+        return self.mesh.role in ("spoke", "hub", "peer")
 
     # ------------------------------------------------------------ cards
 
