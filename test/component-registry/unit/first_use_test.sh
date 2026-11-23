@@ -68,6 +68,18 @@ contains "explain attributes lines to this repository's layer" "$expl" "devconta
 if cmp -s "$resolved" "$template"; then same=yes; else same=no; diff -u "$template" "$resolved" | head -40; fi
 check "the resolved skill equals the devhost template copy byte for byte" yes "$same"
 check "this repository commits no copy of the skill (the registry resolves it)" no "$([ -e "$root/.claude/skills/architecture-review" ] && echo yes || echo no)"
+# The real layer list through the base Claude template (component-registry 1.11.0, ADR-0077): what a
+# hand-over gives Claude Code equals the resolved view byte for byte.
+# shellcheck source=test/component-registry/unit/minijinja.sh
+. "$here/minijinja.sh"
+if need_minijinja "$T/mjbin"; then
+  PATH="$T/mjbin:$PATH" dcf-registry render claude "$T/rendered" >/dev/null 2>&1
+  check "the base Claude template renders the real layer list's skills byte for byte" "" "$(diff -r "$T/state/view/skills" "$T/rendered/skills" 2>&1)"
+elif [ -n "${CI:-}" ]; then
+  check "minijinja-cli is available in CI" yes no
+else
+  echo "skip - no minijinja-cli (offline?): the render check"
+fi
 
 # The generic layer alone: a skill a consumer without this repository's rules can use.
 mkdir -p "$T/alone/.devcontainer"; cd "$T/alone" || exit 1

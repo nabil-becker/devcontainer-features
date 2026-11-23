@@ -415,6 +415,50 @@ the agent's CLI and the key and layer it came from. `agents check` shows the fie
 from the registry and from which layers (`model opus (registry: dept)`), and names the list's
 values it replaced (`replacing --model haiku in its args`, `replacing the list's skills [x]`).
 
+### 6.2 Vendor templates (ADR-0077, built in component-registry 1.11.0)
+
+The last step of the adapter step, writing the files a vendor's CLI reads, is a template, not
+adapter shell (the Operator's rulings of 2026-11-21 and 2026-11-23). The merge of section 3.3 is
+unchanged; templates are one more component kind, merged by layer precedence only.
+
+```text
+  layer copies --resolve--> view: skills/, agents/, meta/, templates/<group>/<vendor>/<layer>/*.j2
+                                     |
+             dcf-registry handover <cli>   (render, then the adapter's skills verb)
+                                     |
+   minijinja-cli <winning template> <context.json>  per skill (for: skill) or once (for: once)
+                                     |
+   renders/<cli>.<agent>.<pid>/skills/<dir>/...  --COMPONENT_REGISTRY_SKILLS-->  agent-adapter-<cli> skills
+```
+
+- **Engine.** `minijinja-cli`, one pinned static binary checked against its sha256, installed by
+  the Feature through `dcf_curl` (ADR-0034); no Python Jinja (ADR-0061 keeps `claude-code`
+  Python-free). Run with no configuration, no environment, strict undefined names, includes only
+  inside the template's group of layers, and a fuel limit: a template only writes files.
+- **Component.** `templates/<vendor>/<file>.j2` in a layer copy (`templates/<vendor>/<ns>:<file>.j2`
+  in a namespaced layer). Its head, a leading Jinja comment, says `for:` (`skill`, `once`; `agent`
+  in slice 2), `output:` (the path written, a template too) and optionally `lock: true`.
+- **Precedence.** The highest layer's template wins whole; replacement never stacks; the lowest
+  layer that locks one keeps it; a layer applies where its `at` is the who-you-are path or an
+  ancestor; a namespaced layer's templates compete only within its namespace, render only its
+  skills, write only in their folders, and never replace a file the Operator's templates write.
+- **The three ways.** Replace the file; change a block with `{% extends "<layer>/<file>.j2" %}`
+  (`component-registry/SKILL.md.j2` for the base; only lower layers can be extended); add a file
+  the base does not produce. An empty output is not written.
+- **The base.** `templates/claude/SKILL.md.j2` (blocks `front_matter` and `body`) reproduces every
+  resolved `SKILL.md` byte for byte, so the 1.11.0 hand-over gives Claude Code exactly the 1.10.0
+  files (tested on fixtures, on this repository's real layer list, and through the real adapter).
+- **Where rendering runs, and failure.** At the hand-over, not at `resolve`: the vendor is known
+  there, `resolve` and `explain` keep working without the binary, and a broken template for one
+  vendor never blocks another. `resolve` checks only heads (a bad head is skipped and reported, the
+  template below wins). A template that does not render, or no `minijinja-cli`, fails that
+  hand-over with the layer and file named; the adapter is not called, so the CLI keeps its last
+  good files. A CLI no template names is handed the view's `skills/` as before.
+- **Shown by** `dcf-registry explain templates[/<vendor>[/<file>.j2]]` (candidates, the winner, the
+  base it extends) and `dcf-registry render <vendor> <folder>` (a preview).
+- **Next (slice 2).** Copilot's files (its adapter gains a `skills` verb that takes rendered
+  files) and `for: agent` (agent definition files rendered per agent).
+
 ## 7. Why not the CLI's own distribution (NFR-9)
 
 Claude Code already distributes skills through plugins and marketplaces and orders managed, user

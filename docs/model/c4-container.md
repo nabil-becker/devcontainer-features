@@ -59,10 +59,15 @@ reads an agent's definition from the resolved view and hands its model to the CL
 Layer namespaces (component-registry 1.7.0, ADR-0073): a layer listed with `namespace: <name>` brings its
 components as `<name>:<component>` (on disk `<name>--<component>`); layers sharing a namespace merge with
 each other and never reach the un-namespaced layers, which are the Operator's own. No new container or relation.
+Vendor templates (component-registry 1.11.0, ADR-0077, built): `dcf-registry handover` renders the
+CLI's winning templates (a layer's, else the built-in base layer's) with `minijinja-cli`, a pinned
+binary inside the component-registry container, before the adapter's `skills` verb copies the
+result; templates come from the same layer sources. The hand-over relation is unchanged in shape;
+its label now says the skills are rendered.
 
 ```mermaid
 flowchart LR
-  component-registry["component-registry: resolve, explain, handover, refresh"]
+  component-registry["component-registry: resolve, explain, render, handover, refresh"]
   participant-component["agents (participant component)"]
   cli-adapter["CLI adapter: skills verb"]
   launcher["Launcher: share mount, whoami"]
@@ -72,7 +77,7 @@ flowchart LR
   master-of-secrets -->|gives secrets to| component-registry
   launcher -.->|later: mounts shares, sets whoami for| component-registry
   participant-component -->|runs resolve at start| component-registry
-  component-registry -->|hands skills to| cli-adapter
+  component-registry -->|hands skills rendered from its templates to| cli-adapter
   participant-component -->|reads agent definitions from the view of| component-registry
   participant-component -->|AGENT_MODEL to| cli-adapter
   devhost["devhost Feature: the generic layer"] -->|a path layer for| component-registry

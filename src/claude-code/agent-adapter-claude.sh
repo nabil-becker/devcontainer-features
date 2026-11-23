@@ -574,8 +574,11 @@ session_gone() {
 config_dir() { printf '%s' "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"; }
 
 # skills (1.12.0; per agent 1.14.0, ADR-0074): the component registry's resolved skills for one agent.
-# dcf-registry hands the agent's view over in COMPONENT_REGISTRY_SKILLS (a resolved view's skills/,
-# one folder per skill; COMPONENT_REGISTRY_PATH names the path it was resolved for). Two places,
+# dcf-registry hands the agent's view over in COMPONENT_REGISTRY_SKILLS (one folder per skill;
+# COMPONENT_REGISTRY_PATH names the path it was resolved for). From component-registry 1.11.0
+# (claude-code 1.14.1, ADR-0077) the folder holds the files rendered from the claude templates (the
+# base one reproduces the view's SKILL.md byte for byte; a layer may replace, extend or add one), so
+# the file format is the template's: this verb only places and marks what it is given. Two places,
 # both in the claude-code volume (tier 4, owner-only; never the repository's .claude/skills: a
 # resolved skill can carry personal facts):
 #   $CLAUDE_CONFIG_DIR/skills, the personal folder every session reads: the skills that every

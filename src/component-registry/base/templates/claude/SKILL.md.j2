@@ -1,0 +1,15 @@
+{#- for: skill
+    output: skills/{{ skill.dir }}/SKILL.md
+
+  The built-in base template for Claude Code (component-registry 1.11.0, ADR-0077): a skill's
+  SKILL.md exactly as the resolved view holds it, its front matter, then its body. A layer
+  replaces this file whole (templates/claude/SKILL.md.j2 in the layer), or changes one block:
+
+    {% extends "component-registry/SKILL.md.j2" %}
+    {% block body %}{{ super() }}
+    One more line.
+    {% endblock %}
+
+  The context is in the component-registry notes ("Vendor templates"). -#}
+{%- block front_matter %}{{ skill.front_matter }}{% endblock -%}
+{%- block body %}{{ skill.body }}{% endblock -%}
