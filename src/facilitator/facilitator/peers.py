@@ -487,6 +487,7 @@ class Daemon:
         secret = self.store.mesh_secret(create=self.issuing)
         if not secret:
             raise PeersError("no mesh secret: this spoke has not joined (facilitator node join)")
+        self.status["secret_sha"] = hashlib.sha256(secret.encode()).hexdigest()[:16]     # the secret this SLIM app was made with
         name = sb.Name(ORG, NODE_NS, self.mesh.node_id)
         self.app = svc.create_app_with_secret(name, secret)
         await self.app.subscribe_async(name, self.conn)

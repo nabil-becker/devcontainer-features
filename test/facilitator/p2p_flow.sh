@@ -163,8 +163,8 @@ convid="$(echo "$conv" | jget 'd["conversation"]')"
 r1="$(agent b answer b1 60 "b1 here")"; r2="$(agent c answer c1 60 "c1 here")"
 if echo "$r1" | grep -q 'hello from a' && echo "$r2" | grep -q 'hello from a'; then ok "b1 and c1 each received a1's message in $convid, node to node, with no hub"
 else no "the three-node conversation: $r1 / $r2"; fi
-sleep 3
 for n in a b c; do
+  wait_for 60 fx "$n" verify --conv "$convid" || true
   if out="$(fx "$n" verify --conv "$convid" 2>&1)"; then ok "verify on node-$n: ${out##*: }"; else no "verify on node-$n: $out"; fi
 done
 
@@ -191,7 +191,7 @@ case "$out" in *"not registered"*|*"no participant"*|*error*) ok "a1 (not public
 # first contact, then a conversation that carries only what is addressed
 pc="$(agent pub open pp j1.node-a -- "@j1.node-a hello from the public node")"
 pconv="$(echo "$pc" | jget 'd["conversation"]')"
-sleep 4
+wait_for 60 sh_in a test -d "$st/conversations/$pconv" || true     # replicated to node-a, where it waits for approval
 if ! agent a answer j1 5 "should not arrive" | grep -q '"received": {'; then ok "first contact: pp's message waits (j1 receives nothing) until a person approves"; else no "j1 received before approval"; fi
 if fx a http approve pp.pub-1 --as pa 2>&1 | grep -q approved; then ok "a person approved pp.pub-1 at first contact"; else no "first-contact approval"; fi
 r="$(agent a answer j1 60 "hello public node, j1 here")"
@@ -212,16 +212,24 @@ case "$out" in *"copy addressed"*) ok "a message to another member of a conversa
 # ---------------------------------------------------------------- revoke: cut off within the lifetime; the secret rotates
 old="$(sh_in a cat $st/mesh/secret)"
 if out="$(fx a node revoke pub-1 --yes --as pa 2>&1)"; then ok "node-a revoked pub-1: ${out#facilitator: }"; else no "revoke: $out"; fi
-same() { [ "$(docker exec "$p-b" cat $st/mesh/secret)" != "$old" ] && [ "$(docker exec "$p-c" cat $st/mesh/secret)" != "$old" ] \
-  && [ "$(docker exec "$p-a" cat $st/mesh/secret)" = "$(docker exec "$p-b" cat $st/mesh/secret)" ]; }
-if wait_for 200 same; then ok "the mesh secret rotated: node-a, node-b and node-c hold the same new one (the revoked node holds the old)"
-else no "the secret did not rotate on the three nodes"; fx a check | grep rotation || true
+# the secret each node's SLIM app was actually made with (the peers part writes its hash into status.json when it connects)
+used() { docker exec "$p-$1" sh -c "python3 -c \"import json; print(json.load(open('$st/mesh/status.json')).get('secret_sha',''))\"" 2>/dev/null \
+  || docker exec "$p-$1" /opt/facilitator/python/bin/python3 -I -c "import json; print(json.load(open('$st/mesh/status.json')).get('secret_sha',''))"; }
+sha() { printf '%s' "$1" | sha256sum | cut -c1-16; }
+oldsha="$(sha "$old")"
+same() { local n; n="$(sha "$(docker exec "$p-a" cat $st/mesh/secret)")"
+  [ "$n" != "$oldsha" ] && [ "$(used a)" = "$n" ] && [ "$(used b)" = "$n" ] && [ "$(used c)" = "$n" ] \
+  && [ "$(docker exec "$p-b" cat $st/mesh/secret)" = "$(docker exec "$p-a" cat $st/mesh/secret)" ] \
+  && [ "$(docker exec "$p-c" cat $st/mesh/secret)" = "$(docker exec "$p-a" cat $st/mesh/secret)" ]; }
+if wait_for 240 same; then ok "the mesh secret rotated: node-a, node-b and node-c hold one new secret and each node's SLIM app was made with it (status.json secret_sha)"
+else no "the secret did not rotate on the three nodes (old $oldsha; a $(used a), b $(used b), c $(used c))"; fx a check | grep rotation || true
   if [ -n "${P2P_PAUSE_ROT:-}" ]; then echo "paused: $p"; sleep "$P2P_PAUSE_ROT"; fi; fi
+if [ "$(used pub)" = "$oldsha" ]; then ok "the revoked node still runs on the old secret, so it cannot form a SLIM session with the three"; else no "pub's secret_sha $(used pub) is not the old one $oldsha"; fi
 for n in a b c; do wait_for 90 sh -c "docker exec $p-$n facilitator infra status | grep -q 'peers *healthy'" || true; done
 c2="$(agent b open pb b1 c1 -- "@c1 are you still there after the rotation")" || true
 c2id="$(echo "$c2" | jget 'd["conversation"]')"
 if agent c answer c1 90 "yes, c1 on the new secret" | grep -q 'after the rotation'; then ok "the remaining nodes keep talking on the new secret (b1 to c1)"; else no "b1 to c1 after the rotation"; fi
-sleep 3
+wait_for 60 fx b verify --conv "$c2id" || true
 if fx b verify --conv "$c2id" >/dev/null; then ok "verify passes on the conversation made after the rotation"; else no "verify after the rotation"; fi
 secs="$(python3 -I -c "import sys; v=sys.argv[1]; print(int(v[:-1])*{'s':1,'m':60,'h':3600}[v[-1]])" "$ttl")"
 if wait_for $((secs + 90)) sh -c "docker exec $p-pub facilitator check | grep -q 'certificate *NOT READY.*EXPIRED'"; then ok "the revoked node's certificate expired within its lifetime ($ttl; 1 h by default) and was not renewed"
