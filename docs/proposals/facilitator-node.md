@@ -1462,3 +1462,6 @@ What slice N4 found where a ruling could not be built as written, and the Operat
   the approval lasts `approval_ttl` (30 days at public), across every conversation the client starts, until it
   expires or the token is revoked. Rejected: an approval per conversation (B: a person in every new
   conversation).
+- **HC5, the `mcp` wheels in the bundle: option A, ruled 2026-11-23.** The bundle grows by about 40 MB; its
+  `install.sh` keeps the 28 `mcp` wheels per architecture pinned by SHA-256 and URL (`--require-hashes`), and a
+  task refreshes that table before the next `mcp` upgrade. Rejected: refreshing it by hand (B).
