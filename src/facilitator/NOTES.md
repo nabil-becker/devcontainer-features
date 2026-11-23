@@ -265,7 +265,7 @@ a file, so the node's certificate key is a file in the volume, mode 600 (the exc
   **card** (its certificate, its facilitator's packet key and its exposed participants' packet keys, signed with the
   certificate's key) binds packet keys to SPIFFE IDs, so every packet's signer has an ID: an entry signed by a key no
   admitted card binds to the principal it writes as is refused, and so is a roster entry adding such a key. A card
-  or a roster older than the one held is a replay; a handle two nodes announce is reachable on neither.
+  or a roster older than the one held is a replay.
 - Refusals go to `mesh/refused.log`; `facilitator check` shows the last ones ("lock two") and the TLS refusals in the
   SLIM log (a refused dialer sees only a timeout; the reason is in the dialer's log: `UnknownIssuer`,
   `CertificateRequired`, `not valid for name`).
@@ -354,6 +354,24 @@ OpenBao's snapshot carries it (ruling BH); `facilitator node restore-roster` rea
 - The SLIM names of a node's participants are its own (`agntcy/facilitator-<node>/<handle>`), and the peers part is
   `agntcy/facilitator-node/<node>` with the mesh's secret: another node cannot open a session to a participant's
   process (a different app secret).
+
+### Naming another node's agent: `@handle.node` (ruling H5)
+
+Two nodes may each have an agent with the same handle; both cards are admitted and both agents are reachable.
+
+- **`@b1.spoke-b`** names the agent `b1` of the node `spoke-b`, in a message, in `to`, in `say` and `open`, in
+  `explain`. The separator is `.`: neither a handle (`a-z 0-9 _ -`) nor a node id (`a-z 0-9 -`; a host name's dots
+  become `-`) can hold one, so the split is never ambiguous. A `.word` after a mention whose word is no known node is
+  punctuation, as before ("thanks @jester." still reaches jester).
+- **A bare `@b1`** works when it names exactly one reachable agent. When several have that handle (this node's own
+  included: there is no local-first rule), it is refused: opening a conversation says
+  `@echo names 2 participants: @echo.spoke-a, @echo.spoke-b; name one of them`, and in a conversation with both as
+  members the mention is delivered to neither, with a notice listing them.
+- **In a conversation shared with other nodes every member is `handle.node`** (its thread, its roster, the routes,
+  `from` in `receive`, the transcript and `verify`), so two `b1` can be members of one conversation. A conversation a
+  node keeps alone keeps bare handles, and a standalone node sees no change.
+- **`who`** shows a participant's bare handle, or `handle.node` where another reachable participant has that handle
+  too; `check` lists the shared handles.
 
 ### Ports (ADR-0071)
 
@@ -660,7 +678,6 @@ each delivery in its route.
   `reload_client_ca_file` did nothing in 3.4.6 here); the peers part restarts it after a renewal.
 - The mesh's SLIM app secret is shared by every joined node and is not rotated when one is revoked (lock one and lock
   two still refuse it).
-- A handle is the mesh's once: two nodes announcing one handle make it reachable on neither.
 - dirctl 1.9.1 cannot switch mDNS off (above, "The Directory, and mDNS").
 - The arm64 bundle is built (a cross build) and checked here, but runs only on the arm64 runner of
   `release-bundle`; nothing on arm64 runs in CI's Feature tests.

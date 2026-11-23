@@ -218,7 +218,8 @@ flowchart LR
 
 Every node one of a conversation's members is on holds a whole replica; each write is pushed to the other member
 nodes until delivered. The hub's SLIM node routes between spokes; its application holds no copy unless one of its
-participants is a member. Each receiving node runs lock two before anything reaches its register.
+participants is a member. Each receiving node runs lock two before anything reaches its register. In a shared
+conversation every member is named `handle.node` (ruling H5), so two nodes' agents of one handle can both be members.
 
 ```mermaid
 flowchart LR

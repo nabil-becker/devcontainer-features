@@ -36,6 +36,11 @@ Nothing changes without a `mesh.yml`: a node stays standalone with every port on
 - **`check`** shows the mesh, the certificate, what is open beyond loopback, the hub, TLS refusals from the SLIM log
   and lock two's refusals; `check <mesh.yml>...` (or `-`) lints mesh files by NFR-11's contract.
   **`explain`** prints the level a handle or SPIFFE ID gets and each level's effective limits with their source.
+- **Qualified handles** (ruling H5): `@b1.spoke-b` names the agent `b1` of the node `spoke-b`. A bare handle works
+  when it names one reachable agent; when several share it, it is refused with their qualified names (no
+  precedence for this node's own). Two nodes may announce the same handle; `who` and `check` show qualified names
+  where a handle is shared. In a conversation shared with other nodes every member is `handle.node`; nothing changes
+  for conversations a node keeps alone or for a standalone node.
 - **The Directory per role** (`node.directory.peering`): a hub's OCI and libp2p on its name, a spoke on loopback with
   the hub as its bootstrap peer, syncing the hub's records by registry, one way. dirctl 1.9.1 has no mDNS switch, so
   peering needs `directory.firewall` (`auto`: iptables drops UDP 5353; or `external`).

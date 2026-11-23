@@ -298,7 +298,7 @@ a file, so the node's certificate key is a file in the volume, mode 600 (the exc
   **card** (its certificate, its facilitator's packet key and its exposed participants' packet keys, signed with the
   certificate's key) binds packet keys to SPIFFE IDs, so every packet's signer has an ID: an entry signed by a key no
   admitted card binds to the principal it writes as is refused, and so is a roster entry adding such a key. A card
-  or a roster older than the one held is a replay; a handle two nodes announce is reachable on neither.
+  or a roster older than the one held is a replay.
 - Refusals go to `mesh/refused.log`; `facilitator check` shows the last ones ("lock two") and the TLS refusals in the
   SLIM log (a refused dialer sees only a timeout; the reason is in the dialer's log: `UnknownIssuer`,
   `CertificateRequired`, `not valid for name`).
@@ -387,6 +387,24 @@ OpenBao's snapshot carries it (ruling BH); `facilitator node restore-roster` rea
 - The SLIM names of a node's participants are its own (`agntcy/facilitator-<node>/<handle>`), and the peers part is
   `agntcy/facilitator-node/<node>` with the mesh's secret: another node cannot open a session to a participant's
   process (a different app secret).
+
+### Naming another node's agent: `@handle.node` (ruling H5)
+
+Two nodes may each have an agent with the same handle; both cards are admitted and both agents are reachable.
+
+- **`@b1.spoke-b`** names the agent `b1` of the node `spoke-b`, in a message, in `to`, in `say` and `open`, in
+  `explain`. The separator is `.`: neither a handle (`a-z 0-9 _ -`) nor a node id (`a-z 0-9 -`; a host name's dots
+  become `-`) can hold one, so the split is never ambiguous. A `.word` after a mention whose word is no known node is
+  punctuation, as before ("thanks @jester." still reaches jester).
+- **A bare `@b1`** works when it names exactly one reachable agent. When several have that handle (this node's own
+  included: there is no local-first rule), it is refused: opening a conversation says
+  `@echo names 2 participants: @echo.spoke-a, @echo.spoke-b; name one of them`, and in a conversation with both as
+  members the mention is delivered to neither, with a notice listing them.
+- **In a conversation shared with other nodes every member is `handle.node`** (its thread, its roster, the routes,
+  `from` in `receive`, the transcript and `verify`), so two `b1` can be members of one conversation. A conversation a
+  node keeps alone keeps bare handles, and a standalone node sees no change.
+- **`who`** shows a participant's bare handle, or `handle.node` where another reachable participant has that handle
+  too; `check` lists the shared handles.
 
 ### Ports (ADR-0071)
 
@@ -693,7 +711,6 @@ each delivery in its route.
   `reload_client_ca_file` did nothing in 3.4.6 here); the peers part restarts it after a renewal.
 - The mesh's SLIM app secret is shared by every joined node and is not rotated when one is revoked (lock one and lock
   two still refuse it).
-- A handle is the mesh's once: two nodes announcing one handle make it reachable on neither.
 - dirctl 1.9.1 cannot switch mDNS off (above, "The Directory, and mDNS").
 - The arm64 bundle is built (a cross build) and checked here, but runs only on the arm64 runner of
   `release-bundle`; nothing on arm64 runs in CI's Feature tests.
@@ -809,6 +826,11 @@ Nothing changes without a `mesh.yml`: a node stays standalone with every port on
 - **`check`** shows the mesh, the certificate, what is open beyond loopback, the hub, TLS refusals from the SLIM log
   and lock two's refusals; `check <mesh.yml>...` (or `-`) lints mesh files by NFR-11's contract.
   **`explain`** prints the level a handle or SPIFFE ID gets and each level's effective limits with their source.
+- **Qualified handles** (ruling H5): `@b1.spoke-b` names the agent `b1` of the node `spoke-b`. A bare handle works
+  when it names one reachable agent; when several share it, it is refused with their qualified names (no
+  precedence for this node's own). Two nodes may announce the same handle; `who` and `check` show qualified names
+  where a handle is shared. In a conversation shared with other nodes every member is `handle.node`; nothing changes
+  for conversations a node keeps alone or for a standalone node.
 - **The Directory per role** (`node.directory.peering`): a hub's OCI and libp2p on its name, a spoke on loopback with
   the hub as its bootstrap peer, syncing the hub's records by registry, one way. dirctl 1.9.1 has no mDNS switch, so
   peering needs `directory.firewall` (`auto`: iptables drops UDP 5353; or `external`).
