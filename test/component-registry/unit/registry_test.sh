@@ -480,8 +480,8 @@ new_case base
 l="$(layer mine)"; printf '[skills/demo]\nbody:text = mine\n' > "$l/a.layer"
 printf 'layers:\n  - id: mine\n    at: /Corp/me\n    writable: true\n    sources:\n      - { kind: path, path: "%s" }\n' "$l" > .devcontainer/registry.yml
 out="$(COMPONENT_REGISTRY_SHARE_DIR="$base_share" dcf-registry resolve --as /Corp/me 2>&1)"
-contains "base layer: the three utility skills and the layer's skill resolved" "$out" "resolved 4 component(s)"
-for s in registry-refresh registry-explain registry-remember; do
+contains "base layer: the two utility skills and the layer's skill resolved" "$out" "resolved 3 component(s)"
+for s in registry-refresh registry-explain; do
   contains "base layer: $s has its SKILL.md with its front matter" "$(head -n 2 "$(V)/skills/$s/SKILL.md" 2>/dev/null)" "name: $s"
 done
 out="$(COMPONENT_REGISTRY_SHARE_DIR="$base_share" dcf-registry explain skills/registry-refresh 2>&1)"
@@ -668,46 +668,6 @@ wait "$p1"; r1=$?; wait "$p2"; r2=$?
 check "lock: two paths resolved at once, both exit 0" "0 0" "$r1 $r2"
 check "lock: the first path's view is there" yes "$([ -f "$(P +Corp+p)/whoami" ] && echo yes || echo no)"
 check "lock: the second path's view is there" yes "$([ -f "$(P +Corp+q)/whoami" ] && echo yes || echo no)"
-
-# remember
-new_case remember
-lm="$(layer mine)"; lb="$(layer base)"
-printf '[skills/demo]\nbody:text = base text\n' > "$lb/a.layer"
-printf 'layers:\n  - id: base\n    at: /Corp\n    sources:\n      - { kind: path, path: "%s" }\n  - id: mine\n    at: /Corp/me\n    writable: true\n    sources:\n      - { kind: path, path: "%s" }\n' "$lb" "$lm" > .devcontainer/registry.yml
-dcf-registry resolve --as /Corp/me >/dev/null 2>&1
-out="$(PATH="$abin:$PATH" dcf-registry remember -- "I am colour-blind; use safe colours" 2>&1)"; rc=$?
-check "remember: exit 0" 0 "$rc"
-check "remember: appended to the writable layer's folder" "[skills/*]" "$(sed -n 2p "$lm/remembered.layer")"
-check "remember: the line as body:text" "body:text = I am colour-blind; use safe colours" "$(sed -n 3p "$lm/remembered.layer")"
-contains "remember: refreshed, the line is in the resolved skill" "$(cat "$(V)/skills/demo/SKILL.md")" "I am colour-blind; use safe colours"
-contains "remember: and handed over" "$out" "took component-registry"
-PATH="$abin:$PATH" dcf-registry remember --skill skills/demo -- "Only for demo" >/dev/null 2>&1
-check "remember --skill: that skill's section" "[skills/demo]" "$(grep -F '[skills/demo]' "$lm/remembered.layer")"
-check "remember: appends, never rewrites (two entries)" 2 "$(grep -c '^; remembered ' "$lm/remembered.layer")"
-contains "remember --skill: in the resolved skill" "$(cat "$(V)/skills/demo/SKILL.md")" "Only for demo"
-check "remember: the base layer is never written" "a.layer" "$(find "$lb" -mindepth 1 -printf '%f\n')"
-before="$(cat "$lm/remembered.layer")"
-dcf-registry remember -- "" >/dev/null 2>&1; check "remember an empty line: exit 2" 2 $?
-dcf-registry remember -- "@file /etc/passwd" >/dev/null 2>&1; check "remember a line starting with @: exit 2" 2 $?
-dcf-registry remember --skill "../x" -- "y" >/dev/null 2>&1; check "remember with a bad skill name: exit 2" 2 $?
-check "refused lines: nothing written" "$before" "$(cat "$lm/remembered.layer")"
-sed -i 's/    writable: true//' .devcontainer/registry.yml
-out="$(dcf-registry remember -- "x" 2>&1)"; rc=$?
-check "remember with no writable layer: exit 1" 1 "$rc"
-contains "remember with no writable layer: says how to mark one" "$out" "mark your own layer (one with a path source) writable: true"
-printf 'layers:\n  - id: base\n    at: /Corp\n    writable: true\n    sources:\n      - { kind: path, path: "%s" }\n  - id: mine\n    at: /Corp/me\n    writable: true\n    sources:\n      - { kind: path, path: "%s" }\n' "$lb" "$lm" > .devcontainer/registry.yml
-out="$(dcf-registry remember -- "x" 2>&1)"; rc=$?
-check "remember with two writable layers: exit 2" 2 "$rc"
-contains "remember with two writable layers: names them" "$out" "(base mine )"
-repo_g="$(layer gitrepo)"; git -C "$repo_g" init -q; printf '[skills/g]\nbody:text = g\n' > "$repo_g/g.layer"; git -C "$repo_g" add . && git -C "$repo_g" commit -qm g
-printf 'layers:\n  - id: g\n    at: /Corp\n    writable: true\n    sources:\n      - { kind: git, url: "%s", branch: main }\n' "$repo_g" > .devcontainer/registry.yml
-out="$(dcf-registry remember -- "x" 2>&1)"; rc=$?
-check "remember on a git layer: refused (exit 1)" 1 "$rc"
-contains "remember on a git layer: not a writable kind" "$out" "has no path source"
-printf 'layers:\n  - id: mine\n    at: /Corp\n    writable: true\n    sources:\n      - { kind: path, path: "%s/nosuch" }\n' "$C" > .devcontainer/registry.yml
-out="$(dcf-registry remember -- "x" 2>&1)"; rc=$?
-check "remember into a folder that is not there: exit 1" 1 "$rc"
-contains "remember into a folder that is not there: says create it" "$out" "is not there; create it"
 
 # ---------------------------- release 1.3.0: heading: false and front matter values ----
 new_case heading
@@ -1033,49 +993,39 @@ albad "twice" "{ pub: beta, pub: gamma }" "alias 'pub' appears twice in one laye
 printf 'layers:\n  - id: a\n    at: /\n    namespace: acme\n    namespace: beta\n    sources:\n      - { kind: path, path: "%s" }\n' "$nc_" > .devcontainer/registry.yml
 contains "namespace: twice in one layer is refused" "$(dcf-registry resolve --as "$W" 2>&1)" "'namespace' appears twice in one layer"
 
-# release 1.9.0: .layer is the layer file extension; .reg is still read, deprecated
+# release 2.0.0: .layer only; .reg is not read; writable is ignored; remember is removed
 new_case layerext
 l="$(layer x)"; printf '[skills/x]\ncolor:value = blue\n' > "$l/a.layer"; path_list "x:/Corp:$l"
 out="$(dcf-registry resolve --as "$W" 2>&1)"; rc=$?
 check ".layer: resolve exit 0" 0 "$rc"
 check ".layer: the file is read" "blue" "$(val skills/x color)"
-lacks ".layer: no deprecation line" "$out" "rename to .layer"
-l="$(layer y)"; printf '[skills/y]\ncolor:value = red\n' > "$l/old.reg"; path_list "y:/Corp:$l"
+lacks ".layer: no .reg line" "$out" "not read since 2.0.0"
+l="$(layer y)"; printf '[skills/y]\ncolor:value = red\n' > "$l/old.reg"; printf '[skills/y]\nsize:value = big\n' > "$l/new.layer"; path_list "y:/Corp:$l"
 out="$(dcf-registry resolve --as "$W" 2>&1)"; rc=$?
-check ".reg: resolve exit 0" 0 "$rc"
-check ".reg: the file is still read" "red" "$(val skills/y color)"
-contains ".reg: the deprecation line names the file" "$out" "reads old.reg; rename to .layer; .reg is removed in 2.0.0"
-l="$(layer z)"; printf '[skills/z]\nk:value = from-layer\n' > "$l/m.layer"; printf '[skills/z]\nk:value = from-reg\n' > "$l/n.reg"; path_list "z:/Corp:$l"
-out="$(dcf-registry resolve --as "$W" 2>&1)"
-check "both extensions: read in name order (n.reg after m.layer wins)" "from-reg" "$(val skills/z k)"
-contains "both extensions: the deprecation line names only the .reg" "$out" "reads n.reg; rename to .layer"
-lacks "both extensions: m.layer is not named" "$out" "reads m.layer"
-# remember writes remembered.layer; an existing remembered.reg is appended to, with the line
-new_case layerext-remember
-lm="$(layer mine)"
+check ".reg: resolve still exits 0 (a warning, not an error)" 0 "$rc"
+check ".reg: the file is not read" "" "$(val skills/y color)"
+check ".reg: the .layer beside it is read" "big" "$(val skills/y size)"
+contains ".reg: one line names the file" "$out" "layer y source 1: not read since 2.0.0: old.reg; rename to .layer"
+l="$(layer r)"; printf '[skills/r]\nk:value = v\n' > "$l/only.reg"
+printf 'layers:\n  - id: r\n    at: /Corp\n    required: true\n    sources:\n      - { kind: path, path: "%s" }\n' "$l" > .devcontainer/registry.yml
+out="$(dcf-registry resolve --as "$W" 2>&1)"; rc=$?
+check "required layer with only .reg: resolves with nothing (exit 0)" 0 "$rc"
+contains "required layer with only .reg: says so" "$out" "not read since 2.0.0: only.reg"
+new_case removed
+lm="$(layer mine)"; printf '[skills/x]\nk:value = v\n' > "$lm/remembered.layer"
 printf 'layers:\n  - id: mine\n    at: /Corp/me\n    writable: true\n    sources:\n      - { kind: path, path: "%s" }\n' "$lm" > .devcontainer/registry.yml
-dcf-registry remember -- "first" >/dev/null 2>&1
-check "remember: writes remembered.layer" "remembered.layer" "$(find "$lm" -mindepth 1 -printf '%f\n')"
-new_case layerext-remember-old
-lm="$(layer mine)"; printf '; old\n[skills/*]\nbody:text = before\n' > "$lm/remembered.reg"
-printf 'layers:\n  - id: mine\n    at: /Corp/me\n    writable: true\n    sources:\n      - { kind: path, path: "%s" }\n' "$lm" > .devcontainer/registry.yml
-out="$(dcf-registry remember -- "second" 2>&1)"
-check "remember: appends to an existing remembered.reg (no split)" "remembered.reg" "$(find "$lm" -mindepth 1 -printf '%f\n')"
-contains "remember: the line is in remembered.reg" "$(cat "$lm/remembered.reg")" "body:text = second"
-contains "remember: prints the deprecation line" "$out" "rename to .layer; .reg is removed in 2.0.0"
-
-# release 1.10.0: writable and remember are deprecated (still work)
-new_case deprecated
-lm="$(layer mine)"
-printf 'layers:\n  - id: mine\n    at: /Corp/me\n    writable: true\n    sources:\n      - { kind: path, path: "%s" }\n' "$lm" > .devcontainer/registry.yml
-check "remember: prints its deprecation line" "yes" "$(PATH="$abin:$PATH" dcf-registry remember -- "dep check" 2>&1 | grep -qF 'remember is deprecated: the registry does not write layers; edit your layer; removed in 2.0.0' && echo yes)"
-check "remember: still writes" "yes" "$(grep -qF 'body:text = dep check' "$lm/remembered.layer" && echo yes)"
-out="$(dcf-registry resolve --as /Corp/me 2>&1)"
-contains "writable: resolve prints one deprecation line for the layer" "$out" "layer mine: writable is deprecated: the registry does not write layers; edit the layer; removed in 2.0.0"
-check "writable: one line per writable layer" 1 "$(grep -c 'writable is deprecated' <<< "$out")"
+out="$(dcf-registry resolve --as /Corp/me 2>&1)"; rc=$?
+check "writable: the old registry.yml still resolves" 0 "$rc"
+contains "writable: one warning that it is ignored" "$out" "layer mine: writable is ignored since 2.0.0: the registry does not write layers; edit the layer"
+check "writable: one line per writable layer" 1 "$(grep -c 'writable is ignored' <<< "$out")"
+check "remembered.layer is an ordinary layer file" "v" "$(val skills/x k)"
+out="$(dcf-registry remember -- "x" 2>&1)"; rc=$?
+check "remember: removed, exit 1" 1 "$rc"
+contains "remember: says removed in 2.0.0 and to edit the layer" "$out" "removed in 2.0.0: edit your layer"
+check "remember: wrote nothing" "remembered.layer" "$(find "$lm" -mindepth 1 -printf '%f\n')"
 new_case nowritable
 l="$(layer a)"; printf '[skills/x]\nk:value = v\n' > "$l/a.layer"; path_list "a:/Corp:$l"
-lacks "no writable: no deprecation line" "$(dcf-registry resolve --as "$W" 2>&1)" "writable is deprecated"
+lacks "no writable: no warning" "$(dcf-registry resolve --as "$W" 2>&1)" "writable is ignored"
 
 echo "component-registry unit: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

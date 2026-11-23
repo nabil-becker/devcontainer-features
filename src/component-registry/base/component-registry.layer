@@ -1,11 +1,8 @@
 ; The component-registry Feature's built-in base layer: rank 0, the id component-registry, at /,
-; below every layer of the layer list and always present when one is resolved. It ships the three
+; below every layer of the layer list and always present when one is resolved. It ships the two
 ; utility skills. A higher layer adapts them like any skill (body:text stacks, @replace replaces).
 [skills/registry-refresh]
 body:text = @file registry-refresh/SKILL.md
 
 [skills/registry-explain]
 body:text = @file registry-explain/SKILL.md
-
-[skills/registry-remember]
-body:text = @file registry-remember/SKILL.md

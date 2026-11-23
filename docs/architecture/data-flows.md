@@ -402,7 +402,7 @@ from its own source at image build, with the same upstream pins.
 
 Built in slices 1 to 3 (component-registry 1.2.0, claude-code 1.12.0, cloud-folder 1.4.0): sources `git`, `path`, `http` (one `.layer` file, auth settings only), `cloud-folder` and, from component-registry 1.5.0, `db` (`sqlite`, `postgres`),
 the view in the Feature's volume, the hand-over to the CLI's skills folder through the adapter's
-`skills` verb, and `/registry-remember` appending to the person's own writable layer (deprecated in component-registry 1.10.0, removed in 2.0.0).
+`skills` verb. The registry does not write layers (`/registry-remember` and `writable` were removed in component-registry 2.0.0).
 
 ```mermaid
 flowchart LR
@@ -425,7 +425,6 @@ flowchart LR
   external-copies --> component-registry
   component-registry -->|resolve| external-view
   external-view -->|handover: minijinja-cli renders the winning templates, then the adapter's skills verb| external-cli-skills
-  component-registry -->|remember (deprecated): appends a line| external-sources
 ```
 
 - Who you are (`COMPONENT_REGISTRY_WHOAMI`) comes from `.env` or the launcher, never a committed file.
@@ -437,7 +436,7 @@ flowchart LR
 - A layer pointed at a public or community source carries a namespace (component-registry 1.7.0, ADR-0073): its components reach the view and the CLI's skills folder only under its prefix (`skills/<ns>--<name>/`), and it cannot change, lock or refer to the Operator's own components; trust in that source stops at its namespace.
 - Each who-you-are path keeps its own view (`paths/<path>`, component-registry 1.8.0), and each hand-over is recorded (`handovers.tsv`: CLI, agent, folder, path; no content). In Claude Code (claude-code 1.14.0) the skills every agent's view has alike stay in `$CLAUDE_CONFIG_DIR/skills`; the rest of an agent's view goes to `$CLAUDE_CONFIG_DIR/registry-agents/<agent>/registry/.claude/skills`, which only that agent's sessions read (`--add-dir`), so one agent's personal facts never reach another agent's skills (ADR-0074).
 - Vendor templates (component-registry 1.11.0, ADR-0077, built): a layer's `templates/<vendor>/<file>.j2` travels with its layer copy into the view; at each hand-over `minijinja-cli` (pinned, checksummed, in the image) renders the winning ones from the view into a temporary owner-only folder in the state volume, the adapter copies the result, and the folder is removed. A template reads only the context the registry gives (no environment, no file outside its layers' templates) and writes only into that folder; a namespaced layer's template writes only inside its namespace's skill folders. Claude Code's base template reproduces the 1.10.0 files byte for byte.
-- The registry does not write layers: edit the layer. `/registry-remember` (deprecated, removed in 2.0.0) still writes only to the layer marked `writable: true`, and only to a folder (a `path` source).
+- The registry does not write layers: edit the layer (`/registry-remember` and `writable` were removed in 2.0.0).
 - In this repository (slice 4) two `path` layers feed the resolve: the devhost Feature's folder in the image (`/usr/local/share/devhost/registry`) and the committed `.devcontainer/registry/repo`; both public, both `required`, so a missing one leaves the last view and never hands over half a skill.
 
 ```mermaid

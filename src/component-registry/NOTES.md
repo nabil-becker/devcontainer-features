@@ -36,7 +36,6 @@
 | Layer copies, the resolved view (with the templates that apply), the lock file, a hand-over's rendered files while it runs | named volume at `/var/lib/devcontainer-features/component-registry`, owner-only | 4 working set |
 | Resolved skills handed to a CLI | the CLI's skills folders (Claude Code: `$CLAUDE_CONFIG_DIR/skills` and, per agent, `$CLAUDE_CONFIG_DIR/registry-agents/`, the claude-code volume), owner-only | 4 working set |
 | Hand-over records (`handovers.tsv`: CLI, agent, folder, path) | the state volume, owner-only | 4 working set |
-| Remembered lines (`/registry-remember`, deprecated: edit your layer; removed in 2.0.0) | `remembered.layer` in the writable layer's folder | the person's choice (their own layer's source) |
 | The utility skills and the base templates (built-in base layer) | `/usr/local/share/component-registry-feature/base`, in the image | none (the Feature) |
 | Source secrets | OpenBao, read with `dcf-secret` | OpenBao's |
 
@@ -59,7 +58,7 @@ four value types, patterns, the match rule, locks, `resolve` and `explain` (`--u
 `git` and `path` registry sources. Release 1.1.0 adds the adapter step (ADR-0064): `handover` gives
 the resolved skills to a CLI through its adapter's `skills` verb, the participant component
 resolves and hands over at every agent's start (with a per-agent who-you-are path), and a built-in
-base layer ships the utility skills `/registry-refresh`, `/registry-explain`, `/registry-remember`.
+base layer ships the utility skills `/registry-refresh` and `/registry-explain`.
 Release 1.2.0 adds the `http` source (and, with cloud-folder 1.4.0, the `cloud-folder` source).
 Release 1.3.0 adds the layer key `heading: false` (stack a layer's text without a heading) and
 writes a skill's `name` and `description` values into its `SKILL.md` front matter.
@@ -85,7 +84,7 @@ at build, and a hand-over to a CLI with templates fails with one line. An `http`
 run time. The scripts are bash, awk and sed (mawk and gawk both work; no python3, no jq):
 
 - `dcf-registry` (`/usr/local/bin`): `resolve`, `explain`, `version`, and (1.1.0) `handover`,
-  `refresh`, `remember`, `layer-list`, and (1.8.0) `forget`, `handovers`, and (1.11.0) `render`.
+  `refresh`, `layer-list`, and (1.8.0) `forget`, `handovers`, and (1.11.0) `render`.
 - `minijinja-cli` (`/usr/local/bin`, 1.11.0).
 - `/usr/local/share/component-registry-feature/base/`: the built-in base layer, the utility skills
   and (1.11.0) the base templates (`templates/claude/SKILL.md.j2`).
@@ -140,7 +139,7 @@ layers:
     at: /Corp/MyDepartment/team/me
     sources:
       - { kind: path, path: .registry-mine }   # git-ignored in this repository
-    writable: true              # deprecated (removed in 2.0.0): /registry-remember appends here; edit the layer instead
+    writable: true              # ignored since 2.0.0 (a warning); the registry does not write layers: edit the layer
     heading: false              # 1.3.0: its text stacks with no "## Layer mine" line
   - id: acme-community
     at: /
@@ -269,9 +268,10 @@ last good copy.
 ## A layer's content: `.layer` files
 
 One or more `*.layer` files at the root of the layer's copy, read in name order, line by line.
-`.reg` was the extension until 1.9.0 (Windows opens `.reg` in the Registry Editor on double-click);
-it is still read in 1.x, `resolve` says once per layer source which files to rename, and it is removed
-in 2.0.0. A folder holding both `x.layer` and `x.reg` reads both, together in name order:
+`.reg` files (the extension until 1.8.x; Windows opens them in the Registry Editor) are not read
+since 2.0.0: `resolve` prints a warning per layer source naming them ("not read since 2.0.0: ...;
+rename to .layer") and goes on without them, so a `required` layer holding only `.reg` files
+resolves with nothing:
 
 ```
 [path]                    a section; [path] @replace replaces the component below it
@@ -322,7 +322,6 @@ list using it is refused with its line. A listed layer adapts a utility skill li
 | --- | --- | --- |
 | `/registry-refresh` | `dcf-registry refresh --session "${CLAUDE_SESSION_ID}"` | (1.8.0) resolve now for the calling agent's own path and hand over to it alone (its session id, found in each adapter's `list`); an unknown or unsubstituted id refreshes every recorded hand-over, each path once; with no record, for the path the latest view was resolved for, to every CLI adapter on PATH. Claude Code picks the change up in the running session; a CLI that does not watch its skills folder needs its session restarted; a skill already used in a conversation keeps its old text until a new conversation |
 | `/registry-explain <path>` | `dcf-registry explain <path> [--uses] [--color auto|always|never]` | read-only, shown to the person |
-| `/registry-remember [skills/<name>] <line>` (deprecated in 1.10.0, removed in 2.0.0: the registry does not write layers, edit your layer) | `dcf-registry remember [--skill <name>] -- <line>` | prints a deprecation line, then appends `body:text = <line>` under `[skills/<name>]` (or `[skills/*]`, every skill) to `remembered.layer` in the folder of the layer marked `writable: true`, then refreshes. Refused, nothing written: no writable layer, two, a writable layer without a `path` source (a git or http layer changes through its owner's release), a folder that is not there or not writable, an empty line, a line starting with `@`. Only when the person asks (`disable-model-invocation`) |
 
 ## Handing skills to a CLI (1.1.0)
 
@@ -827,7 +826,7 @@ to the committed one byte for byte. Switching over (the Operator: it waits) woul
 ```json
 "features": {
   "ghcr.io/nabil-becker/devcontainer-features/go-task:1": {},
-  "ghcr.io/nabil-becker/devcontainer-features/component-registry:1": {}
+  "ghcr.io/nabil-becker/devcontainer-features/component-registry:2": {}
 }
 ```
 
@@ -862,7 +861,6 @@ every skipped line with its reason, and `resolved N component(s) for <W>`.
 - `component-registry:setup`: re-run the start hook.
 - `component-registry:refresh`: resolve and hand over now (`-- --as <path>`, `-- --session <id>`);
   `/registry-refresh`.
-- `component-registry:remember`: `-- [--skill <name>] -- <line>`; `/registry-remember`.
 
 ## Pairs with
 
@@ -889,9 +887,10 @@ every skipped line with its reason, and `resolved N component(s) for <W>`.
   hand-over. In Claude Code a session not started through `agents` reads only the skills every
   agent's view has alike, and a project skill of the same name beats an agent's own copy (the
   registry's then runs as `/registry:<name>`).
-- `remember` writes to a `path` source only, appends, and never edits or removes a line; to take
-  one back, edit `remembered.layer` in your layer. `remember` and `writable` are deprecated (1.10.0):
-  the registry does not write layers, so edit your layer; both are removed in 2.0.0.
+- The registry does not write layers (the Operator's ruling of 2026-11-23): `remember`, the task and
+  `/registry-remember` are removed in 2.0.0 (`dcf-registry remember` says so and exits 1), and
+  `writable` on a layer is ignored with a warning. Edit your layer; a `remembered.layer` left in a
+  layer folder is an ordinary layer file.
 - A `path` source's version is a fingerprint of names, sizes and
   modification times, so a change that keeps all three is not seen.
 - `*` and `**` are whole segments; there are no value filters.
@@ -906,8 +905,7 @@ every skipped line with its reason, and `resolved N component(s) for <W>`.
   must resolve for the same who-you-are path; a missing one is reported, never fetched (1.7.0).
 - A namespaced agent definition matches no agent of the agents list (1.7.0); an agents-list
   agent cannot opt into one. A namespace's skills are adapted through a layer listed in that
-  namespace; `remember --skill` takes no namespaced name (writing is out of the registry's scope,
-  the Operator's ruling of 2026-11-23: `writable` and `remember` are deprecated in 1.10.0 and removed in 2.0.0).
+  namespace.
 
 ## Why it exists
 
@@ -918,7 +916,7 @@ its result to the CLI's own skills folder (1.1.0), so the two do not compete.
 
 ## Version and upgrade
 
-Pin the major in the Feature reference (`component-registry:1`); a rebuild picks up the newest
-1.x. The layer copies and the view are rebuilt by the next `resolve`, so an upgrade needs nothing
+Pin the major in the Feature reference (`component-registry:2`); a rebuild picks up the newest
+2.x (from 1.x: see the CHANGELOG's 2.0.0 actions). The layer copies and the view are rebuilt by the next `resolve`, so an upgrade needs nothing
 else (1.11.0: a rebuild installs `minijinja-cli`; a view resolved before 1.11.0 holds no templates
-and is handed over as it is until the next `resolve`, which every agent start runs); the `.layer` grammar and the layer list keys only grow within 1.x.
+and is handed over as it is until the next `resolve`, which every agent start runs); the `.layer` grammar and the layer list keys only grow within 2.x.

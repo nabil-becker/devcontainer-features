@@ -392,11 +392,11 @@ The domain words of the project itself are not here; they live with the project'
   layers' lines for it are skipped; it beats `@replace`.
 - **Who-you-are path**: the path that says which sections of the registry apply to this person and
   agent, given to `resolve` and `explain` (`--as`).
-- **.layer file**: a file of the component registry's format (`.reg` until 1.9.0; still read in 1.x, deprecated): sections of paths with `:key` value
+- **.layer file**: a file of the component registry's format (`.reg` files are not read since 2.0.0): sections of paths with `:key` value
   lines, read from a layer copy in name order.
 - **Built-in base layer**: the registry layer at rank 0 (id `component-registry`) that the Feature
-  ships itself, holding the three utility skills (`registry-refresh`, `registry-explain`,
-  `registry-remember`); every other layer wins over it, and its id is reserved.
+  ships itself, holding the two utility skills (`registry-refresh` and
+  `registry-explain`); every other layer wins over it, and its id is reserved.
 - **Hand-over**: `dcf-registry handover <cli>`: the step that gives the resolved view's skills to a
   CLI adapter's `skills` verb, under the view lock; exit 3 means the CLI cannot take skills
   (ADR-0064).
