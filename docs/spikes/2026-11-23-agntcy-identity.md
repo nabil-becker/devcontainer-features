@@ -158,3 +158,15 @@ sign to watch; the Directory's own signing may already cover part of this: from 
 - Whether the node's read APIs can be protected and rate limited for a public deployment: they had no auth here.
 - A real tamper test (change one claim, keep the JWS well-formed) was not run; the signature check is standard
   JWX, but the run only showed a parse error.
+
+## Ruling (2026-11-23)
+
+The Operator ruled ID1 to ID3 as recommended:
+
+- **ID1:** public nodes need no agent badges in slice N5a. Badges stay a later opt-in, and the Feature's
+  `identity` option stays refused; N5a's trust rests on key plus approval, the signed node cards and lock two.
+- **ID2:** N5a reserves an optional opaque `badge` field in each participant entry of the node card, and the
+  NOTES describe the binding record (SPIFFE ID, packet key, card hash) a badge would carry.
+- **ID3:** no further work on the identity-provider path or on keeping the issuer key in OpenBao until a
+  consumer asks for badges; revisit when upstream ships offline verification, expiry and a revoke command
+  (upstream issue #179).
