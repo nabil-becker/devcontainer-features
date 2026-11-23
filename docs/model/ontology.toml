@@ -1466,3 +1466,8 @@ summary = "At the public level an HTTP client's first message is held until a pe
 type = "mechanism"
 term = "Via"
 summary = "The data.via field naming the HTTP client the node vouches for on a message it signed."
+
+[node-issuer]
+type = "mechanism"
+term = "Node issuer"
+summary = "What signs a domain's node certificates: the node itself by default, with the CA key in OpenBao, else an ssh-agent, else a file."
