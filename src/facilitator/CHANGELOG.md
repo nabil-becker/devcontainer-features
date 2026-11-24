@@ -35,7 +35,8 @@ node that is not a hub, and a hub with `node.issuer.openbao` keeps its OpenBao P
   machine with `--add-host=<name>:host-gateway`) and an overlay with the CA key in an ssh-agent container beside the hub.
   `task bundle:k8s` renders and checks them with kustomize and kubeconform; `task test:facilitator-k8s` runs the hub, spokes and
   both issuer tiers in a throwaway kind cluster (the Rancher Desktop overlay itself is not run against Rancher Desktop).
-- `bundleVersion` defaults to 0.7.0 (unpinned until `release-bundle` runs: the Feature builds the bundle from its own source).
+- `bundleVersion` defaults to 0.7.0: the Feature installs the published node bundle `facilitator-bundle-v0.7.0`
+  (amd64 and arm64), pinned by SHA-256 in `digests.txt`. 0.6.0 was not released as a Feature: 0.7.0 carries it.
 
 ### Changed
 
