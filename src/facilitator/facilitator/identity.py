@@ -44,6 +44,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from . import cabuild
 from . import mesh as mesh_mod
 
 TOKEN_SECONDS = 15 * 60
@@ -611,13 +612,253 @@ class LocalIssuer:
         self.store.cert(self.domain).write_text(got["cert"])
 
 
+def agent_socket(cfg: dict, environ: dict | None = None) -> str:
+    """node.issuer.ssh_agent.socket: a path, or $SSH_AUTH_SOCK (an environment variable's name after a $)."""
+    env = os.environ if environ is None else environ
+    sock = str(cfg.get("socket") or "").strip()
+    if sock.startswith("$"):
+        sock = env.get(sock[1:].strip("{}"), "")
+    return sock
+
+
+class BuiltinIssuer(LocalIssuer):
+    """The issuer a hub is when no OpenBao is named (rulings K3, K4, K5; ADR-0078): a CA of its own, DNS-name constrained,
+    that needs no unseal. Two shapes, by where the CA key is:
+
+    - **file** (`node.issuer.ssh_agent` absent; the last resort, `check` warns): a *root* (root.pem, root.key) that signed
+      one *issuing CA* (ca.pem, ca.key) once; leaves are signed by the issuing CA, and the trust bundle holds both, so
+      `facilitator node issuer export-root` can take the root key out of the volume (a person's act) with nothing
+      changing for a spoke that has the bundle. A hub built by 0.6.0 has a single CA (ca.pem, ca.key): kept as it is.
+    - **ssh-agent** (`node.issuer.ssh_agent: {socket, key}`): the agent's ed25519 key *is* the CA (self-signed root,
+      once); no key file exists. Every leaf is one signing round trip to the agent. The key is matched by its SHA256
+      fingerprint, never 'the first key'. With the agent gone nothing is issued or renewed and every certificate
+      already issued stays valid until it expires.
+
+    Certificates are built by cabuild (the signature is over the TBS bytes, ed25519), so no OpenSSL 3.4 is needed. The
+    roster is backed up to a file beside it in the same volume (the OpenBao KV does that for the OpenBao tier)."""
+
+    ROOT_DAYS = 7300
+    CA_DAYS = 3650
+
+    def __init__(self, store: Store, domain: str, dns: tuple = (), agent: dict | None = None, environ: dict | None = None):
+        super().__init__(store, domain, dns)
+        self.agent = agent or None
+        self.sock = agent_socket(agent, environ) if agent else ""
+        self.root_pem, self.root_key = self.dir / "root.pem", self.dir / "root.key"
+        self.backup_file = store.root / "roster.backup.json"
+
+    @property
+    def tier(self) -> str:
+        return "ssh-agent" if self.agent else "file"
+
+    def _constraints(self) -> list[str]:
+        return list(dict.fromkeys((self.domain, *self.dns)))
+
+    def _signer_for_ca(self):
+        """The signer of the issuing CA, and what makes it so."""
+        try:
+            if self.agent:
+                return cabuild.agent_signer(self.sock, self.agent.get("key", ""))
+            if not self.ca_key.is_file():
+                raise IdentityError(f"the issuing CA key {self.ca_key} is missing (restore the volume)")
+            return cabuild.file_signer(self.ca_key)
+        except cabuild.SignError as e:
+            raise IdentityError(str(e)) from None
+
+    def _make(self, signer, issuer_der: bytes | None, subject_o_cn: tuple[str, str], spki: bytes, issuer_spki: bytes | None,
+              days: int, pathlen: int) -> str:
+        subj = cabuild.name(*subject_o_cn)
+        now = time.time()
+        exts = [cabuild.ext_basic(True, pathlen), cabuild.ext_key_usage(True), cabuild.ext_dns_constraints(self._constraints()),
+                cabuild.ext_ski(spki)]
+        if issuer_spki is not None:
+            exts.append(cabuild.ext_aki(issuer_spki))
+        try:
+            return cabuild.build(serial=cabuild.new_serial(), issuer=issuer_der or subj, subject=subj, spki=spki,
+                                 not_before=now - 5, not_after=now + days * 86400, exts=exts, sign=signer)
+        except cabuild.SignError as e:
+            raise IdentityError(str(e)) from None
+
+    def ensure(self) -> Path:
+        o, cn = self.domain, f"{self.domain} CA"
+        if self.ca_pem.is_file() and (self.agent or self.ca_key.is_file()):
+            if self.agent:
+                self._check_agent_matches()
+            return self.ca_pem
+        self.store.ensure()
+        self.dir.mkdir(parents=True, exist_ok=True)
+        os.chmod(self.dir, 0o700)
+        if self.agent:
+            try:
+                key = cabuild.agent_key(self.sock, self.agent.get("key", ""))
+            except cabuild.SignError as e:
+                raise IdentityError(str(e)) from None
+            spki = cabuild.agent_spki(key)
+            pem = self._make(self._signer_for_ca(), None, (o, cn), spki, None, self.ROOT_DAYS, 0)
+            self.ca_pem.write_text(pem)
+            return self.ca_pem
+        # a root, then the issuing CA it signs: the root key is only needed to sign the issuing CA
+        new_key(self.root_key)
+        root_spki = cabuild.spki_of_pem_pubkey(_run(["pkey", "-in", str(self.root_key), "-pubout"]).stdout.decode())
+        root_pem = self._make(cabuild.file_signer(self.root_key), None, (o, f"{self.domain} root CA"), root_spki, None,
+                              self.ROOT_DAYS, 1)
+        new_key(self.ca_key)
+        ca_spki = cabuild.spki_of_pem_pubkey(_run(["pkey", "-in", str(self.ca_key), "-pubout"]).stdout.decode())
+        root_subject = cabuild.cert_parts(cabuild.from_pem(root_pem))["subject"]
+        ca_pem = self._make(cabuild.file_signer(self.root_key), root_subject, (o, cn), ca_spki, root_spki, self.CA_DAYS, 0)
+        self.root_pem.write_text(root_pem)
+        self.ca_pem.write_text(ca_pem)
+        return self.ca_pem
+
+    def _check_agent_matches(self) -> None:
+        """The root on disk must be the agent key's (a root made by another key is not this hub's CA)."""
+        try:
+            key = cabuild.agent_key(self.sock, self.agent.get("key", ""))
+        except cabuild.SignError as e:
+            raise IdentityError(str(e)) from None
+        if cert_info(self.ca_pem.read_text())["raw_key"] != cabuild.agent_spki(key)[-32:]:
+            raise IdentityError(f"the CA certificate {self.ca_pem} is not for the agent key {self.agent.get('key')} "
+                                "(node.issuer.ssh_agent.key changed: a new key is a new CA, and every node must join again)")
+
+    def bundle(self) -> str:
+        self.ensure()
+        return self.ca_pem.read_text() + (self.root_pem.read_text() if self.root_pem.is_file() else "")
+
+    def sign(self, request_pem: str, node_id: str, dns: str, ttl_seconds: int) -> dict:
+        ca = self.ensure()
+        csr_check(request_pem)
+        pub = _run(["req", "-noout", "-pubkey"], stdin=request_pem.encode()).stdout.decode()
+        try:
+            spki = cabuild.spki_of_pem_pubkey(pub)
+        except cabuild.SignError as e:
+            raise IdentityError(str(e)) from None
+        parts = cabuild.cert_parts(cabuild.from_pem(ca.read_text()))
+        now = time.time()
+        serial = cabuild.new_serial()
+        try:
+            pem = cabuild.build(
+                serial=serial, issuer=parts["subject"], subject=cabuild.cn_name(dns), spki=spki, not_before=now - 5,
+                not_after=now + ttl_seconds,
+                exts=[cabuild.ext_basic(False), cabuild.ext_key_usage(False), cabuild.ext_eku(),
+                      cabuild.ext_san(dns, f"spiffe://{self.domain}/node/{node_id}"), cabuild.ext_ski(spki),
+                      cabuild.ext_aki(parts["spki"])],
+                sign=self._signer_for_ca())
+        except cabuild.SignError as e:
+            raise IdentityError(str(e)) from None
+        return {"cert": pem, "chain": "", "serial": f"{serial:x}"}
+
+    def backup_roster(self, r: dict) -> None:
+        self.store.ensure()
+        _private(self.backup_file, json.dumps(r, sort_keys=True))
+
+    def restore_roster(self) -> dict:
+        try:
+            return json.loads(self.backup_file.read_text())
+        except (OSError, ValueError) as e:
+            raise IdentityError(f"no roster backup at {self.backup_file}: {e}") from None
+
+    # ------------------------------------------------------------ what a person does with the built-in CA
+
+    def status(self) -> dict:
+        """{tier, ca, root_offline, agent: {...}} for `node issuer status` and check; never a secret."""
+        out: dict = {"tier": self.tier, "domain": self.domain, "ca_present": self.ca_pem.is_file()}
+        if self.ca_pem.is_file():
+            info = cert_info(self.ca_pem.read_text())
+            out["ca_expires"] = info["not_after"]
+            out["ca_key"] = ssh_key(info["raw_key"]) if info["key_type"] == "ed25519" else "other"
+        if self.agent:
+            out["agent"] = {"socket": self.sock, "key": self.agent.get("key")}
+            try:
+                keys = cabuild.agent_identities(self.sock)
+                out["agent"].update(reachable=True, holds_key=any(k["fingerprint"] == self.agent.get("key") for k in keys),
+                                    other_keys=sum(1 for k in keys if k["fingerprint"] != self.agent.get("key")))
+                mine = [k for k in keys if k["fingerprint"] == self.agent.get("key")]
+                out["agent"]["key_type"] = mine[0]["type"] if mine else None
+            except cabuild.SignError as e:
+                out["agent"].update(reachable=False, error=str(e))
+        else:
+            out["key_file"] = str(self.ca_key)
+            out["two_level"] = self.root_pem.is_file()
+            out["root_offline"] = self.root_pem.is_file() and not self.root_key.is_file()
+        return out
+
+    def export_root(self, out: Path) -> dict:
+        """Write the root CA (certificate and key) to a new file at `out`, mode 600, and remove the root key from the volume
+        (ruling K4). After it the hub still issues (the issuing CA signs) and the spokes' bundles are unchanged; what the root
+        key is still needed for is a new issuing CA, in ten years or after a compromise. Refuses to overwrite a file."""
+        if self.agent:
+            raise IdentityError("export-root: the CA key is in an ssh-agent; there is no key file to take out")
+        self.ensure()
+        if not self.root_pem.is_file():
+            raise IdentityError("export-root: this hub's CA was made by 0.6.0 with no separate root (the CA key is the only one); "
+                                "migrate it to OpenBao, or issue again with a new built-in CA")
+        if not self.root_key.is_file():
+            raise IdentityError("export-root: the root key is not in this volume any more (taken out already)")
+        out = Path(out)
+        if out.exists():
+            raise IdentityError(f"export-root: {out} exists; name a new file")
+        out.parent.mkdir(parents=True, exist_ok=True)
+        _private(out, self.root_key.read_text() + self.root_pem.read_text())
+        if out.read_text() != self.root_key.read_text() + self.root_pem.read_text():
+            raise IdentityError("export-root: the copy does not match; the key was left in the volume")
+        self.root_key.unlink()
+        return {"file": str(out), "root": str(self.root_pem)}
+
+    def migrate_to_openbao(self, bao: "Issuer", token: str, ttl_max: str = "720h") -> dict:
+        """Move the issuing CA onto an OpenBao PKI mount, keeping the very same CA (ruling K3): the issuing key and its
+        certificate are imported (config/ca) and the node role is made, so the certificates every spoke holds and the
+        bundle they trust stay valid and nobody joins again. The key then leaves the volume. Needs a token that may
+        configure the mount (the Operator's own; the hub's AppRole may only sign)."""
+        if self.agent:
+            raise IdentityError("migrate: the CA key is in an ssh-agent and cannot be imported into OpenBao; "
+                                "issue the PKI's intermediate from the agent's CA by hand, and every node joins again")
+        if not self.ca_key.is_file():
+            raise IdentityError("migrate: the issuing CA key is not in this volume")
+        bao._token = token
+        mount = bao.mount
+        bundle_pem = self.ca_key.read_text() + self.ca_pem.read_text()
+        try:
+            mounts = bao._call("GET", "sys/mounts")
+            if f"{mount}/" not in (mounts.get("data") or mounts):
+                bao._call("POST", f"sys/mounts/{mount}", {"type": "pki", "config": {"max_lease_ttl": ttl_max}})
+            bao._call("POST", f"{mount}/config/ca", {"pem_bundle": bundle_pem})
+            bao._call("POST", f"{mount}/roles/{bao.role}", node_role(self.domain, ttl_max))
+            # prove it before the key leaves: a throwaway request signed by OpenBao must verify against the bundle
+            with tempfile.TemporaryDirectory(prefix="fac-mig-") as t:
+                k = Path(t) / "k"
+                new_key(k)
+                got = bao.sign(csr(k, f"migrate-check.{self.domain}"), "migrate-check", f"migrate-check.{self.domain}", 300)
+                (Path(t) / "bundle.pem").write_text(self.bundle())
+                if not chain_ok(got["cert"], Path(t) / "bundle.pem"):
+                    raise IdentityError("migrate: a certificate OpenBao signed does not chain to the hub's bundle; the key was left in the volume")
+        except IdentityError:
+            raise
+        r = roster(self.store)
+        bao.backup_roster(r)
+        self.ca_key.unlink()
+        return {"mount": mount, "role": bao.role, "nodes": len(r.get("nodes", {}))}
+
+
+def node_role(domain: str, max_ttl: str = "720h") -> dict:
+    """The OpenBao PKI role a hub's signing uses: names under the domain only (ADR-0069), the SPIFFE ID the hub decides."""
+    return {"allowed_domains": domain, "allow_subdomains": True, "allow_bare_domains": True, "enforce_hostnames": True,
+            "allowed_uri_sans": f"spiffe://{domain}/node/*", "key_type": "any", "server_flag": True, "client_flag": True,
+            "max_ttl": max_ttl, "ttl": "24h", "require_cn": False}
+
+
 def make_issuer(m: "mesh_mod.Mesh", store: Store, domain: str):
-    """The issuer of a domain this node issues in: a hub's own domain is its OpenBao PKI (ADR-0069); a peer's own
-    domain with node.issuer set likewise; anything else (a peer's own domain, a public domain) is a CA the node keeps."""
-    iss = m.node.get("issuer")
-    if domain == m.domain and iss and iss.get("openbao"):
+    """The issuer of a domain this node issues in, in the order of ruling K5 (ADR-0078): an OpenBao PKI when
+    node.issuer.openbao names one; else an ssh-agent that holds the CA key (node.issuer.ssh_agent); else the node's own CA
+    with its key in a file: the built-in one on a hub, the single-level one of a peer or of a public domain."""
+    iss = m.node.get("issuer") or {}
+    dns = tuple(x for x in (m.node.get("name"),) if x)
+    if domain == m.domain and iss.get("openbao"):
         return Issuer({**iss, "domain": domain})
-    return LocalIssuer(store, domain, tuple(x for x in (m.node.get("name"),) if x))
+    if domain == m.domain and iss.get("ssh_agent"):
+        return BuiltinIssuer(store, domain, dns, agent=iss["ssh_agent"])
+    if domain == m.domain and m.role == "hub":
+        return BuiltinIssuer(store, domain, dns)
+    return LocalIssuer(store, domain, dns)
 
 
 # ---------------------------------------------------------------- public join requests (a key, then a person's approval)

@@ -12,11 +12,15 @@ from, whether a caller may reach an agent, which ports the role opens, and lock 
       listen:                    # hub: one SLIM listener per level, each with that level's CA bundle (lock one)
         private: 0.0.0.0:46358
       join: 0.0.0.0:46359        # hub: the join endpoint, open only while a join token is live
-      issuer:                    # hub: the OpenBao PKI that issues the domain's certificates (ADR-0069)
+      issuer:                    # hub: who issues the domain's certificates (ADR-0069, ADR-0078); the tiers, in order:
         domain: corp.example
-        openbao: http://openbao:8200
+        openbao: http://openbao:8200   #   1. an OpenBao PKI (mount, role, kv, approle), when named
         mount: pki-corp
         role: node
+        ssh_agent:                     #   2. else an ssh-agent holds the CA key (an ed25519 key, matched by fingerprint)
+          socket: /run/ssh-ca/agent.sock
+          key: SHA256:...
+                                       #   3. else the built-in CA: a root and an issuing CA, keys in the volume
       hub: hub.corp.example:46358   # spoke: written by `facilitator node join`
       hub_name: hub.corp.example
       hub_node: hub-1
@@ -58,7 +62,9 @@ TOP_KEYS = ("preset", "role", "node", "trust", "expose", "limits")
 NODE_KEYS = ("id", "name", "listen", "join", "issuer", "hub", "hub_name", "hub_node", "domain", "directory", "peers",
              "public")
 PUBLIC_KEYS = ("domain", "join")
-ISSUER_KEYS = ("domain", "openbao", "mount", "role", "kv", "approle")
+ISSUER_KEYS = ("domain", "openbao", "mount", "role", "kv", "approle", "ssh_agent")
+SSH_AGENT_KEYS = ("socket", "key")
+FINGERPRINT_RE = re.compile(r"SHA256:[A-Za-z0-9+/]{43}")
 DIRECTORY_KEYS = ("peering", "firewall", "open_oci")
 LIMIT_KEYS = ("hops", "budget", "rate", "copy", "approval", "approval_ttl", "svid_ttl", "max_packet", "http_receive_wait")
 COPIES = ("full", "member", "addressed")
@@ -333,6 +339,24 @@ class Mesh:
         return rows
 
 
+def _check_ssh_agent(issuer: dict, add) -> None:
+    """node.issuer.ssh_agent (ruling K5): the agent's socket and the SHA256 fingerprint of the ed25519 key that is the CA."""
+    sa = issuer.get("ssh_agent")
+    if sa is None:
+        return
+    if not isinstance(sa, dict):
+        add("bad-value", "node.issuer.ssh_agent: a map of socket and key", "node", "issuer", "ssh_agent")
+        return
+    for k in sa:
+        if k not in SSH_AGENT_KEYS:
+            add("unknown-key", f"node.issuer.ssh_agent.{k}: ssh_agent has {', '.join(SSH_AGENT_KEYS)}", "node", "issuer", "ssh_agent", k)
+    if not str(sa.get("socket") or "").strip():
+        add("role-needs", "node.issuer.ssh_agent.socket: the agent's socket path is needed (or $SSH_AUTH_SOCK)", "node", "issuer", "ssh_agent")
+    if not FINGERPRINT_RE.fullmatch(str(sa.get("key") or "")):
+        add("bad-value", "node.issuer.ssh_agent.key: the CA key's SHA256 fingerprint (ssh-add -l -E sha256), never 'the first key'",
+            "node", "issuer", "ssh_agent")
+
+
 def _check(m: Mesh, raw: dict, text: str) -> None:
     f = m.findings
 
@@ -471,6 +495,7 @@ def _check(m: Mesh, raw: dict, text: str) -> None:
                         add("unknown-key", f"node.issuer.{k}: issuer has {', '.join(ISSUER_KEYS)}", "node", "issuer", k)
                 if issuer["domain"] not in m.trust:
                     add("role-needs", f"role hub: its issuer's domain {issuer['domain']} must be in trust", "node", "issuer", "domain")
+                _check_ssh_agent(issuer, add)
         else:
             # a peer is the issuer of its own domain, with a CA it keeps itself (or an OpenBao PKI when node.issuer says so)
             if not node.get("domain") or not DOMAIN_RE.fullmatch(str(node["domain"])):
@@ -479,6 +504,8 @@ def _check(m: Mesh, raw: dict, text: str) -> None:
                 add("role-needs", f"role peer: its own domain {node['domain']} must be in trust, mapped private", "node", "domain")
             if issuer and (not isinstance(issuer, dict) or issuer.get("domain") not in (None, node.get("domain"))):
                 add("bad-value", "node.issuer.domain: a peer issues in its own node.domain", "node", "issuer")
+            elif isinstance(issuer, dict):
+                _check_ssh_agent(issuer, add)
         if not node.get("name"):
             add("role-needs", f"role {r_}: node.name (the DNS name its peers dial, in its certificate) is needed", "role")
         listen = node.get("listen") or {}

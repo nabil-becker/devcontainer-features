@@ -11,6 +11,7 @@ import signal
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 from . import __version__, clients as clients_mod, identity, mcp, mesh as mesh_mod, peers, settings as settings_mod
 from .app import Facilitator, FacilitatorError, Session, _ago
@@ -164,8 +165,11 @@ def mesh_parts(fac) -> list[tuple]:
             last = ""
         out.append(("certificate", False, f"none in {dom}: " + (
             "facilitator node join --token <token>" if m.role == "spoke" else
-            "its issuer must answer: OpenBao unsealed by hand, the PKI set up, the AppRole file written (the peers part "
-            "keeps asking, then opens the listeners)" + (f"; last: {last.split(' ', 1)[-1]}" if last else ""))))
+            "its issuer must answer (the built-in one needs nothing; OpenBao unsealed by hand with the PKI and the AppRole file "
+            "written; an ssh-agent holding the CA key; the peers part keeps asking, then opens the listeners)"
+            + (f"; last: {last.split(' ', 1)[-1]}" if last else ""))))
+    if m.role in mesh_mod.ISSUING_ROLES and dom:
+        out.extend(_issuer_rows(fac, store, dom))
     if m.public_domain:
         pst = store.cert_state(m.public_domain)
         out.append(("public cert", bool(pst.get("present")) and not pst.get("expired"),
@@ -496,7 +500,7 @@ def cmd_node(a) -> int:
     return {"run": node_run, "peers": node_peers, "invite": node_invite, "join": node_join, "revoke": node_revoke,
             "approve": node_approve, "status": node_status, "restore-roster": node_restore, "bundle": node_bundle,
             "renew": node_renew, "peer": node_peer, "request": node_request, "collect": node_collect,
-            "requests": node_requests, "deny": node_deny, "secret": node_secret}[a.action](a)
+            "requests": node_requests, "deny": node_deny, "secret": node_secret, "issuer": node_issuer}[a.action](a)
 
 
 def node_bundle(a) -> int:
@@ -540,6 +544,42 @@ def node_peers(a) -> int:
     return asyncio.run(peers.Daemon(fac).main())
 
 
+def _issuer_rows(fac, store, dom: str) -> list:
+    """The issuer's tier (ruling K5, ADR-0078): who holds the CA key, and what to warn about. Warnings are rows that do not fail check."""
+    iss = identity.make_issuer(fac.mesh, store, dom)
+    if isinstance(iss, identity.Issuer):
+        sealed = iss.sealed()
+        return [("issuer", sealed is False, f"OpenBao {iss.addr}, mount {iss.mount}: "
+                 + {True: "SEALED (unseal it by hand; nothing is issued or renewed until then)", False: "unsealed",
+                    None: "not reachable"}[sealed])]
+    if not isinstance(iss, identity.BuiltinIssuer):
+        return [("issuer", True, f"a CA this node keeps for {dom}, its key a file in the volume (mode 600)", False)]
+    st = iss.status()
+    rows = []
+    if st["tier"] == "ssh-agent":
+        ag = st.get("agent", {})
+        if not ag.get("reachable"):
+            rows.append(("issuer", False, f"ssh-agent: {ag.get('error', 'unreachable')}; nothing is issued or renewed "
+                         "until it answers, and certificates already issued stay valid until they expire"))
+        elif not ag.get("holds_key"):
+            rows.append(("issuer", False, f"ssh-agent at {ag['socket']} does not hold {ag['key']}"))
+        else:
+            rows.append(("issuer", ag.get("key_type") == "ssh-ed25519", f"ssh-agent at {ag['socket']}, CA key {ag['key']} "
+                         f"({ag.get('key_type')}); the key is never a file" + ("" if ag.get("key_type") == "ssh-ed25519"
+                                                                              else ": only ed25519 signs a certificate's bytes as they are")))
+            if ag.get("other_keys"):
+                rows.append(("issuer agent", True, f"warning: the agent also holds {ag['other_keys']} other key(s); it signs anything for any key it "
+                             "holds, so a CA key belongs in an agent of its own", False))
+    else:
+        rows.append(("issuer", True, f"built-in CA for {dom}, no unseal: its key is a file in the volume (mode 600)"
+                     + ("; the root is offline (export-root done)" if st.get("root_offline") else ""), False))
+        rows.append(("issuer key", True, "warning: the CA key is a file in the volume (the last resort): anyone who reads the volume can "
+                     "issue certificates for this domain; node.issuer.ssh_agent keeps it out of any file"
+                     + ("" if st.get("root_offline") or not st.get("two_level") else
+                        "; facilitator node issuer export-root takes the root key out of the volume"), False))
+    return rows
+
+
 def node_invite(a) -> int:
     refuse_in_agent_job("facilitator node invite")
     fac = _fac(a)
@@ -574,7 +614,7 @@ def node_invite(a) -> int:
     if not m.node.get("join"):
         raise FacilitatorError("node invite: mesh.yml has no node.join (the join endpoint's address)")
     if not store.bundle(m.domain).is_file():
-        raise FacilitatorError("node invite: this node has no certificate yet (infra up; a hub needs its OpenBao unsealed)")
+        raise FacilitatorError("node invite: this node has no certificate yet (infra up; a hub with OpenBao needs it unsealed, one with an ssh-agent needs the agent)")
     _, port = mesh_mod.parse_addr(m.node["join"])
     tok = identity.make_token(store, f"{m.node['name']}:{port}", m.node["name"], store.bundle(m.domain).read_text())
     print(tok)
@@ -793,6 +833,73 @@ def node_revoke(a) -> int:
     return 0
 
 
+def _builtin(fac, what: str):
+    m = fac.mesh
+    if m.role not in mesh_mod.ISSUING_ROLES:
+        raise FacilitatorError(f"node issuer {what}: only a hub or a peer is an issuer (this node's role is {m.role})")
+    iss = identity.make_issuer(m, identity.Store(fac.state.home), m.domain)
+    return iss
+
+
+def node_issuer(a) -> int:
+    """`node issuer status | export-root --out <file> | migrate`: the built-in issuer of a hub (rulings K3, K4, K5; ADR-0078)."""
+    what = a.target or "status"
+    if what not in ("status", "export-root", "migrate"):
+        raise FacilitatorError("node issuer: status, export-root --out <file> or migrate")
+    if what != "status":
+        refuse_in_agent_job(f"facilitator node issuer {what}")
+    fac = _fac(a)
+    iss = _builtin(fac, what)
+    if what == "status":
+        if isinstance(iss, identity.Issuer):
+            out = {"tier": "openbao", "openbao": iss.addr, "mount": iss.mount, "role": iss.role, "sealed": iss.sealed()}
+        elif isinstance(iss, identity.BuiltinIssuer) or isinstance(iss, identity.LocalIssuer):
+            out = iss.status() if isinstance(iss, identity.BuiltinIssuer) else {
+                "tier": "file", "domain": iss.domain, "ca_present": iss.ca_pem.is_file(), "key_file": str(iss.ca_key)}
+        _emit(a, out, json.dumps(out, indent=2, sort_keys=True, default=str))
+        return 0
+    if what == "export-root":
+        if not isinstance(iss, identity.BuiltinIssuer):
+            raise FacilitatorError("node issuer export-root: this node's CA is OpenBao's (take its root out there) or not a hub's built-in one")
+        if not a.out:
+            raise FacilitatorError("node issuer export-root: --out <a new file> (the root CA's key and certificate, mode 600)")
+        try:
+            got = iss.export_root(Path(a.out))
+        except identity.IdentityError as e:
+            raise FacilitatorError(str(e)) from None
+        print(f"facilitator: the root CA's key and certificate are in {got['file']} (mode 600) and no longer in this node's volume. "
+              "Take the file offline now (a password manager's attachment, a safe): it is what signs a new issuing CA, and "
+              "whoever holds it can make certificates the spokes trust. This hub keeps issuing, and no spoke changes anything.")
+        return 0
+    if not isinstance(iss, identity.BuiltinIssuer):
+        raise FacilitatorError("node issuer migrate: this hub's CA is already OpenBao's")
+    cfg = dict(fac.mesh.node.get("issuer") or {})
+    addr = a.openbao or cfg.get("openbao") or os.environ.get("BAO_ADDR")
+    if not addr:
+        raise FacilitatorError("node issuer migrate: the OpenBao address (--openbao, node.issuer.openbao, or BAO_ADDR)")
+    tok = os.environ.get("FACILITATOR_OPENBAO_TOKEN") or ""
+    if a.token_file:
+        try:
+            tok = Path(a.token_file).read_text().strip()
+        except OSError as e:
+            raise FacilitatorError(f"node issuer migrate: {a.token_file}: {e.strerror or e}") from None
+    if not tok:
+        raise FacilitatorError("node issuer migrate: a token that may configure the PKI mount (--token-file, or "
+                               "FACILITATOR_OPENBAO_TOKEN): yours, not the hub's AppRole")
+    bao = identity.Issuer({**cfg, "domain": fac.mesh.domain, "openbao": addr, "mount": a.mount or cfg.get("mount") or "pki"})
+    try:
+        got = iss.migrate_to_openbao(bao, tok)
+    except identity.IdentityError as e:
+        raise FacilitatorError(str(e)) from None
+    print(f"facilitator: the hub's CA now lives in OpenBao ({addr}, mount {got['mount']}, role {got['role']}); the issuing CA's key is "
+          f"no longer in this volume, and the roster ({got['nodes']} node(s)) is in OpenBao's KV. Spokes keep the same CA and bundle: "
+          "none joins again. Now add to mesh.yml, then restart the hub:\n"
+          f"  node.issuer.openbao: {addr}\n  node.issuer.mount: {got['mount']}\n  node.issuer.approle: <a file with role_id= and secret_id= "
+          "of an AppRole that may sign with the role above>\n"
+          "(until then the hub, with no key, cannot issue; certificates already out stay valid).")
+    return 0
+
+
 def node_status(a) -> int:
     fac = _fac(a)
     store = identity.Store(fac.state.home)
@@ -813,9 +920,15 @@ def node_restore(a) -> int:
     fac = _fac(a)
     if fac.mesh.role != "hub":
         raise FacilitatorError("node restore-roster: a hub's roster only")
-    r = identity.Issuer(fac.mesh.node["issuer"]).restore_roster()
-    identity.save_roster(identity.Store(fac.state.home), r)
-    print(f"facilitator: the roster restored from OpenBao: {len(r.get('nodes', {}))} node(s)")
+    store = identity.Store(fac.state.home)
+    iss = identity.make_issuer(fac.mesh, store, fac.mesh.domain)
+    try:
+        r = iss.restore_roster()
+    except identity.IdentityError as e:
+        raise FacilitatorError(f"node restore-roster: {e}") from None
+    identity.save_roster(store, r)
+    print(f"facilitator: the roster restored from {'OpenBao' if isinstance(iss, identity.Issuer) else 'the volume'}: "
+          f"{len(r.get('nodes', {}))} node(s)")
     return 0
 
 
@@ -1171,9 +1284,10 @@ def main(argv: list[str] | None = None) -> int:
                                     "replay (put the lines of http/audit.jsonl in it), show")
     c.add_argument("action", choices=["verify", "replay", "show"])
     c = command("node", cmd_node, "run (the node in the foreground: the server image's command), peers, invite, "
-                                  "join, peer, request, collect, requests, approve, deny, revoke, secret, status, restore-roster")
+                                  "join, peer, request, collect, requests, approve, deny, revoke, secret, status, restore-roster, issuer "
+                                  "(status | export-root --out <file> | migrate)")
     c.add_argument("action", choices=["run", "peers", "invite", "join", "revoke", "approve", "status", "restore-roster",
-                                      "bundle", "renew", "peer", "request", "collect", "requests", "deny", "secret"])
+                                      "bundle", "renew", "peer", "request", "collect", "requests", "deny", "secret", "issuer"])
     c.add_argument("--level", choices=["private", "public"], help="invite: a join or pairing token (private), or a request window for "
                                                                   "the public domain (public)")
     c.add_argument("--as", dest="as_", help="approve, deny: the person acting (a human of facilitator.yml)")
@@ -1182,6 +1296,11 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--file", help="bundle: a PEM file with the domain's CA certificates")
     c.add_argument("--token", help="join: the join token, or a file holding it")
     c.add_argument("--yes", action="store_true", help="revoke: do not ask to confirm")
+    c.add_argument("--out", help="issuer export-root: a new file for the root CA's key and certificate (mode 600)")
+    c.add_argument("--openbao", help="issuer migrate: the OpenBao address (default node.issuer.openbao, else BAO_ADDR)")
+    c.add_argument("--mount", help="issuer migrate: the PKI mount (default node.issuer.mount, else pki)")
+    c.add_argument("--token-file", help="issuer migrate: a file holding an OpenBao token that may configure the mount "
+                                        "(the Operator's own, not the hub's AppRole)")
     c = command("http", cmd_http, "the MCP endpoint over HTTP (slice N4): serve (the infra part runs it), token <client> (a "
                                   "person's act: a bearer token, shown once), list, approve <client>, deny <client>, "
                                   "revoke <client>, audit")
