@@ -287,7 +287,7 @@ check "bad head: the template below wins" component-registry "$(awk -F'\t' '$1 =
 printf 'no head at all\n' | tpl "$m" SKILL.md.j2
 contains "no head: reported" "$(dcf-registry resolve --as "$W" 2>&1)" "no head: a template starts with {#- for: skill  output: <path> -#}"
 printf '{#- for: agent\n output: x -#}\n' | tpl "$m" SKILL.md.j2
-contains "for: agent: not in this release, said" "$(dcf-registry resolve --as "$W" 2>&1)" "for: agent is not in this release"
+contains "for: agent: not supported, said" "$(dcf-registry resolve --as "$W" 2>&1)" "for: agent is not supported"
 
 printf '[skills/one]\nbody:text = one body, changed\n' > "$m/m.layer"
 printf '{#- for: skill\n    output: skills/{{ skill.dir }}/SKILL.md -#}\n{%% if %%}broken\n' | tpl "$m" SKILL.md.j2

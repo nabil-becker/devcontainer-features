@@ -901,9 +901,9 @@ every skipped line with its reason, and `resolved N component(s) for <W>`.
   modification times, so a change that keeps all three is not seen.
 - `*` and `**` are whole segments; there are no value filters.
 - Templates (1.11.0): the base templates are Claude Code's and (2.1.0) Copilot CLI's `SKILL.md`;
-  `for: agent` is not in this release: whether a registry agent definition should become a
-  CLI-native agent file (a Claude Code subagent, a Copilot custom agent) is open for the Operator
-  (ADR-0077, slice 2.2). A template is one file under `templates/<vendor>/`, no
+  `for: agent` is not supported: a registry agent definition does not become a CLI-native agent
+  file (a Claude Code subagent, a Copilot custom agent); its model and skills reach the CLI through
+  `--model` and the skills hand-over (the Operator's ruling, ADR-0077). A template is one file under `templates/<vendor>/`, no
   sub-folders; a template is rendered at the hand-over, not at `resolve`, so a template that does
   not render is found by the hand-over (or `render`), and only a head is checked at `resolve`.
 - The text heading is `## Layer <id>` or none (`heading: false`), per layer, never per line; a
