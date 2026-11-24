@@ -90,7 +90,9 @@ wins" answerable in one line.
   also takes `lock: true`, the lock of decision 7; a partial change extends a lower layer's
   template by `<layer>/<file>.j2`. A template that does not render fails the hand-over and the CLI
   keeps its files; a head that cannot be read is skipped and reported by `resolve`. Copilot's
-  files and `for: agent` are the next slice.
+  skills followed in 2.1.0. `for: agent` is not built: the Operator ruled on 2026-11-24 that a
+  registry agent definition does not become a CLI-native agent file (its model and skills already
+  reach the CLI through `--model` and the skills hand-over).
 - Overriding a template reuses the layers, locks and `explain` already built; no second override
   mechanism exists. A partial change needs `extends` and `block` in the replacing template.
 
@@ -102,3 +104,4 @@ wins" answerable in one line.
 | 2026-11-23 | Decisions 4 to 8 ruled by the Operator on 2026-11-23 (templates are registry components); Options 4 and 5 added. |
 | 2026-11-23 | Numbered 0077 (0075 and 0076 were taken on main); the consequences say how component-registry 1.11.0 built it: rendering in the hand-over, `lock:` in the head, `extends` by layer name, the failure behaviour, the next slice. |
 | 2026-11-24 | Slice 2.1 built (component-registry 2.1.0, copilot 0.3.0): the base layer ships Copilot CLI's `SKILL.md` template and the Copilot adapter gains the `skills` verb (split, shared, off, as Claude Code's). `for: agent` (slice 2.2) waits for the Operator: whether a registry agent definition should become a CLI-native agent file. |
+| 2026-11-24 | The Operator's rulings on slice 2: no CLI-native agent files, so `for: agent` stays unbuilt (option A; option B, a prompt key with refused `tools`, `mcp-servers` and `permission*` front matter, and option C, `--agent`, which ADR-0073 forbids, were not taken); Copilot keeps `split` as its default, as Claude Code; the skills split shared by both adapters moves into one vendored helper as a follow-up. |
