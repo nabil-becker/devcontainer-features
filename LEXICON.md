@@ -603,3 +603,21 @@ renamed. Each project is a tree growing in its own ground.
   built-in issuer, no OpenBao); where its CA key lives is the first configured of an OpenBao PKI, an
   ssh-agent (ed25519 key chosen by fingerprint) or, as a last resort, a file in the node's volume
   (ADR-0078).
+- **Peer node**: a node with `role: peer` (the preset `open`): it keeps its own trust domain and a CA it
+  issues from itself, and pairs with other peers by `node invite` and `node peer --token`, which swap CA
+  bundles, hand over the mesh secret and trade cards (facilitator 0.6.0, ADR-0080).
+- **Public domain**: a second trust domain a node opens beside its own with `node.public`, with its own
+  join endpoint, SLIM listener and CA bundle; a node of another domain is shown only the cards of agents
+  exposed public, and its certificates last `svid_ttl` (ADR-0080).
+- **Join request**: a public node's ask to join, made with `node request` and held until a person runs
+  `node approve` (refused inside an agent's job) or `node deny`; the node then fetches its certificate
+  with `node collect` (ADR-0080).
+- **Addressed copy**: the replication rule `copy: addressed`, kept at conversation level: a public node
+  receives only the conversations it is a member of, and a write is refused when a message in such a
+  conversation is not addressed to that node's members (ADR-0080).
+- **Mesh secret rotation**: replacing the mesh's SLIM shared secret, started by `node revoke`; the nodes
+  that remain receive the new secret under the old one and restart their peers part onto it, and a node
+  that was away runs `node secret` by hand (ADR-0080).
+- **Audit register**: the signed register of type `audit` (register `audit-enrolment`) in which a node
+  writes HTTP enrolments and join, approve, revoke and rotate events, replayed by `facilitator audit
+  verify|replay|show` (ADR-0080).
