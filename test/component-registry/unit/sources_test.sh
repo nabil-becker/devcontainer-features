@@ -222,6 +222,13 @@ printf 'layers:\n  - id: a\n    at: /Corp\n    sources:\n      - { kind: git, ur
 check "layer list: max-size on a git source refused (exit 2)" 2 "$(dcf-registry resolve --as /Corp/me >/dev/null 2>&1; echo $?)"
 printf 'layers:\n  - id: a\n    at: /Corp\n    sources:\n      - { kind: git, url: "%s", branch: main, archive: zip }\n' "$G" > .devcontainer/registry.yml
 check "layer list: archive on a git source refused (exit 2)" 2 "$(dcf-registry resolve --as /Corp/me >/dev/null 2>&1; echo $?)"
+mkdir -p "$T/plainfolder"
+printf 'layers:\n  - id: a\n    at: /Corp\n    sources:\n      - { kind: path, path: "%s", max-size: 1M }\n' "$T/plainfolder" > .devcontainer/registry.yml
+check "layer list: max-size on a path source refused (exit 2)" 2 "$(dcf-registry resolve --as /Corp/me >/dev/null 2>&1; echo $?)"
+printf 'layers:\n  - id: a\n    at: /Corp\n    sources:\n      - { kind: path, path: "%s", archive: tar.gz }\n' "$T/plainfolder" > .devcontainer/registry.yml
+check "layer list: archive on a path source refused (exit 2)" 2 "$(dcf-registry resolve --as /Corp/me >/dev/null 2>&1; echo $?)"
+printf 'layers:\n  - id: a\n    at: /Corp\n    sources:\n      - { kind: db, driver: sqlite, path: "%s/x.db", table: t, sha256: "%s" }\n' "$T" "$good_sum" > .devcontainer/registry.yml
+check "layer list: sha256 on a db source refused (exit 2)" 2 "$(dcf-registry resolve --as /Corp/me >/dev/null 2>&1; echo $?)"
 
 echo "component-registry sources: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

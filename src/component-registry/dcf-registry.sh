@@ -503,7 +503,7 @@ load_list() {
           case "$v" in '' | tar.gz | tgz | zip) ;; *) warn "$at: archive is tar.gz, tgz or zip"; errs=$((errs + 1)) ;; esac ;;
         cloud-folder)
           grep -q '^remote=' <<< "${S_ARGS[$k]}" || { warn "$at: a cloud-folder source needs remote (a folder under the cloud folder)"; errs=$((errs + 1)); }
-          grep -q '^\(url\|branch\|tag\|commit\|path\|allow-insecure\|auth\.[a-z]*\)=' <<< "${S_ARGS[$k]}" && { warn "$at: a cloud-folder source takes remote only (the cloud folder's own set-up is its log-in)"; errs=$((errs + 1)); } ;;
+          grep -q '^\(url\|branch\|tag\|commit\|path\|allow-insecure\|archive\|sha256\|max-size\|auth\.[a-z]*\)=' <<< "${S_ARGS[$k]}" && { warn "$at: a cloud-folder source takes remote only (the cloud folder's own set-up is its log-in)"; errs=$((errs + 1)); } ;;
         git)
           grep -q '^url=' <<< "${S_ARGS[$k]}" || { warn "$at: a git source needs url"; errs=$((errs + 1)); }
           [ "$(grep -c '^\(branch\|tag\|commit\)=' <<< "${S_ARGS[$k]}")" -eq 1 ] || { warn "$at: a git source needs exactly one of branch, tag, commit"; errs=$((errs + 1)); }
@@ -511,7 +511,7 @@ load_list() {
         db)
           grep -q '^driver=' <<< "${S_ARGS[$k]}" || { warn "$at: a db source needs driver (sqlite or postgres)"; errs=$((errs + 1)); }
           [ "$(grep -c '^\(table\|query\)=' <<< "${S_ARGS[$k]}")" -eq 1 ] || { warn "$at: a db source needs exactly one of table, query"; errs=$((errs + 1)); }
-          grep -q '^\(url\|branch\|tag\|commit\|remote\|allow-insecure\|auth\.\(type\|user\|header\)\)=' <<< "${S_ARGS[$k]}" && { warn "$at: a db source takes driver, path or host, port, database, user, sslmode, table or query, and auth.secret only"; errs=$((errs + 1)); }
+          grep -q '^\(url\|branch\|tag\|commit\|remote\|allow-insecure\|archive\|sha256\|max-size\|auth\.\(type\|user\|header\)\)=' <<< "${S_ARGS[$k]}" && { warn "$at: a db source takes driver, path or host, port, database, user, sslmode, table or query, and auth.secret only"; errs=$((errs + 1)); }
           if grep -q '^driver=sqlite$' <<< "${S_ARGS[$k]}"; then
             grep -q '^path=' <<< "${S_ARGS[$k]}" || { warn "$at: a sqlite db source needs path"; errs=$((errs + 1)); }
             # A relative path is the repository's; the source gets it absolute.
@@ -522,7 +522,7 @@ load_list() {
           fi ;;
         path)
           grep -q '^path=' <<< "${S_ARGS[$k]}" || { warn "$at: a path source needs path"; errs=$((errs + 1)); }
-          grep -q '^\(url\|branch\|tag\|commit\|remote\|auth\.[a-z]*\)=' <<< "${S_ARGS[$k]}" && { warn "$at: a path source takes path only (the folder's own permissions are its log-in)"; errs=$((errs + 1)); }
+          grep -q '^\(url\|branch\|tag\|commit\|remote\|archive\|sha256\|max-size\|auth\.[a-z]*\)=' <<< "${S_ARGS[$k]}" && { warn "$at: a path source takes path only (the folder's own permissions are its log-in)"; errs=$((errs + 1)); }
           # A relative path is the repository's; the source gets it absolute.
           v="$(sed -n 's/^path=//p' <<< "${S_ARGS[$k]}")"
           case "$v" in /*) ;; *) S_ARGS[$k]="$(grep -v '^path=' <<< "${S_ARGS[$k]}")"$'\n'"path=$ROOT/$v"$'\n' ;; esac ;;
