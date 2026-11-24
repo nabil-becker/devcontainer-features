@@ -6,6 +6,24 @@ of the Feature and whether they must act (an option renamed, a task removed, a r
 The version in `devcontainer-feature.json` is bumped in the same change that adds its entry
 here; `task lint` fails when the entry is missing.
 
+## [2.0.0] - 2026-11-23
+
+Breaking: removes what 1.9.0 and 1.10.0 deprecated, all at once (the Operator's rulings of
+2026-11-20 and 2026-11-23). Pin `component-registry:2` after you have migrated.
+
+### Removed
+
+- `.reg` layer files are no longer read. `resolve` prints a warning per layer source naming them
+  ("not read since 2.0.0: ...; rename to .layer") and goes on without them; a `required` layer
+  holding only `.reg` files resolves with nothing, so rename them. The `http` source always saves
+  `<layer>.layer`, even for a URL ending in `.reg`. Action: `git mv x.reg x.layer` in each layer.
+- `writable: true` on a layer is ignored: `resolve` prints one warning per such layer, and an old
+  `registry.yml` still resolves. Action: delete the line.
+- `dcf-registry remember`, `task component-registry:remember` and the built-in `/registry-remember`
+  skill (the base layer now ships two utility skills). `dcf-registry remember` prints "removed in
+  2.0.0: edit your layer" and exits 1; the task is gone. A `remembered.layer` already in a layer
+  folder is an ordinary layer file. Action: edit your layer instead; stop using the skill.
+
 ## [1.11.0] - 2026-11-23
 
 ### Added

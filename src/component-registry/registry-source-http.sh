@@ -6,7 +6,7 @@
 #
 #   registry-source-http fetch <layer> <dest> url=<url> [allow-insecure=true] [auth.*=...]
 #                                         the file into <dest>/<name> (the URL's last path
-#                                         segment when it ends in .layer or .reg, else <layer>.layer)
+#                                         segment when it ends in .layer, else <layer>.layer)
 #   registry-source-http version <layer> url=<url> [...]
 #                                         the ETag, else the Last-Modified, else a hash of the body
 #   registry-source-http supports         the verbs it implements
@@ -135,7 +135,7 @@ case "$verb" in
     name="${url%%[?#]*}"; name="${name##*/}"
     case "$name" in
       *.tar.gz | *.tgz | *.zip) die 1 "layer $layer: $url is an archive; this release reads one .layer file" ;;
-      *.layer | *.reg) [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || name="$layer.layer" ;;
+      *.layer) [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || name="$layer.layer" ;;
       *) name="$layer.layer" ;;
     esac
     [ -s "$tmp/body" ] || die 1 "layer $layer: $url answered with an empty body"

@@ -103,7 +103,7 @@ check "base: resolve exit 0" 0 "$rc"
 check "base: the base template is a component of the view" "used	templates/claude/SKILL.md.j2	-	claude	SKILL.md.j2	component-registry" "$(awk -F'\t' 'NR > 1 { print $1 "\t" $2 "\t" $3 "\t" $4 "\t" $5 "\t" $6 }' "$(V)/meta/templates.tsv")"
 out="$(dcf-registry render claude "$C/r1" 2>&1)"; rc=$?
 check "render: exit 0" 0 "$rc"
-contains "render: says what it rendered" "$out" "claude: 9 file(s) rendered from 1 template(s) into $C/r1, for $W"
+contains "render: says what it rendered" "$out" "claude: 8 file(s) rendered from 1 template(s) into $C/r1, for $W"
 d="$(diff -r "$(V)/skills" "$C/r1/skills" 2>&1)"
 check "base: the rendered skills equal the view's byte for byte" "" "$d"
 check "base: a CR survives the round trip" 1 "$(grep -c $'\r' "$C/r1/skills/fm/SKILL.md")"
@@ -123,7 +123,7 @@ for mode in split shared; do
   (CLAUDE_CONFIG_DIR="$C/cfg-old" COMPONENT_REGISTRY_SKILLS="$(readlink -f "$(V)")/skills" COMPONENT_REGISTRY_PATH="$W" COMPONENT_REGISTRY_SKILLS_MODE="$mode" agent-adapter-claude skills host "$C/agentdir" >/dev/null 2>&1)
   out="$(CLAUDE_CONFIG_DIR="$C/cfg-new" dcf-registry handover claude host "$C/agentdir" --as "$W" --skills-mode "$mode" 2>&1)"; rc=$?
   check "handover ($mode): exit 0" 0 "$rc"
-  contains "handover ($mode): says the files were rendered" "$out" "claude: 9 file(s) rendered from 1 template(s)"
+  contains "handover ($mode): says the files were rendered" "$out" "claude: 8 file(s) rendered from 1 template(s)"
   d="$(diff -r "$C/cfg-old" "$C/cfg-new" 2>&1)"
   check "handover ($mode): Claude Code gets the same files as the 1.10.0 hand-over, byte for byte" "" "$d"
 done
@@ -183,7 +183,7 @@ rm -rf "$C/r"; out="$(dcf-registry render claude "$C/r" 2>&1)"
 check "add: a template of the layer's own writes its file" "Checklist of one: True" "$(cat "$C/r/skills/one/checklist.md" 2>/dev/null)"
 check "add: an output that renders empty is not written" no "$([ -e "$C/r/skills/two/checklist.md" ] && echo yes || echo no)"
 check "add: the base's SKILL.md still rendered" "$(cat "$(V)/skills/two/SKILL.md")" "$(cat "$C/r/skills/two/SKILL.md")"
-check "add: for: once renders one file with the skills list" "$(printf 'one\nregistry-explain\nregistry-refresh\nregistry-remember\ntwo')" "$(cat "$C/r/index.md")"
+check "add: for: once renders one file with the skills list" "$(printf 'one\nregistry-explain\nregistry-refresh\ntwo')" "$(cat "$C/r/index.md")"
 contains "add: explain templates lists every winner" "$(dcf-registry explain templates 2>&1)" "templates/claude/checklist.md.j2  mine (1:templates/claude/checklist.md.j2)  for: skill"
 mkdir -p "$C/agentdir"
 CLAUDE_CONFIG_DIR="$C/cfg" dcf-registry handover claude host "$C/agentdir" --as "$W" --skills-mode shared >/dev/null 2>&1
