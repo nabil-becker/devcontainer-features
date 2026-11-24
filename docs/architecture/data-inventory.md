@@ -382,7 +382,7 @@ register entry.
 | --- | --- | --- |
 | Node key and certificate (`mesh/certs/<domain>/node.key`, `node.pem`) | ed25519 key (mode 600); X.509 with URI SAN `spiffe://<domain>/node/<id>`, DNS SAN = the name dialers use, serial, not before/after (24 h private, 1 h public) | signed by the domain's CA; presented on a listener or link; signs the card and every envelope |
 | Trust bundle (`mesh/certs/<domain>/bundle.pem`) | the domain's CA certificates (PEM) | a listener's `client_ca` is the union of one level's bundles (lock one); lock two names the domain whose bundle a certificate chains to; `trust` maps the domain to a level |
-| CA | a hub's: an offline root and an OpenBao intermediate (PKI mount, role, AppRole); a peer's or a public domain's: its own CA (`mesh/ca/<domain>/ca.pem`, `ca.key` mode 600, DNS name constraints) | issues node certificates; its certificate is the bundle |
+| CA | a hub's: an OpenBao PKI (an intermediate, the root offline), or (0.7.0) an ssh-agent's key (no key file), or the built-in root and issuing CA (`mesh/ca/<domain>/root.key` until `export-root`, `ca.key`, mode 600); a peer's or a public domain's: its own CA (`mesh/ca/<domain>/ca.pem`, `ca.key` mode 600, DNS name constraints) | issues node certificates; its certificate is the bundle |
 | Node card (`mesh/cards/<node>.json`) | node, domain, SPIFFE id, certificate, facilitator packet key, participants [handle, key, kind, exposure, description, skills, cid, optional opaque `badge`], `at`, signature by the certificate key | read by lock two to bind a packet key to a node and handle; restricted to the receiver's level; replaces itself when newer |
 | Roster (`mesh/roster.json`, a hub's and an issuer's) | node: serial, joined, revoked, revoked_at, domain, key fingerprint, approved_by | admission of hello and renew; the source of the revoked list a hub sends; backed up to OpenBao KV |
 | Join token (`mesh/invites.json`) | id, SHA-256 of the secret, made, expires (15 min), used | single use; names the CA bundle's hash; opens the join endpoint |
@@ -401,3 +401,13 @@ register entry.
 | The mesh secret and its rotation (the new secret until handed over) | `mesh/secret`, `mesh/rotation.json`, mode 600 | yes |
 | First-contact approvals of public nodes' agents | `mesh/approved.json` | no |
 | The signed audit register | `audit/audit-enrolment/` (register-engine store) | no secrets; ids and names |
+
+## Facilitator node, hub-on-kubernetes additions (facilitator 0.7.0)
+
+| Data | Where | Sensitive |
+| --- | --- | --- |
+| A built-in hub's root CA key | `mesh/ca/<domain>/root.key` (mode 600) until `node issuer export-root` writes it to a file a person takes offline | yes: it signs new issuing CAs |
+| A built-in hub's issuing CA key | `mesh/ca/<domain>/ca.key` (mode 600); gone after `node issuer migrate` (it is in OpenBao) | yes: it issues certificates for the domain |
+| The CA key of the ssh-agent tier | the agent's memory only (an `ssh-agent` container beside the hub on Kubernetes); never a file | yes; custody is the person's backup of the key |
+| The hub's roster backup (built-in or ssh-agent tier) | `mesh/roster.backup.json`, mode 600, the same volume | no secrets; node ids and serials |
+| The hub's manifests | `bundles/facilitator/k8s` (base, overlays), `mesh.yml` in a ConfigMap, the state in a StatefulSet's volume claim | tier 1 in git; the claim is tier 4 |

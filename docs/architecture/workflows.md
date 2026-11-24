@@ -289,3 +289,23 @@ sequenceDiagram
 Two peers: a person runs `node invite` on one and `node peer --token` on the other; the nodes exchange CA bundles and the
 mesh secret. A public node: a person opens a request window (`node invite --level public`), the other side runs `node request`,
 the person runs `node approve <request>`, the public node `node collect`s its 1 h certificate. A revoke rotates the mesh secret.
+
+## 11. The hub on Kubernetes (facilitator 0.7.0)
+
+```mermaid
+sequenceDiagram
+  participant P as a person (terminal)
+  participant K as the cluster (kustomize base, overlay)
+  participant H as hub pod (StatefulSet)
+  participant G as ssh-agent container (optional)
+  participant S as a spoke (devcontainer, --add-host name:host-gateway)
+  P->>K: kustomize build overlay | kubectl apply
+  K->>H: pod, volume claim, ConfigMap (mesh.yml), Service 46358 and 46359
+  Note over H: built-in CA made at first start, no unseal
+  P->>G: ssh-add (the CA key into the agent's memory), only in the ssh-agent overlay
+  H->>G: sign this certificate (per leaf)
+  P->>H: node invite (kubectl exec), a join token
+  P->>S: node join --token (the machine's port, the hub's name in its certificate)
+  S->>H: join endpoint, then SLIM mutual TLS; cards, roster
+  P->>H: node issuer export-root --out file (root key off the volume), or migrate (the same CA into OpenBao)
+```

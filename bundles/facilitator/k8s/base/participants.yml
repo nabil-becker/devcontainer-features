@@ -1,0 +1,2 @@
+# The hub runs no participant (a hub that only routes between its spokes).
+participants: []

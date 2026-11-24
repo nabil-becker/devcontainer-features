@@ -481,3 +481,17 @@ to a failed authentication carries no detail.
 
 Peers (no hub): each node is the issuer of its own domain; `node invite` / `node peer --token` exchange the CA bundles and the
 secret; `hello` and `card` envelopes exchange cards; replication is as in a hub mesh, node to node.
+
+### 3e. The hub's certificates, by tier (facilitator 0.7.0)
+
+```
+ spoke: key + request (a file, SLIM reads it)  --join endpoint (TLS, the bundle's hash from the token)-->  hub
+ hub signs the request, deciding the SANs itself, with, in order:
+   1. OpenBao PKI (sign/<role>)             the CA key never leaves OpenBao
+   2. an ssh-agent (SSH2_AGENT_SIGN_REQUEST) the hub builds the TBSCertificate, the agent signs the bytes (ed25519), no key file
+   3. the built-in issuing CA (a file)       a root signed it once; export-root takes the root key off the volume
+ -> a 24 h certificate; the trust bundle (issuing CA + root) is what the spoke already holds
+```
+
+A new trust boundary on Kubernetes: the pod's two published ports (SLIM and the join endpoint) are all that leave it; with the
+ssh-agent overlay the agent's socket is a memory volume shared by two containers of the one pod and reachable by nothing else.

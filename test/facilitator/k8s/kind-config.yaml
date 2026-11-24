@@ -1,0 +1,10 @@
+# The throwaway cluster: one node; the two ports the hub's Service exposes (NodePorts 30358 and 30359) are published on the
+# machine's 46358 and 46359, as Rancher Desktop forwards a LoadBalancer Service's ports, so a spoke container reaches the hub
+# through host-gateway exactly as a devcontainer does.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - {containerPort: 30358, hostPort: 46358, listenAddress: "0.0.0.0", protocol: TCP}
+      - {containerPort: 30359, hostPort: 46359, listenAddress: "0.0.0.0", protocol: TCP}

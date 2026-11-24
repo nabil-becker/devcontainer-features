@@ -1,0 +1,28 @@
+# The hub on Rancher Desktop's Kubernetes (backlog hub-workstation-networking). The devcontainers of the same machine are the
+# spokes; they reach the hub through the machine, not through the cluster:
+#
+#   spoke (a container) --> host-gateway:46358/46359 --> Rancher Desktop's port forward --> the LoadBalancer Service --> the pod
+#
+# The Service is a LoadBalancer: k3s (Rancher Desktop's Kubernetes) binds the two ports on the node and Rancher Desktop
+# forwards them to the machine's localhost. The name in the hub's certificate must be the name the spokes dial, so the
+# overlay's mesh.yml says hub.workstation.example and each spoke's devcontainer maps that name to the machine:
+#
+#   "runArgs": ["--add-host=hub.workstation.example:host-gateway"]
+#
+# (the same name for every spoke; `host-gateway` is the machine from the container's side, on Docker Desktop, Rancher Desktop's
+# dockerd and a plain Linux engine alike). The join token carries `hub.workstation.example:46359`, so nothing else is typed.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+configMapGenerator:
+  - name: facilitator-hub-config
+    behavior: merge                 # only mesh.yml changes; facilitator.yml and participants.yml stay the base's
+    files:
+      - mesh.yml
+patches:
+  - target: {kind: Service, name: facilitator-hub}
+    patch: |-
+      - op: replace
+        path: /spec/type
+        value: LoadBalancer

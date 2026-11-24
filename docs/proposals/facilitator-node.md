@@ -1518,3 +1518,44 @@ What slice N5a found where a ruling could not be built as written, and the Opera
 - **PP3, a node away during a secret rotation** gets the new secret by hand (`node secret`); an automatic re-fetch is a
   later backlog item.
 - **PP4, a revoke stays per node.** One peer's revoke is not shared; each node revokes for itself.
+
+## Findings of slice hub-on-kubernetes (2026-11-24, facilitator 0.7.0), for the Operator's ruling
+
+What the slice found where a ruling could not be built as written. Each is built as the closest thing, with a recommendation.
+
+- **HK1, the built-in CA is two-level, not the single CA of N5a.** K4 asks for an export of the root "so a person can take it
+  offline"; with one CA that signs leaves, taking its key offline stops the hub issuing. The hub keeps a root and an issuing CA
+  (the root signs the issuing CA once); `export-root` removes the root key from the volume and the hub keeps issuing. A hub
+  made by 0.6.0 keeps its one CA and cannot export. Recommendation: keep (it is the OpenBao pattern, the root offline).
+- **HK2, `migrate` keeps the same CA.** The ruling says "without re-joining spokes"; ADR 0078 decision 4 said "until renewal".
+  `migrate` imports the issuing CA (key and certificate) into the OpenBao mount, so the bundle every spoke holds stays valid
+  and nothing is re-issued. It needs the Operator's own token (the hub's AppRole may only sign) and, for an ssh-agent hub, is
+  impossible (an agent never gives the key up: that hub starts a new CA and every node joins again). Recommendation: keep.
+- **HK3, the built-in hub's roster backup is a file in its own volume** (as K3 says), which guards a torn write and not the
+  loss of the volume. Recommendation: back up the volume claim (a snapshot); revisit if a hub should write a second copy to
+  the shared folder.
+- **HK4, the `openbao:pki:*` tasks were not built** (backlog `openbao-pki-tasks`): the openbao Feature's tasks are the
+  server-mode, root-token-from-shares kind, which is more than "small"; `node issuer migrate` makes the mount, the import and the
+  role itself (the role is the one the NOTES list). Recommendation: build the tasks when a hub needs an OpenBao made from
+  nothing.
+- **HK5, Rancher Desktop was not available**, so the overlay is rendered, schema-checked and run through a kind cluster whose
+  published ports stand in for Rancher Desktop's LoadBalancer forwarding. The one open question is whether that forwarding is
+  reachable through `host-gateway` or binds the machine's loopback only. Recommendation: the Operator runs the overlay once on
+  the workstation; `hub-workstation-networking` stays open until then, with the specification (the hub's name in the
+  certificate, `--add-host`, LoadBalancer) written in the NOTES.
+
+## Rulings on slice hub-on-kubernetes (2026-11-24)
+
+The Operator ruled HK1 to HK5 as recommended (the findings are in "Findings of slice hub-on-kubernetes"):
+
+- **HK1, a two-level built-in CA.** A root signs the issuing CA once; `node issuer export-root` removes only the
+  root key, so the hub keeps issuing and the spokes' bundle does not change (OpenBao's own pattern).
+- **HK2, `migrate` keeps the same CA.** `node issuer migrate` imports the issuing CA into an OpenBao mount, so no
+  spoke re-joins. A hub whose CA key is in an ssh-agent cannot migrate (an agent never gives its key up): moving
+  it to OpenBao means a new CA and every node re-joining.
+- **HK3, the roster backup without OpenBao is a file in the same volume.** It guards a torn write, not the loss
+  of the volume: snapshot the volume; a copy to the shared folder later if wanted.
+- **HK4, the `openbao:pki:*` tasks wait** until a hub must start on OpenBao from nothing; `migrate` already makes
+  the mount, the import and the role.
+- **HK5, the Rancher Desktop overlay is run once on the Operator's workstation** before `hub-workstation-networking`
+  closes; if its LoadBalancer binds loopback only, publish on all interfaces or name the hub `host.docker.internal`.

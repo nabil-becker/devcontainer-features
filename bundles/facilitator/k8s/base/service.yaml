@@ -1,0 +1,13 @@
+# Exposes SLIM and the join endpoint, nothing else: not the Directory, not the HTTP endpoint, not the OCI registry. A
+# ClusterIP service here; an overlay makes it reachable from outside the cluster (the rancher-desktop one: a LoadBalancer).
+apiVersion: v1
+kind: Service
+metadata:
+  name: facilitator-hub
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: facilitator-hub
+  ports:
+    - {name: slim, port: 46358, targetPort: slim, protocol: TCP}
+    - {name: join, port: 46359, targetPort: join, protocol: TCP}

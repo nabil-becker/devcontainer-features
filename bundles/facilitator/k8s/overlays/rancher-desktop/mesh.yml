@@ -1,0 +1,13 @@
+# The hub of workstation.example, for the devcontainers of one machine (reference architecture facilitator-workstation-hub).
+preset: team
+role: hub
+node:
+  id: hub-1
+  name: hub.workstation.example   # in the certificate; each spoke maps it to the machine (--add-host ...:host-gateway)
+  listen:
+    private: 0.0.0.0:46358
+  join: 0.0.0.0:46359
+  issuer:
+    domain: workstation.example   # the built-in CA (ruling K3): nothing to unseal
+trust:
+  workstation.example: private

@@ -1501,3 +1501,28 @@ summary = "Replacing the mesh's SLIM shared secret after a revoke, handed to the
 type = "mechanism"
 term = "Audit register"
 summary = "The signed register of type audit holding enrolment, join, approve, revoke and rotate events."
+
+[built-in-ca]
+type = "mechanism"
+term = "Built-in CA"
+summary = "A hub's own root and issuing CA, used when no OpenBao PKI is configured; needs no unseal."
+
+[export-root]
+type = "mechanism"
+term = "Export root"
+summary = "The person's command that writes the built-in CA's root key out and removes it from the volume."
+
+[issuer-migrate]
+type = "mechanism"
+term = "Issuer migrate"
+summary = "The person's command that moves a built-in hub's issuing CA into an OpenBao PKI without spokes re-joining."
+
+[issuer-tier]
+type = "mechanism"
+term = "Issuer tier"
+summary = "One of the places a node's CA key lives, tried in order: OpenBao, ssh-agent, file."
+
+[agent-tier]
+type = "mechanism"
+term = "Agent tier"
+summary = "The issuer tier that keeps the CA key in an ssh-agent, an ed25519 key matched by fingerprint."

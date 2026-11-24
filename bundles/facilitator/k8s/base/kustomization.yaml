@@ -1,0 +1,27 @@
+# The facilitator hub on Kubernetes (ruling K2, ADR-0078): one hub node, the same image and the same mesh.yml as the compose
+# sample, with the built-in issuer (no OpenBao, nothing to unseal). A StatefulSet with a volume for the state, mesh.yml in a
+# ConfigMap, and a Service that exposes SLIM and the join endpoint and nothing else. Overlays: rancher-desktop (a workstation),
+# ssh-agent (the CA key in an agent beside the hub). Render and check it with `task bundle:k8s`.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: facilitator-hub
+labels:
+  - pairs:
+      app.kubernetes.io/name: facilitator-hub
+      app.kubernetes.io/part-of: facilitator
+    includeSelectors: false
+resources:
+  - namespace.yaml
+  - statefulset.yaml
+  - service.yaml
+configMapGenerator:
+  # One generated ConfigMap with the hub's three files; a change to any of them renames it and so restarts the pod.
+  - name: facilitator-hub-config
+    files:
+      - mesh.yml
+      - facilitator.yml
+      - participants.yml
+images:
+  # The node image of this release; an overlay or a deployment changes only newTag (or newName for a registry mirror).
+  - name: ghcr.io/nabil-becker/facilitator-node
+    newTag: 0.7.0

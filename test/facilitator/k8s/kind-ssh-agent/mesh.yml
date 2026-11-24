@@ -1,0 +1,19 @@
+# bundles/facilitator/k8s/overlays/ssh-agent/mesh.yml plus one exposed agent; the test replaces __FINGERPRINT__ with the SHA256
+# fingerprint of the CA key it generates, in a copy of this folder (never here).
+preset: team
+role: hub
+node:
+  id: hub-1
+  name: hub.workstation.example
+  listen:
+    private: 0.0.0.0:46358
+  join: 0.0.0.0:46359
+  issuer:
+    domain: workstation.example
+    ssh_agent:
+      socket: /run/ssh-ca/agent.sock
+      key: __FINGERPRINT__
+trust:
+  workstation.example: private
+expose:
+  triage: private

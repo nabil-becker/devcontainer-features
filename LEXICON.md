@@ -621,3 +621,18 @@ renamed. Each project is a tree growing in its own ground.
 - **Audit register**: the signed register of type `audit` (register `audit-enrolment`) in which a node
   writes HTTP enrolments and join, approve, revoke and rotate events, replayed by `facilitator audit
   verify|replay|show` (ADR-0080).
+- **Built-in CA**: the issuer a hub runs when no OpenBao PKI is configured: a root CA that signs an
+  issuing CA once (ed25519, DNS-only name constraint), which signs the domain's node certificates; it
+  needs no unseal and backs its roster up to a file in the node's volume (facilitator 0.7.0, ADR-0078).
+- **Export root**: `facilitator node issuer export-root`, a person's act (refused in an agent's job):
+  writes the built-in CA's root key and certificate to a new file and removes the root key from the
+  volume, so it can be kept offline while the hub keeps issuing (facilitator 0.7.0).
+- **Issuer migrate**: `facilitator node issuer migrate`, a person's act: moves a built-in hub's issuing
+  CA into an OpenBao PKI mount, so no spoke re-joins and nothing is re-issued; an ssh-agent hub cannot
+  migrate, because an agent never gives its key up (facilitator 0.7.0).
+- **Issuer tier**: one of the three places a node's CA key can live, tried in order: OpenBao when
+  `node.issuer.openbao` is set, else ssh-agent when `node.issuer.ssh_agent` is set, else a file
+  (ADR-0078).
+- **Agent tier**: the issuer tier `node.issuer.ssh_agent: {socket, key}`: the CA key stays in an
+  ssh-agent, an ed25519 key matched by its SHA256 fingerprint and never "the first key"; with the agent
+  gone the node issues nothing, and the certificates already issued stay valid (facilitator 0.7.0).

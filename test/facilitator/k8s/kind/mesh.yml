@@ -1,0 +1,15 @@
+# bundles/facilitator/k8s/overlays/rancher-desktop/mesh.yml plus one exposed agent (the test's hub has triage).
+preset: team
+role: hub
+node:
+  id: hub-1
+  name: hub.workstation.example
+  listen:
+    private: 0.0.0.0:46358
+  join: 0.0.0.0:46359
+  issuer:
+    domain: workstation.example
+trust:
+  workstation.example: private
+expose:
+  triage: private

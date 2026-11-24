@@ -6,6 +6,41 @@ of the Feature and whether they must act (an option renamed, a task removed, a r
 The version in `devcontainer-feature.json` is bumped in the same change that adds its entry
 here; `task lint` fails when the entry is missing.
 
+## [0.7.0] - 2026-11-24
+
+The hub on Kubernetes (slice hub-on-kubernetes of the facilitator-node proposal; rulings K2 to K5, ADR-0078). Nothing changes for a
+node that is not a hub, and a hub with `node.issuer.openbao` keeps its OpenBao PKI. Rebuild the container.
+
+### Added
+
+- **A built-in issuer for a hub** (K3, K4): with no `node.issuer.openbao` a hub issues its domain's certificates itself and
+  needs no unseal. It keeps a root CA and an issuing CA (ed25519, constrained to `DNS:<domain>` and the hub's own name: SLIM
+  refuses a URI constraint), signs 24 h leaves with the issuing CA, and backs its roster up to `mesh/roster.backup.json` in its
+  own volume. A hub made by 0.6.0 keeps its single CA.
+- **`facilitator node issuer export-root --out <new file>`** (a person's act, refused inside an agent's job): the root's key
+  and certificate to a new file (mode 600) and the root key removed from the volume; the hub keeps issuing and no spoke changes
+  anything. **`facilitator node issuer migrate`** (a person's act) moves a built-in hub onto an OpenBao PKI **keeping the
+  same CA**, so no spoke joins again (it imports the issuing CA, makes the node role, checks a certificate OpenBao signs chains
+  to the spokes' bundle, backs the roster up into OpenBao, then removes the key). **`node issuer status`** (read only). New task
+  `facilitator:node-issuer`.
+- **The ssh-agent tier** (K5): `node.issuer.ssh_agent: {socket, key}`. The agent's ed25519 key is the CA, matched by its SHA256
+  fingerprint (never the first key; RSA, ECDSA and FIDO keys are refused by name), and no CA key file exists; each leaf is one
+  signing round trip. With the agent gone issuing and renewing stop with `ssh-agent unreachable at <socket>` and existing
+  certificates stay valid. Order of the tiers: OpenBao when configured, else the ssh-agent, else the file.
+- **`facilitator check`** names the issuer tier and **warns** (without failing) when the CA key is a file (the last resort) and
+  when the agent holds other keys; `node restore-roster` reads the volume's backup for a built-in hub.
+- **The hub on Kubernetes**: a kustomize base in `bundles/facilitator/k8s` (a StatefulSet with a volume claim, uid 10001, a
+  read-only root filesystem, no capabilities; `mesh.yml` in a ConfigMap; a Service for SLIM 46358 and the join endpoint 46359 and
+  nothing else), an overlay for Rancher Desktop (a LoadBalancer; the hub's name in the certificate is the name spokes map to the
+  machine with `--add-host=<name>:host-gateway`) and an overlay with the CA key in an ssh-agent container beside the hub.
+  `task bundle:k8s` renders and checks them with kustomize and kubeconform; `task test:facilitator-k8s` runs the hub, spokes and
+  both issuer tiers in a throwaway kind cluster (the Rancher Desktop overlay itself is not run against Rancher Desktop).
+- `bundleVersion` defaults to 0.7.0 (unpinned until `release-bundle` runs: the Feature builds the bundle from its own source).
+
+### Changed
+
+- A hub's `check` no longer says it needs OpenBao: its issuer "must answer" (the built-in CA always does).
+
 ## [0.6.0] - 2026-11-23
 
 Peer to peer and the cross-node public rules (slice N5a of the facilitator-node proposal; rulings AH, H4, HC3, ID2, PB3). Nothing

@@ -1,0 +1,30 @@
+# The test's hub: the rancher-desktop overlay, run in a kind cluster (test/facilitator/k8s_flow.sh). Three changes, and only these:
+# the node image is the locally built one (tag kind-test, loaded into the cluster), the Service is a NodePort that kind maps to
+# the machine's 46358 and 46359 (what Rancher Desktop's LoadBalancer forwarding does for a workstation), and the hub has one agent
+# of its own (triage), exposed to the private level, so that a spoke's agent has someone to talk to.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../../../bundles/facilitator/k8s/overlays/rancher-desktop
+images:
+  - name: ghcr.io/nabil-becker/facilitator-node
+    newName: facilitator-node
+    newTag: kind-test
+configMapGenerator:
+  - name: facilitator-hub-config
+    behavior: merge
+    files:
+      - mesh.yml
+      - participants.yml
+patches:
+  - target: {kind: Service, name: facilitator-hub}
+    patch: |-
+      - op: replace
+        path: /spec/type
+        value: NodePort
+      - op: add
+        path: /spec/ports/0/nodePort
+        value: 30358
+      - op: add
+        path: /spec/ports/1/nodePort
+        value: 30359

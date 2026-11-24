@@ -225,6 +225,11 @@ tasks:
     cmds:
       - bash test/facilitator/p2p_flow.sh
 
+  test:facilitator-k8s:
+    desc: 'The hub on Kubernetes end to end in a throwaway kind cluster (test/facilitator/k8s_flow.sh; kind, kubectl, kustomize and kubeconform pinned by version and SHA-256 in test/facilitator/k8s/tools.sh and fetched into a cache; the kind node image pinned by digest): the manifests rendered and checked (task bundle:k8s), the hub deployed from the base through the rancher-desktop overlay with the built-in issuer (the image facilitator-node:<version>-local, task bundle:build then bundle:image, loaded into the cluster), the hub''s pod hardened (uid 10001, read-only root, no capabilities) and its Service exposing SLIM and the join endpoint only; a spoke container reaching it through the machine (--add-host host-gateway, the published ports) joins with a token, an agent on the spoke and one on the hub converse, verify passes on both, check warns that the CA key is a file; export-root takes the root key out of the volume and the hub keeps issuing; then the ssh-agent overlay: a key loaded into the agent container beside the hub, a second spoke gets a certificate signed by it, a CA key file nowhere, the agent removed and issuing refused with a clear error while the issued certificate stays valid; deletes the cluster, containers and images it made. Needs a Docker daemon that allows --privileged; df and one cluster at a time; not part of lint.'
+    cmds:
+      - bash test/facilitator/k8s_flow.sh
+
   test:facilitator-http:
     desc: 'Slice N4 end to end, no Docker (test/facilitator/http_flow.sh): the endpoint of a built node bundle (FACILITATOR_BUNDLE, else dist/, else it builds one: task bundle:build) on 127.0.0.1 with a mesh.yml that exposes one agent public and one not; a leaf MCP client (401 without detail, 413, Origin, 404, the tools offered and never continue or approve, who showing only the public agent, a hidden agent refused as unknown, the first message held, approved by a person, answered, received, via in transcript and verify, max_packet and the public rate refused, a revoked token refused at once, ten failures blocking an address), then Claude Code and GitHub Copilot CLI run for real with a bearer token (skipped, said aloud, when the binary or its login is missing: COPILOT_BIN, GH_TOKEN; FACILITATOR_HTTP_CLIENTS=leaf runs only the leaf). Claude Code uses a small model (FACILITATOR_HTTP_CLAUDE_MODEL, default haiku). Not part of lint.'
     cmds:
@@ -713,6 +718,21 @@ tasks:
           set -eu
           v="$(bash bundles/facilitator/install.sh --version)"
           docker build -t "facilitator-node:$v-local" --build-arg "BUNDLE_VERSION=$v" -f bundles/facilitator/Dockerfile "{{.OUT}}"
+
+  bundle:k8s:
+    desc: 'Render the facilitator hub''s kustomize base and its overlays (bundles/facilitator/k8s: base, overlays/rancher-desktop, overlays/ssh-agent) with kustomize and check each with kubeconform (-strict, the Kubernetes schemas of KUBERNETES_SCHEMA_VERSION): the StatefulSet with a volume, mesh.yml in a ConfigMap, a Service for SLIM and the join endpoint only. -- <overlay> renders one to standard output (task bundle:k8s -- overlays/rancher-desktop). kustomize and kubeconform come from the kustomize and kubeconform Features when they are on PATH at the pinned version, else the pinned, checksummed ones are fetched into ~/.cache/facilitator-k8s-tools (test/facilitator/k8s/tools.sh). Needs network for the schemas; not part of lint.'
+    silent: true
+    cmds:
+      - cmd: |
+          set -eu
+          . test/facilitator/k8s/tools.sh
+          fac_tools kustomize kubeconform
+          if [ -n "{{.CLI_ARGS}}" ]; then exec kustomize build "bundles/facilitator/k8s/{{.CLI_ARGS}}"; fi
+          for o in base overlays/rancher-desktop overlays/ssh-agent; do
+            echo "== $o"
+            kustomize build "bundles/facilitator/k8s/$o" | kubeconform -strict -summary -kubernetes-version "$KUBERNETES_SCHEMA_VERSION"
+          done
+          bash test/facilitator/k8s/shape.sh
 
   bundle:pin:
     desc: 'After the Operator has run release-bundle: download the release facilitator-bundle-v<version> (`task bundle:pin -- 0.3.0`), check each asset against its SHA256SUMS, the digest GitHub records for it and its build attestation (gh attestation verify), and add the lines to src/facilitator/digests.txt, for the pull request that pins the bundle. Needs gh, logged in.'
