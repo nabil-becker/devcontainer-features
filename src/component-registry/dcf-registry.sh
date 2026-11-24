@@ -55,6 +55,8 @@
 #           url: https://git.example.invalid/corp/registry.git
 #           tag: v3               # exactly one of branch, tag, commit
 #           auth: { type: basic, user: bot, secret: registry/corp }   # optional, dcf-secret
+#         - { kind: git, url: https://git.example.invalid/corp/monorepo.git, branch: main, path: registry/corp }   # 2.2.0: a folder of the repository is the layer root
+#         - { kind: http, url: "https://github.com/acme/registry/releases/download/v3/registry.tar.gz", archive: tar.gz, sha256: "<64 hex>", path: registry, max-size: 200M }   # 2.2.0: an archive (max-size optional, default 100M)
 #         - { kind: http, url: "https://registry.example.invalid/corp.layer", auth: { type: bearer, secret: registry/corp } }
 #         - { kind: cloud-folder, remote: registry/mine }   # a folder under the cloud folder
 #         - { kind: path, path: .registry-mine }   # repo-relative or absolute folder
@@ -259,7 +261,7 @@ function setkey(where, k, v,   id) {
     return
   }
   if (where == "source") {
-    if (k !~ /^(kind|url|branch|tag|commit|path|remote|required|allow-insecure|driver|host|port|database|user|sslmode|table|query)$/) fail("unknown key '" k "' in a source (kind, url, branch, tag, commit, path, remote, required, allow-insecure, driver, host, port, database, user, sslmode, table, query, auth)")
+    if (k !~ /^(kind|url|branch|tag|commit|path|remote|required|allow-insecure|archive|sha256|max-size|driver|host|port|database|user|sslmode|table|query)$/) fail("unknown key '" k "' in a source (kind, url, branch, tag, commit, path, remote, required, allow-insecure, archive, sha256, max-size, driver, host, port, database, user, sslmode, table, query, auth)")
     id = k
   } else {
     if (k !~ /^(type|secret|user|header)$/) fail("unknown key '" k "' in auth (type, secret, user, header)")
@@ -493,18 +495,23 @@ load_list() {
       case "$v" in
         http)
           grep -q '^url=' <<< "${S_ARGS[$k]}" || { warn "$at: an http source needs url"; errs=$((errs + 1)); }
-          grep -q '^\(branch\|tag\|commit\|path\|remote\)=' <<< "${S_ARGS[$k]}" && { warn "$at: an http source takes url, allow-insecure and auth (type, user, secret, header) only"; errs=$((errs + 1)); } ;;
+          grep -q '^\(branch\|tag\|commit\|remote\)=' <<< "${S_ARGS[$k]}" && { warn "$at: an http source takes url, archive, sha256, path, max-size, allow-insecure and auth (type, user, secret, header) only"; errs=$((errs + 1)); }
+          if grep -q '^\(sha256\|path\)=' <<< "${S_ARGS[$k]}" && ! grep -q '^archive=' <<< "${S_ARGS[$k]}"; then warn "$at: sha256 and path belong to an archive source (archive: tar.gz, tgz or zip)"; errs=$((errs + 1)); fi
+          v="$(sed -n 's/^max-size=//p' <<< "${S_ARGS[$k]}")"
+          [ -z "$v" ] || [[ "$v" =~ ^[1-9][0-9]*[KMG]?$ ]] || { warn "$at: max-size is a number of bytes or a number with K, M or G (binary), not 0 or negative: '$v'"; errs=$((errs + 1)); }
+          v="$(sed -n 's/^archive=//p' <<< "${S_ARGS[$k]}")"
+          case "$v" in '' | tar.gz | tgz | zip) ;; *) warn "$at: archive is tar.gz, tgz or zip"; errs=$((errs + 1)) ;; esac ;;
         cloud-folder)
           grep -q '^remote=' <<< "${S_ARGS[$k]}" || { warn "$at: a cloud-folder source needs remote (a folder under the cloud folder)"; errs=$((errs + 1)); }
-          grep -q '^\(url\|branch\|tag\|commit\|path\|allow-insecure\|auth\.[a-z]*\)=' <<< "${S_ARGS[$k]}" && { warn "$at: a cloud-folder source takes remote only (the cloud folder's own set-up is its log-in)"; errs=$((errs + 1)); } ;;
+          grep -q '^\(url\|branch\|tag\|commit\|path\|allow-insecure\|archive\|sha256\|max-size\|auth\.[a-z]*\)=' <<< "${S_ARGS[$k]}" && { warn "$at: a cloud-folder source takes remote only (the cloud folder's own set-up is its log-in)"; errs=$((errs + 1)); } ;;
         git)
           grep -q '^url=' <<< "${S_ARGS[$k]}" || { warn "$at: a git source needs url"; errs=$((errs + 1)); }
           [ "$(grep -c '^\(branch\|tag\|commit\)=' <<< "${S_ARGS[$k]}")" -eq 1 ] || { warn "$at: a git source needs exactly one of branch, tag, commit"; errs=$((errs + 1)); }
-          grep -q '^\(path\|remote\|allow-insecure\|auth\.header\)=' <<< "${S_ARGS[$k]}" && { warn "$at: a git source takes url, branch, tag or commit, and auth (type, user, secret)"; errs=$((errs + 1)); } ;;
+          grep -q '^\(remote\|allow-insecure\|archive\|sha256\|max-size\|auth\.header\)=' <<< "${S_ARGS[$k]}" && { warn "$at: a git source takes url, branch, tag or commit, path (a folder of the repository), and auth (type, user, secret)"; errs=$((errs + 1)); } ;;
         db)
           grep -q '^driver=' <<< "${S_ARGS[$k]}" || { warn "$at: a db source needs driver (sqlite or postgres)"; errs=$((errs + 1)); }
           [ "$(grep -c '^\(table\|query\)=' <<< "${S_ARGS[$k]}")" -eq 1 ] || { warn "$at: a db source needs exactly one of table, query"; errs=$((errs + 1)); }
-          grep -q '^\(url\|branch\|tag\|commit\|remote\|allow-insecure\|auth\.\(type\|user\|header\)\)=' <<< "${S_ARGS[$k]}" && { warn "$at: a db source takes driver, path or host, port, database, user, sslmode, table or query, and auth.secret only"; errs=$((errs + 1)); }
+          grep -q '^\(url\|branch\|tag\|commit\|remote\|allow-insecure\|archive\|sha256\|max-size\|auth\.\(type\|user\|header\)\)=' <<< "${S_ARGS[$k]}" && { warn "$at: a db source takes driver, path or host, port, database, user, sslmode, table or query, and auth.secret only"; errs=$((errs + 1)); }
           if grep -q '^driver=sqlite$' <<< "${S_ARGS[$k]}"; then
             grep -q '^path=' <<< "${S_ARGS[$k]}" || { warn "$at: a sqlite db source needs path"; errs=$((errs + 1)); }
             # A relative path is the repository's; the source gets it absolute.
@@ -515,7 +522,7 @@ load_list() {
           fi ;;
         path)
           grep -q '^path=' <<< "${S_ARGS[$k]}" || { warn "$at: a path source needs path"; errs=$((errs + 1)); }
-          grep -q '^\(url\|branch\|tag\|commit\|remote\|auth\.[a-z]*\)=' <<< "${S_ARGS[$k]}" && { warn "$at: a path source takes path only (the folder's own permissions are its log-in)"; errs=$((errs + 1)); }
+          grep -q '^\(url\|branch\|tag\|commit\|remote\|archive\|sha256\|max-size\|auth\.[a-z]*\)=' <<< "${S_ARGS[$k]}" && { warn "$at: a path source takes path only (the folder's own permissions are its log-in)"; errs=$((errs + 1)); }
           # A relative path is the repository's; the source gets it absolute.
           v="$(sed -n 's/^path=//p' <<< "${S_ARGS[$k]}")"
           case "$v" in /*) ;; *) S_ARGS[$k]="$(grep -v '^path=' <<< "${S_ARGS[$k]}")"$'\n'"path=$ROOT/$v"$'\n' ;; esac ;;
