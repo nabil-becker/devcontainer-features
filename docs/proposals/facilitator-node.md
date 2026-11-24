@@ -1572,3 +1572,8 @@ The Operator ruled HK1 to HK5 as recommended (the findings are in "Findings of s
   login server whose subjects are emails puts those emails in the record: prefer one with opaque subjects where
   that matters. Rejected: a fingerprint of the subject (B: the record could no longer say who it was without the
   login server).
+- **OA3, letting a refused client back: option B, ruled 2026-11-24.** `facilitator http forget <client>` is built
+  in N5b: a person's act (refused inside an agent's job) that drops a revoked or denied client's entry, so the
+  same login (issuer and subject) is treated as new next time and held for a person's approval; a live client is
+  refused (revoke it first). The forget is written to the audit register; past records keep naming the client.
+  Rejected: leaving it to a later slice (A).
