@@ -6,6 +6,20 @@ of the Feature and whether they must act (an option renamed, a task removed, a r
 The version in `devcontainer-feature.json` is bumped in the same change that adds its entry
 here; `task lint` fails when the entry is missing.
 
+
+## [2.1.0] - 2026-11-24
+
+### Added
+
+- The built-in base layer ships `templates/copilot/SKILL.md.j2` (ADR-0077 slice 2.1, backlog
+  `templating-slice-2`): Copilot CLI reads the same `SKILL.md` as Claude Code, so the template is
+  the same, and it reproduces each resolved skill byte for byte. With copilot 0.3.0 (whose adapter
+  gains the `skills` verb), `dcf-registry handover copilot` renders it and hands the result over; a
+  layer overrides it the three ways as for Claude Code. `explain templates/copilot` and
+  `render copilot` show it.
+
+Nothing to do for Claude Code. A Copilot agent gets registry skills from copilot 0.3.0; see that
+Feature's changelog for the default and how to turn it off.
 ## [2.0.0] - 2026-11-23
 
 Breaking: removes what 1.9.0 and 1.10.0 deprecated, all at once (the Operator's rulings of

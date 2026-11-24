@@ -9,6 +9,9 @@
 #     asked, --session-id a stable UUID only with AGENT_ADAPTER_COPILOT_CONTINUE=1, an empty prompt refused
 #   mcp-attach: copilot mcp add facilitator, no token or handle in the entry, idempotent, nothing with
 #     no facilitator on PATH, other targets exit 2
+#   skills (0.3.0, ADR-0077): rendered skills into $COPILOT_HOME/skills (shared) and each agent's own
+#     folder, passed with --add-dir on new, resume and run-once (once); split, shared, off and forget;
+#     an unowned skill never touched; a project skill clash said; skills-show; owner-only
 #   every other verb exits 3, and `supports` lists exactly the verbs that do not
 # Part of `task lint` (`task test:copilot-unit`). ADAPTER_SH points the test at another copy.
 # shellcheck disable=SC2016  # fake programs are written with single-quoted scripts on purpose
@@ -59,7 +62,7 @@ run() { PATH="$bin:$sysp" "$@"; }
 # --- supports agrees with the verbs
 VERBS="start-bg wake attach resume new list stop logs hint record trust run-once session-busy session-stop session-remove"
 sup="$(run "$A" supports)"
-check "supports lists the working verbs" "new resume hint run-once supports" "$(printf '%s' "$sup" | tr '\n' ' ' | sed 's/ $//')"
+check "supports lists the working verbs" "new resume hint run-once skills skills-show supports" "$(printf '%s' "$sup" | tr '\n' ' ' | sed 's/ $//')"
 bad=''
 for v in $VERBS; do
   if [ "$v" = list ] || [ "$v" = session-busy ] || [ "$v" = session-stop ] || [ "$v" = session-remove ]; then
@@ -191,6 +194,56 @@ cp "$bin/facilitator" "$T/echo/facilitator"
 out="$(PATH="$T/echo:$sysp" "$T/echo/agent-adapter-copilot" mcp-attach facilitator 2>&1)"; rc=$?
 check "a refused add exits 1" 1 "$rc"
 contains "and names the private-home rule" "$out" "writable by group or other"
+
+
+# --- skills (0.3.0, ADR-0077): every test in a temp COPILOT_HOME
+export COPILOT_HOME="$T/copilot-home"
+CH="$COPILOT_HOME"
+mkdir -p "$T/va/x" "$T/va/y" "$T/vb/x" "$T/vb/z" "$T/repo2/.github/skills/z"
+printf -- '---\nname: x\ndescription: X\n---\nx body\n' > "$T/va/x/SKILL.md"; cp "$T/va/x/SKILL.md" "$T/vb/x/SKILL.md"
+printf 'y body\n' > "$T/va/y/SKILL.md"; printf 'z body\n' > "$T/vb/z/SKILL.md"
+sk() { PATH="$bin:$sysp" COMPONENT_REGISTRY_SKILLS="$1" COMPONENT_REGISTRY_SKILLS_MODE="${3:-split}" "$A" skills "$2" "$4" 2>&1; }
+out="$(PATH="$bin:$sysp" "$A" skills a "$T/repo" 2>&1)"; rc=$?
+check "skills without COMPONENT_REGISTRY_SKILLS: exit 2" 2 "$rc"
+check "skills without COMPONENT_REGISTRY_SKILLS: nothing created" no "$([ -e "$CH/skills" ] && echo yes || echo no)"
+(umask 077; mkdir -p "$CH/skills/mine"); echo 'my own' > "$CH/skills/mine/SKILL.md"
+out="$(sk "$T/va" a split "$T/repo")"; rc=$?
+check "skills split, one agent: exit 0" 0 "$rc"
+check "one agent: its whole view is shared (personal)" "x body" "$(tail -n 1 "$CH/skills/x/SKILL.md")"
+check "one agent: marked owned" yes "$([ -f "$CH/skills/x/.component-registry" ] && echo yes || echo no)"
+check "a copy is owner-only" 700 "$(stat -c %a "$CH/skills/x")"
+out="$(sk "$T/vb" b split "$T/repo2")"
+check "two views: what both have alike stays personal" yes "$([ -f "$CH/skills/x/SKILL.md" ] && echo yes || echo no)"
+check "two views: what they disagree on leaves the personal folder" no "$([ -e "$CH/skills/y" ] && echo yes || echo no)"
+ownb="$(ls -d "$CH"/registry-agents/b.*/registry)"
+check "two views: b's own skill in its own .github/skills" "z body" "$(cat "$ownb/.github/skills/z/SKILL.md")"
+owna="$(ls -d "$CH"/registry-agents/a.*/registry)"
+check "two views: a's own skill moved to its own folder" "y body" "$(cat "$owna/.github/skills/y/SKILL.md")"
+check "an unowned personal skill is never touched" "my own" "$(cat "$CH/skills/mine/SKILL.md")"
+contains "the hand-over says a project skill of the same name wins" "$out" "the project's $T/repo2/.github/skills/z wins in b's sessions"
+reset
+out="$(run "$A" new b "$T/repo2" -- --add-dir /other 2>&1)"
+check "new: --add-dir its own folder, last" "$T/repo2|--name b --add-dir /other --add-dir $ownb" "$(calls)"
+contains "new: one line says it" "$out" "b: registry skills: 1 shared, 1 own -> --add-dir $ownb"
+contains "new: a project clash said" "$out" "clash: the project's $T/repo2/.github/skills/z wins in its sessions"
+reset; run "$A" resume b "$T/repo2" -- --add-dir "$ownb" >/dev/null 2>&1
+check "resume: never twice" "$T/repo2|--resume b --add-dir $ownb" "$(calls)"
+reset; echo hi | run "$A" run-once b "$T/repo2" >/dev/null 2>&1
+contains "run-once: its own folder too" "$(calls)" "--no-auto-update --add-dir $ownb"
+reset; run "$A" new c "$T/repo" >/dev/null 2>&1
+check "an agent with no own folder: no --add-dir" "$T/repo|--name c" "$(calls)"
+show="$(run "$A" skills-show b "$T/repo2")"
+contains "skills-show: own folder" "$show" "own	$ownb"
+contains "skills-show: own skills" "$show" "own-skills	z"
+contains "skills-show: shared" "$show" "shared-skills	x"
+out="$(sk "$T/va" a shared "$T/repo")"
+check "shared: no own folder for the agent" no "$([ -e "$owna" ] && echo yes || echo no)"
+check "shared: its whole view personal" "y body" "$(cat "$CH/skills/y/SKILL.md" 2>/dev/null)"
+out="$(sk "$T/vb" b off "$T/repo2")"
+check "off: the agent's own folder dropped" no "$([ -e "$ownb" ] && echo yes || echo no)"
+out="$(PATH="$bin:$sysp" COMPONENT_REGISTRY_FORGET=1 "$A" skills a "$T/repo" 2>&1)"; rc=$?
+check "forget: exit 0" 0 "$rc"
+unset COPILOT_HOME
 
 echo "copilot adapter: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

@@ -21,7 +21,7 @@ check "the db source says what it supports" bash -c "registry-source-db supports
 check "the db source refuses an unsupported driver (exit 3)" bash -c "registry-source-db version l driver=oracle table=t; [ \$? -eq 3 ]"
 check "component-registry-setup on PATH" command -v component-registry-setup
 check "dcf-persist on PATH" command -v dcf-persist
-check "the Feature version is baked" grep -qx '2.0.0' /usr/local/share/component-registry-feature/version
+check "the Feature version is baked" grep -qx '2.1.0' /usr/local/share/component-registry-feature/version
 check "the registryFile option is baked (default)" grep -qx 'REGISTRYFILE=.devcontainer/registry.yml' /usr/local/share/component-registry-feature/options.env
 check "COMPONENT_REGISTRY_STATE_DIR set" bash -c "[ \"\$COMPONENT_REGISTRY_STATE_DIR\" = /var/lib/devcontainer-features/component-registry ]"
 check "setup makes the state folder owner-only" bash -c "component-registry-setup >/dev/null && [ \"\$(stat -c %a \"\$COMPONENT_REGISTRY_STATE_DIR\")\" = 700 ]"
@@ -30,6 +30,7 @@ check "taskfile registered" test -f /usr/local/share/go-task/includes.d/componen
 check "the built-in base layer is installed (1.1.0)" bash -c "for s in registry-refresh registry-explain; do test -f /usr/local/share/component-registry-feature/base/\$s/SKILL.md || exit 1; done; test -f /usr/local/share/component-registry-feature/base/component-registry.layer"
 check "minijinja-cli on PATH at the pinned version (1.11.0)" bash -c "minijinja-cli --version | grep -qx 'minijinja-cli 3.1.0'"
 check "the base Claude template is installed (1.11.0)" test -f /usr/local/share/component-registry-feature/base/templates/claude/SKILL.md.j2
+check "the base Copilot template is installed (2.1.0)" test -f /usr/local/share/component-registry-feature/base/templates/copilot/SKILL.md.j2
 check "the sources say what they support" bash -c "registry-source-path supports | grep -qx version && registry-source-git supports | grep -qx fetch"
 
 # shellcheck disable=SC2016  # expansion is meant to happen inside the inner bash

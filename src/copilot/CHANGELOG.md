@@ -6,6 +6,23 @@ of the Feature and whether they must act (an option renamed, a task removed, a r
 The version in `devcontainer-feature.json` is bumped in the same change that adds its entry
 here; `task lint` fails when the entry is missing.
 
+## [0.3.0] - 2026-11-24
+
+### Added
+
+- **Registry skills** (ADR-0077 slice 2.1, backlog `templating-slice-2`): `agent-adapter-copilot`
+  gains the `skills` verb (and the read-only `skills-show`). With the component-registry Feature 2.1.0
+  and a layer list, each Copilot agent gets its registry skills, rendered from the `copilot` templates:
+  the ones every agent shares in `$COPILOT_HOME/skills` (Copilot's personal skills folder), the ones
+  only its own path resolves in a folder that `new`, `resume` and `run-once` pass with `--add-dir`.
+  A project or personal skill of the same name wins, and that is said.
+
+### Changed
+
+- This is a change for a Copilot agent in a container with a layer list: it now gets skills it did
+  not get before. The default is `split`, as for Claude Code. Action, only to keep the old
+  behaviour: `registry-skills: off` on the agent's entry, or `COMPONENT_REGISTRY_SKILLS_MODE=off`.
+
 ## [0.2.1] - 2026-11-21
 
 ### Changed

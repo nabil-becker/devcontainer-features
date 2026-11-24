@@ -35,6 +35,12 @@
 #     (the component registry's agent definition wins, handed over by the participant component;
 #     Copilot CLI 1.0.114 `copilot --help`: "--model <model>  Set the AI model to use (use 'auto'
 #     to let Copilot pick automatically)"); run-once is left as its caller sends it
+#     skills     (0.3.0, ADR-0064, ADR-0077) the component registry's skills, rendered from the
+#                copilot templates, in $COMPONENT_REGISTRY_SKILLS: the ones every agent shares into
+#                $COPILOT_HOME/skills, the agent's own into a folder that new, resume and run-once
+#                pass with --add-dir; see "skills" below. COMPONENT_REGISTRY_SKILLS_MODE split
+#                (default), shared or off; COMPONENT_REGISTRY_FORGET=1 drops the agent's folder
+#     skills-show  (0.3.0, read-only) the agent's own folder and skills, and the shared ones
 #   agent-adapter-copilot supports   the verbs above that work, one per line
 # Exit: 0 done, 1 failed, 2 bad use, 3 not supported.
 #
@@ -53,10 +59,218 @@ set -u
 die() { local rc="$1"; shift; printf 'agent-adapter-copilot: %s\n' "$*" >&2; exit "$rc"; }
 note() { printf 'agent-adapter-copilot: %s\n' "$*" >&2; }
 
+# skills (0.3.0, ADR-0064 and ADR-0077): the component registry's resolved skills for one agent,
+# rendered from the copilot templates (component-registry 2.1.0) and handed over by dcf-registry in
+# COMPONENT_REGISTRY_SKILLS (one folder per skill; COMPONENT_REGISTRY_PATH names the path). The same
+# shape as agent-adapter-claude's verb (claude-code 1.14.0, ADR-0074), kept in step with it, in
+# Copilot CLI's own places (docs read 2026-11-24: the CLI command reference, "Skill locations";
+# https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference, page
+# changed 2026-11-20), both in COPILOT_HOME (the Feature's volume, tier 4, owner-only; never the
+# repository's .github/skills, .agents/skills or .claude/skills):
+#   $COPILOT_HOME/skills, Copilot's personal skills folder: the skills every agent's view has alike;
+#   $COPILOT_HOME/registry-agents/<name>.<folder sum>/registry/.github/skills, the agent's own folder,
+#     passed with --add-dir <that>/registry to every session of the agent the adapter starts (new,
+#     resume, run-once): Copilot loads .github/skills under an added directory.
+# Copilot's order (first found wins for a name): project skills, then personal, then added
+# directories; so a name the agents' views disagree on must not be personal, and a project or
+# personal skill of the same name beats the agent's own copy (said; Copilot has no qualified name
+# for the loser). Copilot does not watch its skills folders: a running session reads a change after
+# /skills reload. COMPONENT_REGISTRY_SKILLS_MODE: split (the default), shared, off; FORGET=1 drops
+# the agent's folder. Each copy is marked owned (.component-registry); an unmarked folder is never
+# touched. Owner-only (umask 077).
+copilot_home() { printf '%s' "${COPILOT_HOME:-$HOME/.copilot}"; }
+# project_skill <folder> <name>: the project skill of that name Copilot would read first, if any
+project_skill() { local p; for p in .github/skills .agents/skills .claude/skills; do [ -d "$1/$p/$2" ] && { printf '%s' "$1/$p/$2"; return 0; }; done; return 1; }
+SKILLS_MARK=.component-registry
+REG_ADD=registry   # the added directory's folder name: a clashing skill runs as /registry:<name>
+agents_skills_dir() { printf '%s/registry-agents' "$(copilot_home)"; }
+# the key is made from the folder's real path, so the hand-over and a start agree however it is written
+agent_key() { local f; f="$(cd "$2" 2>/dev/null && pwd -P)" || f="$2"; printf '%s.%s' "$1" "$(printf '%s' "$f" | cksum | cut -d' ' -f1)"; }
+# agent_add_dir <name> <folder>: the folder passed with --add-dir for that agent
+agent_add_dir() { printf '%s/%s/%s' "$(agents_skills_dir)" "$(agent_key "$1" "$2")" "$REG_ADD"; }
+skill_name_ok() { [[ "$1" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ ]]; }
+
+# put_skills <dest> <src root> <name>...: each named skill copied from <src root> into <dest>,
+# marked owned; an unchanged one left; an unowned folder of that name never touched (PUT_MINE).
+# Adds to PUT_COPIED, PUT_SAME, PUT_MINE; PUT_RC 1 when a copy failed.
+put_skills() {
+  local dest="$1" src="$2" nm tmp; shift 2
+  for nm in "$@"; do
+    if [ -e "$dest/$nm" ] && [ ! -f "$dest/$nm/$SKILLS_MARK" ]; then
+      note "skills: $dest/$nm is not the registry's (no $SKILLS_MARK in it), so it is left as it is and the registry's $nm is not installed there."
+      PUT_MINE=$((PUT_MINE + 1)); continue
+    fi
+    if [ -f "$dest/$nm/$SKILLS_MARK" ] && diff -rq -x "$SKILLS_MARK" "$src/$nm" "$dest/$nm" >/dev/null 2>&1; then PUT_SAME=$((PUT_SAME + 1)); continue; fi
+    tmp="$dest/.$nm.new.$$"
+    rm -rf "$tmp"
+    if ! { mkdir -p "$tmp" && cp -R "$src/$nm/." "$tmp/"; } 2>/dev/null; then
+      rm -rf "$tmp"; note "skills: copying $nm into $dest failed."; PUT_RC=1; continue
+    fi
+    printf '%s\n' "Owned by the component registry (dcf-registry): the next resolve replaces or removes this folder. Change the layer, not this copy." > "$tmp/$SKILLS_MARK"
+    if ! { rm -rf "${dest:?}/$nm" && mv "$tmp" "$dest/$nm"; }; then
+      rm -rf "$tmp"; note "skills: replacing $dest/$nm failed."; PUT_RC=1; continue
+    fi
+    PUT_COPIED=$((PUT_COPIED + 1))
+  done
+}
+# prune_skills <dest> <name>...: owned copies in <dest> not named are removed; adds to PRUNED
+prune_skills() {
+  local dest="$1" d nm; shift
+  local -A want=()
+  for nm in "$@"; do want[$nm]=1; done
+  for d in "$dest"/*/; do
+    [ -f "$d$SKILLS_MARK" ] || continue
+    nm="$(basename "$d")"
+    [ -n "${want[$nm]:-}" ] && continue
+    rm -rf "${dest:?}/$nm" && PRUNED=$((PRUNED + 1))
+  done
+  for d in "$dest"/.*.new.*; do [ -e "$d" ] && rm -rf "$d"; done
+  return 0
+}
+
+# skills_show (the optional verb skills-show <name> <folder>, as agent-adapter-claude's): what Copilot CLI
+# holds for the agent, read-only, one tab-separated line each:
+#   own <its own folder, the one --add-dir passes, or ->    own-skills <names, or ->
+#   shared <the personal folder>                            shared-skills <the registry's there, or ->
+skills_show() {
+  local pers rd nm d o='' sh=''
+  pers="$(copilot_home)/skills" rd="$(agent_add_dir "$NAME" "$FOLDER")"
+  for d in "$pers"/*/; do [ -f "$d$SKILLS_MARK" ] && sh="$sh${sh:+ }$(basename "$d")"; done
+  if [ -d "$rd/.github/skills" ]; then
+    for d in "$rd"/.github/skills/*/; do [ -f "$d$SKILLS_MARK" ] && o="$o${o:+ }$(basename "$d")"; done
+    printf 'own\t%s\nown-skills\t%s\n' "$rd" "${o:--}"
+  else
+    printf 'own\t-\nown-skills\t-\n'
+  fi
+  printf 'shared\t%s\nshared-skills\t%s\n' "$pers" "${sh:--}"
+  return 0
+}
+# count_owned <folder>: how many skills in it the registry owns
+count_owned() { local d n=0; for d in "$1"/*/; do [ -f "$d$SKILLS_MARK" ] && n=$((n + 1)); done; printf '%s' "$n"; }
+
+skills_handover() {
+  local src="${COMPONENT_REGISTRY_SKILLS:-}" forget='' pers base me a d nm fo anew='' swept=0
+  local pc ps pr pm oc os orr own='' ref ok p smode="${COMPONENT_REGISTRY_SKILLS_MODE:-split}"
+  [ "${COMPONENT_REGISTRY_FORGET:-}" = 1 ] && forget=1
+  # (1.14.0, ADR-0074) the mode the agents list (registry-skills) or the container
+  # (COMPONENT_REGISTRY_SKILLS_MODE) chose: split (the default), shared (the whole view personal, the
+  # latest hand-over wins, no own folder), off (as forget)
+  case "$smode" in
+    split | shared) ;;
+    off) forget=1 ;;
+    *) die 2 "skills: COMPONENT_REGISTRY_SKILLS_MODE is '$smode', not split, shared or off." ;;
+  esac
+  if [ -z "$forget" ]; then
+    [ -n "$src" ] || die 2 "skills needs COMPONENT_REGISTRY_SKILLS, the resolved skills folder (dcf-registry handover sets it)."
+    [ -d "$src" ] || die 2 "skills: COMPONENT_REGISTRY_SKILLS is '$src', which is not a folder."
+  fi
+  pers="$(copilot_home)/skills" base="$(agents_skills_dir)"
+  (umask 077 && mkdir -p "$pers" "$base") 2>/dev/null || die 1 "skills: cannot create $pers or $base."
+  umask 077
+  if command -v flock >/dev/null 2>&1; then
+    exec 7>>"$base/.lock"
+    flock -w "${AGENT_ADAPTER_SKILLS_WAIT:-60}" 7 || die 1 "skills: another hand-over has held $base/.lock for ${AGENT_ADAPTER_SKILLS_WAIT:-60}s; try again."
+  fi
+  me="$base/$(agent_key "$NAME" "$FOLDER")"
+  if [ -z "$forget" ] && [ "$smode" = shared ]; then
+    # shared: no own folder; the whole view into the personal folder, as before 1.14.0
+    rm -rf "$me"
+    local -a all=()
+    for d in "$src"/*/; do nm="$(basename "$d")"; [ -d "$d" ] || continue; if skill_name_ok "$nm"; then all+=("$nm"); else note "skills: '$nm' is not a skill name; skipped."; fi; done
+    PUT_RC=0 PUT_COPIED=0 PUT_SAME=0 PUT_MINE=0 PRUNED=0
+    put_skills "$pers" "$src" "${all[@]+"${all[@]}"}"
+    prune_skills "$pers" "${all[@]+"${all[@]}"}"
+    [ "$PUT_MINE" -eq 0 ] || own=", $PUT_MINE left to their owner"
+    echo "copilot: $((PUT_COPIED + PUT_SAME)) resolved skill(s) in $pers ($PUT_COPIED copied, $PUT_SAME unchanged, $PRUNED removed$own): $NAME's whole view (registry skills shared: the latest hand-over wins for every session)."
+    echo "copilot: a session started from now on reads them; a running one after /skills reload."
+    return "$PUT_RC"
+  fi
+  if [ -n "$forget" ]; then
+    if [ -d "$me" ]; then rm -rf "$me"; echo "copilot: $NAME's own registry skills ($me) removed."
+    else echo "copilot: $NAME has no registry skills of its own here; nothing to remove."; fi
+  else
+    [ -d "$me/$REG_ADD/.github/skills" ] || anew=1
+    mkdir -p "$me/$REG_ADD/.github/skills" || die 1 "skills: cannot create $me."
+    rm -rf "$me/.want.new"
+    { mkdir -p "$me/.want.new" && cp -R "$src/." "$me/.want.new/"; } 2>/dev/null || { rm -rf "$me/.want.new"; die 1 "skills: copying the view into $me failed."; }
+    if ! { rm -rf "$me/want" && mv "$me/.want.new" "$me/want"; }; then die 1 "skills: replacing $me/want failed."; fi
+    printf '%s\t%s\t%s\n' "$NAME" "$FOLDER" "${COMPONENT_REGISTRY_PATH:-}" > "$me/agent"
+  fi
+  # an agent whose folder is gone is dropped (its sessions cannot start there any more)
+  for a in "$base"/*/; do
+    a="${a%/}"
+    [ "$a" = "$me" ] && continue
+    fo="$(cut -f2 "$a/agent" 2>/dev/null)"
+    if [ -z "$fo" ] || [ ! -d "$fo" ]; then rm -rf "$a"; swept=$((swept + 1)); fi
+  done
+  # the split: a skill every agent's view has alike is personal, every other one is the agent's own
+  local -a mirrors=() shared=() union=()
+  local -A sk_seen=() isshared=()
+  for a in "$base"/*/want; do [ -d "$a" ] && mirrors+=("$a"); done
+  for a in "${mirrors[@]+"${mirrors[@]}"}"; do
+    for d in "$a"/*/; do
+      [ -d "$d" ] || continue
+      nm="$(basename "$d")"
+      [ -n "${sk_seen[$nm]:-}" ] && continue
+      sk_seen[$nm]=1
+      if skill_name_ok "$nm"; then union+=("$nm"); else note "skills: '$nm' is not a skill name; skipped."; fi
+    done
+  done
+  for nm in "${union[@]+"${union[@]}"}"; do
+    ok=1 ref=''
+    for a in "${mirrors[@]}"; do
+      [ -d "$a/$nm" ] || { ok=0; break; }
+      if [ -z "$ref" ]; then ref="$a/$nm"; elif ! diff -rq "$ref" "$a/$nm" >/dev/null 2>&1; then ok=0; break; fi
+    done
+    [ "$ok" -eq 1 ] && { shared+=("$nm"); isshared[$nm]=1; }
+  done
+  # 1. every agent's own folder gets what it newly needs, 2. the personal folder becomes the shared
+  # set, 3. each own folder drops what it no longer needs: a running session never misses a skill
+  local -a mine_names=()
+  PUT_RC=0
+  for a in "${mirrors[@]+"${mirrors[@]}"}"; do
+    local -a own_names=()
+    for d in "$a"/*/; do nm="$(basename "$d")"; [ -d "$d" ] && skill_name_ok "$nm" && [ -z "${isshared[$nm]:-}" ] && own_names+=("$nm"); done
+    PUT_COPIED=0 PUT_SAME=0 PUT_MINE=0
+    put_skills "${a%/want}/$REG_ADD/.github/skills" "$a" "${own_names[@]+"${own_names[@]}"}"
+    if [ "${a%/want}" = "$me" ]; then oc="$PUT_COPIED" os="$PUT_SAME"; mine_names=("${own_names[@]+"${own_names[@]}"}"); fi
+  done
+  PUT_COPIED=0 PUT_SAME=0 PUT_MINE=0 PRUNED=0
+  [ "${#mirrors[@]}" -gt 0 ] && put_skills "$pers" "${mirrors[0]}" "${shared[@]+"${shared[@]}"}"
+  prune_skills "$pers" "${shared[@]+"${shared[@]}"}"
+  pc="$PUT_COPIED" ps="$PUT_SAME" pm="$PUT_MINE" pr="$PRUNED"
+  for a in "${mirrors[@]+"${mirrors[@]}"}"; do
+    local -a keep=()
+    for d in "$a"/*/; do nm="$(basename "$d")"; [ -d "$d" ] && [ -z "${isshared[$nm]:-}" ] && keep+=("$nm"); done
+    PRUNED=0
+    prune_skills "${a%/want}/$REG_ADD/.github/skills" "${keep[@]+"${keep[@]}"}"
+    [ "${a%/want}" = "$me" ] && orr="$PRUNED"
+  done
+  [ "$pm" -eq 0 ] || own=", $pm left to their owner"
+  echo "copilot: $((pc + ps)) resolved skill(s) in $pers ($pc copied, $ps unchanged, $pr removed$own): the ones every agent's view has alike."
+  [ "$swept" -eq 0 ] || echo "copilot: $swept agent(s) whose folder is gone no longer have registry skills of their own."
+  if [ -z "$forget" ]; then
+    echo "copilot: $((${oc:-0} + ${os:-0})) of $NAME's own in $me/$REG_ADD/.github/skills (${oc:-0} copied, ${os:-0} unchanged, ${orr:-0} removed), read through --add-dir $me/$REG_ADD."
+    for nm in "${mine_names[@]+"${mine_names[@]}"}"; do
+      if [ -d "$pers/$nm" ]; then
+        echo "copilot: $nm: the personal skill $pers/$nm is not the registry's and wins in $NAME's sessions; the registry's is not used there."
+      elif p="$(project_skill "$FOLDER" "$nm")"; then
+        echo "copilot: $nm: the project's $p wins in $NAME's sessions (Copilot reads project skills first); the registry's is not used there."
+      fi
+    done
+    if [ -n "$anew" ]; then
+      echo "copilot: $NAME's own skills folder is new: its next start passes --add-dir; a session of it running now reads it after /add-dir $me/$REG_ADD."
+    fi
+  fi
+  echo "copilot: a session started from now on reads them; a running one after /skills reload."
+  return "$PUT_RC"
+}
+
+
 verb="${1:-}"
 [ $# -gt 0 ] && shift
 case "$verb" in
-  supports) printf '%s\n' new resume hint run-once supports; exit 0 ;;
+  supports) printf '%s\n' new resume hint run-once skills skills-show supports; exit 0 ;;
   '') die 2 "usage: agent-adapter-copilot <verb> <name> <folder> [-- copilot args]" ;;
   start-bg | wake | attach | list | stop | logs | record | trust | session-busy | session-stop | session-remove)
     die 3 "'$verb' is not supported (Copilot CLI has no local background session, list or stop, and keeps its trusted folders itself)" ;;
@@ -77,7 +291,7 @@ case "$verb" in
       || die 1 "'copilot mcp add facilitator' failed (is COPILOT_HOME private to its owner? Copilot refuses one writable by group or other)"
     echo "agent-adapter-copilot: registered the facilitator MCP entry (no token in it; start copilot with FACILITATOR_HANDLE and FACILITATOR_TOKEN set)"
     exit 0 ;;
-  new | resume | hint | run-once) ;;
+  new | resume | hint | run-once | skills | skills-show) ;;
   *) die 3 "'$verb' is not supported" ;;
 esac
 
@@ -93,6 +307,10 @@ case "${AGENT_SESSION_NAME-}" in
   *) SNAME="$AGENT_SESSION_NAME" ;;
 esac
 [ -d "$FOLDER" ] || die 1 "$NAME: folder $FOLDER does not exist"
+case "$verb" in
+  skills) skills_handover; exit $? ;;
+  skills-show) skills_show; exit $? ;;
+esac
 # The model (0.2.0): AGENT_MODEL, the model of the agent's definition in the component registry
 # (participant 1.3.0), is passed as --model on new and resume, in place of any --model the args hold
 # (the registry wins, the Operator's ruling of 2026-11-21; one line says what it replaced). A value
@@ -117,6 +335,35 @@ if [ -n "${AGENT_MODEL-}" ]; then
     fi ;;
   esac
 fi
+
+# (0.3.0, ADR-0077) the agent's own registry skills: every session of it the adapter starts (new,
+# resume, run-once) gets --add-dir <its folder>, last, once; Copilot loads .github/skills under it.
+case "$verb" in
+  new | resume | run-once)
+    ADD_DIR="$(agent_add_dir "$NAME" "$FOLDER")"
+    if [ -d "$ADD_DIR/.github/skills" ]; then
+      has='' inadd=''
+      for a in "$@"; do
+        case "$a" in
+          --add-dir) inadd=1 ;;
+          --add-dir=*) inadd=''; [ "${a#--add-dir=}" = "$ADD_DIR" ] && has=1 ;;
+          -*) inadd='' ;;
+          *) [ -n "$inadd" ] && [ "$a" = "$ADD_DIR" ] && has=1 ;;
+        esac
+      done
+      [ -n "$has" ] || set -- "$@" --add-dir "$ADD_DIR"
+      if [ "$verb" != run-once ]; then
+        note "$NAME: registry skills: $(count_owned "$(copilot_home)/skills") shared, $(count_owned "$ADD_DIR/.github/skills") own -> --add-dir $ADD_DIR${has:+ (already in its args)}"
+        for d in "$ADD_DIR"/.github/skills/*/; do
+          [ -f "$d$SKILLS_MARK" ] || continue
+          nm="$(basename "$d")"
+          if p="$(project_skill "$FOLDER" "$nm")"; then note "$NAME: registry skills: clash: the project's $p wins in its sessions; its own $nm is not used."
+          elif [ -d "$(copilot_home)/skills/$nm" ]; then note "$NAME: registry skills: clash: the personal $(copilot_home)/skills/$nm wins in its sessions; its own $nm is not used."
+          fi
+        done
+      fi
+    fi ;;
+esac
 
 case "$verb" in
   hint)

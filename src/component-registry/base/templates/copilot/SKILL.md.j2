@@ -1,0 +1,17 @@
+{#- for: skill
+    output: skills/{{ skill.dir }}/SKILL.md
+
+  The built-in base template for GitHub Copilot CLI (component-registry 2.1.0, ADR-0077): a
+  skill's SKILL.md exactly as the resolved view holds it, its front matter, then its body. Copilot
+  CLI reads the same SKILL.md as Claude Code (front matter name, lower-case with hyphens, and
+  description, both required by Copilot). A layer replaces this file whole
+  (templates/copilot/SKILL.md.j2 in the layer), or changes one block:
+
+    {% extends "component-registry/SKILL.md.j2" %}
+    {% block body %}{{ super() }}
+    One more line.
+    {% endblock %}
+
+  The context is in the component-registry notes ("Vendor templates"). -#}
+{%- block front_matter %}{{ skill.front_matter }}{% endblock -%}
+{%- block body %}{{ skill.body }}{% endblock -%}

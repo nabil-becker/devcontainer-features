@@ -101,3 +101,4 @@ wins" answerable in one line.
 | 2026-11-21 | First draft; decisions 1 to 3 ruled by the Operator on 2026-11-21, decision 4 left open. |
 | 2026-11-23 | Decisions 4 to 8 ruled by the Operator on 2026-11-23 (templates are registry components); Options 4 and 5 added. |
 | 2026-11-23 | Numbered 0077 (0075 and 0076 were taken on main); the consequences say how component-registry 1.11.0 built it: rendering in the hand-over, `lock:` in the head, `extends` by layer name, the failure behaviour, the next slice. |
+| 2026-11-24 | Slice 2.1 built (component-registry 2.1.0, copilot 0.3.0): the base layer ships Copilot CLI's `SKILL.md` template and the Copilot adapter gains the `skills` verb (split, shared, off, as Claude Code's). `for: agent` (slice 2.2) waits for the Operator: whether a registry agent definition should become a CLI-native agent file. |
