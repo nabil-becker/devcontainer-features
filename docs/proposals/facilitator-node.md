@@ -1543,3 +1543,19 @@ What the slice found where a ruling could not be built as written. Each is built
   reachable through `host-gateway` or binds the machine's loopback only. Recommendation: the Operator runs the overlay once on
   the workstation; `hub-workstation-networking` stays open until then, with the specification (the hub's name in the
   certificate, `--add-host`, LoadBalancer) written in the NOTES.
+
+## Rulings on slice hub-on-kubernetes (2026-11-24)
+
+The Operator ruled HK1 to HK5 as recommended (the findings are in "Findings of slice hub-on-kubernetes"):
+
+- **HK1, a two-level built-in CA.** A root signs the issuing CA once; `node issuer export-root` removes only the
+  root key, so the hub keeps issuing and the spokes' bundle does not change (OpenBao's own pattern).
+- **HK2, `migrate` keeps the same CA.** `node issuer migrate` imports the issuing CA into an OpenBao mount, so no
+  spoke re-joins. A hub whose CA key is in an ssh-agent cannot migrate (an agent never gives its key up): moving
+  it to OpenBao means a new CA and every node re-joining.
+- **HK3, the roster backup without OpenBao is a file in the same volume.** It guards a torn write, not the loss
+  of the volume: snapshot the volume; a copy to the shared folder later if wanted.
+- **HK4, the `openbao:pki:*` tasks wait** until a hub must start on OpenBao from nothing; `migrate` already makes
+  the mount, the import and the role.
+- **HK5, the Rancher Desktop overlay is run once on the Operator's workstation** before `hub-workstation-networking`
+  closes; if its LoadBalancer binds loopback only, publish on all interfaces or name the hub `host.docker.internal`.
