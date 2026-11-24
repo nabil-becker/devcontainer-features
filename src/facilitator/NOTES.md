@@ -222,8 +222,9 @@ processes a node needs and no bundle shared with this Feature (not checked again
 
 From 0.4.0 a node can be a **hub** (an intranet node other nodes link to) or a **spoke** (a node that links to one
 hub), beside the default **standalone** (0.3.0's behaviour, nothing open). Two levels of trust are built: **local**
-(this machine, unrestricted) and **private** (an intranet domain). Public trust across nodes, approving a stranger's node,
-cloud AIs and peer-to-peer meshes are slice N5 (MCP over HTTP for CLIs is slice N4, below), and are refused by name until then
+(this machine, unrestricted) and **private** (an intranet domain). Public trust across nodes, approving a stranger's node
+and peer-to-peer meshes are slice N5a (below); cloud AIs are slice N5b and are refused by name until then (MCP over HTTP
+for CLIs is slice N4)
 ([proposal facilitator-node](../../docs/proposals/facilitator-node.md), ADR-0067 to ADR-0071).
 
 ```
@@ -534,7 +535,7 @@ for this key on this node; the spike is `docs/spikes/2026-11-23-agntcy-identity.
 From 0.5.0 a node can serve its MCP tools over HTTP (Streamable HTTP), so a CLI that cannot start `facilitator mcp` here
 reaches the node with a **static bearer token**: Claude Code (`claude mcp add --transport http`) and GitHub Copilot CLI
 (`copilot mcp add --transport http`), both run for real against this endpoint (test/facilitator/http_flow.sh).
-**Cloud AIs (OAuth 2.1, a public HTTPS address) are slice N5**: `http.issuers` is refused by name until then. The
+**Cloud AIs (OAuth 2.1, a public HTTPS address) are slice N5b**: `http.issuers` is refused by name until then. The
 endpoint is the `mcp` Python library 2.3.0 (MIT; 28 hash-pinned wheels in the bundle) on uvicorn; an install without the
 bundle needs it importable only when the endpoint is on ([proposal](../../docs/proposals/facilitator-node.md) section 11;
 ADR-0070, ADR-0071, ADR-0068).
@@ -566,7 +567,7 @@ facilitator:
     behind_proxy: false        # ... or true when a reverse proxy ends TLS (then only the proxy may reach the node)
     allowed_hosts: []          # extra Host header values
     allowed_origins: []        # Origin header values allowed (CLIs send none; a browser's is refused unless listed)
-    # issuers: [...]           # OAuth issuers: not yet, slice N5
+    # issuers: [...]           # OAuth issuers: not yet, slice N5b
 ```
 
 | Key | Default | Meaning |
@@ -577,7 +578,7 @@ facilitator:
 | `http.tls_cert`, `http.tls_key` | unset | PEM files; both or neither. Mode 600 for the key. |
 | `http.behind_proxy` | `false` | A proxy ends TLS; uvicorn then trusts the proxy's `X-Forwarded-For` for the per-address limits, so only the proxy may reach the port. |
 | `http.allowed_hosts`, `http.allowed_origins` | none | Host and Origin values accepted besides the derived ones. |
-| `http.issuers` | none | Refused: slice N5. |
+| `http.issuers` | none | Refused: slice N5b. |
 
 `mesh.yml` gains, for this slice (the single-node public rules, ruling AH):
 
@@ -917,7 +918,7 @@ each delivery in its route.
 
 - Hub and spoke with local and private trust across nodes (slice N3); MCP over HTTP serves CLIs with static bearer
   tokens on one node (slice N4); public trust across nodes, a node joining by key and approval, peer to peer, OAuth and
-  cloud AIs are slice N5. The endpoint serves one node: a client reaches the agents of the node it dials only.
+  cloud AIs are slice N5b. The endpoint serves one node: a client reaches the agents of the node it dials only.
 - A bearer token has no expiry and no rotation but revoke and a new token; there is no per-token scope.
 - The audit of enrolments is a hash-chained log in the volume, not a signed register: a person with the volume can
   rewrite it whole (a cut or an edit shows; a rewrite of the chain does not). A signed `audit` register type is a
