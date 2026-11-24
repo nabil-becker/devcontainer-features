@@ -43,7 +43,7 @@ cleanup() {
   for s in "${spokes[@]}"; do docker rm -fv "$p-$s" >/dev/null 2>&1 || true; docker volume rm "$p-$s" >/dev/null 2>&1 || true; done
   kind delete cluster --name "$cluster" >/dev/null 2>&1 || true
   docker rmi "facilitator-node:kind-test" >/dev/null 2>&1 || true
-  if [ "$pulled_node" = 1 ]; then docker rmi "${KIND_NODE_IMAGE%@*}" >/dev/null 2>&1 || true; fi
+  if [ "$pulled_node" = 1 ]; then docker rmi "$KIND_NODE_IMAGE" >/dev/null 2>&1 || true; fi
   docker run --rm -v "$tmp:/t" --entrypoint /bin/sh -u 0 "$image" -c 'rm -rf /t/* /t/.[!.]*' >/dev/null 2>&1 || true
   rm -rf "$tmp"
 }
@@ -77,7 +77,7 @@ if bash "$root/test/facilitator/k8s/shape.sh" >"$tmp/shape.out" 2>&1; then ok "t
 else no "the manifests' shape"; grep FAIL "$tmp/shape.out"; fi
 
 # ---------------------------------------------------------------- the cluster
-docker image inspect "${KIND_NODE_IMAGE%@*}" >/dev/null 2>&1 || pulled_node=1
+docker image inspect "$KIND_NODE_IMAGE" >/dev/null 2>&1 || pulled_node=1
 export KUBECONFIG="$tmp/kubeconfig"
 kind create cluster --name "$cluster" --image "$KIND_NODE_IMAGE" --config "$root/test/facilitator/k8s/kind-config.yaml" \
   --kubeconfig "$KUBECONFIG" --wait 120s >"$tmp/kind.log" 2>&1 || { cat "$tmp/kind.log"; exit 1; }
@@ -142,8 +142,8 @@ else no "spoke-a does not see triage"; fxs spoke-a check || true; docker logs "$
 conv="$(agent_s spoke-a open pa1 a1 triage -- "@triage hello from a spoke on the workstation" | jget 'd["conversation"]')"
 r1="$(agent_h answer triage 60 "triage on the hub here: welcome")"
 case "$r1" in *"hello from a spoke"*) ok "the hub's agent triage received a1's message in $conv (spoke to hub, over SLIM through the cluster)" ;; *) no "triage received: $r1" ;; esac
-r2="$(agent_s spoke-a answer a1 60 "@pa1 the hub said hello")"
-case "$r2" in *"welcome"*) ok "a1 on the spoke received the hub agent's answer" ;; *) no "a1 did not get the answer: $r2" ;; esac
+r2=""; for _ in $(seq 1 30); do r2="$(agent_s spoke-a mail pa1)"; case "$r2" in *"welcome"*) break ;; esac; sleep 1; done
+case "$r2" in *"welcome"*) ok "the person on the spoke (pa1) received the hub agent's answer (rule 3: to the asker)" ;; *) no "pa1 did not get the answer: $r2" ;; esac
 sleep 3
 for where in hub spoke-a; do
   if [ "$where" = hub ]; then rc=0; out="$(fxh verify --conv "$conv" 2>&1)" || rc=$?; else rc=0; out="$(fxs spoke-a verify --conv "$conv" 2>&1)" || rc=$?; fi
@@ -214,7 +214,7 @@ wait_for 30 docker exec "$p-spoke-d" bash -c "exec 3<>/dev/tcp/$name/46359" || t
 out="$(fxs spoke-d node join --token "$tok" 2>&1 || true)"
 case "$out" in *"unreachable"*|*"issuer"*) ok "issuing stops cleanly: a join now is refused (${out#facilitator: })" ;; *) no "a join with the agent gone: $out" ;; esac
 if fxs spoke-c check | grep -q 'certificate *ready'; then ok "spoke-c's existing certificate is still valid with the agent gone"; else no "spoke-c's certificate"; fi
-conv3="$(agent_s spoke-c open pc1 c1 triage -- "@triage still there with the agent gone?" | jget 'd["conversation"]')"
+agent_s spoke-c open pc1 c1 triage -- "@triage still there with the agent gone?" >/dev/null
 r4="$(agent_h answer triage 60 "yes")"
 case "$r4" in *"still there"*) ok "traffic over the existing links is unaffected: triage received c1's message" ;; *) no "traffic with the agent gone: $r4" ;; esac
 
