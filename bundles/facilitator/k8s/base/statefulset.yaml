@@ -1,0 +1,77 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: facilitator-hub
+spec:
+  serviceName: facilitator-hub
+  replicas: 1                       # one hub: the roster and the CA are in its volume
+  podManagementPolicy: OrderedReady
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: facilitator-hub
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: facilitator-hub
+    spec:
+      automountServiceAccountToken: false      # the hub never talks to the Kubernetes API
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001                       # the image's `facilitator` user
+        runAsGroup: 10001
+        fsGroup: 10001                         # the volume is writable by it (the state folder is mode 0700)
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: hub
+          image: ghcr.io/nabil-becker/facilitator-node:0.7.0   # the tag is set by `images:` in kustomization.yaml
+          imagePullPolicy: IfNotPresent
+          # the image's entrypoint is `facilitator node run`; the role comes from the mounted mesh.yml
+          env:
+            - name: FACILITATOR_MESH_FILE
+              value: /etc/facilitator/mesh.yml
+          ports:
+            - {name: slim, containerPort: 46358, protocol: TCP}      # SLIM, the private level's listener (lock one)
+            - {name: join, containerPort: 46359, protocol: TCP}      # the join endpoint, open only while a join token is live
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          # the image's own health check (`facilitator infra status`): the Directory and SLIM answer
+          startupProbe:
+            exec: {command: [facilitator, infra, status]}
+            periodSeconds: 5
+            failureThreshold: 36
+            timeoutSeconds: 10
+          livenessProbe:
+            exec: {command: [facilitator, infra, status]}
+            periodSeconds: 30
+            failureThreshold: 3
+            timeoutSeconds: 10
+          readinessProbe:
+            exec: {command: [facilitator, infra, status]}
+            periodSeconds: 15
+            timeoutSeconds: 10
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {memory: 1Gi}
+          volumeMounts:
+            - {name: state, mountPath: /var/lib/devcontainer-features/facilitator}    # NFR-1: all state here
+            - {name: tmp, mountPath: /tmp}
+            - {name: config, mountPath: /etc/facilitator, readOnly: true}
+      volumes:
+        - name: tmp
+          emptyDir: {sizeLimit: 64Mi}
+        - name: config
+          configMap:
+            name: facilitator-hub-config
+  volumeClaimTemplates:
+    - metadata:
+        name: state
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 1Gi

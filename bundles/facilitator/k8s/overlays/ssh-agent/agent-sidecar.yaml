@@ -1,0 +1,34 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: facilitator-hub
+spec:
+  template:
+    spec:
+      containers:
+        - name: hub
+          volumeMounts:
+            - {name: ca-agent, mountPath: /run/ssh-ca}
+        - name: ca-agent
+          image: ghcr.io/nabil-becker/facilitator-node:0.7.0
+          imagePullPolicy: IfNotPresent
+          command: [ssh-agent, -D, -a, /run/ssh-ca/agent.sock]
+          env:
+            - {name: SSH_AUTH_SOCK, value: /run/ssh-ca/agent.sock}     # for `kubectl exec ... ssh-add -`
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          startupProbe:
+            exec: {command: [test, -S, /run/ssh-ca/agent.sock]}
+            periodSeconds: 2
+            failureThreshold: 30
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {memory: 64Mi}
+          volumeMounts:
+            - {name: ca-agent, mountPath: /run/ssh-ca}
+      volumes:
+        - name: ca-agent
+          emptyDir: {medium: Memory, sizeLimit: 1Mi}

@@ -1,0 +1,23 @@
+# The hub whose CA key is in an ssh-agent beside it (ruling K5, ADR-0078), on top of the rancher-desktop overlay: a second
+# container of the pod runs `ssh-agent` (the node image has it) on a socket in a memory volume both containers share. The key is
+# loaded by a person, from their terminal, and lives only in that agent's memory:
+#
+#   ssh-keygen -t ed25519 -N '' -f ./hub-ca            # once, offline; keep hub-ca safe, it is the CA
+#   ssh-keygen -l -E sha256 -f ./hub-ca.pub            # the fingerprint goes into mesh.yml (node.issuer.ssh_agent.key)
+#   kubectl -n facilitator-hub exec -i facilitator-hub-0 -c ca-agent -- ssh-add - < ./hub-ca
+#
+# The hub issues nothing until the key is loaded and again after every restart of the pod (the agent's memory is gone with
+# it): that is the price of a CA key that is never a file. Certificates already issued stay valid. The agent holds only this
+# key and is reachable only from inside this pod. ed25519 only.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../rancher-desktop
+configMapGenerator:
+  - name: facilitator-hub-config
+    behavior: merge
+    files:
+      - mesh.yml
+patches:
+  - path: agent-sidecar.yaml
+    target: {kind: StatefulSet, name: facilitator-hub}

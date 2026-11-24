@@ -1,0 +1,17 @@
+# The hub of workstation.example with its CA key in an ssh-agent. REPLACE the fingerprint with your CA key's
+# (ssh-keygen -l -E sha256 -f hub-ca.pub): this one holds no key, so the hub reports "does not hold" until you do.
+preset: team
+role: hub
+node:
+  id: hub-1
+  name: hub.workstation.example
+  listen:
+    private: 0.0.0.0:46358
+  join: 0.0.0.0:46359
+  issuer:
+    domain: workstation.example
+    ssh_agent:
+      socket: /run/ssh-ca/agent.sock
+      key: SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+trust:
+  workstation.example: private

@@ -1,0 +1,16 @@
+# The hub's mesh.yml (a ConfigMap key, mounted at /etc/facilitator/mesh.yml): the hub of corp.example with the built-in
+# issuer (ruling K3): with no node.issuer.openbao and no node.issuer.ssh_agent the hub keeps a CA of its own, constrained to
+# DNS names, and needs no unseal. `facilitator node issuer export-root` takes its root key offline later; `node issuer
+# migrate` moves it into an OpenBao without a spoke joining again.
+preset: team
+role: hub
+node:
+  id: hub-1
+  name: hub.corp.example          # the DNS name in the hub's certificate: what the spokes dial and verify
+  listen:
+    private: 0.0.0.0:46358        # lock one: the private level's listener, with the private domains' CA bundle
+  join: 0.0.0.0:46359             # the join endpoint, open only while a join token is live
+  issuer:
+    domain: corp.example
+trust:
+  corp.example: private
