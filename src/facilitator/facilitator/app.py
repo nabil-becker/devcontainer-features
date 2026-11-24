@@ -171,6 +171,27 @@ class Facilitator:
         return {"client": name, "token": token, "level": level, "id": self.clients.spiffe_id(self.mesh, name),
                 "approval": self.mesh.limit(level, "approval")[0]}
 
+    def oauth_client(self, issuer_name: str, issuer: str, subject: str, client_id: str = "") -> tuple[str, dict]:
+        """The HTTP client an OAuth token names (slice N5b), made on its first valid token: (handle, its table entry). A
+        new one is enrolled, so its first message is held until a person approves it; a denied or revoked one stays
+        refused (the entry says so). The key the node signs with is made at once, as for `http token`."""
+        name = self.clients.oauth_handle(issuer_name, issuer, subject)
+        parts, cfg, _, _ = self.participants()
+        if name in [p.name for p in parts] or name in cfg.humans or name in ("facilitator", "all"):
+            raise FacilitatorError(f"{name} is already a participant or a person of this node: the OAuth client needs a name of its own")
+        ident = self.state.roster().get(name)
+        if ident and ident.get("kind") != "http":
+            raise FacilitatorError(f"{name} is already registered as a {ident.get('kind')}: the OAuth client needs a name of its own")
+        try:
+            c, created = self.clients.ensure_oauth(name, issuer_name, issuer, subject, client_id)
+        except clients_mod.ClientError as e:
+            raise FacilitatorError(str(e)) from None
+        if created or not ident:
+            pub, where = self.signer.ensure_key(name)
+            self.state.set_identity(name, kind="http", key=pub, keystore=where,
+                                    registered=dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+        return name, c
+
     def http_ready(self, for_tokens: bool = False) -> tuple[bool, str]:
         """Whether the HTTP endpoint may be used on this node, and why not (ADR-0070 decision 8, ADR-0071)."""
         try:

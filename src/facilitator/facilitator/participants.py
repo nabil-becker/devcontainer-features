@@ -52,6 +52,27 @@ HTTP_KEYS = ("enabled", "listen", "url", "tls_cert", "tls_key", "behind_proxy", 
              "issuers")
 
 
+ISSUER_KEYS = ("name", "issuer", "jwks_uri", "algorithms", "scope", "audience")
+ASYMMETRIC_ALGS = ("RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "ES512", "EdDSA")
+DEFAULT_ALGS = ("RS256", "ES256")
+
+
+@dataclass
+class Issuer:
+    """One entry of `facilitator.http.issuers` (slice N5b, ADR-0070 decision 2, ruling PB3): an OAuth authorization
+    server the node accepts access tokens from. The node is a resource server only; it never hosts one."""
+    name: str                                   # a short handle: names the server in docs, check and each client's handle
+    issuer: str                                 # the `iss` its tokens carry, exactly; also what the protected-resource metadata names
+    jwks_uri: str | None = None                 # default: found from the issuer's discovery document
+    algorithms: list[str] = field(default_factory=lambda: list(DEFAULT_ALGS))
+    scope: str | None = None                    # default: facilitator:participate
+    audience: str | None = None                 # default: the node's resource URL (RFC 8707); some servers fix their own
+
+    def json(self) -> dict:
+        return {"name": self.name, "issuer": self.issuer, "jwks_uri": self.jwks_uri, "algorithms": list(self.algorithms),
+                "scope": self.scope, "audience": self.audience}
+
+
 @dataclass
 class HttpConfig:
     """`facilitator.http:` of facilitator.yml (slice N4, ADR-0070, ADR-0071): the MCP endpoint over HTTP. Off unless
@@ -64,7 +85,7 @@ class HttpConfig:
     behind_proxy: bool = False
     allowed_hosts: list[str] = field(default_factory=list)
     allowed_origins: list[str] = field(default_factory=list)
-    issuers: list[str] = field(default_factory=list)      # OAuth issuers: slice N5, refused now
+    issuers: list["Issuer"] = field(default_factory=list)     # the OAuth authorization servers whose tokens are accepted (slice N5b)
 
     @property
     def configured(self) -> bool:
@@ -237,10 +258,7 @@ def _parse_http(cfg: FacilitatorConfig, v, where: str) -> None:
             elif k in ("allowed_hosts", "allowed_origins"):
                 setattr(h, k, _list(x))
             elif k == "issuers":
-                h.issuers = _list(x)
-                if h.issuers:
-                    err.append(f"{where}: facilitator.http.issuers: not yet: slice N5 (OAuth for cloud AIs; this version "
-                               "serves CLIs with static bearer tokens)")
+                h.issuers = _parse_issuers(x, where, err)
         except ListError as e:
             err.append(str(e))
     if h.listen:
@@ -251,6 +269,68 @@ def _parse_http(cfg: FacilitatorConfig, v, where: str) -> None:
             err.append(f"{where}: facilitator.http.listen: {e}")
     if bool(h.tls_cert) != bool(h.tls_key):
         err.append(f"{where}: facilitator.http: tls_cert and tls_key go together")
+    if h.issuers:
+        if not h.url:
+            err.append(f"{where}: facilitator.http.issuers: needs http.url, the public HTTPS address of this node (a cloud AI "
+                       "reaches it there, and the tokens' audience is that address)")
+        elif not _https_or_loopback(h.url):
+            err.append(f"{where}: facilitator.http.url {h.url}: with issuers it must be https:// (http:// only for a loopback "
+                       "host, for tests)")
+
+
+def _https_or_loopback(url: str) -> bool:
+    from urllib.parse import urlsplit
+    from .mesh import is_loopback
+    try:
+        u = urlsplit(url)
+        host = u.hostname or ""
+    except ValueError:
+        return False
+    return bool(host) and not u.fragment and not u.query and (u.scheme == "https" or (u.scheme == "http" and is_loopback(host)))
+
+
+def _parse_issuers(v, where: str, err: list[str]) -> list[Issuer]:
+    """facilitator.http.issuers: a list of {name, issuer, jwks_uri?, algorithms?, scope?, audience?}; every problem is named."""
+    at = f"{where}: facilitator.http.issuers"
+    if not isinstance(v, list):
+        err.append(f"{at}: a list of entries, each '- name: ..., issuer: https://...'")
+        return []
+    out: list[Issuer] = []
+    for n, it in enumerate(v, 1):
+        here = f"{at}[{n}]"
+        if not isinstance(it, dict):
+            err.append(f"{here}: a map with name and issuer (a bare URL has no name: give it one)")
+            continue
+        bad = [k for k in it if k not in ISSUER_KEYS]
+        if bad:
+            err.append(f"{here}: unknown {', '.join(bad)}; an issuer has {', '.join(ISSUER_KEYS)}")
+        name, iss = _text(it.get("name")), _text(it.get("issuer"))
+        if not HANDLE_RE.fullmatch(name) or len(name) > 24:
+            err.append(f"{here}: name '{name}': a lowercase handle of at most 24 characters (it begins every client's handle from this server)")
+        if not iss or not _https_or_loopback(iss):
+            err.append(f"{here}: issuer '{iss}': an https:// URL (http:// only for a loopback host, for tests)")
+        jwks = it.get("jwks_uri")
+        if jwks not in (None, "") and not _https_or_loopback(str(jwks)):
+            err.append(f"{here}: jwks_uri '{jwks}': an https:// URL")
+        algs = _list(it["algorithms"]) if "algorithms" in it else list(DEFAULT_ALGS)
+        for a in algs:
+            if a.lower() == "none" or a.upper().startswith("HS"):
+                err.append(f"{here}: algorithms: {a} is refused (none and the shared-secret HS* algorithms are never accepted: "
+                           "a token must be signed by the issuer's public key)")
+            elif a not in ASYMMETRIC_ALGS:
+                err.append(f"{here}: algorithms: {a} is not one of {', '.join(ASYMMETRIC_ALGS)}")
+        if not algs:
+            err.append(f"{here}: algorithms: at least one")
+        scope = _text(it.get("scope")) or None
+        if scope and (" " in scope.strip() or not scope.strip()):
+            err.append(f"{here}: scope '{scope}': one scope name (the token must carry it)")
+        aud = _text(it.get("audience")) or None
+        if any(i.name == name for i in out):
+            err.append(f"{here}: name '{name}' is used twice")
+        if any(i.issuer == iss for i in out):
+            err.append(f"{here}: issuer {iss} is listed twice")
+        out.append(Issuer(name, iss, str(jwks) if jwks else None, algs, scope, aud))
+    return out
 
 
 def load(settings) -> tuple[list[Participant], FacilitatorConfig, list[str], Path]:

@@ -9,7 +9,14 @@ and kept only as a SHA-256 hash in `http/clients.json` (mode 600, in the state v
     revoked    a person revoked it: its token no longer works, at once
 
 The node signs for the client with a key it holds (ADR-0068): the roster entry is kind `http`, and every packet
-the client's messages and task states make carries `data.via` = {transport: http, auth: bearer, client}. The
+the client's messages and task states make carries `data.via` = {transport: http, auth: bearer, client}.
+
+A client that comes with an OAuth access token (slice N5b) is the same kind of entry with no token of its own:
+the first valid token from an unknown (issuer, subject) creates it, enrolled, and its first message is held until a
+person approves it, as for a bearer client. Its handle is `<issuer name>-<subject>` (`oauth_handle`), and its packets
+carry via = {transport: http, auth: oauth, client, issuer, subject}. The client is the (issuer, subject), not the OAuth
+client_id: the subject is the account the authorization server vouches for, and a person approves a person; one
+connector (one client_id) serves every user of a cloud AI, and registration may give it a new client_id each time. The
 client's SPIFFE ID is `spiffe://http.<home domain>/node/<node id>/http/<client>` (the domain is the mapping key of
 mesh.yml's trust: public unless mapped private).
 
@@ -119,6 +126,51 @@ class Clients:
             self.audit("enrolled", name, by)
         return f"{name}.{secret}"
 
+    # ------------------------------------------------------------ OAuth clients (slice N5b)
+
+    @staticmethod
+    def oauth_handle(issuer_name: str, issuer: str, subject: str) -> str:
+        """`<issuer name>-<subject>` as a handle: the subject lowercased, anything else than letters, digits, - and _
+        becoming -, cut at 28 characters; with an 8-hex hash of (issuer, subject) added when that changed it, so two
+        subjects never share a handle by their look alone."""
+        slug = re.sub(r"[^a-z0-9_-]+", "-", subject.lower()).strip("-_")[:28]
+        exact = slug == subject and len(subject) <= 28
+        if not exact:
+            slug = (slug + "-" if slug else "") + hashlib.sha256(f"{issuer}\0{subject}".encode()).hexdigest()[:8]
+        return f"{issuer_name}-{slug}"
+
+    def ensure_oauth(self, name: str, issuer_name: str, issuer: str, subject: str, client_id: str) -> tuple[dict, bool]:
+        """(the entry, created) for the client an OAuth token names. An unknown one is enrolled, pending a person's
+        approval; a known one must be the same (issuer, subject), or the handle is taken (ClientError)."""
+        with self.state.lock("http-clients"):
+            t = self.all()
+            c = t.get(name)
+            if c is not None:
+                if c.get("auth") != "oauth" or c.get("issuer") != issuer or c.get("subject") != subject:
+                    raise ClientError(f"the handle {name} is taken by another client")
+                if client_id and c.get("client_id") != client_id:
+                    c["client_id"] = client_id
+                    self._put(t)
+                return c, False
+            if sum(1 for x in t.values() if x["status"] == "enrolled") >= MAX_PENDING:
+                raise ClientError(f"{MAX_PENDING} clients are enrolled and not yet approved: approve or deny some first "
+                                  "(the cap on pending enrolments)")
+            at = now_iso()
+            t[name] = {"status": "enrolled", "token_hash": "", "created": at, "created_by": f"oauth: {issuer_name}",
+                       "label": "", "approved_at": None, "approved_by": None, "last_seen": None,
+                       "auth": "oauth", "issuer_name": issuer_name, "issuer": issuer, "subject": subject,
+                       "client_id": client_id}
+            self._put(t)
+            self.audit("enrolled", name, f"oauth: {issuer_name}", f"first valid token of subject {subject[:80]} from {issuer}")
+            return t[name], True
+
+    def via(self, name: str) -> dict:
+        """`data.via` for a client (the record writes it into every packet signed on its behalf)."""
+        c = self.get(name) or {}
+        if c.get("auth") == "oauth":
+            return {"transport": "http", "auth": "oauth", "client": name, "issuer": c["issuer"], "subject": c["subject"]}
+        return {"transport": "http", "auth": "bearer", "client": name}
+
     def set_status(self, name: str, status: str, by: str, event: str, **extra) -> dict:
         if status not in STATES:
             raise ClientError(f"no state {status}")
@@ -168,7 +220,7 @@ class Clients:
         c = self.get(name)
         want = (c or {}).get("token_hash") or "0" * 64
         ok = hmac.compare_digest(want.encode(), hash_secret(secret).encode())
-        if not ok or c is None or c["status"] not in LIVE:
+        if not ok or c is None or c["status"] not in LIVE or not c.get("token_hash"):
             return None
         return name, c
 
@@ -232,8 +284,12 @@ class Clients:
 
 def public_view(name: str, c: dict) -> dict:
     """What a listing shows: never the hash."""
-    return {"client": name, "status": c["status"], "created": c["created"], "approved_at": c.get("approved_at"),
-            "approved_by": c.get("approved_by"), "last_seen": c.get("last_seen"), "label": c.get("label", "")}
+    v = {"client": name, "status": c["status"], "created": c["created"], "approved_at": c.get("approved_at"),
+         "approved_by": c.get("approved_by"), "last_seen": c.get("last_seen"), "label": c.get("label", ""),
+         "auth": c.get("auth", "bearer")}
+    if c.get("auth") == "oauth":
+        v.update({"issuer": c["issuer"], "subject": c["subject"], "oauth_client": c.get("client_id", "")})
+    return v
 
 
 def default_path(home: Path) -> Path:

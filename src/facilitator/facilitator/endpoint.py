@@ -14,8 +14,13 @@ Host and Origin (DNS rebinding) and the bearer token through `TokenVerifier` (th
 The tools are the participant set (who, say, reply, receive, mail, transcript); never continue or approve. Every call
 is the HttpSession of the client the token names: the node signs for it, every packet carries data.via, the client is
 mapped to `http.<home domain>` (public unless mesh.yml says private) and sees only agents exposed at that level.
-OAuth (a token from an issuer, for cloud AIs) is slice N5: `AccessToken` here carries the client name as client_id, the
-seam an issuer's (iss, sub) will fill.
+OAuth (slice N5b): with `http.issuers` set, a token from an allow-listed authorization server (a JWT,
+checked by oauth.py: issuer, algorithm, signature, exp, the audience of this node's /mcp URL, the scope) is accepted
+beside the bearer tokens; the node publishes the RFC 9728 protected-resource metadata at
+/.well-known/oauth-protected-resource[/mcp] and answers 401 with `WWW-Authenticate: Bearer resource_metadata=...` so a
+cloud AI finds where to log in (403 insufficient_scope for a token without the scope; 503 when an issuer's keys cannot
+be read: closed, and not counted against the caller). The client is the token's (issuer, subject), enrolled on its first
+valid token and held for a person's approval; `AccessToken.client_id` carries its handle as for a bearer client.
 
 The `mcp` library is imported here only: a node that never opens the endpoint does not need it."""
 from __future__ import annotations
@@ -23,9 +28,10 @@ from __future__ import annotations
 import json
 import threading
 import time
+import sys
 from collections import defaultdict, deque
 
-from . import __version__, clients as clients_mod, mesh as mesh_mod
+from . import __version__, clients as clients_mod, mesh as mesh_mod, oauth as oauth_mod
 from .app import Facilitator, FacilitatorError, HttpSession
 from .mcp import mail_text
 
@@ -36,6 +42,7 @@ MAX_RECEIVES = 2
 MAX_LIST = 200
 PATH = "/mcp"
 WELL_KNOWN = "/.well-known/"
+METADATA_PATHS = ("/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource" + PATH)
 
 
 class EndpointError(RuntimeError):
@@ -139,13 +146,28 @@ class Gate:
             if not (path == PATH or path.startswith(PATH + "/") or path.startswith(WELL_KNOWN)):
                 return await self._reply(send, 404, {"error": "not found"})
             headers = {k.decode().lower(): v.decode("latin-1") for k, v in scope["headers"]}
+            if path.startswith(WELL_KNOWN):
+                if path in METADATA_PATHS and scope.get("method") in ("GET", "HEAD") and d.oauth is not None:
+                    return await self._reply(send, 200, oauth_mod.metadata(d.resource_url, d.cfg.issuers, d.scope_default),
+                                             [(b"cache-control", b"public, max-age=300")])
+                return await self._reply(send, 404, {"error": "not found"})
             if path == PATH or path.startswith(PATH + "/"):
                 auth = headers.get("authorization", "")
                 token = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
-                if d.fac.clients.check_token(token) is None:
-                    d.abuse.failed(addr)
-                    return await self._reply(send, 401, {"error": "unauthorized"},
-                                             [(b"www-authenticate", b'Bearer error="invalid_token"')])
+                who, err = await d.authenticate(token)
+                if who is None:
+                    if err is not None and err.server:                # the node's or an issuer's fault: closed, not the caller's
+                        return await self._reply(send, 503, {"error": "temporarily unavailable"}, [(b"retry-after", b"30")])
+                    if err is not None and err.code == "insufficient_scope":
+                        return await self._reply(send, 403, {"error": "forbidden"}, [(b"www-authenticate", oauth_mod.challenge(
+                            d.metadata_url, "insufficient_scope", d.scope_default))])
+                    if token or d.oauth is None:                      # a missing token is not a failed one when OAuth is on (discovery)
+                        d.abuse.failed(addr)
+                    if d.oauth is None:
+                        www = b'Bearer error="invalid_token"'
+                    else:
+                        www = oauth_mod.challenge(d.metadata_url, "invalid_token" if token else None)
+                    return await self._reply(send, 401, {"error": "unauthorized"}, [(b"www-authenticate", www)])
             cl = headers.get("content-length")
             if cl is not None and (not cl.isdigit() or int(cl) > MAX_BODY):
                 return await self._reply(send, 413, {"error": "too large"})
@@ -189,8 +211,66 @@ class Daemon:
         self.abuse = abuse or Abuse()
         self.level = fac.mesh.http_level()
         self.wait_cap = mesh_mod.seconds(fac.mesh.limit(self.level, "http_receive_wait")[0])
+        base = base_url(self.cfg)
+        self.resource_url = f"{base}{PATH}"
+        self.metadata_url = f"{base}{METADATA_PATHS[1]}"
+        self.scope_default = clients_mod.SCOPE
+        self.oauth = oauth_mod.Verifier(self.cfg.issuers, self.resource_url) if self.cfg.issuers else None
+        self.verified: dict[str, tuple] = {}                  # sha256(token) -> (Principal, until): a few seconds, never the token
+        self.logged: dict[str, float] = {}
 
     # ------------------------------------------------------------ the library's token check
+
+    def _log(self, why: str) -> None:
+        """One line on the node's stderr per reason a minute: why a token was refused (never the token)."""
+        now = time.time()
+        if now - self.logged.get(why, 0) >= 60:
+            self.logged[why] = now
+            if len(self.logged) > 200:
+                self.logged.clear()
+            sys.stderr.write(f"facilitator http: a token was refused: {why}\n")
+            sys.stderr.flush()
+
+    def authenticate_sync(self, token: str):
+        """(the client's handle, None) for a token that may be used now; else (None, why): why is None for a token that is
+        no one's (the plain refusal), an OAuthError for a refused OAuth token. A bearer token is the table's; an OAuth
+        token is checked by oauth.py and names a client by (issuer, subject), enrolled on its first valid token."""
+        got = self.fac.clients.check_token(token)
+        if got is not None:
+            return got[0], None
+        if self.oauth is None or token.count(".") != 2:
+            return None, None
+        import hashlib
+        key = hashlib.sha256(token.encode()).hexdigest()
+        now = time.time()
+        hit = self.verified.get(key)
+        if hit and hit[1] > now:
+            pr = hit[0]
+        else:
+            try:
+                pr = self.oauth.verify(token)
+            except oauth_mod.OAuthError as e:
+                self._log(e.why)
+                return None, e
+            if len(self.verified) > 1000:
+                self.verified.clear()
+            self.verified[key] = (pr, min(now + 10, pr.expires_at))
+        with self.lock:
+            try:
+                name, c = self.fac.oauth_client(pr.issuer_name, pr.issuer, pr.subject, pr.client_id)
+            except FacilitatorError as e:
+                self._log(str(e))
+                return None, oauth_mod.OAuthError("invalid_token", str(e))
+        if c["status"] not in clients_mod.LIVE:
+            self._log(f"the client {name} is {c['status']}")
+            return None, oauth_mod.OAuthError("invalid_token", f"the client {name} is {c['status']}")
+        return name, None
+
+    async def authenticate(self, token: str):
+        import anyio
+        if not token:
+            return None, None
+        return await anyio.to_thread.run_sync(self.authenticate_sync, token)
 
     def verifier(self):
         from mcp.server.auth.provider import AccessToken
@@ -199,12 +279,12 @@ class Daemon:
 
         class Verifier:
             async def verify_token(self, token: str):
-                got = daemon.fac.clients.check_token(token)
-                if got is None:
+                name, _ = await daemon.authenticate(token)
+                if name is None:
                     return None
-                name, c = got
-                return AccessToken(token="bearer", client_id=name, scopes=[clients_mod.SCOPE],
-                                   expires_at=None, resource=None, subject=name, claims={"via": "bearer"})
+                oauth = (daemon.fac.clients.get(name) or {}).get("auth") == "oauth"
+                return AccessToken(token="oauth" if oauth else "bearer", client_id=name, scopes=[clients_mod.SCOPE],
+                                   expires_at=None, resource=None, subject=name, claims={"via": "oauth" if oauth else "bearer"})
 
         return Verifier()
 
@@ -238,7 +318,7 @@ class Daemon:
                           "say starts a conversation with a handle who lists (to=[handle]). You see only the agents this "
                           "node exposes to you; your first message may wait for a person's approval."),
             token_verifier=self.verifier(),
-            auth=AuthSettings(issuer_url=base, resource_server_url=f"{base}{PATH}", required_scopes=[clients_mod.SCOPE],
+            auth=AuthSettings(issuer_url=self.cfg.issuers[0].issuer if self.cfg.issuers else base, resource_server_url=self.resource_url, required_scopes=[clients_mod.SCOPE],
                               validate_token_resource=False))
 
         def me() -> str:

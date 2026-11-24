@@ -227,6 +227,12 @@ def http_parts(fac) -> list[tuple]:
     except ListError:
         return out
     cfg = fcfg.http
+    if cfg.issuers and not fcfg.http_errors:
+        from . import endpoint
+        b = endpoint.base_url(cfg)
+        out.append(("http oauth", True, "resource server for " + ", ".join(f"{i.name} ({i.issuer})" for i in cfg.issuers)
+                    + f"; resource {b}{endpoint.PATH}, metadata {b}{endpoint.METADATA_PATHS[1]}; a client is an (issuer, subject), "
+                    "enrolled on its first token and approved by a person (facilitator http issuers reads their keys)", False))
     ok, why = fac.http_ready()
     if not cfg.configured and not fcfg.http_errors:
         out.append(("http endpoint", True, "off (facilitator.http.listen is not set: nothing is open)", False))
@@ -982,11 +988,14 @@ def cmd_http(a) -> int:
         for r in rows:
             r["held"] = pend.get(r["client"], 0)
         _emit(a, rows, "\n".join(
-            f"facilitator: {r['client']:<20} {r['status']:<9} level {fac.mesh.http_level()}, created {r['created']}"
+            f"facilitator: {r['client']:<20} {r['status']:<9} level {fac.mesh.http_level()}, "
+            + (f"OAuth, subject {r['subject']} of {r['issuer']}, " if r["auth"] == "oauth" else "") + f"created {r['created']}"
             + (f", approved {r['approved_at']} by {r['approved_by']}" if r["approved_at"] else "")
             + (f", {r['held']} message(s) wait for approval" if r["held"] else "") for r in rows) or "facilitator: no HTTP clients yet "
             "(facilitator http token <client>)")
         return 0
+    if act == "issuers":
+        return _http_issuers(a, fac)
     if act == "audit":
         ok, detail = fac.clients.audit_ok()
         log = fac.clients.audit_log()
@@ -1023,6 +1032,27 @@ def cmd_http(a) -> int:
             f"; {r['dropped']} held message(s) not delivered" if r["dropped"] else ""))
         return 0
     raise SettingsError(f"http {act}")
+
+
+def _http_issuers(a, fac) -> int:
+    """facilitator http issuers: the authorization servers of facilitator.http.issuers and, asked for here only, whether
+    each one's keys can be read now (the one place the node fetches an issuer's JWKS on request; `check` fetches nothing)."""
+    from . import endpoint, oauth
+    cfg = fac.participants()[1].http
+    if not cfg.issuers:
+        _emit(a, [], "facilitator: no OAuth issuers (facilitator.http.issuers is empty): only bearer tokens are accepted")
+        return 0
+    base = endpoint.base_url(cfg)
+    ver = oauth.Verifier(cfg.issuers, f"{base}{endpoint.PATH}")
+    rows, bad = [], 0
+    for i in cfg.issuers:
+        ok, detail = ver.check_reachable(i)
+        bad += not ok
+        rows.append(i.json() | {"reachable": ok, "detail": detail})
+    _emit(a, {"resource": f"{base}{endpoint.PATH}", "metadata": f"{base}{endpoint.METADATA_PATHS[1]}", "issuers": rows},
+          f"facilitator: resource {base}{endpoint.PATH}; protected-resource metadata {base}{endpoint.METADATA_PATHS[1]}\n"
+          + "\n".join(f"  {r['name']:<16} {r['issuer']}  {'ok' if r['reachable'] else 'NOT READABLE'}: {r['detail']}" for r in rows))
+    return 1 if bad else 0
 
 
 def cmd_audit(a) -> int:
@@ -1303,8 +1333,8 @@ def main(argv: list[str] | None = None) -> int:
                                         "(the Operator's own, not the hub's AppRole)")
     c = command("http", cmd_http, "the MCP endpoint over HTTP (slice N4): serve (the infra part runs it), token <client> (a "
                                   "person's act: a bearer token, shown once), list, approve <client>, deny <client>, "
-                                  "revoke <client>, audit")
-    c.add_argument("action", choices=["serve", "token", "list", "approve", "deny", "revoke", "audit"])
+                                  "revoke <client>, audit, issuers (the OAuth authorization servers, and whether their keys can be read)")
+    c.add_argument("action", choices=["serve", "token", "list", "approve", "deny", "revoke", "audit", "issuers"])
     c.add_argument("client", nargs="?")
     c.add_argument("--label", help="token: a note for the list")
     c.add_argument("--as", dest="as_", help="the person acting (a human of facilitator.yml; default the first)")

@@ -6,6 +6,47 @@ of the Feature and whether they must act (an option renamed, a task removed, a r
 The version in `devcontainer-feature.json` is bumped in the same change that adds its entry
 here; `task lint` fails when the entry is missing.
 
+## [0.8.0] - 2026-11-24
+
+Cloud AIs over OAuth 2.1 (slice N5b of the facilitator-node proposal; ruling PB3, ADR-0070 decisions 1, 2 and 5 to 8). The node is
+an OAuth **resource server only**; bearer tokens keep working beside it, and a node that sets no `http.issuers` behaves as
+0.7.0 (except that the well-known metadata path now answers 404 until issuers are set). Rebuild the container. No new
+Python dependency: the bundle already carries PyJWT and `cryptography` (the `mcp` library's).
+
+### Added
+
+- **`facilitator.http.issuers`**: the allow list of authorization servers whose JWT access tokens are accepted. Each entry has a
+  `name` (a handle, at most 24 characters), the `issuer` URL, and optionally `jwks_uri` (else found from the issuer's
+  discovery document), `algorithms` (default RS256 and ES256; `none` and `HS*` are refused), `scope` (default
+  `facilitator:participate`) and `audience` (default the node's resource URL). It needs `http.url`, the public HTTPS
+  address, and beyond loopback TLS or `behind_proxy: true` as before (ADR-0070 decision 8). `check` lints every option and
+  fetches nothing.
+- **The token checks** (`oauth.py`): issuer, algorithm, signature against the issuer's JWKS (fetched over HTTPS, kept an hour,
+  re-read once a minute for an unknown `kid`), `exp`, the audience of this node's `/mcp` URL (RFC 8707), the scope. A refused
+  token is a 401 with `WWW-Authenticate: Bearer error="invalid_token", resource_metadata=...` and no detail; a token without
+  the scope is a 403 `insufficient_scope`; **keys that cannot be read close the door** (503, not counted against the caller,
+  the log says why).
+- **The RFC 9728 protected-resource metadata** at `/.well-known/oauth-protected-resource` and `.../mcp`, naming the node's
+  resource, the authorization servers and the scope; and a 401 with `resource_metadata` for a request with no token, so a cloud
+  AI finds where to log in.
+- **An OAuth client is the (issuer, subject)** of its token, enrolled on its first valid token and held until a person approves
+  it (first contact, as for a bearer client); handle `<issuer name>-<subject>`; the same HTTP client in every other way (never
+  `human`, the participant tools only, `http.<home domain>`, the public limits). Its packets carry `via` = `{transport: http,
+  auth: oauth, client, issuer, subject}`; `transcript` and `verify` show it. The conversation type accepts `subject` in `via`.
+- **`facilitator http issuers`** reads each issuer's keys now and says which are readable; `facilitator http list` shows an OAuth
+  client's issuer and subject; `check` has an `http oauth` line.
+- NOTES: "MCP over HTTP for cloud AIs", a section per setting and how a person connects a claude.ai custom connector.
+- Tests: `test_oauth.py` (a local test issuer; the right and the wrong audience, expired, wrong issuer, wrong scope, alg none,
+  HS256 forged with the public key, a rotated key, keys that cannot be read, the endpoint's statuses and challenges, enrolment,
+  approval, `via`), more in `test_http.py`, and `test/facilitator/oauth_flow.sh` (`task test:facilitator-oauth`): an MCP
+  client holding an OAuth token end to end through a built bundle's endpoint.
+
+### Changed
+
+- The well-known metadata path answers **404** on a node with no `http.issuers` (0.7.0 answered the library's metadata naming
+  the node itself as its authorization server, which was wrong: a node hosts none).
+- `facilitator.http.issuers` is no longer refused; a bare list of URLs is refused by name (an entry needs a `name`).
+
 ## [0.7.0] - 2026-11-24
 
 The hub on Kubernetes (slice hub-on-kubernetes of the facilitator-node proposal; rulings K2 to K5, ADR-0078). Nothing changes for a

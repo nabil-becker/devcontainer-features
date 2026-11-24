@@ -1,2 +1,2 @@
 """facilitator: the communication layer between agents of any vendor (the facilitator Feature's NOTES)."""
-__version__ = "0.7.0"
+__version__ = "0.8.0"

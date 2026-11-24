@@ -14,6 +14,7 @@ from pathlib import Path
 from registerengine import adapters, core
 from registerengine import registertypes
 
+from . import clients as clients_mod
 from .signer import Signer
 from .state import State
 
@@ -154,7 +155,7 @@ class Record:
         """`data.via` (ADR-0068, ADR-0070): the node signs for an HTTP client, and says so in every packet it signs
         on that client's behalf. None for everyone else."""
         if principal != FACILITATOR and self.state.roster().get(principal, {}).get("kind") == "http":
-            return {"transport": "http", "auth": "bearer", "client": principal}
+            return clients_mod.Clients(self.state).via(principal)
         return None
 
     def add(self, conv: str, principal: str, kind: str, data: dict) -> str:

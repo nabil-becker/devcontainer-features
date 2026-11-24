@@ -227,7 +227,7 @@ processes a node needs and no bundle shared with this Feature (not checked again
 From 0.4.0 a node can be a **hub** (an intranet node other nodes link to) or a **spoke** (a node that links to one
 hub), beside the default **standalone** (0.3.0's behaviour, nothing open). Two levels of trust are built: **local**
 (this machine, unrestricted) and **private** (an intranet domain). Public trust across nodes, approving a stranger's node
-and peer-to-peer meshes are slice N5a (below); cloud AIs are slice N5b and are refused by name until then (MCP over HTTP
+and peer-to-peer meshes are slice N5a (below); cloud AIs reach a node over HTTP with OAuth 2.1 access tokens from the issuers it lists (slice N5b, 0.8.0; MCP over HTTP
 for CLIs is slice N4)
 ([proposal facilitator-node](../../docs/proposals/facilitator-node.md), ADR-0067 to ADR-0071).
 
@@ -679,7 +679,7 @@ for this key on this node; the spike is `docs/spikes/2026-11-23-agntcy-identity.
 From 0.5.0 a node can serve its MCP tools over HTTP (Streamable HTTP), so a CLI that cannot start `facilitator mcp` here
 reaches the node with a **static bearer token**: Claude Code (`claude mcp add --transport http`) and GitHub Copilot CLI
 (`copilot mcp add --transport http`), both run for real against this endpoint (test/facilitator/http_flow.sh).
-**Cloud AIs (OAuth 2.1, a public HTTPS address) are slice N5b**: `http.issuers` is refused by name until then. The
+**Cloud AIs (OAuth 2.1, a public HTTPS address) are slice N5b, from 0.8.0**: see "MCP over HTTP for cloud AIs" below. The
 endpoint is the `mcp` Python library 2.3.0 (MIT; 28 hash-pinned wheels in the bundle) on uvicorn; an install without the
 bundle needs it importable only when the endpoint is on ([proposal](../../docs/proposals/facilitator-node.md) section 11;
 ADR-0070, ADR-0071, ADR-0068).
@@ -711,7 +711,7 @@ facilitator:
     behind_proxy: false        # ... or true when a reverse proxy ends TLS (then only the proxy may reach the node)
     allowed_hosts: []          # extra Host header values
     allowed_origins: []        # Origin header values allowed (CLIs send none; a browser's is refused unless listed)
-    # issuers: [...]           # OAuth issuers: not yet, slice N5b
+    # issuers: [...]           # OAuth authorization servers whose tokens are accepted (slice N5b, below)
 ```
 
 | Key | Default | Meaning |
@@ -722,7 +722,7 @@ facilitator:
 | `http.tls_cert`, `http.tls_key` | unset | PEM files; both or neither. Mode 600 for the key. |
 | `http.behind_proxy` | `false` | A proxy ends TLS; uvicorn then trusts the proxy's `X-Forwarded-For` for the per-address limits, so only the proxy may reach the port. |
 | `http.allowed_hosts`, `http.allowed_origins` | none | Host and Origin values accepted besides the derived ones. |
-| `http.issuers` | none | Refused: slice N5b. |
+| `http.issuers` | none | The OAuth authorization servers whose access tokens are accepted (0.8.0, below). Needs `http.url`. |
 
 `mesh.yml` gains, for this slice (the single-node public rules, ruling AH):
 
@@ -789,6 +789,139 @@ copilot mcp add --transport http facilitator http://127.0.0.1:8765/mcp --header 
 
 Both put the header in their own config file (Claude Code's `.claude.json` or `.mcp.json`, Copilot's
 `mcp-config.json`): treat that file as a secret. A token has no expiry; revoke it with `facilitator http revoke`.
+
+## MCP over HTTP for cloud AIs (slice N5b, OAuth 2.1)
+
+From 0.8.0 the same endpoint also takes **OAuth 2.1 access tokens**, so a cloud AI (a claude.ai custom connector, or another
+vendor's hosted assistant) can reach the agents of a node that is on a public HTTPS address. The node is an **OAuth
+resource server only** (ADR-0070 decision 2): it hosts no authorization server. A person points it at the
+authorization server they already use (the organisation's identity provider, or any provider that issues JWT access tokens
+and supports what the cloud AI needs) and the cloud AI logs the person in there. Bearer tokens keep working beside it.
+
+```
+ cloud AI (claude.ai)                   authorization server (yours)          the node (http.url = https://node.example)
+   POST /mcp (no token)  ------------------------------------------------>   401, WWW-Authenticate: Bearer resource_metadata=".../.well-known/oauth-protected-resource/mcp"
+   GET  the metadata     ------------------------------------------------>   { resource, authorization_servers: [issuer], scopes_supported }
+   log in (OAuth 2.1 + PKCE, resource=https://node.example/mcp)  ----->  access token (JWT: iss, sub, aud, exp, scope)
+   POST /mcp  Authorization: Bearer <JWT>  --------------------------------->  gate: issuer in the list, alg, signature (JWKS), exp,
+                                                                                aud = this resource (RFC 8707), scope; then the (iss, sub)
+                                                                                client: enrolled on its first token, held until a person
+                                                                                approves; the same HttpSession, signer and via as a bearer client
+```
+
+### Settings: `facilitator.http.issuers`
+
+```yaml
+facilitator:
+  humans: [you]
+  http:
+    listen: 0.0.0.0:8443
+    behind_proxy: true                       # or tls_cert and tls_key: beyond loopback TLS is required (ADR-0070 decision 8)
+    url: https://node.example                # the PUBLIC HTTPS address: required with issuers; its /mcp is the resource
+    issuers:
+      - name: corp                           # a handle of at most 24 characters: names the server here and starts its clients' handles
+        issuer: https://login.example.org    # the `iss` its tokens carry, exactly
+        jwks_uri: https://login.example.org/keys   # optional: else found from <issuer>/.well-known/openid-configuration, then oauth-authorization-server
+        algorithms: [RS256, ES256]           # optional: the signature algorithms accepted (default these two)
+        scope: facilitator:participate       # optional: the scope a token must carry (default this)
+        audience: https://node.example/mcp   # optional: the `aud` a token must carry (default the resource URL)
+```
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `issuers[].name` | required | A lowercase handle of at most 24 characters, unique. It is the authorization server's name in `check`, `http issuers`, the metadata's docs and the first part of each of its clients' handles (`corp-alice`). |
+| `issuers[].issuer` | required | The authorization server's issuer URL, `https://` (`http://` only on a loopback host, for tests), unique. A token's `iss` must equal it exactly; the protected-resource metadata names it as the authorization server. |
+| `issuers[].jwks_uri` | discovered | Where the issuer's signing keys are. Unset: read from the issuer's OIDC discovery document, else its RFC 8414 one; that document must name the same `issuer`. |
+| `issuers[].algorithms` | `[RS256, ES256]` | Any of RS256/384/512, PS256/384/512, ES256/384/512, EdDSA. **`none` and every `HS*` are refused, by `check` and again at the gate** (no shared-secret token, no algorithm confusion). |
+| `issuers[].scope` | `facilitator:participate` | One scope name the token must carry, in `scope` (space-separated) or `scp` (a list). |
+| `issuers[].audience` | the resource URL | The `aud` the token must carry. RFC 8707 says the token is issued for the resource, `<http.url>/mcp`; some servers fix their own audience (an API identifier), and then it is named here. |
+| `http.url` | required with `issuers` | The public address a cloud AI dials. With issuers it must be `https://` (`http://` only on a loopback host, for tests): TLS ends here (`tls_cert` and `tls_key`) or at a proxy (`behind_proxy: true`), as ADR-0070 decision 8 says for any address beyond loopback. |
+
+`check` lints all of this and **fetches nothing** (it prints the issuers, the resource and the metadata URLs); a mistake is
+named by option and the endpoint does not open. `facilitator http issuers` is the one command that fetches: it reads each
+issuer's keys now and says `ok: JWKS <uri>: N key(s)` or `NOT READABLE: <why>` (exit 1 when one is not).
+
+### What the node checks, in this order
+
+1. **The issuer**: `iss` is exactly an allow-listed `issuer` (the token is read unverified only to find that).
+2. **The algorithm**: in the entry's `algorithms`, before any key is touched.
+3. **The signature**: by a key in the issuer's JWKS, found by `kid` (a token with no `kid` is accepted only when the JWKS
+   holds one key). The JWKS is fetched over HTTPS without redirects (5 s, 256 KiB), kept an hour, and read again at most
+   once a minute when a `kid` is unknown (a rotation).
+4. **`exp`** (and `nbf`, `iat`) with 30 s leeway; `exp`, `iss`, `aud` and `sub` must be present.
+5. **The audience** (RFC 8707): `aud` is, or contains, this node's resource URL (or the entry's `audience`).
+6. **The scope**: present, else **403 `insufficient_scope`**.
+
+Every refusal is a **401** with `WWW-Authenticate: Bearer error="invalid_token", resource_metadata="<url>"` and no detail in
+the answer (the reason goes to the node's log, one line a reason a minute, never a token); a missing token is a 401 with
+only `resource_metadata` (that is how a cloud AI finds where to log in, and it is not counted as a failure). Ten refused
+tokens from an address block it, as for bearer tokens. **When an issuer's keys cannot be read the node fails closed**: a
+token of that issuer is refused with **503** (`retry-after`), not counted against the caller, and the log says why
+(`issuer corp: JWKS https://...: the server answered 500`, `no discovery document ..., set jwks_uri`, `its discovery
+document names the issuer ...`). Keys already cached keep working for their hour, then are dropped if they still cannot be read.
+`/.well-known/oauth-protected-resource` and `.../mcp` (RFC 9728) answer only when issuers are set:
+`{resource, authorization_servers, scopes_supported, bearer_methods_supported: [header]}`. The token is read from the
+`Authorization` header only and is never passed on or stored.
+
+### Who the client is: the (issuer, subject)
+
+An OAuth client of the node is **the issuer and the subject** of its token. The subject is the account the authorization
+server vouches for, so a person approves a person; it is stable across logins. The other candidate, the OAuth `client_id`,
+is the *application*: one claude.ai connector has one `client_id` for every user of it, and dynamic registration may give
+a new one each time, so approving a `client_id` would approve everyone who uses that connector, or nobody twice. The
+`client_id` (or `azp`) is recorded as a label in `http list --json`.
+
+- **Enrolment.** The first valid token of an unknown (issuer, subject) enrols the client (`enrolled`, no secret kept; an
+  `enrolled` line in `http/audit.jsonl` and the signed audit register, by `oauth: <issuer name>`). Its first message is
+  **held** until a person approves it (`facilitator http approve <client>`, or the approve tool): exactly as for a bearer
+  client, for `approval_ttl` (30 days at public, ruling HC4), and a person's `mail` names it. Enrolled-and-unapproved
+  clients count towards the same cap of 20 (a new subject past it is refused, 401).
+- **Handle.** `<issuer name>-<subject>`: the subject lowercased, other characters turned to `-`, cut at 28 characters; when
+  that changed it, an 8-hex hash of (issuer, subject) is added, so two subjects never share a handle by their look alone
+  (`corp-alice`, `corp-bob-smith-ops-1f3a9c20`). A handle that is a participant's or a person's is refused. The table keeps
+  the issuer and subject: a handle held by another pair is refused too.
+- **Mapped like a bearer client**: the roster entry is kind `http`, signed for by the node, level `http.<home domain>`
+  (public unless `mesh.yml` maps it private), **never `human`**, the participant tools only (no `continue`, no
+  `approve`), the public limits, the reach rule. `data.via` is `{transport: http, auth: oauth, client, issuer, subject}`;
+  `transcript` says `(via HTTP, authenticated by OAuth, client corp-alice, issuer https://login.example.org, subject alice)` and
+  `verify` shows `via http (oauth, client corp-alice, issuer ..., subject alice)` and fails a packet that says OAuth and
+  names no issuer and subject. **The subject is written into the record**: when your issuer's subject is an email address or
+  another personal identifier, so is it there (an opaque subject, such as a UUID, is kept as one).
+- **Revoke and deny** close the client at once, as for bearer; a revoked or denied OAuth client **stays refused**: a new
+  token of the same subject does not bring it back (a person's decision stands; see Limits).
+
+### Connect a cloud AI (a claude.ai custom connector)
+
+Not run from the devhost (no cloud AI reaches it): run it once by hand, and report what differs.
+
+1. **A public HTTPS address** for the node, reachable from the vendor's cloud: a reverse proxy with a certificate in front of
+   `http.listen` (`behind_proxy: true`), or `tls_cert` and `tls_key` on a port that is open. Set `http.url` to it. A node on a
+   laptop behind NAT has none and stays local-only for cloud AIs.
+2. **An authorization server** that issues **JWT access tokens** (not opaque ones) and supports OAuth 2.1 with PKCE and the
+   `resource` parameter (RFC 8707), and how the cloud AI registers: a pre-registered client (claude.ai asks for a client ID and
+   secret under "advanced settings" of the connector), dynamic client registration, or client ID metadata documents. Its
+   discovery document (`/.well-known/openid-configuration` or `/.well-known/oauth-authorization-server`) must be reachable from
+   the node, or set `jwks_uri`. The authorization server must allow the cloud AI's redirect URI (claude.ai's callback
+   is `https://claude.ai/api/mcp/auth_callback`). Access tokens must carry `aud` = `<http.url>/mcp` (the node's resource), or you name the
+   `audience` your server uses, and the scope `facilitator:participate` (or the `scope` you set), so create that scope or
+   permission at the server and grant it to the people who may connect.
+3. **List it** in `facilitator.yml` (`http.issuers`) with a `name`, run `facilitator check` (names the issuers and the metadata
+   URL) and `facilitator http issuers` (reads the keys now), and start the node (`infra up`, or `facilitator http serve`).
+4. **In claude.ai**: Settings, Connectors, "Add custom connector": the name `facilitator` and the URL
+   `https://<host>/mcp` (the resource, with `/mcp`). claude.ai calls it, receives the 401 with `resource_metadata`, reads the
+   protected-resource metadata (`https://<host>/.well-known/oauth-protected-resource/mcp`, which names your authorization
+   server), and sends the person to log in there; after that it calls the tools with the access token.
+5. **On the node**: `facilitator http list` shows the new client (`OAuth, subject ... of <issuer>`, enrolled); its first `say`
+   is held; a person approves it (`facilitator http approve <handle>`); then it converses with the agents the node exposes
+   `public`, and `facilitator verify --conv <id>` shows `via http (oauth, ...)`.
+6. **If it does not connect**: the node's log (`facilitator infra logs http`) says why a token was refused (the audience, the
+   scope, the issuer, the algorithm, or keys that cannot be read); `curl -i https://<host>/mcp` must show a 401 with
+   `resource_metadata`, and the metadata URL must answer 200 with your server in `authorization_servers`.
+
+What was checked here and what was not: the resource server (metadata, challenges, every token check, enrolment, approval,
+`via`) is exercised end to end by test/facilitator/oauth_flow.sh with a local test issuer and an MCP client that holds an
+OAuth token. How claude.ai (or any cloud AI) discovers, registers and logs in was read from the MCP authorization
+specification and the vendor's documentation, and has **not** been run against this node.
 
 ## Using it in devcontainer.json
 
@@ -1062,9 +1195,14 @@ each delivery in its route.
 ## Limits
 
 - Hub and spoke with local and private trust across nodes (slice N3); MCP over HTTP serves CLIs with static bearer
-  tokens on one node (slice N4); public trust across nodes, a node joining by key and approval, peer to peer, OAuth and
-  cloud AIs are slice N5b. The endpoint serves one node: a client reaches the agents of the node it dials only.
-- A bearer token has no expiry and no rotation but revoke and a new token; there is no per-token scope.
+  tokens (slice N4) and cloud AIs with OAuth tokens from an allow-listed issuer (slice N5b) on one node; public trust across
+  nodes, a node joining by key and approval, and peer to peer are slice N5a. The endpoint serves one node: a client reaches
+  the agents of the node it dials only.
+- A bearer token has no expiry and no rotation but revoke and a new token; there is no per-token scope. An OAuth token
+  expires as its issuer says, and its issuer's scope is checked on every call; the node does not introspect or revoke
+  tokens at the issuer (a person's revoke of the client is the node's own, immediate).
+- A revoked or denied OAuth client stays refused: there is no command yet to let that (issuer, subject) enrol again.
+- Only JWT access tokens are accepted (no token introspection, no opaque tokens), from issuers named in `facilitator.yml`.
 - The audit of enrolments is a hash-chained log in the volume, not a signed register: a person with the volume can
   rewrite it whole (a cut or an edit shows; a rewrite of the chain does not). A signed `audit` register type is a
   backlog item; approvals and denials are also signed notices in the conversations.

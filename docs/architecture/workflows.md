@@ -260,7 +260,7 @@ sequenceDiagram
 ## 9. An HTTP client enrols and its first contact is approved (facilitator 0.5.0, slice N4)
 
 A person makes the token (never an agent's job); the CLI keeps it in its own config. The first message is written and
-held; a person sees it in `mail` and approves. Bearer tokens only: the OAuth enrolment of cloud AIs is slice N5.
+held; a person sees it in `mail` and approves. Bearer tokens here; the OAuth enrolment of cloud AIs is section 12.
 
 ```mermaid
 sequenceDiagram
@@ -308,4 +308,25 @@ sequenceDiagram
   P->>S: node join --token (the machine's port, the hub's name in its certificate)
   S->>H: join endpoint, then SLIM mutual TLS; cards, roster
   P->>H: node issuer export-root --out file (root key off the volume), or migrate (the same CA into OpenBao)
+```
+
+## 12. A cloud AI connects and its first contact is approved (facilitator 0.8.0, slice N5b)
+
+```mermaid
+sequenceDiagram
+  participant C as cloud AI (a claude.ai connector)
+  participant A as authorization server (a named issuer)
+  participant N as node (resource server, http.url)
+  participant P as a person (terminal)
+  C->>N: POST /mcp, no token
+  N-->>C: 401, WWW-Authenticate: Bearer resource_metadata=".../oauth-protected-resource/mcp"
+  C->>N: GET the metadata (RFC 9728)
+  N-->>C: resource, authorization_servers [issuer], scope
+  C->>A: log the person in (OAuth 2.1, PKCE, resource = the node)
+  A-->>C: JWT access token (iss, sub, aud, exp, scope)
+  C->>N: POST /mcp with the token
+  Note over N: issuer, alg, signature (JWKS), exp, aud, scope; unknown (issuer, subject): enrolled
+  N-->>C: tools; its first say is held
+  P->>N: http list, http approve corp-alice
+  N-->>C: delivered; the agent's answer; every packet carries via: oauth, issuer, subject
 ```

@@ -11,6 +11,7 @@ bundle's python. One step per call; prints JSON lines; exit 0 when every asserti
 import asyncio
 import http.client
 import json
+import os
 import sys
 from urllib.parse import urlsplit
 
@@ -94,7 +95,8 @@ def main(argv):
             err, text = await tool(s, "reply", {"text": "thanks"})
             need(not err and "sent" in text, "reply")
             err, text = await tool(s, "transcript", {"conversation": conv})
-            need("(via HTTP, authenticated by bearer token, client" in text, "transcript shows via")
+            how = os.environ.get("HTTP_CLIENT_VIA", "bearer token")                 # "OAuth" in test/facilitator/oauth_flow.sh
+            need(f"(via HTTP, authenticated by {how}, client" in text, f"transcript shows via ({how})")
             err, text = await tool(s, "mail")
             need(not err, "mail")
             err, text = await tool(s, "transcript", {"conversation": "c-00000000"})
