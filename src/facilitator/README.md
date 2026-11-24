@@ -1099,6 +1099,8 @@ changes unless `mesh.yml` says `role: peer`, `preset: open` or `node.public`: no
 
 - `node approve` works (it was refused until now); `node invite`, `node revoke` also serve a peer; `trust` may map a domain
   `public` under `preset: open`; `copy: addressed` is accepted (and the only value at public).
+- `bundleVersion` defaults to `0.6.0`: the Feature installs the published node bundle `facilitator-bundle-v0.6.0`
+  (amd64 and arm64), pinned by SHA-256 in `digests.txt`.
 
 ### [0.5.0] - 2026-11-23
 
