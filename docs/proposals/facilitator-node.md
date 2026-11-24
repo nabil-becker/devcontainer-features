@@ -1577,3 +1577,7 @@ The Operator ruled HK1 to HK5 as recommended (the findings are in "Findings of s
   same login (issuer and subject) is treated as new next time and held for a person's approval; a live client is
   refused (revoke it first). The forget is written to the audit register; past records keep naming the client.
   Rejected: leaving it to a later slice (A).
+- **OA4, the issuer's keys unreadable: option A, ruled 2026-11-24.** When the node cannot fetch or read an
+  issuer's key set, it answers 503 and stays closed: no OAuth client gets in until the keys can be read, the
+  refusal is not counted against the caller's address (so an issuer outage cannot block a caller), and the
+  node's log says why. Rejected: answering 401 like a bad token (B: it would count against the caller).
