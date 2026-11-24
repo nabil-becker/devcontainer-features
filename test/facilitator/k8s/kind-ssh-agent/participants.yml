@@ -1,0 +1,6 @@
+participants:
+  - name: triage
+    cli: claude
+    kind: resident
+    attachment: mcp
+    description: the hub's own agent
