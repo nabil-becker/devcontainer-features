@@ -122,7 +122,7 @@ class Infra:
     def meshed(self) -> bool:
         """A hub, or a spoke that has joined its hub (node.hub set by node join): the peers part runs."""
         m = self.mesh
-        return m is not None and (m.role == "hub" or (m.role == "spoke" and bool(m.node.get("hub"))))
+        return m is not None and (m.role in mesh_mod.ISSUING_ROLES or (m.role == "spoke" and bool(m.node.get("hub"))))
 
     def http_on(self) -> bool:
         """The `http` part (slice N4) runs only when facilitator.http.listen is set, HTTP is enabled and the node may use it
@@ -226,7 +226,7 @@ class Infra:
         store = identity.Store(self.state.home)
         dom = m.domain
         if not dom or not store.cert(dom).is_file() or not store.bundle(dom).is_file():
-            if m.role == "hub":
+            if m.role in mesh_mod.ISSUING_ROLES:
                 # the hub's OpenBao is sealed or not set up yet (it is unsealed by hand, ADR-0069): the node runs on
                 # loopback, and the peers part asks for the certificate again and restarts SLIM with the listeners
                 return None
@@ -246,10 +246,28 @@ class Infra:
                                  "on disk)")
             level_bundle = store.certs / f"level-{lv}.pem"
             level_bundle.write_text("".join(b.read_text() for _, b in sorted(bundles.items())))
+            # the public listener presents a certificate of the public domain (its own CA), so a public dialer checks it
+            # against the public bundle alone; every other listener presents the node's own domain's (SP1: separate)
+            ldom = m.public_domain if lv == "public" else dom
+            if not store.cert(ldom).is_file():
+                return None
             lines += [f"        - endpoint: {q(f'{host}:{port}')}", "          tls:",
-                      f"            source: {{type: file, cert: {q(str(store.cert(dom)))}, key: {q(str(store.key(dom)))}}}",
+                      f"            source: {{type: file, cert: {q(str(store.cert(ldom)))}, key: {q(str(store.key(ldom)))}}}",
                       f"            client_ca: {{type: file, path: {q(str(level_bundle))}}}"]
-        if m.role == "spoke":
+        if m.role in mesh_mod.ISSUING_ROLES and any(a != "incoming" for a in m.peers.values()):
+            private = store.certs / "level-private.pem"
+            if not private.is_file():
+                private.write_text("".join(b.read_text() for _, b in sorted(store.bundles(m.trust, "private").items())))
+            lines += ["      clients:"]
+            for pid, addr in sorted(m.peers.items()):
+                if addr == "incoming":
+                    continue
+                host, _ = mesh_mod.parse_addr(addr)
+                lines += [f"        - endpoint: {q('https://' + addr)}", f"          server_name: {q(host)}",
+                          "          connection_type: peer", "          tls:",
+                          f"            source: {{type: file, cert: {q(str(store.cert(dom)))}, key: {q(str(store.key(dom)))}}}",
+                          f"            ca_source: {{type: file, path: {q(str(private))}}}"]
+        elif m.role == "spoke":
             lines += ["      clients:", f"        - endpoint: {q('https://' + m.node['hub'])}",
                       f"          server_name: {q(m.node['hub_name'])}", "          connection_type: peer", "          tls:",
                       f"            source: {{type: file, cert: {q(str(store.cert(dom)))}, key: {q(str(store.key(dom)))}}}",
@@ -276,9 +294,9 @@ class Infra:
         m = self.mesh
         p = self.ports["dir"]
         name = m.node.get("name")
-        if m.role == "hub" or (d.get("open_oci") and name):
+        if m.role in mesh_mod.ISSUING_ROLES or (d.get("open_oci") and name):
             text = text.replace(f'registry_address: "127.0.0.1:{p["oci"]}"', f'registry_address: "{name}:{p["oci"]}"')
-        if m.role == "hub":
+        if m.role in mesh_mod.ISSUING_ROLES:
             listen = f"/ip4/0.0.0.0/tcp/{p['p2p']}"
             adv = [f'    directory_api_address: "127.0.0.1:{p["api"]}"', f'    directory_oci_address: "{name}:{p["oci"]}"']
             boot = []
@@ -435,11 +453,12 @@ class Infra:
                 raise InfraError(f"{c}: port 127.0.0.1:{port} ({name}) is in use by {owner}; stop it, or set "
                                  f"{self._port_var(c, name)} to a free port")
         self.state.ensure()
-        if c == "slim" and self.mesh is not None and self.mesh.role == "hub" and self.fac is not None:
+        if c == "slim" and self.mesh is not None and self.mesh.role in mesh_mod.ISSUING_ROLES and self.fac is not None:
             from .identity import IdentityError
-            from .peers import ensure_hub_cert
+            from .peers import ensure_own_cert
             try:
-                ensure_hub_cert(self.fac)
+                for dom_ in self.mesh.domains_issued():
+                    ensure_own_cert(self.fac, dom_)
             except IdentityError as e:
                 print(f"facilitator: slim: no certificate for the hub yet ({e}); its listeners open once the issuer "
                       "answers (the peers part keeps asking)", file=__import__("sys").stderr, flush=True)

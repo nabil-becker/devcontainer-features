@@ -66,19 +66,19 @@ def test_hub_file_parses():
 
 
 def test_findings_name_line_and_rule():
-    text = ("preset: open\nrole: peer\nnode:\n  id: Bad_Id\n  colour: blue\ntrust:\n  corp.test: public\n"
+    text = ("preset: wide\nrole: mesh\nnode:\n  id: Bad_Id\n  colour: blue\ntrust:\n  corp.test: public\n"
             "  hub.local: private\nexpose:\n  jester: public\n  \"*\": nowhere\nlimits:\n  private:\n    hops: 0\n"
-            "    copy: addressed\nextra: 1\n")
+            "    copy: member\n  public:\n    copy: full\nextra: 1\n")
     m = m_(text)
     got = {(f.rule, f.line) for f in m.findings}
     msgs = " | ".join(f.message for f in m.findings)
-    assert ("not-yet", 1) in got and "slice N5" in msgs, got        # open
-    assert ("not-yet", 2) in got                                     # peer
+    assert ("bad-value", 1) in got and "solo, team or open" in msgs, got        # preset
+    assert ("bad-value", 2) in got and "hub or peer" in msgs                    # role
     assert ("bad-value", 4) in got                                   # node.id
     assert ("unknown-key", 5) in got                                 # node.colour
-    assert ("not-yet", 7) in got                                     # public trust
-    assert ("unknown-key", 16) in got                                # extra
-    assert ("bad-value", 14) in got and ("bad-value", 15) in got     # hops 0, copy addressed
+    assert ("above-ceiling", 7) in got                               # public trust under the default solo
+    assert ("unknown-key", 18) in got                                # extra
+    assert ("bad-value", 14) in got and ("bad-value", 17) in got     # hops 0, public copy full
     assert any(f.rule == "bad-value" and "nowhere" in f.message for f in m.findings)
 
 
@@ -287,8 +287,8 @@ def test_invite_and_revoke_refused_in_an_agents_job():
         # outside a job it goes on (and here stops at the missing certificate, never at the job rule)
         r = _cli({}, "node", "invite")
         assert r.returncode == 1 and "agent's job" not in r.stderr and "no certificate" in r.stderr, r.stderr
-        r = _cli({}, "node", "approve")
-        assert r.returncode == 1 and "not yet: slice N5" in r.stderr
+        r = _cli({"CLAUDECODE": "1"}, "node", "approve", "r-1")
+        assert r.returncode == 1 and "inside an agent's job" in r.stderr, r.stderr
     finally:
         e.close()
 
@@ -297,16 +297,16 @@ def test_check_lint_contract():
     with tempfile.TemporaryDirectory() as t:
         good, bad = Path(t) / "good.yml", Path(t) / "bad.yml"
         good.write_text(HUB)
-        bad.write_text("preset: open\nrole: hub\n")
+        bad.write_text("preset: wide\nrole: hub\n")
         r = _cli({}, "check", str(good))
         assert r.returncode == 0 and r.stdout == "", (r.returncode, r.stdout, r.stderr)
         r = _cli({}, "check", str(bad))
-        assert r.returncode == 1 and r.stdout.startswith(f"{bad}:1: not-yet: preset open"), r.stdout
+        assert r.returncode == 1 and r.stdout.startswith(f"{bad}:1: bad-value: preset"), r.stdout
         r = _cli({}, "check", "--format", "json", str(bad))
-        assert r.returncode == 1 and json.loads(r.stdout)[0]["rule"] == "not-yet"
+        assert r.returncode == 1 and json.loads(r.stdout)[0]["rule"] == "bad-value"
         r = subprocess.run([sys.executable, "-I", str(helpers.SRC / "bin" / "facilitator"), "check", "-"],
-                           input="trust:\n  x.test: public\n", capture_output=True, text=True)
-        assert r.returncode == 1 and r.stdout.startswith("-:2: not-yet"), r.stdout
+                           input="trust:\n  x.test: public\n  y.test: nowhere\n", capture_output=True, text=True)
+        assert r.returncode == 1 and r.stdout.startswith("-:2: above-ceiling"), r.stdout
         r = _cli({}, "check", str(Path(t) / "missing.yml"))
         assert r.returncode == 2
 

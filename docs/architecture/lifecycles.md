@@ -253,7 +253,7 @@ stateDiagram-v2
 
 ## A node in a hub's domain (facilitator 0.4.0)
 
-The public path (a join request a person approves) is slice N5 and is refused until then.
+The public path (a join request a person approves) is slice N5a: see the node's lifecycle below.
 
 ```mermaid
 stateDiagram-v2
@@ -267,3 +267,9 @@ stateDiagram-v2
   Revoked --> [*]
   Expired --> [*]
 ```
+
+## A public node across nodes (facilitator 0.6.0, slice N5a)
+
+`requested` (a key sent in a window a person opened) -> `approved` (a person; certificate 1 h) | `denied` -> `collected` ->
+`renewing` (at half life, while the issuer allows) -> `revoked` (no renewal, lock two refuses it, the mesh secret rotates) ->
+`expired` (within the hour: no handshake). Each transition is a signed entry of the `audit` register.

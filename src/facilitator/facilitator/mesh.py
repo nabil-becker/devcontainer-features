@@ -4,8 +4,8 @@ its own, every policy question the rest of the application asks: which role the 
 domain maps to which level, how wide an agent is exposed, the limits of a level and where each value came
 from, whether a caller may reach an agent, which ports the role opens, and lock two's decision on a SPIFFE ID.
 
-    preset: team                 # solo (the default) | team; open is slice N5
-    role: hub                    # standalone (the default) | spoke | hub; peer is slice N5
+    preset: team                 # solo (the default) | team | open (the public level across nodes, slice N5a)
+    role: hub                    # standalone (the default) | spoke | hub | peer (no hub: a peers list, slice N5a)
     node:                        # this node's own settings (the brief of slice N3 put them here, not in
       id: hub-1                  #   facilitator.yml): its id (default: the host name), and by role:
       name: hub.corp.example     # hub: the DNS name in its certificate, the spokes' server_name
@@ -23,6 +23,10 @@ from, whether a caller may reach an agent, which ports the role opens, and lock 
       domain: corp.example
       directory:
         peering: false           # the Directory's libp2p and OCI beyond loopback (SP5: no mDNS switch exists)
+      peers:                     # peer (and hub): node id -> host:port of the peer's SLIM listener, or `incoming` (it dials us)
+        node-b: b.mesh.test:46358
+      public:                    # hub or peer: the public domain this node issues certificates for (1 h, by approval)
+        domain: open.example
     trust:                       # SPIFFE trust domain -> level; a domain not listed is refused
       corp.example: private
     expose:                      # handle or full SPIFFE ID -> the widest level it may be reached from
@@ -47,12 +51,13 @@ from . import yamlite
 
 LEVELS = ("local", "private", "public")
 ORDER = {lv: i for i, lv in enumerate(LEVELS)}
-ROLES = ("standalone", "spoke", "hub")
-NOT_YET_ROLES = {"peer": "role peer: not yet: slice N5 (peer to peer)"}
-PRESETS = {"solo": "local", "team": "private"}               # preset -> its ceiling
-NOT_YET_PRESETS = {"open": "preset open: not yet: slice N5 (the public level across nodes)"}
+ROLES = ("standalone", "spoke", "hub", "peer")
+ISSUING_ROLES = ("hub", "peer")                               # the roles that issue certificates and accept joins
+PRESETS = {"solo": "local", "team": "private", "open": "public"}   # preset -> its ceiling
 TOP_KEYS = ("preset", "role", "node", "trust", "expose", "limits")
-NODE_KEYS = ("id", "name", "listen", "join", "issuer", "hub", "hub_name", "hub_node", "domain", "directory")
+NODE_KEYS = ("id", "name", "listen", "join", "issuer", "hub", "hub_name", "hub_node", "domain", "directory", "peers",
+             "public")
+PUBLIC_KEYS = ("domain", "join")
 ISSUER_KEYS = ("domain", "openbao", "mount", "role", "kv", "approle")
 DIRECTORY_KEYS = ("peering", "firewall", "open_oci")
 LIMIT_KEYS = ("hops", "budget", "rate", "copy", "approval", "approval_ttl", "svid_ttl", "max_packet", "http_receive_wait")
@@ -211,9 +216,24 @@ class Mesh:
         spoke, none when standalone."""
         if self.role == "hub":
             return (self.node.get("issuer") or {}).get("domain")
-        if self.role == "spoke":
+        if self.role in ("spoke", "peer"):
             return self.node.get("domain")
         return None
+
+    @property
+    def public_domain(self) -> str | None:
+        """The public domain this node issues for (node.public.domain; a hub or a peer): its certificates last the public
+        level's svid_ttl (1 h) and are issued only after a person approves a join request (ruling AH)."""
+        return ((self.node.get("public") or {}).get("domain")) if self.role in ISSUING_ROLES else None
+
+    @property
+    def peers(self) -> dict:
+        """node id -> host:port of each peer this node dials (a peer's, and a hub's optional seed list)."""
+        return dict(self.node.get("peers") or {}) if self.role in ISSUING_ROLES else {}
+
+    def domains_issued(self) -> list[str]:
+        """Every domain this node is the issuer of: its own, and its public one."""
+        return [d for d in (self.domain if self.role in ISSUING_ROLES else None, self.public_domain) if d]
 
     def level_of_domain(self, domain: str) -> str | None:
         """The level `trust` maps a domain to; the home domain is local; None for a domain not listed (refused)."""
@@ -277,8 +297,9 @@ class Mesh:
     # ------------------------------------------------------------ ports (ADR-0071)
 
     def listeners(self) -> dict[str, tuple[str, int]]:
-        """The SLIM listeners beyond loopback this node opens: {level: (host, port)}; only a hub opens any."""
-        if self.role != "hub" or self.findings:
+        """The SLIM listeners beyond loopback this node opens: {level: (host, port)}; only a hub or a peer opens any, one
+        per level, the public one separate (SP1)."""
+        if self.role not in ISSUING_ROLES or self.findings:
             return {}
         out = {}
         for lv, addr in (self.node.get("listen") or {}).items():
@@ -291,16 +312,22 @@ class Mesh:
         rows = []
         for lv, (h, p) in self.listeners().items():
             rows.append({"what": f"SLIM listener, level {lv} (lock one: the CA bundle of the {lv} domains)",
-                         "address": f"{h}:{p}", "when": "always (role hub)"})
-        if self.role == "hub" and self.node.get("join") and not self.findings:
+                         "address": f"{h}:{p}", "when": f"always (role {self.role})"})
+        if self.role in ISSUING_ROLES and self.node.get("join") and not self.findings:
             h, p = parse_addr(self.node["join"])
-            rows.append({"what": "join endpoint (HTTPS)", "address": f"{h}:{p}", "when": "only while a join token is live"})
+            rows.append({"what": "join endpoint (HTTPS)", "address": f"{h}:{p}",
+                         "when": "only while a join token is live, a request window is open or a join request waits"})
+        pj = (self.node.get("public") or {}).get("join") if self.role in ISSUING_ROLES else None
+        if pj and not self.findings:
+            h, p = parse_addr(pj)
+            rows.append({"what": "public join endpoint (HTTPS; join requests, no token)", "address": f"{h}:{p}",
+                         "when": "only while a request window is open or a request waits"})
         d = self.node.get("directory") or {}
         if d.get("peering") and not self.findings:
-            if self.role == "hub":
+            if self.role in ISSUING_ROLES:
                 rows.append({"what": "Directory libp2p (the spokes' bootstrap peer)", "address": "0.0.0.0:<p2p port>",
                              "when": "directory.peering"})
-            if self.role == "hub" or (self.role == "spoke" and d.get("open_oci") and self.node.get("name")):
+            if self.role in ISSUING_ROLES or (self.role == "spoke" and d.get("open_oci") and self.node.get("name")):
                 rows.append({"what": "Directory OCI registry (anonymous pull, and anonymous push: firewall it to the peers)",
                              "address": f"{self.node.get('name')}:<oci port>", "when": "directory.peering"})
         return rows
@@ -319,17 +346,13 @@ def _check(m: Mesh, raw: dict, text: str) -> None:
         if k not in TOP_KEYS:
             add("unknown-key", f"'{k}': mesh.yml has {', '.join(TOP_KEYS)} and nothing else", k)
     p = raw.get("preset") or "solo"
-    if p in NOT_YET_PRESETS:
-        add("not-yet", NOT_YET_PRESETS[p], "preset")
-    elif p not in PRESETS:
-        add("bad-value", f"preset {p!r}: solo or team", "preset")
+    if p not in PRESETS:
+        add("bad-value", f"preset {p!r}: solo, team or open", "preset")
     else:
         m.preset = p
     r = raw.get("role") or "standalone"
-    if r in NOT_YET_ROLES:
-        add("not-yet", NOT_YET_ROLES[r], "role")
-    elif r not in ROLES:
-        add("bad-value", f"role {r!r}: standalone, spoke or hub", "role")
+    if r not in ROLES:
+        add("bad-value", f"role {r!r}: standalone, spoke, hub or peer", "role")
     else:
         m.role = r
     node = raw.get("node") or {}
@@ -362,10 +385,8 @@ def _check(m: Mesh, raw: dict, text: str) -> None:
                 add("above-ceiling", f"trust: {d}: HTTP clients are refused under the preset solo", "trust", d)
             else:
                 m.trust[d] = lv
-        elif lv == "public":
-            add("not-yet", f"trust: {d}: public: not yet: slice N5", "trust", d)
         elif lv not in LEVELS:
-            add("bad-value", f"trust: {d}: {lv!r} is not a level (local, private)", "trust", d)
+            add("bad-value", f"trust: {d}: {lv!r} is not a level (local, private, public)", "trust", d)
         elif ORDER[lv] > ORDER[m.ceiling]:
             add("above-ceiling", f"trust: {d}: {lv} is above the preset {m.preset}'s ceiling ({m.ceiling})", "trust", d)
         else:
@@ -381,7 +402,7 @@ def _check(m: Mesh, raw: dict, text: str) -> None:
             add("above-ceiling", f"expose: {k}: public is above the preset solo's ceiling (local); public means reachable "
                                  "by the node's HTTP clients, which need team", "expose", k)
         elif lv not in LEVELS:
-            add("bad-value", f"expose: {k}: {lv!r} is not a level (local, private)", "expose", k)
+            add("bad-value", f"expose: {k}: {lv!r} is not a level (local, private, public)", "expose", k)
         elif ORDER[lv] > ORDER[m.ceiling] and lv != "public":
             add("above-ceiling", f"expose: {k}: {lv} is above the preset {m.preset}'s ceiling ({m.ceiling})", "expose", k)
         else:
@@ -407,8 +428,9 @@ def _check(m: Mesh, raw: dict, text: str) -> None:
                 elif k == "copy":
                     if v not in COPIES:
                         raise MeshError(f"{v!r}: {', '.join(COPIES)}")
-                    if v == "addressed":
-                        raise MeshError("addressed: not yet: slice N5")
+                    if lv == "public" and v != "addressed":
+                        raise MeshError(f"{v}: the public level copies only what is addressed to a node (a person who wants "
+                                        "more makes that node private)")
                     good[k] = v
                 elif k == "approval":
                     if v not in APPROVALS:
@@ -425,8 +447,8 @@ def _check(m: Mesh, raw: dict, text: str) -> None:
                     good[k] = str(v)
                 elif k == "svid_ttl":
                     s = seconds(v)
-                    if not 300 <= s <= 7 * 86400:
-                        raise MeshError(f"{v!r}: between 5m and 7d")
+                    if not 60 <= s <= 7 * 86400:
+                        raise MeshError(f"{v!r}: between 1m and 7d")
                     good[k] = v
                 elif k == "max_packet":
                     size(v)
@@ -438,20 +460,31 @@ def _check(m: Mesh, raw: dict, text: str) -> None:
         m.limits_file[lv] = good
     # the role's own needs
     issuer = node.get("issuer") or {}
-    if m.role == "hub":
-        if not isinstance(issuer, dict) or not issuer.get("domain"):
-            add("role-needs", "role hub: node.issuer.domain (the trust domain it issues for) is needed", "role")
+    if m.role in ISSUING_ROLES:
+        r_ = m.role
+        if r_ == "hub":
+            if not isinstance(issuer, dict) or not issuer.get("domain"):
+                add("role-needs", "role hub: node.issuer.domain (the trust domain it issues for) is needed", "role")
+            else:
+                for k in issuer:
+                    if k not in ISSUER_KEYS:
+                        add("unknown-key", f"node.issuer.{k}: issuer has {', '.join(ISSUER_KEYS)}", "node", "issuer", k)
+                if issuer["domain"] not in m.trust:
+                    add("role-needs", f"role hub: its issuer's domain {issuer['domain']} must be in trust", "node", "issuer", "domain")
         else:
-            for k in issuer:
-                if k not in ISSUER_KEYS:
-                    add("unknown-key", f"node.issuer.{k}: issuer has {', '.join(ISSUER_KEYS)}", "node", "issuer", k)
-            if issuer["domain"] not in m.trust:
-                add("role-needs", f"role hub: its issuer's domain {issuer['domain']} must be in trust", "node", "issuer", "domain")
+            # a peer is the issuer of its own domain, with a CA it keeps itself (or an OpenBao PKI when node.issuer says so)
+            if not node.get("domain") or not DOMAIN_RE.fullmatch(str(node["domain"])):
+                add("role-needs", "role peer: node.domain (the trust domain this node issues its own certificate in) is needed", "role")
+            elif m.trust.get(node["domain"]) != "private":
+                add("role-needs", f"role peer: its own domain {node['domain']} must be in trust, mapped private", "node", "domain")
+            if issuer and (not isinstance(issuer, dict) or issuer.get("domain") not in (None, node.get("domain"))):
+                add("bad-value", "node.issuer.domain: a peer issues in its own node.domain", "node", "issuer")
         if not node.get("name"):
-            add("role-needs", "role hub: node.name (the DNS name the spokes dial, in its certificate) is needed", "role")
+            add("role-needs", f"role {r_}: node.name (the DNS name its peers dial, in its certificate) is needed", "role")
         listen = node.get("listen") or {}
-        if not isinstance(listen, dict) or not listen:
-            add("role-needs", "role hub: node.listen (a SLIM listener per level, e.g. private: 0.0.0.0:46358)", "role")
+        if not isinstance(listen, dict) or (r_ == "hub" and not listen):
+            add("role-needs", "role hub: node.listen (a SLIM listener per level, e.g. private: 0.0.0.0:46358)"
+                if r_ == "hub" else "node.listen: a map of level to host:port", "role" if r_ == "hub" else "node")
         else:
             for lv, addr in listen.items():
                 try:
@@ -462,12 +495,54 @@ def _check(m: Mesh, raw: dict, text: str) -> None:
                 if lv not in m.trust.values() or lv not in LEVELS:
                     add("role-needs", f"node.listen.{lv}: no domain in trust maps to {lv}, so no CA bundle for it",
                         "node", "listen", lv)
+                if lv == "public" and not m.public_domain:
+                    add("role-needs", "node.listen.public: a public listener needs node.public.domain (the public domain it "
+                                      "presents a certificate in)", "node", "listen", "public")
+                if lv == "local":
+                    add("bad-value", "node.listen.local: nothing local is dialled from another machine", "node", "listen", "local")
         if node.get("join"):
             try:
                 parse_addr(node["join"])
             except MeshError as e:
                 add("bad-value", f"node.join: {e}", "node", "join")
+            if node.get("public") and (node.get("public") or {}).get("join") == node["join"]:
+                add("bad-value", "node.public.join: the public join endpoint is separate from node.join (SP1)", "node", "public", "join")
+        pub = node.get("public")
+        if pub is not None:
+            if not isinstance(pub, dict) or any(k not in PUBLIC_KEYS for k in pub) or not pub.get("domain"):
+                add("bad-value", "node.public: {domain: <the public trust domain this node issues for>, join: <host:port of the "
+                                 "separate public join endpoint>}", "node", "public")
+            elif m.trust.get(pub["domain"]) != "public":
+                add("role-needs", f"node.public.domain {pub['domain']} must be in trust, mapped public (preset open)",
+                    "node", "public", "domain")
+            elif m.ceiling != "public":
+                add("above-ceiling", f"node.public: the preset {m.preset} does not allow public (open does)", "node", "public")
+            elif pub.get("join"):
+                try:
+                    parse_addr(pub["join"])
+                except MeshError as e:
+                    add("bad-value", f"node.public.join: {e}", "node", "public", "join")
+        peers = node.get("peers") or {}
+        if not isinstance(peers, dict):
+            add("bad-value", "node.peers: a map of node id to host:port", "node", "peers")
+        else:
+            for pid, addr in peers.items():
+                if not NODE_ID_RE.fullmatch(str(pid)) or pid == m.node_id:
+                    add("bad-value", f"node.peers: {pid!r} is not another node's id", "node", "peers", pid)
+                    continue
+                if addr == "incoming":
+                    continue                    # the peer dials this node (written by `node invite` and the pairing)
+                try:
+                    parse_addr(addr)
+                except MeshError as e:
+                    add("bad-value", f"node.peers.{pid}: {e} (or `incoming`: the peer dials this node)", "node", "peers", pid)
+        if r_ == "peer" and not peers and not node.get("join"):
+            add("role-needs", "role peer: node.peers (the nodes it dials) or node.join (so that a peer can pair with it) "
+                              "is needed", "role")
     elif m.role == "spoke":
+        if node.get("peers"):
+            add("role-needs", "role spoke: a spoke dials its one hub: remove node.peers (role peer links nodes without a hub)",
+                "node", "peers")
         if node.get("listen"):
             add("role-needs", "role spoke: a spoke opens nothing (it dials its hub): remove node.listen", "node", "listen")
         if node.get("hub"):
@@ -488,6 +563,10 @@ def _check(m: Mesh, raw: dict, text: str) -> None:
                 add("unknown-key", f"node.directory.{k}: directory has {', '.join(DIRECTORY_KEYS)}", "node", "directory", k)
         if d.get("firewall") not in (None, "auto", "external"):
             add("bad-value", "node.directory.firewall: auto (iptables, needs NET_ADMIN) or external", "node", "directory", "firewall")
+        if d.get("peering") and "public" in m.trust.values():
+            add("role-needs", "node.directory.peering: not with a public domain in trust: the Directory's libp2p would admit any "
+                              "dialer into its gossip (R3); a public node is reached through the register (copy addressed)",
+                "node", "directory", "peering")
 
 
 def parse(text: str, path: Path | None = None) -> Mesh:
@@ -528,7 +607,8 @@ def effective(m: Mesh) -> Mesh:
                 findings=list(m.findings), text=m.text)
 
 
-def write_node(path: Path, updates: dict, role: str | None = None, trust: dict | None = None) -> None:
+def write_node(path: Path, updates: dict, role: str | None = None, trust: dict | None = None,
+               preset: str | None = None) -> None:
     """Writes keys into mesh.yml's node section (and role, trust) keeping everything else as written: used by
     `node join`. The file is small and in the subset yamlite reads; the sections touched are rewritten."""
     try:
@@ -539,6 +619,8 @@ def write_node(path: Path, updates: dict, role: str | None = None, trust: dict |
     raw = raw or {}
     if role:
         raw["role"] = role
+    if preset:
+        raw["preset"] = preset
     raw.setdefault("preset", "team")
     node = dict(raw.get("node") or {})
     node.update({k: v for k, v in updates.items() if v is not None})

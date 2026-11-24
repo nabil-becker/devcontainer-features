@@ -369,3 +369,35 @@ classDiagram
 On disk the resolved component is `skills/<name>/` (`SKILL.md` and its files) and
 `meta/skills/<name>/`: `values/<key>`, `keys.tsv` (key, type, summary) and `provenance.tsv` (state,
 key, type, layer, rank, version, `source:file:line`, data, why: `sourceOfEachValue`).
+
+### Facilitator trust records (backlog `trust-docs`)
+
+How the records of a node's trust connect: a **CA** signs a **node certificate** over the node's **key**; **trust bundles**
+(CA certificates per domain) say whom a listener and a dialer trust; the node's **card** binds its packet keys to that
+certificate; a **roster** (hub) or `node.peers` (peer) says which nodes may be admitted; a **join token** or an approved
+**request** is how a node gets in; **HTTP clients** are the node's own callers; every act is an **audit** line and a signed
+register entry.
+
+| Record | Fields | Connects to |
+| --- | --- | --- |
+| Node key and certificate (`mesh/certs/<domain>/node.key`, `node.pem`) | ed25519 key (mode 600); X.509 with URI SAN `spiffe://<domain>/node/<id>`, DNS SAN = the name dialers use, serial, not before/after (24 h private, 1 h public) | signed by the domain's CA; presented on a listener or link; signs the card and every envelope |
+| Trust bundle (`mesh/certs/<domain>/bundle.pem`) | the domain's CA certificates (PEM) | a listener's `client_ca` is the union of one level's bundles (lock one); lock two names the domain whose bundle a certificate chains to; `trust` maps the domain to a level |
+| CA | a hub's: an offline root and an OpenBao intermediate (PKI mount, role, AppRole); a peer's or a public domain's: its own CA (`mesh/ca/<domain>/ca.pem`, `ca.key` mode 600, DNS name constraints) | issues node certificates; its certificate is the bundle |
+| Node card (`mesh/cards/<node>.json`) | node, domain, SPIFFE id, certificate, facilitator packet key, participants [handle, key, kind, exposure, description, skills, cid, optional opaque `badge`], `at`, signature by the certificate key | read by lock two to bind a packet key to a node and handle; restricted to the receiver's level; replaces itself when newer |
+| Roster (`mesh/roster.json`, a hub's and an issuer's) | node: serial, joined, revoked, revoked_at, domain, key fingerprint, approved_by | admission of hello and renew; the source of the revoked list a hub sends; backed up to OpenBao KV |
+| Join token (`mesh/invites.json`) | id, SHA-256 of the secret, made, expires (15 min), used | single use; names the CA bundle's hash; opens the join endpoint |
+| Public join request (`mesh/requests.json`) | id, node, domain, CSR, key fingerprint, secret hash, status (pending, approved, denied, collected), certificate, approved_by/at | a person's `node approve`; becomes a roster entry |
+| Mesh secret and rotation (`mesh/secret`, `mesh/rotation.json`) | the SLIM app secret; rotation: rid, new secret, pending nodes, deadline, state | rotated on every revoke and handed to the nodes that remain |
+| HTTP client (`http/clients.json`) | name, token hash (SHA-256), status (enrolled, approved, denied, revoked), created/approved by and at, last seen | its SPIFFE id `spiffe://http.<home>/node/<id>/http/<client>`; approval lasts `approval_ttl` |
+| Audit log (`http/audit.jsonl`) | at, event, client, by, hash of the previous line | replayed into the register |
+| Signed audit register (`audit/audit-enrolment/`) | `enrolment` entries: event, subject, by, claimed, detail, SHA-256 of the replayed line; signed by the facilitator key | verified by `facilitator audit verify` (chain, no gap, whole log replayed) |
+
+## Facilitator node, slice N5a additions (facilitator 0.6.0)
+
+| Data | Where | Sensitive |
+| --- | --- | --- |
+| A node's own CA key (a peer's domain, a public domain) | `mesh/ca/<domain>/ca.key`, mode 600, state volume | yes: it issues certificates for that domain |
+| Public join requests (a public key, a secret's hash) | `mesh/requests.json`, mode 600 | no secrets; the key is public |
+| The mesh secret and its rotation (the new secret until handed over) | `mesh/secret`, `mesh/rotation.json`, mode 600 | yes |
+| First-contact approvals of public nodes' agents | `mesh/approved.json` | no |
+| The signed audit register | `audit/audit-enrolment/` (register-engine store) | no secrets; ids and names |

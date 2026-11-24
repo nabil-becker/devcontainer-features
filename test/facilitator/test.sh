@@ -24,9 +24,9 @@ check "infra up again: running, the same processes" bash -c 'a=$(cat "$FACILITAT
 check "every port on loopback" bash -c '! grep -E ":(22B8|15B3|2327|22B9|B515) " /proc/net/tcp | awk "\$4==\"0A\"" | grep -v "0100007F:"'
 check "check is ready" facilitator check
 check "check names the mesh: solo, standalone, nothing open" bash -c 'facilitator check | grep -q "mesh .*preset solo, role standalone" && facilitator check | grep -q "open ports .*none beyond loopback"'
-check "check lints a mesh.yml (NFR-11)" bash -c 'out="$(printf "preset: open\n" | facilitator check -)"; rc=$?; [ "$rc" = 1 ] && echo "$out" | grep -q "^-:1: not-yet: preset open"'
-check "node approve: not yet, slice N5" bash -c 'facilitator node approve 2>&1 | grep -q "not yet: slice N5"'
-check "node invite only on a hub" bash -c 'env -u CLAUDECODE facilitator node invite 2>&1 | grep -q "only a hub invites"'
+check "check lints a mesh.yml (NFR-11)" bash -c 'out="$(printf "preset: wide\n" | facilitator check -)"; rc=$?; [ "$rc" = 1 ] && echo "$out" | grep -q "^-:1: bad-value: preset"'
+check "node approve: only where a public domain is issued" bash -c 'env -u CLAUDECODE facilitator node approve 2>&1 | grep -q "issues no public domain"'
+check "node invite only on a hub" bash -c 'env -u CLAUDECODE facilitator node invite 2>&1 | grep -q "only a hub or a peer invites"'
 check "infra down" bash -c 'facilitator infra down && ! facilitator infra status >/dev/null'
 
 reportResults

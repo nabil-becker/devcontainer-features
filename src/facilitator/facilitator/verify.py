@@ -108,8 +108,10 @@ class Walker:
             if self.not_copied(c, pc):
                 # a replica (slice N3): the lineage leaves this node's copy into a conversation it is not a member
                 # of, so not copied here by policy (copy member); said so, with where to verify the rest
-                self.partial.append(f"{c}/{mid}: its parent {pc}/{pm} is not copied to this node (copy member); "
-                                    f"verify it on {self.fac.net.meta(c).get('home')}")
+                cp = self.fac.net.meta(c).get("copy") or "member"
+                self.partial.append(f"{c}/{mid}: its parent {pc}/{pm} is not copied to this node (copy {cp}"
+                                    + ("; partial by policy, only its id is known here" if cp == "addressed" else "")
+                                    + f"); verify it on {self.fac.net.meta(c).get('home')}")
                 return lines
             _, pp, _ = self.conv(pc)
             parent = (pp or {}).get("messages", {}).get(pm) if pp else None
@@ -138,4 +140,5 @@ def verify(fac, conv: str, message: str | None = None) -> dict:
         w.problems.append(f"{conv}: no thread entry")
     return {"conversation": conv, "ok": not w.problems, "messages": len(chains), "chains": chains,
             "problems": list(dict.fromkeys(w.problems)), "partial": list(dict.fromkeys(w.partial)),
+            "replica": (fac.net.meta(conv) or {}).get("copy") if fac.net.active else None,
             "entries": len(led.valid) if led is not None else 0}

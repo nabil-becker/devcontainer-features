@@ -1466,6 +1466,21 @@ What slice N4 found where a ruling could not be built as written, and the Operat
   `install.sh` keeps the 28 `mcp` wheels per architecture pinned by SHA-256 and URL (`--require-hashes`), and a
   task refreshes that table before the next `mcp` upgrade. Rejected: refreshing it by hand (B).
 
+## Rulings before slice N5 (2026-11-23)
+
+- **PB1, the AGNTCY Identity spike comes first.** The short hands-on spike (backlog `agntcy-identity-spike`)
+  runs before slice N5, as section 13 schedules it; its findings decide the badge layer and whether public
+  nodes need agent badges.
+- **PB2, the hub's OpenBao stays unsealed by hand** (ruling AB stands). After a restart, public certificates (1 h)
+  lapse within the hour, so public links fail closed until a person unseals; private and local survive a day.
+  Revisited when a hub runs unattended.
+- **PB3, slice N5 is split.** **N5a** (`facilitator` 0.6.0): peer-to-peer (`role: peer`, a peers list), the
+  cross-node public rules (join by key plus approval, a separate public listener, `copy: addressed`, partial
+  replicas in `verify`, revoke and cut-off, `preset: open`), rotating the mesh's SLIM secret on revoke (H4),
+  and the signed audit register (HC3). **N5b** (`facilitator` 0.7.0): the OAuth 2.1 resource server and cloud
+  AIs (protected-resource metadata, the issuer allow list, a named authorization server, a public HTTPS
+  address).
+
 ## Rulings on the hub's issuer and the hub on Kubernetes (2026-11-23)
 
 - **K3, a built-in issuer by default: yes.** With no `node.issuer.openbao`, a hub issues its domain's
@@ -1490,3 +1505,16 @@ What slice N4 found where a ruling could not be built as written, and the Operat
   ssh-agent signs the certificate's bytes as they are, and SLIM accepts the result; RSA and ECDSA keys hash
   first and FIDO keys cannot sign. It also found that SLIM refuses every certificate from a CA carrying a URI
   name constraint, so the built-in issuer keeps only the DNS constraint (lock two still checks the domain).
+
+## Rulings on slice N5a (2026-11-24)
+
+What slice N5a found where a ruling could not be built as written, and the Operator's ruling on each, all as recommended.
+
+- **PP1, addressed copy at conversation level.** A public node gets only the conversations it is a member of, and in
+  those only messages addressed to it (other writes are refused); `verify` reports "partial (copy addressed)".
+  Rejected: true partial replicas (they need a register-engine change).
+- **PP2, a peer is its own issuer.** A CA (DNS-only name constraint) whose key is a file in its volume, mode 600, or in
+  OpenBao or an ssh-agent per K5. Widens ADR-0069 decision 4, as ADR 0078 does for a hub (ADR 0080).
+- **PP3, a node away during a secret rotation** gets the new secret by hand (`node secret`); an automatic re-fetch is a
+  later backlog item.
+- **PP4, a revoke stays per node.** One peer's revoke is not shared; each node revokes for itself.

@@ -22,7 +22,7 @@ tasks:
     cmds: ['facilitator explain {{.CLI_ARGS}}']
 
   node-invite:
-    desc: 'On a hub: print a join token for its domain (single use, valid 15 minutes; the join endpoint is open while one is live). A person''s act: refused inside an agent''s job. Hand the token to the person setting up the spoke.'
+    desc: 'On a hub or a peer: print a join (or pairing) token for its domain (single use, valid 15 minutes; the join endpoint is open while one is live); -- --level public opens a 15 minute request window for the public domain and prints the info a public node needs. A person''s act: refused inside an agent''s job. Hand the token to the person setting up the spoke.'
     interactive: true
     dir: '{{.USER_WORKING_DIR}}'
     cmds: ['facilitator node invite']
@@ -33,15 +33,51 @@ tasks:
     cmds: ['facilitator node join {{.CLI_ARGS}}']
 
   node-revoke:
-    desc: 'On a hub: revoke a node: -- <node>. Its certificate is not renewed and lock two refuses it at once on the hub and at the next roster on every spoke; what it already holds is not recalled. Asks to confirm; refused inside an agent''s job.'
+    desc: 'On a hub or a peer: revoke a node: -- <node>. Its certificate is not renewed and lock two refuses it at once and, from a hub, at the next roster on every spoke; the mesh''s SLIM secret rotates and is handed to the nodes that remain; what it already holds is not recalled. Asks to confirm; refused inside an agent''s job.'
     interactive: true
     dir: '{{.USER_WORKING_DIR}}'
     cmds: ['facilitator node revoke {{.CLI_ARGS}}']
 
   node-approve:
-    desc: 'Approve a public node''s join request: not yet, slice N5 (a private node joins with node-invite''s token).'
+    desc: 'On a node that issues a public domain: approve a public node''s join request: -- <request id> [--yes]. The key is approved for the public domain, a certificate of the public level''s svid_ttl (1 h) is issued, and the approval is a signed entry of the audit register. A person''s act: refused inside an agent''s job.'
+    interactive: true
     dir: '{{.USER_WORKING_DIR}}'
     cmds: ['facilitator node approve {{.CLI_ARGS}}']
+
+  node-deny:
+    desc: 'Deny a public node''s join request: -- <request id>. A person''s act: refused inside an agent''s job.'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['facilitator node deny {{.CLI_ARGS}}']
+
+  node-requests:
+    desc: 'List the public join requests waiting for a person (each with its key''s fingerprint), approved or denied. Read only.'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['facilitator node requests']
+
+  node-peer:
+    desc: 'On a peer: pair with another peer with its token (node-invite on that peer): -- --token <token or file> [<its join address>]. The two exchange the CA bundles of their own domains, this one adopts the mesh secret, mesh.yml gets the trust and peers entries; then restart SLIM.'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['facilitator node peer {{.CLI_ARGS}}']
+
+  node-request:
+    desc: 'On a public node: ask a node to let this one join its public domain: -- <the info file that `node invite --level public` printed over there>. Sends a key; nothing is issued until a person approves; then run node-collect.'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['facilitator node request {{.CLI_ARGS}}']
+
+  node-collect:
+    desc: 'On a public node: collect the answer to its join request; when a person approved it, install the certificate (1 h), the bundle and the mesh secret, and write mesh.yml (a spoke of the public domain).'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['facilitator node collect']
+
+  node-secret:
+    desc: 'The mesh''s SLIM app secret, for a node that missed a rotation (prints it; or -- --file <file> sets it). A person carries it over a channel of their own. Refused inside an agent''s job.'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['facilitator node secret {{.CLI_ARGS}}']
+
+  audit:
+    desc: 'The signed audit register of enrolments (HTTP clients and nodes): -- verify (the chain whole, the http log fully replayed), replay (put the lines of http/audit.jsonl in it), show.'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['facilitator audit {{.CLI_ARGS}}']
 
   node-status:
     desc: 'The mesh as this node sees it: its role and domain, the peers part''s state, the cards it admitted, a hub''s roster, the last refusals (JSON, read only).'
