@@ -5,6 +5,7 @@
 # After it, the tools are on PATH. The pins below are the releases' own checksums (kind's .sha256sum files, dl.k8s.io's
 # .sha256 files, the kustomize checksums.txt and the kubeconform CHECKSUMS), read on 2026-11-24. FACILITATOR_K8S_TOOLS names
 # another cache folder.
+# shellcheck disable=SC2034  # the pins are read by the scripts that source this file
 set -euo pipefail
 
 KIND_VERSION=v0.33.0

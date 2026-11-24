@@ -8,7 +8,8 @@ itself by default and needs no OpenBao. The design is the approved proposal
 [0067](../adr/0067-the-facilitator-is-a-network-node-built-as-a-bundle-with-topology-as-configuration-and-trust-levels-over-spiffe.md),
 [0069](../adr/0069-node-certificates-are-issued-by-an-openbao-pki-per-trust-domain-and-two-locks-keep-each-trust-level-apart.md),
 [0075](../adr/0075-a-spoke-joins-through-a-join-endpoint-agents-are-bound-to-their-node-by-signed-cards-and-a-handle-can-be-qualified-by-its-node.md);
-the hub's issuer is ADR 0078 (on its own branch, not yet on `main`).
+the hub's issuer is ADR
+[0078](../adr/0078-a-node-issues-certificates-itself-by-default-with-the-ca-key-in-openbao-else-an-ssh-agent-else-a-file.md).
 
 ## Who it is for, and when to use it
 
@@ -23,18 +24,19 @@ case of Windows with `wslc` is not checked).
 
 ## What exists today
 
-Dated 2026-11-23. The current release is `facilitator` 0.5.0; the server image is
-`ghcr.io/nabil-becker/facilitator-node:0.5.0`.
+Dated 2026-11-24. The release is `facilitator` 0.6.0; **0.7.0 (this change, unreleased) builds the rows marked 0.7.0**. The
+server image is `ghcr.io/nabil-becker/facilitator-node` (0.7.0 to come).
 
 | Piece | State | Version |
 | --- | --- | --- |
 | Hub and spoke, `mesh.yml`, join token, mutual TLS, the two locks, `check`, `explain`, qualified handles (`@b1.spoke-b`) | built, released | 0.4.0 |
 | The hub as the node image in **Docker Compose** with an OpenBao beside it (`bundles/facilitator/compose.yml`) | built, released: the sample runs the hub, OpenBao and one spoke on an internal network that publishes nothing | image 0.5.0 |
 | The hub's certificates from an **OpenBao PKI**, unsealed by hand after each start | built, released | 0.4.0 |
-| A **built-in issuer** for a hub (no OpenBao, no unseal), `facilitator node issuer migrate` and `export-root` | planned; the local issuer exists for peers in 0.6.0 (being built) | rulings K3, K4; ADR 0078 |
-| The CA key in an **ssh-agent** (`node.issuer.ssh_agent`), a file in the volume as the last resort | planned; the spike showed it works for ed25519 (2026-11-23) | ruling K5; ADR 0078 |
-| The hub on **Kubernetes**: a kustomize base (StatefulSet, volume, ConfigMap, Service), an overlay for Rancher Desktop, a test in a throwaway cluster | planned (backlog `hub-on-kubernetes`); a Helm chart later, with a `helm` Feature that does not exist yet | ruling K2 |
-| A devcontainer reaching a hub that runs next to it, on a workstation | **not checked** end to end: the sample compose puts its own spoke in the hub's network | |
+| A **built-in issuer** for a hub (no OpenBao, no unseal: a root and an issuing CA, DNS name constraints), `facilitator node issuer export-root` and `migrate` (the same CA into OpenBao, no spoke joins again) | **built** (unit tests, `migrate` against a real OpenBao dev server, the flow in kind) | 0.7.0; rulings K3, K4; ADR 0078 |
+| The CA key in an **ssh-agent** (`node.issuer.ssh_agent`: socket and fingerprint, ed25519), a file in the volume as the last resort that `check` warns about | **built**: issuing stops cleanly when the agent is gone; run in kind with an agent container beside the hub | 0.7.0; ruling K5; ADR 0078 |
+| The hub on **Kubernetes**: a kustomize base (StatefulSet, volume claim, ConfigMap, Service for SLIM and the join endpoint only), an overlay for Rancher Desktop, an ssh-agent overlay, `task bundle:k8s`, a test in a throwaway kind cluster | **built** (`bundles/facilitator/k8s`, `task test:facilitator-k8s`); a Helm chart later, with a `helm` Feature that does not exist yet | 0.7.0; ruling K2 |
+| A devcontainer reaching a hub that runs next to it, on a workstation | **built and run in a stand-in**: spoke containers reach the hub through the machine's published ports with `--add-host <name>:host-gateway`, in kind; **not run against Rancher Desktop itself** (the one open check: whether its LoadBalancer forwarding is reachable through `host-gateway`) | 0.7.0 |
+| The `openbao:pki:*` tasks (enable the mount, the CSR, set the signed intermediate, the node role) | not built (backlog `openbao-pki-tasks`); `node issuer migrate` makes the mount and the role itself | |
 
 ## Diagram
 
@@ -45,17 +47,18 @@ Dated 2026-11-23. The current release is `facilitator` 0.5.0; the server image i
  |                                                                                                     |
  |  RANCHER DESKTOP  (one engine, one Kubernetes)                                                      |
  |  +---------------------------------------------------------+     +---------------------------+     |
- |  | HUB  (planned: kustomize base; today: compose)          |     | devcontainer A (repo 1)   |     |
- |  |  facilitator-node image 0.5.0, role hub, preset team    |<----| spoke laptop-nb-a         |     |
+ |  | HUB  (kustomize base on Kubernetes; or compose)         |     | devcontainer A (repo 1)   |     |
+ |  |  facilitator-node image 0.7.0, role hub, preset team    |<----| spoke laptop-nb-a         |     |
  |  |  one StatefulSet / one container, volume hub-state (4)  | SLIM| facilitator Feature       |     |
  |  |  Directory + SLIM embedded, loopback only               | mTLS| claude, copilot, model    |     |
  |  |  SLIM private listener 46358   join endpoint 46359      |     +---------------------------+     |
- |  |  issuer: built-in CA (planned) | ssh-agent (planned)    |     +---------------------------+     |
- |  |          | OpenBao PKI (built; a second container,      |<----| devcontainer B (repo 2)   |     |
+ |  |  issuer: built-in CA | ssh-agent (a container beside)   |     +---------------------------+     |
+ |  |          | OpenBao PKI (a second container,             |<----| devcontainer B (repo 2)   |     |
  |  |            sealed until you unseal it)                  |     | spoke laptop-nb-b         |     |
  |  |  mesh.yml in a ConfigMap (tier 1: the manifests)        |     +---------------------------+     |
+ |  |  Service LoadBalancer: only 46358 and 46359             |     --add-host hub...:host-gateway  |
  |  +---------------------------------------------------------+                                       |
- |        |  CA key (planned tier): a DEDICATED ssh-agent holding only that key                        |
+ |        |  CA key (ssh-agent tier): a DEDICATED agent holding only that key, memory only             |
  |        v                                                                                           |
  |  NOTHING published beyond the machine: the hub's ports reach the spokes only                       |
  +-----------------------------------------------------------------------------------------------------+
@@ -66,8 +69,8 @@ Dated 2026-11-23. The current release is `facilitator` 0.5.0; the server image i
 
 A spoke is a devcontainer with the Feature and its own `mesh.yml`, which `facilitator node join` writes. Each
 spoke needs the hub's DNS name to resolve to the hub (the name in the hub's certificate is the `server_name` its
-spokes dial); `--add-host` with `host-gateway` points it at the machine's published port. That line is not run
-end to end (see "What exists today").
+spokes dial); `--add-host` with `host-gateway` points it at the machine, where the hub's Service publishes its two ports.
+The same name is the overlay's `node.name`, so the join token carries it and nothing is typed per spoke.
 
 ```jsonc
 {
@@ -79,10 +82,10 @@ end to end (see "What exists today").
       "participants": true
     },
     "ghcr.io/nabil-becker/devcontainer-features/facilitator:0": {
-      "bundleVersion": "0.5.0"
+      "bundleVersion": "0.7.0"
     }
   },
-  // The hub's name as its certificate carries it; not run end to end, not checked by the tool.
+  // The hub's name as its certificate carries it (the overlay's node.name); run in kind, not on Rancher Desktop itself.
   "runArgs": ["--add-host=hub.workstation.example:host-gateway"],
   "containerEnv": {
     // A spoke's mesh.yml is written by `node join`, so it lives in the spoke's own volume.
@@ -92,23 +95,24 @@ end to end (see "What exists today").
 }
 ```
 
-The engineer's own tooling to render and check the hub's manifests is a second, planned fragment. It names a `helm`
-Feature that does not exist, so `task architectures:check` keeps it failing until it does.
+The engineer's own tooling to render and check the hub's manifests is a second fragment (`task bundle:k8s` uses these two when
+they are on `PATH`, and fetches pinned ones when not):
 
-```jsonc planned
+```jsonc
 {
   "name": "hub-manifests",
   "features": {
     "ghcr.io/nabil-becker/devcontainer-features/kustomize:1": {},
-    "ghcr.io/nabil-becker/devcontainer-features/kubeconform:1": {},
-    "ghcr.io/nabil-becker/devcontainer-features/helm:1": {}
+    "ghcr.io/nabil-becker/devcontainer-features/kubeconform:1": {}
   }
 }
 ```
 
-The hub's `mesh.yml` (a ConfigMap in the planned base; a mounted file in the compose sample, which is
-`bundles/facilitator/hub/mesh.yml`). The `issuer` block with `openbao` is built; leaving it out, and `ssh_agent`, are
-planned (K3, K5):
+A `helm` Feature, for the Helm chart that comes later (ruling K2), does not exist yet.
+
+The hub's `mesh.yml` (a ConfigMap in the base; a mounted file in the compose sample, which is
+`bundles/facilitator/hub/mesh.yml` and names an OpenBao). The built-in issuer is the default: no `openbao` key and no
+`ssh_agent` key. The Rancher Desktop overlay's file, whole:
 
 ```yaml
 preset: team
@@ -119,15 +123,18 @@ node:
   listen: {private: 0.0.0.0:46358}    # lock one: the private level's listener
   join: 0.0.0.0:46359                 # open only while a join token is live
   issuer:
-    domain: workstation.example
-    # built today: openbao: http://openbao:8200, mount: pki-corp, role: node, kv: secret, approle: <file>
-    # planned: no openbao key = the hub's own CA, no unseal;  ssh_agent: {socket: <path>, key: <fingerprint>}
+    domain: workstation.example       # the built-in CA. Tiers, in order: openbao: <url> (+ mount, role, kv, approle),
+                                      # else ssh_agent: {socket: <path>, key: <SHA256 fingerprint>}, else this
 trust:
   workstation.example: private
 ```
 
-Then, in a plain terminal and never in an agent's job: `facilitator node invite` on the hub (a token, 15 minutes,
-single use), `facilitator node join --token <token>` on each spoke, restart the spoke, `facilitator check`.
+Deploy: `kustomize build bundles/facilitator/k8s/overlays/rancher-desktop | kubectl apply -f -` (the node image tag is
+`images:` in the base). The ssh-agent overlay adds an agent container and the `ssh_agent` tier; the NOTES' "Hub on Kubernetes
+and the issuer tiers" has the commands, including `export-root` and `migrate`.
+
+Then, in a plain terminal and never in an agent's job: `kubectl -n facilitator-hub exec facilitator-hub-0 -c hub -- facilitator node invite`
+on the hub (a token, 15 minutes, single use), `facilitator node join --token <token>` on each spoke, restart the spoke, `facilitator check`.
 
 ## Data and its storage tier
 
@@ -135,9 +142,9 @@ single use), `facilitator node join --token <token>` on each spoke, restart the 
 | --- | --- | --- | --- | --- |
 | The hub's manifests: `mesh.yml`, `facilitator.yml`, `participants.yml`, the kustomize base and overlay | the repository | 1 | untouched | kept once pushed |
 | A spoke's `mesh.yml`, its certificate (24 h) and its key (mode 600, a file: SLIM reads it from a file) | the spoke's volume `facilitator-state-${devcontainerId}` | 4 | kept | join again |
-| The hub's roster (every admitted card) | the hub's volume; today also backed up into OpenBao's KV (`secret/facilitator/mesh/roster`) | 4 | kept | `facilitator node restore-roster` from OpenBao's snapshot (today); built-in: from the volume only (planned) |
-| The domain's CA key, built-in issuer (planned) | the hub's volume, mode 600, a last resort that `check` warns about | 4 | kept | **lost with the volume**: every spoke joins again |
-| The domain's CA key, ssh-agent tier (planned) | a dedicated agent's memory; the key's own backup is yours | custody, outside the tiers | untouched | load the key again; spokes need not re-join |
+| The hub's roster (every admitted card) | the hub's volume; backed up into OpenBao's KV (`secret/facilitator/mesh/roster`) on the OpenBao tier, to `mesh/roster.backup.json` in the same volume otherwise | 4 | kept | `facilitator node restore-roster`: from OpenBao's snapshot, or (built-in) from the volume's own backup only |
+| The domain's CA key, built-in issuer: the issuing CA's `ca.key`, and the root's `root.key` until `node issuer export-root` | the hub's volume, mode 600, a last resort that `check` warns about | 4 | kept | **lost with the volume**: every spoke joins again |
+| The domain's CA key, ssh-agent tier | a dedicated agent's memory; the key's own backup is yours | custody, outside the tiers | untouched | load the key again; spokes need not re-join |
 | The domain's PKI, OpenBao tier (built) | OpenBao's raft volume `openbao-data`; the root kept offline | 4 under ADR 0048's bounded loss; the root off the machine | kept | restore the snapshot, unseal with the shares |
 | OpenBao's unseal shares (OpenBao tier only) | the person's password manager and paper | off the machine | untouched | untouched |
 | A join token | shown once, valid 15 minutes, single use | none | not kept | not kept |
@@ -189,7 +196,7 @@ single use), `facilitator node join --token <token>` on each spoke, restart the 
   name constraint (`NameConstraintViolation`), with an agent-signed CA and a plain `openssl` one alike.
 - **Instead:** a DNS constraint only; lock two (the application's check of the domain in every card and entry) keeps the
   domain.
-- **Caught by:** the spike; the built-in issuer's change (ruling K3's note) is planned.
+- **Caught by:** the spike; the built-in issuer (0.7.0) keeps the DNS constraint only, and a test (`test_issuer.py`) fails on a URI one.
 
 ### W3. Directory peering on a shared segment
 

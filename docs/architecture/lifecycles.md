@@ -273,3 +273,11 @@ stateDiagram-v2
 `requested` (a key sent in a window a person opened) -> `approved` (a person; certificate 1 h) | `denied` -> `collected` ->
 `renewing` (at half life, while the issuer allows) -> `revoked` (no renewal, lock two refuses it, the mesh secret rotates) ->
 `expired` (within the hour: no handshake). Each transition is a signed entry of the `audit` register.
+
+## A hub's CA (facilitator 0.7.0, hub-on-kubernetes)
+
+Built-in: `none` -> `made` (a root signs the issuing CA once; the first start of the hub) -> `issuing` -> (`export-root`: the
+root key leaves the volume, still `issuing`) -> `migrated` (`node issuer migrate`: the same issuing CA lives in OpenBao, its key
+gone from the volume) | `replaced` (a new CA: every node joins again). ssh-agent: `none` -> `made` (the agent signs a
+self-signed root once) -> `issuing` <-> `agent away` (issuing and renewing stop; issued certificates stay valid; back when the
+agent answers and holds the key) -> `replaced` (the fingerprint changed: a new CA, every node joins again).

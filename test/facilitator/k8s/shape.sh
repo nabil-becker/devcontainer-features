@@ -4,6 +4,7 @@
 # hostNetwork, hostPID, hostPath or privileged; the Service exposes the SLIM listener (46358) and the join endpoint (46359)
 # and nothing else; the image is the node image of this release, tagged by `images:` alone; mesh.yml in the ConfigMap is a
 # hub with the built-in issuer (no openbao) or, in the ssh-agent overlay, the agent's. Run by `task bundle:k8s`.
+# shellcheck disable=SC2015  # `A && ok || no` is the pattern of every flow script here
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../../.." && pwd)"
 . "$root/test/facilitator/k8s/tools.sh"

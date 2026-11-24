@@ -75,3 +75,4 @@ Rejected by the Operator as too heavy a dependency for a default.
 | Date | Change |
 |---|---|
 | 2026-11-23 | First draft, accepted on the Operator's rulings K3, K4 and K5 of the same day. |
+| 2026-11-24 | Built in `facilitator` 0.7.0: the built-in CA is a root plus an issuing CA (so the root key can leave the volume), built by `cabuild.py` for the ssh-agent tier as well; `migrate` imports the same issuing CA into OpenBao (no spoke re-joins, no waiting for renewal). The proposal's "Findings of slice hub-on-kubernetes" lists what did not hold as written. |

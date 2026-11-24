@@ -38,6 +38,12 @@ tasks:
     dir: '{{.USER_WORKING_DIR}}'
     cmds: ['facilitator node revoke {{.CLI_ARGS}}']
 
+  node-issuer:
+    desc: 'On a hub: the issuer''s tier and its CA: -- status (read only: the tier, the CA''s expiry, for an ssh-agent whether it answers and holds the key), -- export-root --out <a new file> (the built-in root CA''s key and certificate written to a new file, mode 600, and the root key removed from the volume: take the file offline; the hub keeps issuing and no spoke changes anything), -- migrate [--openbao <url>] [--mount <m>] [--token-file <file>] (the built-in CA imported into an OpenBao PKI, the same CA, so no spoke joins again; the token is yours and may configure the mount). export-root and migrate are a person''s acts: refused inside an agent''s job.'
+    interactive: true
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['facilitator node issuer {{.CLI_ARGS}}']
+
   node-approve:
     desc: 'On a node that issues a public domain: approve a public node''s join request: -- <request id> [--yes]. The key is approved for the public domain, a certificate of the public level''s svid_ttl (1 h) is issued, and the approval is a signed entry of the audit register. A person''s act: refused inside an agent''s job.'
     interactive: true

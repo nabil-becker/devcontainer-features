@@ -10,6 +10,10 @@
   domains. Lock two: the application checks the SPIFFE ID of every signed message against `mesh.yml` (the ID's domain is the
   domain whose CA signed it, the domain is trusted at a level within the preset, the node is not revoked), and takes a
   packet's identity from its signer's key in an admitted card.
+- **Who issues.** A hub issues its domain's certificates itself by default (the **built-in CA**: nothing to unseal), or from
+  an OpenBao PKI or an ssh-agent when `mesh.yml` names one; the tiers and what each protects are in
+  [Hub on Kubernetes and the issuer tiers](#hub-on-kubernetes-and-the-issuer-tiers-slice-hub-on-kubernetes). The CA is
+  constrained to DNS names only (SLIM refuses a URI constraint); lock two keeps the SPIFFE ID's domain.
 - **Lifetimes and renewal.** Certificates last 24 h (local, private) and 1 h (public), renewed at half life while the issuer
   allows it; short lifetimes are the revocation, because SLIM checks no revocation list.
 - **Revoke and rotation.** `node revoke`: no renewal, lock two refuses the node at once, its card is dropped, and the mesh's
@@ -286,10 +290,11 @@ A hub's `node` adds `name` (the DNS name in its certificate, which its spokes di
 ### Identity, and the two locks
 
 A node's identity is an ed25519 certificate file: URI SAN `spiffe://<domain>/node/<id>`, a DNS SAN (the
-`server_name` its dialers use), `CA:false`, server and client auth. A hub's domain is issued by **OpenBao PKI**: an
-intermediate in the hub's OpenBao, the **root kept offline**; certificates last **24 h** and are renewed at half
-life; OpenBao is **unsealed by hand** after every start, and while it is sealed nothing is issued or renewed (a day's
-margin). A node's home domain `<id>.local` may be self-issued (its own CA in the volume). SLIM reads its TLS key from
+`server_name` its dialers use), `CA:false`, server and client auth. A hub's domain is issued, in the order of the tiers
+below, by an **OpenBao PKI** (an intermediate in the hub's OpenBao, the **root kept offline**; **unsealed by hand** after
+every start, and while it is sealed nothing is issued or renewed: a day's margin), else by an **ssh-agent** that holds
+the CA key, else by the hub's **built-in CA** (the default from 0.7.0); certificates last **24 h** and are renewed at half
+life. A node's home domain `<id>.local` may be self-issued (its own CA in the volume). SLIM reads its TLS key from
 a file, so the node's certificate key is a file in the volume, mode 600 (the exception ADR-0069 decision 4 writes).
 
 - **Lock one, the listener:** a hub has one SLIM listener per level, each with the CA bundle of that level's
@@ -310,6 +315,11 @@ a file, so the node's certificate key is a file in the volume, mode 600 (the exc
 Everything a person does here is a person's act: `node invite`, `node revoke`, `node bundle` and
 `node restore-roster` refuse to run inside an agent's job (`CLAUDECODE`, `DEVHOST_JOB_CHILD`, `FACILITATOR_HANDLE`, or a
 name in `FACILITATOR_AGENT_JOB_VARS`).
+
+**With no OpenBao (the default from 0.7.0)** steps 1 to 5 shrink to one: start a hub whose `mesh.yml` has an `issuer`
+with only a `domain` (the Kubernetes base below, or the sample compose without its OpenBao service); it makes its CA,
+issues its own certificate and opens its listener with nothing to unseal. Go to step 6. The steps below are the OpenBao
+tier; `facilitator node issuer migrate` moves a built-in hub onto it later without a spoke joining again.
 
 1. **Start the hub and its OpenBao** (the sample compose, or your own):
    `docker compose -f bundles/facilitator/compose.yml up -d`. The hub reads
@@ -373,7 +383,9 @@ revocation (no CRL), so until expiry its TLS link may still form; for an urgent 
 its bundle or stop the listener. What it already holds is not recalled.
 
 **Back up** a hub's roster: every join and revoke writes it into OpenBao's KV (`secret/facilitator/mesh/roster`), so
-OpenBao's snapshot carries it (ruling BH); `facilitator node restore-roster` reads it back.
+OpenBao's snapshot carries it (ruling BH); `facilitator node restore-roster` reads it back. A built-in or ssh-agent hub
+writes it to `mesh/roster.backup.json` in its own volume (mode 600): that guards against a torn write, not against losing
+the volume; back the volume up (a snapshot of the claim) as you would any state.
 
 ### What crosses between nodes
 
@@ -442,6 +454,138 @@ anonymous push. So:
 | The hub's OpenBao is sealed | no certificate issued or renewed; a hub without one runs on loopback and opens nothing |
 | A wrong `server_name` or CA | the dialer's SLIM log says `not valid for name` or `UnknownIssuer`; `check` names it |
 | An invalid `mesh.yml` | the node runs standalone (fail narrow); `check` lists the findings |
+
+## Hub on Kubernetes and the issuer tiers (slice hub-on-kubernetes)
+
+From 0.7.0 a hub needs no OpenBao, and the node image runs on Kubernetes from a kustomize base
+([`bundles/facilitator/k8s`](../../bundles/facilitator/k8s)). Rulings K2 to K5 and ADR-0078; a spike proved the agent tier
+([ssh-agent-ca](../../docs/spikes/2026-11-23-ssh-agent-ca.md)).
+
+### The issuer tiers
+
+A hub's `node.issuer` picks, **in this order**, who holds the CA key and signs:
+
+| Tier | `node.issuer` has | The CA key | Needs | `check` says |
+| --- | --- | --- | --- | --- |
+| 1. OpenBao PKI | `openbao` (and `mount`, `role`, `kv`, `approle`) | in OpenBao | OpenBao unsealed by hand after each start | the seal state |
+| 2. ssh-agent | `ssh_agent: {socket, key}` | in an agent's memory, **never a file** | the agent running with the key loaded | the agent, the key's fingerprint; **warns** when the agent holds other keys |
+| 3. built-in CA (the default) | only `domain` | a file in the volume, mode 600 | nothing | **warns** that the CA key is a file (the last resort) |
+
+| Setting | Meaning |
+| --- | --- |
+| `node.issuer.domain` | the trust domain issued for (a hub: required; must be in `trust`) |
+| `node.issuer.openbao`, `mount`, `role`, `kv`, `approle` | tier 1 (unchanged from 0.4.0) |
+| `node.issuer.ssh_agent.socket` | the agent's socket path, or `$SSH_AUTH_SOCK` (a `$` and the variable's name) |
+| `node.issuer.ssh_agent.key` | the CA key's **SHA256 fingerprint** (`ssh-keygen -l -E sha256 -f key.pub`), never "the first key"; **ed25519 only** |
+
+- **The built-in CA** is a *root* (20 years) that signed one *issuing CA* (10 years) once; leaves are signed by the issuing
+  CA and the trust bundle holds both, so the root key can leave the volume (below) without a spoke noticing. Both are
+  ed25519 and constrained to `DNS:<domain>` and the hub's own name (SLIM, built on rustls-webpki, refuses a URI
+  constraint). A hub made by 0.6.0 (one CA, no separate root) keeps working as it is. The roster is backed up to a file in
+  the volume. The certificates are built by `cabuild.py` (DER assembled in Python, the signature asked of a signer), so no
+  OpenSSL 3.4 is needed.
+- **`facilitator node issuer export-root --out <new file>`** (a person's act, refused inside an agent's job) writes the
+  root's key and certificate to a new file (mode 600; never over a file that exists) and **removes the root key from the
+  volume**. Take the file offline. The hub keeps issuing, every spoke's bundle is unchanged. It is what signs a new
+  issuing CA in ten years or after a compromise.
+- **`facilitator node issuer migrate`** (a person's act) moves a built-in hub onto an OpenBao PKI **keeping the same CA**:
+  it imports the issuing CA's key and certificate (with the root's certificate) into the mount, makes the node role, checks
+  that a certificate OpenBao signs chains to the bundle the spokes hold, backs the roster up into OpenBao's KV, and only
+  then removes the key from the volume. Spokes need not join again and issued certificates stay valid. Give it an OpenBao
+  address (`--openbao`, `node.issuer.openbao` or `BAO_ADDR`), the mount (`--mount`, default `pki`) and a token that may
+  configure the mount (`--token-file` or `FACILITATOR_OPENBAO_TOKEN`: yours, not the hub's AppRole); then add `openbao`,
+  `mount` and `approle` to `mesh.yml` and restart. It refuses a hub whose key is in an ssh-agent (an agent never gives the
+  key up). `facilitator node issuer status` shows the tier (read only).
+- **The ssh-agent tier**: the agent's ed25519 key *is* the CA (the root is self-signed once, by the agent, and every leaf is
+  one signing round trip). `facilitator check` shows the key's fingerprint and whether the agent answers. **With the agent
+  gone**, issuing and renewing stop with `ssh-agent unreachable at <socket>`; every certificate already issued stays valid
+  until it expires, and traffic over existing links is untouched. Changing `key` is a new CA: every node joins again
+  (the hub refuses the old CA file with that message). Use an agent of its own that holds only this key: an agent signs
+  anything for a key it holds. RSA and ECDSA keys hash first and a FIDO key cannot sign the bytes: refused by name.
+
+### The Kubernetes base
+
+[`bundles/facilitator/k8s`](../../bundles/facilitator/k8s) is a kustomize base and two overlays (a Helm chart is later,
+with a `helm` Feature that does not exist yet):
+
+```text
+base/                  Namespace (Pod Security "restricted"), StatefulSet, Service, and a ConfigMap generated from
+                       mesh.yml, facilitator.yml and participants.yml (a change renames it, which restarts the pod)
+overlays/rancher-desktop    Service -> LoadBalancer; mesh.yml for hub.workstation.example (workstation.example)
+overlays/ssh-agent          on top of it: a ca-agent container in the pod (ssh-agent on a memory volume) and the
+                            ssh_agent tier in mesh.yml
+```
+
+- **The StatefulSet**: one replica, the node image `ghcr.io/nabil-becker/facilitator-node` (the tag is `images:` in the base's
+  `kustomization.yaml`: `newTag: 0.7.0`), a 1 Gi volume claim for the state at `/var/lib/devcontainer-features/facilitator`,
+  uid 10001, `runAsNonRoot`, a **read-only root filesystem** (the image allows it: only the state volume and a `/tmp`
+  emptyDir are writable), all capabilities dropped, no privilege escalation, `RuntimeDefault` seccomp, no service-account
+  token, the image's own health check (`facilitator infra status`) as startup, liveness and readiness probes.
+- **The Service** exposes **SLIM (46358) and the join endpoint (46359) and nothing else**: not the Directory, not the HTTP
+  endpoint (off), not the OCI registry. The join endpoint answers only while a join token is live.
+- `task bundle:k8s` renders the base and both overlays with `kustomize build`, checks each with `kubeconform -strict`, and
+  runs `test/facilitator/k8s/shape.sh` (uid, read-only root, capabilities, the Service's two ports, the image tag, the
+  issuer). The `kustomize` and `kubeconform` Features put the tools on `PATH`; otherwise pinned, checksummed ones are fetched.
+  `task bundle:k8s -- overlays/rancher-desktop` prints one render. Apply it with
+  `kustomize build bundles/facilitator/k8s/overlays/rancher-desktop | kubectl apply -f -`.
+
+### Reaching the hub from the devcontainers of the same machine (Rancher Desktop)
+
+The spokes are containers on the machine's Docker engine; the hub is a pod. They meet at the machine's ports, never in the
+cluster's network:
+
+```text
+ spoke (a devcontainer)  --- hub.workstation.example:46358 / :46359 --->  host-gateway (the machine)
+   "runArgs": ["--add-host=hub.workstation.example:host-gateway"]                |
+                                                  Rancher Desktop forwards the LoadBalancer Service's ports
+                                                                                 v
+                                      Service (LoadBalancer) 46358, 46359  -->  facilitator-hub-0
+```
+
+1. **The name in the hub's certificate is the name the spokes dial.** The overlay's `mesh.yml` says
+   `node.name: hub.workstation.example` and `issuer.domain: workstation.example`; the join token carries
+   `hub.workstation.example:46359` and the spokes' `server_name` is that name, so nothing is typed per spoke. Use your own
+   name in both places (any DNS-style name; it need not resolve outside the machine) and the same one in every spoke.
+2. **Each spoke maps that name to the machine**: `--add-host=hub.workstation.example:host-gateway` in the devcontainer's
+   `runArgs`. `host-gateway` is the machine as the container sees it, on Docker Desktop, Rancher Desktop's dockerd and a
+   plain Linux engine alike (`host.docker.internal` as `node.name` works only where the engine defines it).
+3. **The Service is a LoadBalancer**: k3s binds the two ports on its node and Rancher Desktop forwards a LoadBalancer
+   Service's ports to the machine. **Not run against Rancher Desktop** (this devhost has none): the throwaway-cluster test
+   below reproduces the same chain with kind's published ports in place of Rancher Desktop's forwarding, spokes reaching
+   the hub through `host-gateway` exactly as above. Whether Rancher Desktop's forward binds the machine's loopback only (so
+   that `host-gateway` cannot reach it) is the one thing to check first on a real workstation; if it does, publish the ports
+   on all interfaces or use `host.docker.internal` with the loopback forward.
+4. The ports are **published on the machine**, so anything that reaches the machine reaches the join endpoint (open only while
+   a token is live) and the SLIM listener (mutual TLS, lock one). Keep the machine's firewall closed to the network.
+
+For a team's hub on a real cluster use an `Ingress`-free LoadBalancer or `NodePort` of your own in an overlay, a CA in
+OpenBao (`node issuer migrate`) and a `StorageClass` you back up.
+
+### The ssh-agent overlay, step by step
+
+```sh
+ssh-keygen -t ed25519 -N '' -f ./hub-ca                 # once, offline; ./hub-ca is the CA: keep it where you keep roots
+ssh-keygen -l -E sha256 -f ./hub-ca.pub                 # put this fingerprint in overlays/ssh-agent/mesh.yml (node.issuer.ssh_agent.key)
+kustomize build bundles/facilitator/k8s/overlays/ssh-agent | kubectl apply -f -
+kubectl -n facilitator-hub exec -i facilitator-hub-0 -c ca-agent -- ssh-add - < ./hub-ca     # load the key into the agent's memory
+kubectl -n facilitator-hub exec facilitator-hub-0 -c hub -- facilitator check                # the issuer row, then the certificate
+```
+
+The key is in the agent's memory only, so **after every restart of the pod the hub issues nothing until a person loads the
+key again** (certificates already issued stay valid; the hub keeps asking). That is the price of a CA key that is never a
+file; a pod that restarts unattended wants the OpenBao tier or the built-in CA.
+
+### Tested in a throwaway cluster
+
+`task test:facilitator-k8s` ([`test/facilitator/k8s_flow.sh`](../../test/facilitator/k8s_flow.sh)): kind v0.33.0 with its
+Kubernetes 1.37.0 node image by digest, kubectl, kustomize and kubeconform pinned by version and SHA-256
+([`k8s/tools.sh`](../../test/facilitator/k8s/tools.sh)), one cluster, deleted afterwards with every container, volume and
+image it made. It renders and checks the manifests; deploys the hub (the rancher-desktop overlay, the image loaded into
+the cluster, the Service as a NodePort published on the machine's 46358 and 46359); checks the pod's hardening and the
+Service's two ports; joins a spoke container with a token; has the spoke's agent and the hub's agent converse, with `verify`
+on both; runs `export-root` and joins a second spoke after the root key left; then redeploys from the ssh-agent overlay,
+loads a key into the agent container, joins a third spoke on a certificate the agent signed (no CA key file anywhere), and
+removes the agent's socket: `check` says so, a join is refused cleanly and the issued certificate stays valid.
 
 ## Peer to peer and the public level (slice N5a)
 
@@ -833,8 +977,9 @@ mistake, not an attacker.
 | `facilitator:node-revoke` | `facilitator node revoke <node> [--yes]` | On a hub: no renewal, refused by lock two. Asks to confirm; refused inside an agent's job. |
 | `facilitator:node-approve` | `facilitator node approve <request> [--yes]` | On an issuer of a public domain: approve a public node's join request (its key, for the public domain); issues its certificate. Refused inside an agent's job. |
 | `facilitator:node-requests`, `node-deny`, `node-peer`, `node-request`, `node-collect`, `node-secret`, `audit` | `facilitator node requests\|deny <request>\|peer --token <t>\|request <info>\|collect\|secret`, `facilitator audit verify\|replay\|show` | Slice N5a: public join requests, pairing two peers, a public node's request and collection, the mesh secret, the signed audit register. |
+| `facilitator:node-issuer` | `facilitator node issuer status\|export-root --out <file>\|migrate [--openbao <url>] [--mount <m>] [--token-file <f>]` | The hub's issuer tier (read only); the built-in root CA's key out of the volume to a new file; the built-in CA moved into an OpenBao PKI, the same CA. `export-root` and `migrate` are a person's acts: refused inside an agent's job. |
 | `facilitator:node-status` | `facilitator node status` | The peers part, the admitted cards, a hub's roster, the last refusals (JSON). |
-| (no task) | `facilitator node bundle <domain> --file <pem>`, `node renew`, `node restore-roster`, `node peers` | A federated domain's trust bundle; renew this spoke's certificate now; a hub's roster back from OpenBao; the peers part in the foreground (`infra up` starts it). |
+| (no task) | `facilitator node bundle <domain> --file <pem>`, `node renew`, `node restore-roster`, `node peers` | A federated domain's trust bundle; renew this spoke's certificate now; a hub's roster back from OpenBao or from its volume; the peers part in the foreground (`infra up` starts it). |
 | `facilitator:http-token` | `facilitator http token <client> [--label ..] [--as <person>]` | A bearer token for an HTTP client, shown once (only its hash is kept). A person's act: refused inside an agent's job. |
 | `facilitator:http` | `facilitator http list\|audit\|approve <client>\|deny <client>\|revoke <client>` | The clients (no secret), the audit chain, first-contact approval, the end of a client's token. `approve`, `deny` and `revoke` are a person's acts. `http serve` is what the `http` infra part runs. |
 | `facilitator:setup` | `facilitator-setup` | The state folder and the facilitator's key (idempotent, never fatal). |
@@ -978,6 +1123,14 @@ together), and `mcp` 2.3.0 with its 27 dependency wheels, each by SHA-256 (the t
 the Directory's data) is kept. A new AGNTCY or CPython version is a new bundle (the script's pins), released by
 `release-bundle` and pinned in `digests.txt`. 0.x: the MCP tools, the packet fields and the CLI verbs may still
 change before 1.0.
+
+**From 0.6.0 to 0.7.0:** rebuild the container (the Feature, and the node image). Nothing changes for a node that is not a
+hub, and a hub with `node.issuer.openbao` keeps its OpenBao PKI. A hub with **no** `openbao` (it had a single built-in CA
+from 0.6.0, or none) keeps working: a hub with no CA yet now makes a root and an issuing CA, and one made by 0.6.0 keeps its
+single CA (so it cannot `export-root`: migrate it, or start a new hub). New: `node.issuer.ssh_agent`, `facilitator node
+issuer status | export-root | migrate`, `check`'s issuer rows (and its warnings), the Kubernetes base in
+`bundles/facilitator/k8s`, `task bundle:k8s` and `task test:facilitator-k8s`. The bundle is 0.7.0 (unreleased: until
+`release-bundle` runs and `digests.txt` pins it, the Feature builds it from its own source).
 
 **From 0.4.0 to 0.5.0:** rebuild the container. Nothing changes unless `facilitator.http.listen` is set: no port opens
 and no client exists. `mesh.yml`'s `expose` now accepts `public` under `team`, and `limits` the keys `approval`,
