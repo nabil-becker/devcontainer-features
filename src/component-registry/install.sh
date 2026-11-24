@@ -106,6 +106,15 @@ cp -R "$feature_dir/base" "$share/base"
 find "$share/base" -type d -exec chmod 0755 {} +
 find "$share/base" -type f -exec chmod 0644 {} +
 
+# zip layers (an http source with archive: zip) need unzip; tar.gz needs only tar.
+if ! command -v unzip >/dev/null 2>&1; then
+  if command -v apt-get >/dev/null 2>&1; then
+    apt-get update -qq && apt-get install -y -qq --no-install-recommends unzip && rm -rf /var/lib/apt/lists/* ||
+      echo "component-registry: could not install unzip; a zip layer will be refused until it is (apt-get install unzip)" >&2
+  else
+    echo "component-registry: no unzip and no apt-get; a zip layer will be refused until unzip is added" >&2
+  fi
+fi
 command -v flock >/dev/null 2>&1 || echo "component-registry: flock (util-linux) is not in the image; dcf-registry resolve needs it" >&2
 command -v sqlite3 >/dev/null 2>&1 || command -v psql >/dev/null 2>&1 || echo "component-registry: neither sqlite3 nor psql in the image; a db layer source will fail until one is added (apt-get install sqlite3 or postgresql-client)"
 command -v git >/dev/null 2>&1 || echo "component-registry: no git in the image; a git layer source will fail until one is added (the git Feature)"

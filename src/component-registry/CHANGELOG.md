@@ -7,6 +7,25 @@ The version in `devcontainer-feature.json` is bumped in the same change that add
 here; `task lint` fails when the entry is missing.
 
 
+## [2.2.0] - 2026-11-24
+
+### Added
+
+- `git` source `path: <folder>`: a folder of the repository is the layer (a monorepo). Only that
+  folder is fetched (a blob-less shallow fetch where the server allows it) and its contents are the
+  layer root, so `*.layer` and `@file` siblings work as in a root layer. An absolute path, `..` or a
+  folder missing at the ref is refused with a line naming layer, ref and path. The version stays the
+  commit, so a change elsewhere in the repository is also a new version.
+- `http` source `archive: tar.gz | tgz | zip`, with optional `sha256: <hex>` (the pin and the
+  version; a mismatch is refused and nothing is replaced) and `path: <folder>` (a folder inside the
+  archive). The archive is checked before extraction: absolute or `..` names, links pointing
+  outside (a zip may hold no symlink), device files and a total over 100 MiB are refused. Without
+  `archive` the source reads one `.layer` file exactly as before. Auth is unchanged.
+- The Feature installs `unzip` (apt) when it is missing; a zip layer without it is refused saying so.
+
+Action: none; existing layer lists work unchanged. Use `path` or `archive` to read a monorepo
+folder or a release asset.
+
 ## [2.1.0] - 2026-11-24
 
 ### Added

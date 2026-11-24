@@ -257,8 +257,8 @@ exit codes: 0 done, 1 failed, 2 bad use, 3 not supported (the Feature falls back
 
 | Kind | Installed by | What the layer list pins | Log-in |
 |---|---|---|---|
-| `git` | component-registry | `url` and one of `branch`, `tag`, `commit` | optional; secret through `dcf-secret` |
-| `http` | component-registry | `url` (a `.layer` file or an archive) | `auth`: bearer, header or basic; secret through `dcf-secret`; none for an open endpoint |
+| `git` | component-registry | `url` and one of `branch`, `tag`, `commit`; from 2.2.0 `path`, a folder of the repository as the layer root (a monorepo) | optional; secret through `dcf-secret` |
+| `http` | component-registry | `url` (a `.layer` file, or with `archive: tar.gz\|tgz\|zip` an archive, 2.2.0, with optional `sha256` and `path`, a folder inside it) | `auth`: bearer, header or basic; secret through `dcf-secret`; none for an open endpoint |
 | `path` | component-registry | `path` (a file share is mounted on the host by the launcher, `DCF_HOST_*`) | the folder's own permissions |
 | `cloud-folder` | cloud-folder | `remote` | its existing rclone set-up |
 | `db` | component-registry (1.5.0) | `driver` (`sqlite` or `postgres`); `path`, or `host`, `port`, `database`, `user`, `sslmode`; one of `table` or `query` returning `(section, key, type, data, locked)` | `auth.secret` (the postgres password) through `dcf-secret`, into the client's environment only |

@@ -184,20 +184,44 @@ Only this YAML subset is read: comments, plain and quoted values, block entries 
 
 | Source kind | Keys | Log-in |
 | --- | --- | --- |
-| `git` | `url`, one of `branch`, `tag`, `commit`; `required` | `auth`: `type` `basic` (default; `user`, default `git`) or `bearer`, and `secret`, a `dcf-secret` name; handed to git through the environment, never an argument; git never prompts |
+| `git` | `url`, one of `branch`, `tag`, `commit`; `path` (2.2.0: a folder of the repository); `required` | `auth`: `type` `basic` (default; `user`, default `git`) or `bearer`, and `secret`, a `dcf-secret` name; handed to git through the environment, never an argument; git never prompts |
 | `path` | `path` (repository-relative or absolute); `required` | the folder's own permissions |
-| `http` | `url` (one `.layer` file); `allow-insecure`; `required` | `auth`: `type` `bearer`, `header` (`header` names it) or `basic` (`user`), and `secret`, a `dcf-secret` name; none (the default without a secret) reads an open endpoint |
+| `http` | `url` (one `.layer` file, or with `archive` an archive); `archive`, `sha256`, `path` (2.2.0); `allow-insecure`; `required` | `auth`: `type` `bearer`, `header` (`header` names it) or `basic` (`user`), and `secret`, a `dcf-secret` name; none (the default without a secret) reads an open endpoint |
 | `cloud-folder` | `remote` (a folder under the cloud folder); `required` | the cloud folder's own set-up (cloud-folder Feature 1.4.0 or later installs the source) |
 | `db` | `driver` (`sqlite`, `postgres`); `path` or `host`, `port`, `database`, `user`, `sslmode`; one of `table`, `query`; `required` | `auth.secret`, a `dcf-secret` name, the postgres password; sqlite: the file's own permissions |
 
 ### The `http` source
 
 `registry-source-http` reads one `.layer` file of at most 1 MiB, saved in the layer copy under the
-URL's file name (or `<layer>.layer`). The smallest safe form: archives (`.tar.gz`, `.zip`) and
-`@file` siblings are **not** read in this release, because unpacking an archive from the network
-is a risk the registry does not take; the source says so when the URL is an archive. No manifest
-and no signature are required; review is the endpoint owner's, and the layer list pins only the
-URL and how to log in.
+URL's file name (or `<layer>.layer`). Without `archive:` that is all it reads (a URL that is an
+archive is refused with a line saying to set `archive`). No manifest and no signature are
+required; review is the endpoint owner's, and the layer list pins the URL, how to log in and,
+for an archive, optionally its `sha256`.
+
+#### An archive as a layer (2.2.0)
+
+With `archive: tar.gz` (or `tgz`) or `archive: zip` the URL is an archive whose contents become
+the layer root, so `*.layer` at its top level and `@file`s relative to it work as in a root layer
+(a GitHub release asset, `.../releases/download/v3/registry.tar.gz`, is the typical case).
+
+- `sha256: <64 hex>` pins the archive: a download that hashes differently is refused and nothing in
+  the layer copy is replaced (the last good copy stays). The pin is also the version, so an
+  unchanged pin costs no request. Without it the version is the ETag or Last-Modified, else the
+  archive's own `sha256` after the download, as for a single file.
+- `path: <folder>` (also valid on its own with `archive`) is a folder inside the archive that
+  becomes the root (a GitHub source archive has one top folder; name it). Relative, no `..`, not
+  absolute; a folder that is not in the archive is an error naming layer, URL and path.
+- **Extraction is checked before anything is written.** Refused: an entry name that is absolute or
+  holds `..` (or a backslash or a drive letter); a symlink or hardlink whose target is absolute or
+  holds `..` (a zip may hold no symlink at all); a device, fifo or other special file; a total
+  over **100 MiB** extracted (the download is capped at 100 MiB too; a test hook,
+  `REGISTRY_SOURCE_HTTP_MAX_EXTRACT`, sets the extracted cap in bytes). After extraction the
+  result is checked again (only files, folders and links that stay inside; the size on disk).
+  Folder modes are normalised so an archive of folders without `r` or `x` still reads.
+- `tar` is in the image. `zip` needs `unzip`: the Feature installs it with `apt-get` when it is
+  missing (a warning when there is no `apt-get`), and a zip layer without it is refused saying so.
+- Auth is unchanged (bearer, header, basic through `dcf-secret`; a secret is never sent over plain
+  `http://` without `allow-insecure`).
 
 - **Secrets.** `auth.secret` names a secret that `dcf-secret` (openbao) reads at each run; it
   reaches curl as a config on standard input, never on a command line, in a file, in an
@@ -214,10 +238,37 @@ URL and how to log in.
   copy and says so.
 
 ```yaml
+# a GitHub release asset, pinned, one folder of it as the layer
+- kind: http
+  url: "https://github.com/acme/registry/releases/download/v3/registry.tar.gz"
+  archive: tar.gz
+  sha256: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+  path: registry                 # the folder inside the archive that holds the *.layer files
 - { kind: http, url: "https://registry.example.invalid/corp.layer", auth: { type: bearer, secret: registry/corp } }
 - { kind: http, url: "https://registry.example.invalid/open.layer" }          # an open endpoint
 - { kind: http, url: "https://registry.example.invalid/x.layer", auth: { type: header, header: X-Api-Key, secret: registry/x } }
 ```
+
+### The `git` source's `path` (2.2.0)
+
+`path: <folder>` reads one folder of the repository as the layer (a monorepo). Only that folder
+is fetched: a blob-less shallow fetch where the server allows a filter (else a shallow fetch),
+then a checkout of that one path; its contents are copied into the layer copy as its root.
+Refused: an absolute path, a `..`, a backslash, a path that is a file, and a path that does not
+exist at the ref (the error names layer, ref and path).
+
+```yaml
+- kind: git
+  url: "https://git.example.invalid/corp/monorepo.git"
+  branch: main
+  path: registry/corp            # *.layer and @file siblings are read from this folder
+  auth: { type: bearer, secret: registry/corp }
+```
+
+The version stays the commit (`git ls-remote`), so a change anywhere in the repository counts as a
+new version and the layer is fetched again (the copy is the same if the folder did not change).
+The folder's own tree hash would be exact but needs the objects, which means a fetch on every
+check, against the point of asking the version first.
 
 ### The `db` source (1.5.0)
 
@@ -950,6 +1001,25 @@ and is handed over as it is until the next `resolve`, which every agent start ru
 
 ## Changes
 
+### [2.2.0] - 2026-11-24
+
+#### Added
+
+- `git` source `path: <folder>`: a folder of the repository is the layer (a monorepo). Only that
+  folder is fetched (a blob-less shallow fetch where the server allows it) and its contents are the
+  layer root, so `*.layer` and `@file` siblings work as in a root layer. An absolute path, `..` or a
+  folder missing at the ref is refused with a line naming layer, ref and path. The version stays the
+  commit, so a change elsewhere in the repository is also a new version.
+- `http` source `archive: tar.gz | tgz | zip`, with optional `sha256: <hex>` (the pin and the
+  version; a mismatch is refused and nothing is replaced) and `path: <folder>` (a folder inside the
+  archive). The archive is checked before extraction: absolute or `..` names, links pointing
+  outside (a zip may hold no symlink), device files and a total over 100 MiB are refused. Without
+  `archive` the source reads one `.layer` file exactly as before. Auth is unchanged.
+- The Feature installs `unzip` (apt) when it is missing; a zip layer without it is refused saying so.
+
+Action: none; existing layer lists work unchanged. Use `path` or `archive` to read a monorepo
+folder or a release asset.
+
 ### [2.1.0] - 2026-11-24
 
 #### Added
@@ -981,36 +1051,6 @@ Breaking: removes what 1.9.0 and 1.10.0 deprecated, all at once (the Operator's 
   skill (the base layer now ships two utility skills). `dcf-registry remember` prints "removed in
   2.0.0: edit your layer" and exits 1; the task is gone. A `remembered.layer` already in a layer
   folder is an ordinary layer file. Action: edit your layer instead; stop using the skill.
-
-### [1.11.0] - 2026-11-23
-
-#### Added
-
-- **Vendor templates** (ADR-0077, backlog `templating-build`): each vendor's files are rendered
-  from Jinja templates by `minijinja-cli` at every hand-over; the merge (precedence, locks,
-  `explain`) is unchanged. A template is a file `templates/<vendor>/<file>.j2` in a layer, a
-  component of the new kind `template`, with a head saying `for:` (`skill` or `once`), `output:`
-  (the path written, itself templated) and optionally `lock: true`. The highest layer's template
-  wins whole; a lower layer's lock holds; a namespaced layer's templates are its own, render only
-  its skills and never replace the Operator's files. Any layer may replace a template, change one
-  block with `{% extends "<layer>/<file>.j2" %}`, or add its own.
-- The built-in base layer ships `templates/claude/SKILL.md.j2`, which reproduces every resolved
-  `SKILL.md` byte for byte: Claude Code gets exactly the files 1.10.0 gave until a layer
-  overrides it. A CLI with no template is handed the view's skills as before.
-- `dcf-registry render <vendor> <folder>` (task `component-registry:render`) previews what a
-  hand-over gets; `dcf-registry explain templates[/<vendor>[/<file>.j2]]` shows each candidate,
-  the winner and the base it extends. The view keeps the templates and `meta/templates.tsv`.
-- `minijinja-cli` 3.1.0 is installed (the static build for x86_64 or aarch64, through `dcf_curl`,
-  checked against a pinned sha256): the Feature's first download at build.
-
-#### Changed
-
-- A template that does not render, or no `minijinja-cli`, fails the hand-over with the template's
-  layer and file named; the adapter is not called and the CLI keeps the skills it has. A template
-  head that cannot be read is skipped and reported by `resolve`, as an unreadable line is.
-
-Action: rebuild to get `minijinja-cli`. Nothing else; a view resolved before 1.11.0 is handed
-over as it is until the next `resolve`.
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/component-registry/CHANGELOG.md).
 
