@@ -182,10 +182,24 @@ hf "url=$base/device.tar.gz" archive=tar.gz; check "tar.gz device file: refused"
 contains "device file: said" "$(cat "$T/err")" "device, fifo or other special file"
 check "an evil entry wrote nothing outside the layer folder" "no" "$([ -e /etc/evil.layer ] && echo yes || echo no)"
 # size cap
-REGISTRY_SOURCE_HTTP_MAX_EXTRACT=1000 hf "url=$base/big.tar.gz" archive=tar.gz; check "size cap: refused (exit 1)" 1 $?
-contains "size cap: named" "$(cat "$T/err")" "over the 1000 byte limit"
+hf "url=$base/big.tar.gz" archive=tar.gz max-size=1000; check "size cap (max-size): refused (exit 1)" 1 $?
+contains "size cap: names the cap and how to raise it" "$(cat "$T/err")" "over the 1000 (max-size) cap; raise it with max-size: on the source or COMPONENT_REGISTRY_MAX_ARCHIVE_SIZE"
 check "size cap: nothing written" "" "$(lsd)"
 hf "url=$base/big.tar.gz" archive=tar.gz; check "under the default cap: fetched" 0 $?
+hf "url=$base/big.tar.gz" archive=tar.gz max-size=4K; check "max-size 4K raises it over the 3000 bytes: fetched" 0 $?
+hf "url=$base/big.tar.gz" archive=tar.gz max-size=2K; check "max-size 2K (binary units) refuses 3000 bytes" 1 $?
+COMPONENT_REGISTRY_MAX_ARCHIVE_SIZE=1000 hf "url=$base/big.tar.gz" archive=tar.gz; check "env default 1000: refused" 1 $?
+contains "env default: named" "$(cat "$T/err")" "over the 1000 (COMPONENT_REGISTRY_MAX_ARCHIVE_SIZE) cap"
+COMPONENT_REGISTRY_MAX_ARCHIVE_SIZE=1000 hf "url=$base/big.tar.gz" archive=tar.gz max-size=1M; check "the source's key beats the env default" 0 $?
+COMPONENT_REGISTRY_MAX_ARCHIVE_SIZE=1M hf "url=$base/big.tar.gz" archive=tar.gz max-size=1000; check "the key beats the env default (lowering)" 1 $?
+COMPONENT_REGISTRY_MAX_ARCHIVE_SIZE=1000 hf "url=$base/plain.layer"; check "the env default does not touch a plain file" 0 $?
+hf "url=$base/plain.layer" max-size=10; check "max-size on a plain file caps its download (exit 1)" 1 $?
+hf "url=$base/plain.layer" max-size=1K; check "max-size on a plain file: fetched under it" 0 $?
+for bad in 0 -5 abc 1.5M 10X 010 ''; do
+  [ -n "$bad" ] || continue
+  hf "url=$base/good.tar.gz" archive=tar.gz "max-size=$bad"; check "max-size '$bad' refused (exit 2)" 2 $?
+done
+COMPONENT_REGISTRY_MAX_ARCHIVE_SIZE=lots hf "url=$base/good.tar.gz" archive=tar.gz; check "a bad env default is refused (exit 2)" 2 $?
 
 # ------------------------------------------------------- through the layer list ----
 C="$T/case"; mkdir -p "$C/repo/.devcontainer"; cd "$C/repo" || exit 1
@@ -200,6 +214,12 @@ printf 'layers:\n  - id: a\n    at: /Corp\n    sources:\n      - { kind: http, u
 out="$(dcf-registry resolve --as /Corp/me 2>&1)"; rc=$?
 check "layer list: sha256 without archive refused (exit 2)" 2 "$rc"
 contains "layer list: and says why" "$out" "sha256 and path belong to an archive source"
+printf 'layers:\n  - id: a\n    at: /Corp\n    sources:\n      - { kind: http, url: "%s/good.tar.gz", archive: tar.gz, max-size: 0 }\n' "$base" > .devcontainer/registry.yml
+out="$(dcf-registry resolve --as /Corp/me 2>&1)"; rc=$?
+check "layer list: max-size 0 refused (exit 2)" 2 "$rc"
+contains "layer list: and says why" "$out" "max-size is a number of bytes or a number with K, M or G"
+printf 'layers:\n  - id: a\n    at: /Corp\n    sources:\n      - { kind: git, url: "%s", branch: main, max-size: 1M }\n' "$G" > .devcontainer/registry.yml
+check "layer list: max-size on a git source refused (exit 2)" 2 "$(dcf-registry resolve --as /Corp/me >/dev/null 2>&1; echo $?)"
 printf 'layers:\n  - id: a\n    at: /Corp\n    sources:\n      - { kind: git, url: "%s", branch: main, archive: zip }\n' "$G" > .devcontainer/registry.yml
 check "layer list: archive on a git source refused (exit 2)" 2 "$(dcf-registry resolve --as /Corp/me >/dev/null 2>&1; echo $?)"
 

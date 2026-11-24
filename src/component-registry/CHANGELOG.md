@@ -21,6 +21,7 @@ here; `task lint` fails when the entry is missing.
   archive). The archive is checked before extraction: absolute or `..` names, links pointing
   outside (a zip may hold no symlink), device files and a total over 100 MiB are refused. Without
   `archive` the source reads one `.layer` file exactly as before. Auth is unchanged.
+- `max-size: <n>[K|M|G]` on an `http` source sets the one cap on the download and the extracted total (default 100 MiB for an archive, 1 MiB for a plain file); `COMPONENT_REGISTRY_MAX_ARCHIVE_SIZE` sets the default for archives, the source's key winning. A refusal names the cap and how to raise it.
 - The Feature installs `unzip` (apt) when it is missing; a zip layer without it is refused saying so.
 
 Action: none; existing layer lists work unchanged. Use `path` or `archive` to read a monorepo

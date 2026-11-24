@@ -16,11 +16,14 @@
 # such as releases/download/v3/registry.tar.gz is a layer with its @file siblings):
 #   sha256=<hex>   pin the archive: a different download is refused, nothing replaced; it is also
 #                  the version (no request is needed to ask)
+#   max-size=<n>[K|M|G]  the cap on the download and on the extracted total (default 100 MiB;
+#                  also valid on a plain file, default 1 MiB); COMPONENT_REGISTRY_MAX_ARCHIVE_SIZE
+#                  sets the default for archives, the source's key wins
 #   path=<folder>  the folder inside the archive that becomes the layer root (relative, no ..);
 #                  without it the archive's top level is the root
 # Extraction is checked before anything is written: entries with an absolute path or .., a
 # symlink or hardlink whose target is absolute or holds .., a device, fifo or other special
-# file, and a total over 100 MiB (REGISTRY_SOURCE_HTTP_MAX_EXTRACT bytes) are refused. A zip
+# file, and a total over the cap are refused. A zip
 # may hold no symlinks at all. zip needs unzip (installed by the Feature when apt-get is there;
 # else a zip layer is refused saying so); tar.gz needs tar.
 #
@@ -54,19 +57,20 @@ case "$verb" in
   *) die 3 "verb '$verb' is not supported (fetch, version, supports)" ;;
 esac
 
-url='' archive='' sha='' apath='' atype='' auser='' aheader='' asecret='' insecure=false
+url='' archive='' sha='' apath='' maxs='' atype='' auser='' aheader='' asecret='' insecure=false
 for kv in "$@"; do
   case "$kv" in
     url=*) url="${kv#url=}" ;;
     archive=*) archive="${kv#archive=}" ;;
     sha256=*) sha="${kv#sha256=}" ;;
     path=*) apath="${kv#path=}" ;;
+    max-size=*) maxs="${kv#max-size=}" ;;
     allow-insecure=*) insecure="${kv#allow-insecure=}" ;;
     auth.type=*) atype="${kv#auth.type=}" ;;
     auth.user=*) auser="${kv#auth.user=}" ;;
     auth.header=*) aheader="${kv#auth.header=}" ;;
     auth.secret=*) asecret="${kv#auth.secret=}" ;;
-    *) die 2 "layer $layer: unknown setting '${kv%%=*}' (url, archive, sha256, path, allow-insecure, auth.type, auth.user, auth.header, auth.secret)" ;;
+    *) die 2 "layer $layer: unknown setting '${kv%%=*}' (url, archive, sha256, path, max-size, allow-insecure, auth.type, auth.user, auth.header, auth.secret)" ;;
   esac
 done
 [ -n "$url" ] || die 2 "layer $layer: an http source needs url"
@@ -132,7 +136,23 @@ curl_conf() {
   esac
 }
 
-maxsize=1048576; [ -z "$archive" ] || maxsize=104857600
+# The cap, in bytes, on the download and (an archive) on the extracted total: max-size on the
+# source, else COMPONENT_REGISTRY_MAX_ARCHIVE_SIZE (archives only), else 1 MiB for one file and
+# 100 MiB for an archive. A number is bytes; K, M, G are binary.
+size_bytes() { # <value> -> bytes, or fails
+  [[ "$1" =~ ^[1-9][0-9]*[KMG]?$ ]] || return 1
+  local n="${1%[KMG]}"
+  case "$1" in *K) echo $((n * 1024)) ;; *M) echo $((n * 1048576)) ;; *G) echo $((n * 1073741824)) ;; *) echo "$n" ;; esac
+}
+maxsize=1048576; maxlabel='1 MiB'; [ -z "$archive" ] || { maxsize=104857600; maxlabel='100 MiB'; }
+if [ -n "$maxs" ]; then
+  maxsize="$(size_bytes "$maxs")" || die 2 "layer $layer: max-size is a number of bytes or a number with K, M or G (binary), not 0 or negative: '$maxs'"
+  maxlabel="$maxs (max-size)"
+elif [ -n "$archive" ] && [ -n "${COMPONENT_REGISTRY_MAX_ARCHIVE_SIZE:-}" ]; then
+  maxsize="$(size_bytes "$COMPONENT_REGISTRY_MAX_ARCHIVE_SIZE")" || die 2 "layer $layer: COMPONENT_REGISTRY_MAX_ARCHIVE_SIZE is a number of bytes or a number with K, M or G (binary), not 0 or negative: '$COMPONENT_REGISTRY_MAX_ARCHIVE_SIZE'"
+  maxlabel="$COMPONENT_REGISTRY_MAX_ARCHIVE_SIZE (COMPONENT_REGISTRY_MAX_ARCHIVE_SIZE)"
+fi
+raise="raise it with max-size: on the source or COMPONENT_REGISTRY_MAX_ARCHIVE_SIZE"
 max_time="${REGISTRY_SOURCE_HTTP_MAX_TIME:-60}" conn="${REGISTRY_SOURCE_HTTP_CONNECT_TIMEOUT:-10}"
 redir=(--location --max-redirs 3 --proto-redir "=http,https")
 [ -z "$token" ] || redir=()
@@ -149,7 +169,7 @@ hdrval() { sed -n "s/^$2:[[:space:]]*//Ip" "$1" | tail -n 1 | tr -d '\r\t'; }
 # extract_archive: check $tmp/body, list it, refuse anything unsafe, extract into $tmp/x, copy the
 # chosen folder into $dest. Nothing is written to $dest before every check has passed.
 extract_archive() {
-  local got cap="${REGISTRY_SOURCE_HTTP_MAX_EXTRACT:-104857600}" n tgt total x="$tmp/x"
+  local got cap="$maxsize" n tgt total x="$tmp/x"
   got="$(sha256sum < "$tmp/body" | cut -d' ' -f1)"
   if [ -n "$sha" ] && [ "$got" != "$sha" ]; then
     die 1 "layer $layer: $url does not match its sha256 (pinned $sha, got $got); nothing was replaced"
@@ -190,7 +210,7 @@ extract_archive() {
   else
     total="$(awk '{ s += $3 } END { print s + 0 }' "$tmp/lines")"
   fi
-  [ "$total" -le "$cap" ] || die 1 "layer $layer: $url would extract to $total bytes, over the $cap byte limit; refusing the archive"
+  [ "$total" -le "$cap" ] || die 1 "layer $layer: $url would extract to $total bytes, over the $maxlabel cap; $raise; refusing the archive"
   case "$archive" in
     tar.gz | tgz) tar -xzf "$tmp/body" -C "$x" --no-same-owner --no-same-permissions 2>"$tmp/err" ;;
     zip) unzip -q "$tmp/body" -d "$x" 2>"$tmp/err" ;;
@@ -202,7 +222,7 @@ extract_archive() {
     case "$(readlink -f "$l")" in "$(readlink -f "$x")"/*) ;; *) die 1 "layer $layer: $url holds a link pointing outside; refusing the archive" ;; esac
   done < <(find "$x" -type l)
   n="$(du -sb "$x" | cut -f1)"
-  [ "$n" -le "$cap" ] || die 1 "layer $layer: $url extracted to $n bytes, over the $cap byte limit; refusing the archive"
+  [ "$n" -le "$cap" ] || die 1 "layer $layer: $url extracted to $n bytes, over the $maxlabel cap; $raise; refusing the archive"
   if [ -n "$apath" ]; then
     # the folder must be a real folder inside the extraction (a link may not lead out of it)
     case "$(readlink -f "$x/$apath")" in "$(readlink -f "$x")"/*) ;; *) die 1 "layer $layer: $url has no folder '$apath' inside the archive" ;; esac
@@ -227,7 +247,10 @@ case "$verb" in
     printf 'sha256:%s\n' "$(sha256sum < "$tmp/body" | cut -d' ' -f1)" ;;
   fetch)
     [ -d "$dest" ] || die 2 "layer $layer: the destination $dest is not a folder"
-    get "$tmp/body" "$tmp/h" || die 1 "layer $layer: cannot read $url: $(grep -m 1 . "$tmp/err")"
+    if ! get "$tmp/body" "$tmp/h"; then
+      if grep -qi 'maximum file size\|exceeded' "$tmp/err"; then die 1 "layer $layer: $url is over the $maxlabel cap; $raise"; fi
+      die 1 "layer $layer: cannot read $url: $(grep -m 1 . "$tmp/err")"
+    fi
     if [ -n "$archive" ]; then
       extract_archive
       exit 0

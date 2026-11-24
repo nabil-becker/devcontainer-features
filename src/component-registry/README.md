@@ -186,7 +186,7 @@ Only this YAML subset is read: comments, plain and quoted values, block entries 
 | --- | --- | --- |
 | `git` | `url`, one of `branch`, `tag`, `commit`; `path` (2.2.0: a folder of the repository); `required` | `auth`: `type` `basic` (default; `user`, default `git`) or `bearer`, and `secret`, a `dcf-secret` name; handed to git through the environment, never an argument; git never prompts |
 | `path` | `path` (repository-relative or absolute); `required` | the folder's own permissions |
-| `http` | `url` (one `.layer` file, or with `archive` an archive); `archive`, `sha256`, `path` (2.2.0); `allow-insecure`; `required` | `auth`: `type` `bearer`, `header` (`header` names it) or `basic` (`user`), and `secret`, a `dcf-secret` name; none (the default without a secret) reads an open endpoint |
+| `http` | `url` (one `.layer` file, or with `archive` an archive); `archive`, `sha256`, `path`, `max-size` (2.2.0); `allow-insecure`; `required` | `auth`: `type` `bearer`, `header` (`header` names it) or `basic` (`user`), and `secret`, a `dcf-secret` name; none (the default without a secret) reads an open endpoint |
 | `cloud-folder` | `remote` (a folder under the cloud folder); `required` | the cloud folder's own set-up (cloud-folder Feature 1.4.0 or later installs the source) |
 | `db` | `driver` (`sqlite`, `postgres`); `path` or `host`, `port`, `database`, `user`, `sslmode`; one of `table`, `query`; `required` | `auth.secret`, a `dcf-secret` name, the postgres password; sqlite: the file's own permissions |
 
@@ -214,10 +214,16 @@ the layer root, so `*.layer` at its top level and `@file`s relative to it work a
 - **Extraction is checked before anything is written.** Refused: an entry name that is absolute or
   holds `..` (or a backslash or a drive letter); a symlink or hardlink whose target is absolute or
   holds `..` (a zip may hold no symlink at all); a device, fifo or other special file; a total
-  over **100 MiB** extracted (the download is capped at 100 MiB too; a test hook,
-  `REGISTRY_SOURCE_HTTP_MAX_EXTRACT`, sets the extracted cap in bytes). After extraction the
+  over the **size cap** (see below). After extraction the
   result is checked again (only files, folders and links that stay inside; the size on disk).
   Folder modes are normalised so an archive of folders without `r` or `x` still reads.
+- **Size cap.** One number caps both the download and the extracted total: `max-size: <n>[K|M|G]`
+  on the source (binary units; a plain number is bytes; 0, negative or garbage is refused, exit
+  2), else the container-wide `COMPONENT_REGISTRY_MAX_ARCHIVE_SIZE` (same format, archives only),
+  else the built-in **100 MiB**. The source's key wins over the variable. `max-size` is also valid
+  on a plain `.layer` file, where it replaces the 1 MiB cap (the variable does not touch plain
+  files). A refusal says which cap it hit and how to raise it ("over the 100 MiB cap; raise it
+  with max-size: on the source or COMPONENT_REGISTRY_MAX_ARCHIVE_SIZE").
 - `tar` is in the image. `zip` needs `unzip`: the Feature installs it with `apt-get` when it is
   missing (a warning when there is no `apt-get`), and a zip layer without it is refused saying so.
 - Auth is unchanged (bearer, header, basic through `dcf-secret`; a secret is never sent over plain
@@ -244,6 +250,7 @@ the layer root, so `*.layer` at its top level and `@file`s relative to it work a
   archive: tar.gz
   sha256: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
   path: registry                 # the folder inside the archive that holds the *.layer files
+  max-size: 250M                 # optional: raise (or lower) the 100 MiB cap for this source
 - { kind: http, url: "https://registry.example.invalid/corp.layer", auth: { type: bearer, secret: registry/corp } }
 - { kind: http, url: "https://registry.example.invalid/open.layer" }          # an open endpoint
 - { kind: http, url: "https://registry.example.invalid/x.layer", auth: { type: header, header: X-Api-Key, secret: registry/x } }
@@ -1015,6 +1022,7 @@ and is handed over as it is until the next `resolve`, which every agent start ru
   archive). The archive is checked before extraction: absolute or `..` names, links pointing
   outside (a zip may hold no symlink), device files and a total over 100 MiB are refused. Without
   `archive` the source reads one `.layer` file exactly as before. Auth is unchanged.
+- `max-size: <n>[K|M|G]` on an `http` source sets the one cap on the download and the extracted total (default 100 MiB for an archive, 1 MiB for a plain file); `COMPONENT_REGISTRY_MAX_ARCHIVE_SIZE` sets the default for archives, the source's key winning. A refusal names the cap and how to raise it.
 - The Feature installs `unzip` (apt) when it is missing; a zip layer without it is refused saying so.
 
 Action: none; existing layer lists work unchanged. Use `path` or `archive` to read a monorepo
