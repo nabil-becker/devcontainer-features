@@ -1567,3 +1567,8 @@ The Operator ruled HK1 to HK5 as recommended (the findings are in "Findings of s
   it and may register a new `client_id` each time, so each person is enrolled and approved on their own (per
   client, ruling HC4) and the record names who it was; `client_id` is kept as a label. Rejected: approving the
   connector (B: one approval would let in everyone who uses it).
+- **OA2, the login's subject in the record: option A, ruled 2026-11-24.** `via` carries the issuer's subject as
+  given, so the record names exactly who it was; it is kept and replicated like every entry. NOTES warns that a
+  login server whose subjects are emails puts those emails in the record: prefer one with opaque subjects where
+  that matters. Rejected: a fingerprint of the subject (B: the record could no longer say who it was without the
+  login server).
