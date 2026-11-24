@@ -191,6 +191,10 @@ processes of the same Linux user can read it in the process list; it is refused 
 
 ### Registry skills (`skills`, 0.3.0)
 
+The hand-over code is the collection's shared helper `src/common/dcf-skills.sh`, carried inside the
+adapter and the same as Claude Code's (`task common:check`, copilot 0.3.1); only Copilot CLI's
+places and words are the adapter's own.
+
 With the component-registry Feature (2.1.0 or later) and a layer list, the participant component
 resolves at each agent's start and `dcf-registry handover copilot <agent> <folder>` renders the
 `copilot` templates (the base layer's `templates/copilot/SKILL.md.j2` reproduces each resolved
@@ -340,6 +344,15 @@ the line "manage the environment, not the CLI" (NFR-13); `trust` answers exit 3 
 
 ## Changes
 
+### [0.3.1] - 2026-11-24
+
+#### Changed
+
+- The skills hand-over code (`skills`, `skills-show`, the `--add-dir` folder and the start line) is
+  now the collection's shared helper `dcf-skills.sh`, carried inside `agent-adapter-copilot` (backlog
+  `skills-shared-helper`). No change in behaviour: the same files, modes, folders and lines,
+  checked byte for byte before and after in `split`, `shared`, `off` and forget. Nothing to do.
+
 ### [0.3.0] - 2026-11-24
 
 #### Added
@@ -364,18 +377,6 @@ the line "manage the environment, not the CLI" (NFR-13); `trust` answers exit 3 
 - The participant component 1.4.0 it carries: an agent's hand-over names its own `registry-path`,
   and `agents up` forgets the agents no longer in the list (ADR-0074). The Copilot adapter has no
   `skills` verb, so nothing changes for a Copilot agent; nothing to do.
-
-### [0.2.0] - 2026-11-20
-
-#### Added
-
-- **The model of an agent definition.** `agent-adapter-copilot` reads `AGENT_MODEL` (the component
-  registry's agent definition, handed over by the participant component 1.3.0; a layer's
-  `model.copilot` key sets it for Copilot agents only) and passes it as `--model` on `new` and
-  `resume`, in place of any `--model` in the agent's arguments (the registry wins, said in one line).
-  The flag is Copilot CLI 1.0.114's own (`copilot --help`). `run-once` is unchanged.
-- With `participants: true`, the participant component 1.3.0: agent definitions from the component
-  registry at an agent's start; the registry's skills replace the list entry's and are shown.
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/copilot/CHANGELOG.md).
 

@@ -170,6 +170,10 @@ processes of the same Linux user can read it in the process list; it is refused 
 
 ### Registry skills (`skills`, 0.3.0)
 
+The hand-over code is the collection's shared helper `src/common/dcf-skills.sh`, carried inside the
+adapter and the same as Claude Code's (`task common:check`, copilot 0.3.1); only Copilot CLI's
+places and words are the adapter's own.
+
 With the component-registry Feature (2.1.0 or later) and a layer list, the participant component
 resolves at each agent's start and `dcf-registry handover copilot <agent> <folder>` renders the
 `copilot` templates (the base layer's `templates/copilot/SKILL.md.j2` reproduces each resolved

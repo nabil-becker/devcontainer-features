@@ -6,6 +6,15 @@ of the Feature and whether they must act (an option renamed, a task removed, a r
 The version in `devcontainer-feature.json` is bumped in the same change that adds its entry
 here; `task lint` fails when the entry is missing.
 
+## [0.3.1] - 2026-11-24
+
+### Changed
+
+- The skills hand-over code (`skills`, `skills-show`, the `--add-dir` folder and the start line) is
+  now the collection's shared helper `dcf-skills.sh`, carried inside `agent-adapter-copilot` (backlog
+  `skills-shared-helper`). No change in behaviour: the same files, modes, folders and lines,
+  checked byte for byte before and after in `split`, `shared`, `off` and forget. Nothing to do.
+
 ## [0.3.0] - 2026-11-24
 
 ### Added

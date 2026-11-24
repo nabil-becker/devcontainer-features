@@ -219,6 +219,11 @@ here stay. How to override a template: the component-registry notes, "Vendor tem
 
 ### Each agent its own registry skills (1.14.0)
 
+The hand-over code (this verb, `skills-show`, the `--add-dir` folder and the start line) is the
+collection's shared helper `src/common/dcf-skills.sh`, carried inside the adapter and kept in step
+with Copilot's by `task common:check` (claude-code 1.14.2); only Claude Code's places and words are
+the adapter's own.
+
 Agents with different `registry-path`s in one container each read their own resolved skills, under
 one login and one Claude Code state ([ADR-0074](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/adr/0074-each-agent-reads-the-skills-its-registry-path-resolves-through-an-added-directory-and-the-personal-folder-keeps-what-every-agent-shares.md)).
 
