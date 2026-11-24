@@ -39,6 +39,7 @@ if ! need_minijinja "$mjbin"; then
 fi
 for f in dcf-registry registry-source-path; do cp "$src/$f.sh" "$bin/$f"; chmod +x "$bin/$f"; done
 cp "$root/src/claude-code/agent-adapter-claude.sh" "$bin/agent-adapter-claude"; chmod +x "$bin/agent-adapter-claude"
+cp "$root/src/copilot/agent-adapter-copilot.sh" "$bin/agent-adapter-copilot"; chmod +x "$bin/agent-adapter-copilot"
 # a claude that must never run for the skills verb
 printf '#!/bin/sh\necho "claude $*" >> "%s/claude-calls"\nexit 1\n' "$T" > "$bin/claude"; chmod +x "$bin/claude"
 # a CLI without templates, which takes skills
@@ -100,7 +101,7 @@ printf '[skills/tool]\nbody:text = an acme tool\n' > "$n/n.layer"
 list corp:/Corp bare:/Corp acme:/:acme
 out="$(dcf-registry resolve --as "$W" 2>&1)"; rc=$?
 check "base: resolve exit 0" 0 "$rc"
-check "base: the base template is a component of the view" "used	templates/claude/SKILL.md.j2	-	claude	SKILL.md.j2	component-registry" "$(awk -F'\t' 'NR > 1 { print $1 "\t" $2 "\t" $3 "\t" $4 "\t" $5 "\t" $6 }' "$(V)/meta/templates.tsv")"
+check "base: the base templates are components of the view (claude, and copilot from 2.1.0)" "$(printf 'used\ttemplates/claude/SKILL.md.j2\t-\tclaude\tSKILL.md.j2\tcomponent-registry\nused\ttemplates/copilot/SKILL.md.j2\t-\tcopilot\tSKILL.md.j2\tcomponent-registry')" "$(awk -F'\t' 'NR > 1 { print $1 "\t" $2 "\t" $3 "\t" $4 "\t" $5 "\t" $6 }' "$(V)/meta/templates.tsv")"
 out="$(dcf-registry render claude "$C/r1" 2>&1)"; rc=$?
 check "render: exit 0" 0 "$rc"
 contains "render: says what it rendered" "$out" "claude: 8 file(s) rendered from 1 template(s) into $C/r1, for $W"
@@ -127,6 +128,21 @@ for mode in split shared; do
   d="$(diff -r "$C/cfg-old" "$C/cfg-new" 2>&1)"
   check "handover ($mode): Claude Code gets the same files as the 1.10.0 hand-over, byte for byte" "" "$d"
 done
+# Copilot (component-registry 2.1.0): its base template gives the view's skills byte for byte, and a
+# hand-over through it gives Copilot CLI's folders exactly what the view's skills handed straight
+# to its adapter give, in temp COPILOT_HOMEs.
+out="$(dcf-registry render copilot "$C/rc" 2>&1)"; rc=$?
+check "copilot: render exit 0" 0 "$rc"
+check "copilot: the rendered skills equal the view's byte for byte" "" "$(diff -r "$(V)/skills" "$C/rc/skills" 2>&1)"
+for mode in split shared; do
+  rm -rf "$C/ch-old" "$C/ch-new"
+  (COPILOT_HOME="$C/ch-old" COMPONENT_REGISTRY_SKILLS="$(readlink -f "$(V)")/skills" COMPONENT_REGISTRY_PATH="$W" COMPONENT_REGISTRY_SKILLS_MODE="$mode" agent-adapter-copilot skills host "$C/agentdir" >/dev/null 2>&1)
+  out="$(COPILOT_HOME="$C/ch-new" dcf-registry handover copilot host "$C/agentdir" --as "$W" --skills-mode "$mode" 2>&1)"; rc=$?
+  check "copilot handover ($mode): exit 0" 0 "$rc"
+  contains "copilot handover ($mode): rendered" "$out" "copilot: 8 file(s) rendered from 1 template(s)"
+  check "copilot handover ($mode): the same files as the view's skills give, byte for byte" "" "$(diff -r "$C/ch-old" "$C/ch-new" 2>&1)"
+done
+check "copilot handover: the skills reach Copilot's personal folder" "$(cat "$(V)/skills/fm/SKILL.md")" "$(cat "$C/ch-new/skills/fm/SKILL.md")"
 check "handover: no render folder is left in the state folder" "" "$(ls -A "$COMPONENT_REGISTRY_STATE_DIR/renders" 2>/dev/null)"
 check "handover: claude itself never ran" "" "$(cat "$T/claude-calls" 2>/dev/null)"
 out="$(dcf-registry handover plain host "$C/agentdir" --as "$W" 2>&1)"
@@ -267,11 +283,11 @@ printf '{#- output: x -#}\nno for\n' | tpl "$m" SKILL.md.j2
 out="$(dcf-registry resolve --as "$W" 2>&1)"
 contains "bad head: skipped and reported with its layer and file" "$out" "skipped template mine 1:templates/claude/SKILL.md.j2 templates/claude/SKILL.md.j2: the head has no for: (skill or once)"
 contains "bad head: counted in the skipped lines" "$out" "(1 line(s) skipped"
-check "bad head: the template below wins" component-registry "$(awk -F'\t' '$1 == "used" { print $6 }' "$(V)/meta/templates.tsv")"
+check "bad head: the template below wins" component-registry "$(awk -F'\t' '$1 == "used" && $4 == "claude" { print $6 }' "$(V)/meta/templates.tsv")"
 printf 'no head at all\n' | tpl "$m" SKILL.md.j2
 contains "no head: reported" "$(dcf-registry resolve --as "$W" 2>&1)" "no head: a template starts with {#- for: skill  output: <path> -#}"
 printf '{#- for: agent\n output: x -#}\n' | tpl "$m" SKILL.md.j2
-contains "for: agent: not in this release, said" "$(dcf-registry resolve --as "$W" 2>&1)" "for: agent is not in this release"
+contains "for: agent: not supported, said" "$(dcf-registry resolve --as "$W" 2>&1)" "for: agent is not supported"
 
 printf '[skills/one]\nbody:text = one body, changed\n' > "$m/m.layer"
 printf '{#- for: skill\n    output: skills/{{ skill.dir }}/SKILL.md -#}\n{%% if %%}broken\n' | tpl "$m" SKILL.md.j2

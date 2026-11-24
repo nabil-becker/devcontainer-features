@@ -1142,7 +1142,7 @@ END {
     seen[k] = 1
     if (v ~ /\t/) { err = "a tab in " k ":"; break }
     if (k == "for") {
-      if (v == "agent") { err = "for: agent is not in this release (planned: agent definitions, ADR-0077 slice 2); for: skill or once"; break }
+      if (v == "agent") { err = "for: agent is not supported: an agent definition does not become a CLI-native agent file (ADR-0077); for: skill or once"; break }
       if (v != "skill" && v != "once") { err = "for: is skill or once, not '" v "'"; break }
       f = v
     } else if (k == "output") {

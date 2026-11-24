@@ -14,6 +14,7 @@
 | Data | Where it lives | Storage tier |
 | --- | --- | --- |
 | Login (when made with `copilot login`), settings, session history, the facilitator MCP entry | named volume at `COPILOT_HOME` (`/var/lib/devcontainer-features/copilot`); a repo may bind-mount a host folder there | 4 working set |
+| Registry skills (0.3.0, with the component-registry Feature 2.1.0): shared ones in `$COPILOT_HOME/skills`, each agent's own in `$COPILOT_HOME/registry-agents/<agent>.<sum>/`, each copy marked `.component-registry` | the same volume, owner-only | 4 working set |
 | Agent list (with `participants: true`) | `.devcontainer/participants.yml` in the repository | 1 git |
 | Leases and start markers (with `participants: true`) | `/var/lib/devcontainer-features/agents`, not a volume; a lease must not survive a rebuild | 4 working set |
 | A token in `COPILOT_GITHUB_TOKEN`, `GH_TOKEN` or `GITHUB_TOKEN` | the environment of the process that starts copilot; this Feature stores none | not stored |
@@ -137,6 +138,8 @@ against two fake adapters and now the two real ones).
 | `new` | `copilot --name <session name>` in the folder (a terminal is needed) |
 | `resume` | `copilot --resume <session name>` in the folder |
 | `hint` | prints how to resume by hand |
+| `skills` | (0.3.0, ADR-0064, ADR-0077) the component registry's skills, rendered from the `copilot` templates and handed over by `dcf-registry handover copilot`, into Copilot's personal skills folder and the agent's own folder; see "Registry skills" below |
+| `skills-show` | (0.3.0, read-only) the agent's own folder and skills and the shared ones, one tab-separated line each (`own`, `own-skills`, `shared`, `shared-skills`); `agents check` and `dcf-registry handovers --skills` print them |
 | `run-once` | one non-interactive turn, for the facilitator's pump: the prompt on stdin, the reply on stdout, `copilot -p <prompt> --silent --no-ask-user --no-auto-update` |
 | `mcp-attach facilitator` | `copilot mcp add facilitator ...` (see Attach); not a verb of the contract yet |
 | `start-bg`, `wake`, `attach`, `list`, `stop`, `logs`, `record`, `session-*` | exit 3: no local background session, list or stop |
@@ -164,6 +167,40 @@ keeps one conversation per name and folder across turns with `--session-id` set 
 both; unset, each turn is a fresh session and carries its own context (the facilitator sends the
 conversation with each message). The prompt travels as an argument (that is what `-p` takes), so other
 processes of the same Linux user can read it in the process list; it is refused above 100000 bytes.
+
+### Registry skills (`skills`, 0.3.0)
+
+With the component-registry Feature (2.1.0 or later) and a layer list, the participant component
+resolves at each agent's start and `dcf-registry handover copilot <agent> <folder>` renders the
+`copilot` templates (the base layer's `templates/copilot/SKILL.md.j2` reproduces each resolved
+`SKILL.md` byte for byte; a layer may replace it, change a block, or add a file) and calls this verb
+with the result. Copilot CLI's own places, from its docs (read 2026-11-24: the CLI command
+reference, "Skill locations", page changed 2026-11-20; its changelog, 1.0.107: added directories
+load `.agents/skills` and `.claude/skills` too), for the pinned 1.0.114:
+
+- `$COPILOT_HOME/skills/<name>/SKILL.md` (Copilot's `~/.copilot/skills`; `COPILOT_HOME` replaces the
+  whole `~/.copilot`) is its personal skills folder: **the skills every agent's view has alike**.
+- `$COPILOT_HOME/registry-agents/<agent>.<sum>/registry/.github/skills/` is **the agent's own**
+  folder: what its view does not share. `new`, `resume` and `run-once` pass `--add-dir <that>/registry`
+  (last, once; never when the args name it already), and Copilot loads `.github/skills` under an
+  added directory. `new` and `resume` say it in one line:
+  `pilot: registry skills: 3 shared, 1 own -> --add-dir <folder>`.
+- Copilot's order is first found wins: project skills (`.github/skills`, `.agents/skills`,
+  `.claude/skills` in the repository), then personal, then added directories. So a project or
+  personal skill of the same name beats the agent's own copy, which is then not used (Copilot has no
+  qualified name for the loser, unlike Claude Code's `/registry:<name>`); the hand-over and the start
+  line say so.
+- Copilot does not watch its skills folders: a session started after the hand-over reads them; a
+  running one after `/skills reload` (or `/add-dir <folder>` for a new own folder).
+- Each copy carries a `.component-registry` file; only marked copies are replaced or removed, and a
+  skill folder without it is never touched. Never the repository's skill folders.
+
+**Is this a change for you?** Before 0.3.0 the adapter had no `skills` verb, so a Copilot agent got
+no registry skills. From 0.3.0, **when a layer list is there**, it does, by default in `split`
+mode (the same default as Claude Code). Without the component-registry Feature or a layer list,
+nothing happens. To keep a Copilot agent as before, set `registry-skills: off` on its entry in the
+agents list (or `COMPONENT_REGISTRY_SKILLS_MODE=off` for every agent of the container); `shared`
+puts its whole view in the personal folder (the latest hand-over wins).
 
 ## Attach (`attach`)
 
@@ -248,7 +285,10 @@ use the real CLI for `--version` and `copilot mcp` only.
    then `FACILITATOR_HANDLE=pilot FACILITATOR_TOKEN="$(cat $FACILITATOR_HOME/tokens/pilot)" copilot`, and
    ask it to call the `who` tool. If it does not see the tools, the entry's environment did not reach
    the server: say so (see Attach).
-7. A resident entry (`kind: resident`, `cli: copilot`) in the list: `task agents -- dozer` says copilot has
+7. Registry skills (0.3.0): with a layer list, start a copilot participant; `/skills list` in it shows
+   the registry's skills, the shared ones as personal and its own from the added directory. Check
+   that `--add-dir` loads `.github/skills` in the pinned CLI (the docs say so; it was not run here).
+8. A resident entry (`kind: resident`, `cli: copilot`) in the list: `task agents -- dozer` says copilot has
    no background mode and opens a session in the terminal.
 
 ## Anti-patterns
@@ -271,6 +311,8 @@ the line "manage the environment, not the CLI" (NFR-13); `trust` answers exit 3 
   copy of the component.
 - **facilitator**: `attach: facilitator` registers its MCP entry; its pump runs `agent-adapter-copilot
   run-once`.
+- **component-registry** (2.1.0 or later): its hand-over renders the `copilot` templates and gives the
+  result to the `skills` verb.
 - **gh**: ordered before this Feature with `installsAfter`; a token from its login can serve as Copilot's
   (`GH_TOKEN`) when it has the Copilot Requests permission.
 - **go-task**: the Taskfile (`copilot:*`).

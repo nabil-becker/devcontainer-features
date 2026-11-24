@@ -63,7 +63,7 @@ Vendor templates (component-registry 1.11.0, ADR-0077, built): `dcf-registry han
 CLI's winning templates (a layer's, else the built-in base layer's) with `minijinja-cli`, a pinned
 binary inside the component-registry container, before the adapter's `skills` verb copies the
 result; templates come from the same layer sources. The hand-over relation is unchanged in shape;
-its label now says the skills are rendered.
+its label now says the skills are rendered. From component-registry 2.1.0 the Copilot adapter is a second `skills` receiver (copilot 0.3.0); no new container or relation.
 
 ```mermaid
 flowchart LR

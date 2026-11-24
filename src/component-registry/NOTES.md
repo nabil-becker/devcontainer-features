@@ -18,8 +18,9 @@
         |   2. agent-adapter-<cli> skills with that folder
         |   (at an agent's start, by the participant component; or /registry-refresh)
         v
-  the CLI's own skills folders (Claude Code: $CLAUDE_CONFIG_DIR/skills for what every agent
-  shares, and each agent's own folder read through --add-dir; marked owned)
+  the CLI's own skills folders (Claude Code: $CLAUDE_CONFIG_DIR/skills; Copilot CLI, 2.1.0:
+  $COPILOT_HOME/skills; for what every agent shares, and each agent's own folder read through
+  --add-dir; marked owned)
   agents/<name>/ (1.6.0): read by the participant component at the agent's start (model, skills)
 
   dcf-registry explain <path> [--uses] [--color auto|always|never]   read-only
@@ -34,7 +35,7 @@
 | A layer's `.layer` files and skill files | its source: a git repository, a folder, a file share | the owner's choice |
 | A layer's vendor templates (1.11.0, `templates/<vendor>/<file>.j2`) | its source, beside its `.layer` files | the owner's choice |
 | Layer copies, the resolved view (with the templates that apply), the lock file, a hand-over's rendered files while it runs | named volume at `/var/lib/devcontainer-features/component-registry`, owner-only | 4 working set |
-| Resolved skills handed to a CLI | the CLI's skills folders (Claude Code: `$CLAUDE_CONFIG_DIR/skills` and, per agent, `$CLAUDE_CONFIG_DIR/registry-agents/`, the claude-code volume), owner-only | 4 working set |
+| Resolved skills handed to a CLI | the CLI's skills folders (Claude Code: `$CLAUDE_CONFIG_DIR/skills` and, per agent, `$CLAUDE_CONFIG_DIR/registry-agents/`, the claude-code volume; Copilot CLI, 2.1.0: `$COPILOT_HOME/skills` and `$COPILOT_HOME/registry-agents/`, the copilot volume), owner-only | 4 working set |
 | Hand-over records (`handovers.tsv`: CLI, agent, folder, path) | the state volume, owner-only | 4 working set |
 | The utility skills and the base templates (built-in base layer) | `/usr/local/share/component-registry-feature/base`, in the image | none (the Feature) |
 | Source secrets | OpenBao, read with `dcf-secret` | OpenBao's |
@@ -73,6 +74,9 @@ Release 1.11.0 renders each vendor's files from Jinja templates with `minijinja-
 hand-over (ADR-0077, below): the merge is unchanged; the base layer ships Claude Code's `SKILL.md`
 template, which gives exactly the files 1.10.0 gave, and any layer may replace it, change one
 block of it, or add a template of its own.
+Release 2.1.0 ships the same base template for GitHub Copilot CLI (`templates/copilot/SKILL.md.j2`):
+with copilot 0.3.0, whose adapter gains the `skills` verb, Copilot agents get their registry
+skills too (see the copilot notes).
 
 ## What it installs
 
@@ -87,7 +91,7 @@ run time. The scripts are bash, awk and sed (mawk and gawk both work; no python3
   `refresh`, `layer-list`, and (1.8.0) `forget`, `handovers`, and (1.11.0) `render`.
 - `minijinja-cli` (`/usr/local/bin`, 1.11.0).
 - `/usr/local/share/component-registry-feature/base/`: the built-in base layer, the utility skills
-  and (1.11.0) the base templates (`templates/claude/SKILL.md.j2`).
+  and (1.11.0) the base templates (`templates/claude/SKILL.md.j2`; 2.1.0 `templates/copilot/SKILL.md.j2`).
 - `registry-source-git`, `registry-source-path`, `registry-source-http` and (1.5.0) `registry-source-db`: the **registry sources** of this release.
 - `component-registry-setup`: the `postStartCommand`.
 - `dcf-persist`, the collection's helper behind every setup script.
@@ -420,8 +424,9 @@ free text):
 | `output` | the path written, relative to the render folder, itself a template: letters, digits, `. _ -` segments, no `.` or `..` |
 | `lock` | optional, `true`: no higher layer's template of that name is used (the lowest layer that locks keeps it) |
 
-**What the built-in base layer ships**: `templates/claude/SKILL.md.j2`, a skill's `SKILL.md` as the
-resolved view holds it, in two blocks:
+**What the built-in base layer ships**: `templates/claude/SKILL.md.j2` and (2.1.0)
+`templates/copilot/SKILL.md.j2` (Copilot CLI reads the same `SKILL.md` format), each a skill's
+`SKILL.md` as the resolved view holds it, in two blocks:
 
 ```jinja
 {%- block front_matter %}{{ skill.front_matter }}{% endblock -%}
@@ -431,7 +436,8 @@ resolved view holds it, in two blocks:
 It reproduces the view byte for byte, so a consumer sees no change until a layer overrides a
 template (`task test:component-registry-unit` and `task test:registry-first-use` prove it, the
 latter on this repository's real layer list, and compare a hand-over through it with the 1.10.0
-hand-over in a temp Claude config folder).
+hand-over in a temp Claude config folder, and, from 2.1.0, through the Copilot adapter in a temp
+`COPILOT_HOME`).
 
 **The context** (one JSON document per rendering):
 
@@ -883,8 +889,8 @@ every skipped line with its reason, and `resolved N component(s) for <W>`.
 - An agent's `skills` from the registry are what it is said to use (`agents list --json`); they do
   not limit which resolved skills its CLI receives (every resolved skill is handed over).
 - Agents with different who-you-are paths each keep their own skills only where the CLI's adapter
-  keeps them apart (Claude Code from claude-code 1.14.0, ADR-0074); another CLI reads the latest
-  hand-over. In Claude Code a session not started through `agents` reads only the skills every
+  keeps them apart (Claude Code from claude-code 1.14.0, ADR-0074; Copilot CLI from copilot 0.3.0);
+  another CLI reads the latest hand-over. In Claude Code a session not started through `agents` reads only the skills every
   agent's view has alike, and a project skill of the same name beats an agent's own copy (the
   registry's then runs as `/registry:<name>`).
 - The registry does not write layers (the Operator's ruling of 2026-11-23): `remember`, the task and
@@ -894,9 +900,10 @@ every skipped line with its reason, and `resolved N component(s) for <W>`.
 - A `path` source's version is a fingerprint of names, sizes and
   modification times, so a change that keeps all three is not seen.
 - `*` and `**` are whole segments; there are no value filters.
-- Templates (1.11.0): Claude Code's `SKILL.md` is the only base template; Copilot has none (its
-  adapter has no `skills` verb yet) and `for: agent` is not in this release (slice 2 of ADR-0077:
-  Copilot's files, agent definitions). A template is one file under `templates/<vendor>/`, no
+- Templates (1.11.0): the base templates are Claude Code's and (2.1.0) Copilot CLI's `SKILL.md`;
+  `for: agent` is not supported: a registry agent definition does not become a CLI-native agent
+  file (a Claude Code subagent, a Copilot custom agent); its model and skills reach the CLI through
+  `--model` and the skills hand-over (the Operator's ruling, ADR-0077). A template is one file under `templates/<vendor>/`, no
   sub-folders; a template is rendered at the hand-over, not at `resolve`, so a template that does
   not render is found by the hand-over (or `render`), and only a head is checked at `resolve`.
 - The text heading is `## Layer <id>` or none (`heading: false`), per layer, never per line; a
