@@ -804,6 +804,11 @@ class BuiltinIssuer(LocalIssuer):
         self.root_key.unlink()
         return {"file": str(out), "root": str(self.root_pem)}
 
+    def _issuer_is_ours(self, bao: "Issuer", mount: str, issuer_id: str) -> bool:
+        """The imported issuer whose certificate is this hub's issuing CA (the import may also bring the root)."""
+        d = bao._call("GET", f"{mount}/issuer/{issuer_id}")
+        return cert_info((d.get("data") or {}).get("certificate", ""))["serial"] == cert_info(self.ca_pem.read_text())["serial"]
+
     def migrate_to_openbao(self, bao: "Issuer", token: str, ttl_max: str = "720h") -> dict:
         """Move the issuing CA onto an OpenBao PKI mount, keeping the very same CA (ruling K3): the issuing key and its
         certificate are imported (config/ca) and the node role is made, so the certificates every spoke holds and the
@@ -816,13 +821,19 @@ class BuiltinIssuer(LocalIssuer):
             raise IdentityError("migrate: the issuing CA key is not in this volume")
         bao._token = token
         mount = bao.mount
-        bundle_pem = self.ca_key.read_text() + self.ca_pem.read_text()
+        bundle_pem = self.ca_key.read_text() + self.ca_pem.read_text() + (self.root_pem.read_text() if self.root_pem.is_file() else "")
         try:
             mounts = bao._call("GET", "sys/mounts")
             if f"{mount}/" not in (mounts.get("data") or mounts):
                 bao._call("POST", f"sys/mounts/{mount}", {"type": "pki", "config": {"max_lease_ttl": ttl_max}})
-            bao._call("POST", f"{mount}/config/ca", {"pem_bundle": bundle_pem})
+            got = bao._call("POST", f"{mount}/config/ca", {"pem_bundle": bundle_pem})
+            ours = [i for i in ((got.get("data") or {}).get("imported_issuers") or [])]
+            ca_issuer = next((i for i in ours if self._issuer_is_ours(bao, mount, i)), None)
+            if ca_issuer:                    # a mount that had a CA keeps it as the default until told
+                bao._call("POST", f"{mount}/config/issuers", {"default": ca_issuer})
             bao._call("POST", f"{mount}/roles/{bao.role}", node_role(self.domain, ttl_max))
+            if f"{bao.kv}/" not in (mounts.get("data") or mounts):
+                bao._call("POST", f"sys/mounts/{bao.kv}", {"type": "kv", "options": {"version": "2"}})
             # prove it before the key leaves: a throwaway request signed by OpenBao must verify against the bundle
             with tempfile.TemporaryDirectory(prefix="fac-mig-") as t:
                 k = Path(t) / "k"
@@ -840,10 +851,12 @@ class BuiltinIssuer(LocalIssuer):
 
 
 def node_role(domain: str, max_ttl: str = "720h") -> dict:
-    """The OpenBao PKI role a hub's signing uses: names under the domain only (ADR-0069), the SPIFFE ID the hub decides."""
+    """The OpenBao PKI role a hub's signing uses: names under the domain only (ADR-0069), the SANs the hub decides (never
+    the request's), ed25519 keys, server and client auth. The same role the openbao:pki:role task writes."""
     return {"allowed_domains": domain, "allow_subdomains": True, "allow_bare_domains": True, "enforce_hostnames": True,
-            "allowed_uri_sans": f"spiffe://{domain}/node/*", "key_type": "any", "server_flag": True, "client_flag": True,
-            "max_ttl": max_ttl, "ttl": "24h", "require_cn": False}
+            "allowed_uri_sans": f"spiffe://{domain}/*", "key_type": "ed25519", "server_flag": True, "client_flag": True,
+            "key_usage": "DigitalSignature", "ext_key_usage": "ServerAuth,ClientAuth", "use_csr_common_name": False,
+            "use_csr_sans": False, "max_ttl": max_ttl, "ttl": "24h", "require_cn": False}
 
 
 def make_issuer(m: "mesh_mod.Mesh", store: Store, domain: str):

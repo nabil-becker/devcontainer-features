@@ -290,6 +290,60 @@ def test_the_tiers_are_taken_in_order_openbao_then_ssh_agent_then_file():
                                 st, "a.t").tier == "ssh-agent"
 
 
+# ---------------------------------------------------------------- migrate to OpenBao (needs the bao binary: a dev server)
+
+def test_migrate_moves_the_same_ca_into_openbao_so_no_spoke_joins_again():
+    import shutil
+    import socket
+    import urllib.request
+    if not shutil.which("bao"):
+        print("skip: bao is not installed (the migration is tested against a dev server)")
+        return
+    with socket.socket() as s_:
+        s_.bind(("127.0.0.1", 0))
+        port = s_.getsockname()[1]
+    srv = subprocess.Popen(["bao", "server", "-dev", "-dev-root-token-id=t0", f"-dev-listen-address=127.0.0.1:{port}"],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        for _ in range(100):
+            try:
+                urllib.request.urlopen(f"http://127.0.0.1:{port}/v1/sys/health", timeout=1)
+                break
+            except Exception:           # noqa: BLE001
+                time.sleep(0.1)
+        with tempfile.TemporaryDirectory() as t:
+            st = identity.Store(Path(t))
+            iss = identity.make_issuer(m_(HUB), st, "corp.test")
+            bundle = iss.bundle()
+            before = leaf_for(iss, "a")["cert"]
+            r = {"nodes": {"a": {"serial": "1", "revoked": False}}}
+            identity.save_roster(st, r)
+            bao = identity.Issuer({"domain": "corp.test", "openbao": f"http://127.0.0.1:{port}", "mount": "pki-corp"})
+            got = iss.migrate_to_openbao(bao, "t0")
+            assert got["nodes"] == 1 and not iss.ca_key.exists()
+            # OpenBao signs now with the same CA: the old bundle (what every spoke holds) verifies the new leaf and the old one
+            os.environ["FACILITATOR_OPENBAO_TOKEN"] = "t0"
+            try:
+                k = Path(t) / "k"
+                identity.new_key(k)
+                new = bao.sign(identity.csr(k, "b.corp.test"), "b", "b.corp.test", 3600)["cert"]
+            finally:
+                os.environ.pop("FACILITATOR_OPENBAO_TOKEN")
+            assert verifies(new, bundle) and verifies(before, bundle)
+            assert identity.cert_info(new)["uris"] == ["spiffe://corp.test/node/b"]
+            assert bao.restore_roster() == r
+            assert len(identity.pem_blocks(bao._call("GET", "pki-corp/cert/ca_chain", token=False, raw=False)["data"]["ca_chain"])) == 2
+            # an agent's CA cannot be imported
+            try:
+                identity.BuiltinIssuer(identity.Store(Path(t) / "x"), "corp.test", (), agent={"socket": "/s", "key": FP}).migrate_to_openbao(bao, "t0")
+                assert False
+            except identity.IdentityError as e:
+                assert "ssh-agent" in str(e)
+    finally:
+        srv.terminate()
+        srv.wait(timeout=10)
+
+
 # ---------------------------------------------------------------- check and the commands
 
 def test_check_warns_when_the_ca_key_is_a_file_and_when_the_agent_holds_other_keys():
