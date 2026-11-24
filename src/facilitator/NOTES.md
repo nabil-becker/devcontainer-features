@@ -741,10 +741,11 @@ facilitator http token <client> [--label ..]   # prints the token once; only its
 facilitator http list | audit                  # the clients (no secret), the audit chain
 facilitator http approve <client>              # first contact: its held messages are delivered (also the person's MCP tool approve)
 facilitator http deny <client> | revoke <client>   # the token stops working at once
+facilitator http forget <client>               # a revoked or denied client's entry dropped: the same login is new next time
 ```
 
-A **token** is `<client>.<secret>` (the secret is 256 random bits). It is a person's act: `token`, `approve`, `deny` and
-`revoke` refuse to run inside an agent's job (`CLAUDECODE`, `DEVHOST_JOB_CHILD`, `FACILITATOR_HANDLE`, or the variables
+A **token** is `<client>.<secret>` (the secret is 256 random bits). It is a person's act: `token`, `approve`, `deny`,
+`revoke` and `forget` refuse to run inside an agent's job (`CLAUDECODE`, `DEVHOST_JOB_CHILD`, `FACILITATOR_HANDLE`, or the variables
 `FACILITATOR_AGENT_JOB_VARS` names). At most 20 clients may be enrolled and not yet approved. The approver is the person
 acting (`--as`, a human of `facilitator.yml`, default the first): on a node with no person attached, the hub's own
 `humans:` list, which `check` requires to name one while a level asks for first contact.
@@ -758,6 +759,11 @@ acting (`--as`, a human of `facilitator.yml`, default the first): on a node with
   the line before it (`facilitator http audit` checks the chain). It is **not** a signed register (see Limits); the
   approval and denial are also signed notices in the conversations they concern.
 - Revocation closes the client's future calls at once and discards its token's hash; what it wrote stays in the record.
+- **Forget** (`facilitator http forget <client>`, task `facilitator:http-forget`) lets a refused client back: it drops the
+  entry of a **revoked or denied** client (a live one is refused: revoke it first), so the same login is new next time: an
+  OAuth login (issuer and subject) enrols again on its next valid token and is held for a person's approval; a bearer client
+  name can be given a new `http token`. A `forget` event goes to the audit log and the signed register; past records keep
+  naming the client.
 
 ### What an HTTP client is, and sees
 
@@ -888,7 +894,7 @@ a new one each time, so approving a `client_id` would approve everyone who uses 
   names no issuer and subject. **The subject is written into the record**: when your issuer's subject is an email address or
   another personal identifier, so is it there (an opaque subject, such as a UUID, is kept as one).
 - **Revoke and deny** close the client at once, as for bearer; a revoked or denied OAuth client **stays refused**: a new
-  token of the same subject does not bring it back (a person's decision stands; see Limits).
+  token of the same subject does not bring it back (a person's decision stands) until a person runs `http forget`.
 
 ### Connect a cloud AI (a claude.ai custom connector)
 
@@ -1114,6 +1120,7 @@ mistake, not an attacker.
 | `facilitator:node-status` | `facilitator node status` | The peers part, the admitted cards, a hub's roster, the last refusals (JSON). |
 | (no task) | `facilitator node bundle <domain> --file <pem>`, `node renew`, `node restore-roster`, `node peers` | A federated domain's trust bundle; renew this spoke's certificate now; a hub's roster back from OpenBao or from its volume; the peers part in the foreground (`infra up` starts it). |
 | `facilitator:http-token` | `facilitator http token <client> [--label ..] [--as <person>]` | A bearer token for an HTTP client, shown once (only its hash is kept). A person's act: refused inside an agent's job. |
+| `facilitator:http-forget` | `facilitator http forget <client>` | Lets a revoked or denied client back as new (an OAuth login enrols again, held for approval). A person's act; a live client is refused. |
 | `facilitator:http` | `facilitator http list\|audit\|approve <client>\|deny <client>\|revoke <client>` | The clients (no secret), the audit chain, first-contact approval, the end of a client's token. `approve`, `deny` and `revoke` are a person's acts. `http serve` is what the `http` infra part runs. |
 | `facilitator:setup` | `facilitator-setup` | The state folder and the facilitator's key (idempotent, never fatal). |
 | `facilitator:infra` | `facilitator infra up\|down\|status\|logs [agent\|dir\|slim\|peers\|http]` | The infrastructure; `up` is idempotent, nothing is restarted on a crash (`status` says so). |
@@ -1201,7 +1208,7 @@ each delivery in its route.
 - A bearer token has no expiry and no rotation but revoke and a new token; there is no per-token scope. An OAuth token
   expires as its issuer says, and its issuer's scope is checked on every call; the node does not introspect or revoke
   tokens at the issuer (a person's revoke of the client is the node's own, immediate).
-- A revoked or denied OAuth client stays refused: there is no command yet to let that (issuer, subject) enrol again.
+- A revoked or denied OAuth client stays refused until a person runs `facilitator http forget <client>`; its next token then enrols it anew.
 - Only JWT access tokens are accepted (no token introspection, no opaque tokens), from issuers named in `facilitator.yml`.
 - The audit of enrolments is a hash-chained log in the volume, not a signed register: a person with the volume can
   rewrite it whole (a cut or an edit shows; a rewrite of the chain does not). A signed `audit` register type is a

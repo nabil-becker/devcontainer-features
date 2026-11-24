@@ -20,7 +20,7 @@ connector (one client_id) serves every user of a cloud AI, and registration may 
 client's SPIFFE ID is `spiffe://http.<home domain>/node/<node id>/http/<client>` (the domain is the mapping key of
 mesh.yml's trust: public unless mapped private).
 
-Every enrolment, approval, denial and revocation is also a line in `http/audit.jsonl`, each carrying the hash of the
+Every enrolment, approval, denial, revocation and forget is also a line in `http/audit.jsonl`, each carrying the hash of the
 one before it, so a cut or an edit shows (`facilitator http audit`). That log is not a register: see the NOTES.
 """
 from __future__ import annotations
@@ -197,6 +197,23 @@ class Clients:
 
     def revoke(self, name: str, by: str) -> dict:
         return self.set_status(name, "revoked", by, "revoked")
+
+    def forget(self, name: str, by: str) -> dict:
+        """A person's act (ruling OA3): drop a revoked or denied client's entry, so the same login (OAuth: issuer and
+        subject; bearer: the name) is new next time. A live client is refused: revoke it first. Returns the entry dropped."""
+        with self.state.lock("http-clients"):
+            t = self.all()
+            if name not in t:
+                raise ClientError(f"no HTTP client {name} (facilitator http list)")
+            c = t[name]
+            if c["status"] in LIVE:
+                raise ClientError(f"the client {name} is {c['status']}: revoke it first (facilitator http revoke {name}), "
+                                  "then forget it")
+            del t[name]
+            self._put(t)
+            who = f"OAuth subject {c['subject'][:80]} of {c['issuer']}, " if c.get("auth") == "oauth" else ""
+            self.audit("forget", name, by, f"{who}was {c['status']}; its entry is dropped")
+            return c
 
     def seen(self, name: str) -> None:
         try:

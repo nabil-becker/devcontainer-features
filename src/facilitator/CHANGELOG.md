@@ -35,6 +35,7 @@ Python dependency: the bundle already carries PyJWT and `cryptography` (the `mcp
   auth: oauth, client, issuer, subject}`; `transcript` and `verify` show it. The conversation type accepts `subject` in `via`.
 - **`facilitator http issuers`** reads each issuer's keys now and says which are readable; `facilitator http list` shows an OAuth
   client's issuer and subject; `check` has an `http oauth` line.
+- **`facilitator http forget <client>`** (task `facilitator:http-forget`, ruling OA3): a person's act that drops a revoked or denied client's entry so the same login (OAuth: issuer and subject; bearer: the name) is new next time, enrolled again and held for approval; a live client is refused; a `forget` event is written to the audit log and register.
 - NOTES: "MCP over HTTP for cloud AIs", a section per setting and how a person connects a claude.ai custom connector.
 - Tests: `test_oauth.py` (a local test issuer; the right and the wrong audience, expired, wrong issuer, wrong scope, alg none,
   HS256 forged with the public key, a rotated key, keys that cannot be read, the endpoint's statuses and challenges, enrolment,
@@ -45,6 +46,7 @@ Python dependency: the bundle already carries PyJWT and `cryptography` (the `mcp
 
 - The well-known metadata path answers **404** on a node with no `http.issuers` (0.7.0 answered the library's metadata naming
   the node itself as its authorization server, which was wrong: a node hosts none).
+- A revoked or denied OAuth client is no longer refused for good: a person can `forget` it.
 - `facilitator.http.issuers` is no longer refused; a bare list of URLs is refused by name (an entry needs a `name`).
 
 ## [0.7.0] - 2026-11-24

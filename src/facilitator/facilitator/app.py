@@ -264,6 +264,14 @@ class Facilitator:
                 held += 1
         return {"client": name, "status": "denied" if what == "deny" else "revoked", "by": by, "dropped": held}
 
+    def forget_client(self, name: str, by: str) -> dict:
+        """A person's act (ruling OA3): let a revoked or denied client back as new; a live one is refused."""
+        try:
+            c = self.clients.forget(name, by)
+        except clients_mod.ClientError as e:
+            raise FacilitatorError(str(e)) from None
+        return {"client": name, "status": "forgotten", "was": c["status"], "by": by, "auth": c.get("auth", "bearer")}
+
     def held_for_approval(self, name: str) -> list[tuple[str, str]]:
         """(conversation, message) of an HTTP client's messages held for approval and never delivered since."""
         out = []

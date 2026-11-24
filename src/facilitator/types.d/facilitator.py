@@ -257,7 +257,7 @@ def project(led) -> tuple[dict, dict[str, list[str]]]:
     return conv, flags
 
 
-AUDIT_EVENTS = ("enrolled", "approved", "denied", "revoked",                      # an HTTP client's token and its approval (slice N4)
+AUDIT_EVENTS = ("enrolled", "approved", "denied", "revoked", "forget",                    # an HTTP client's token and its approval (slice N4)
                 "join-requested", "join-approved", "join-denied", "node-revoked",   # a node's join and its cut-off (slice N5a)
                 "secret-rotated")
 SUBJECT_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.@:/-]{0,127}")

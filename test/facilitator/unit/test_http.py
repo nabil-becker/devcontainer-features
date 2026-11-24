@@ -304,6 +304,31 @@ def test_a_token_is_shown_once_kept_as_a_hash_and_revoked_at_once():
         e.close()
 
 
+def test_forget_a_bearer_client_gives_its_name_a_new_token_and_is_a_persons_act():
+    e = env()
+    try:
+        fac = e.register_all()
+        tok = fac.enrol_http("cli-one", "you")["token"]
+        try:
+            fac.forget_client("cli-one", "you")
+            raise AssertionError("a live client")
+        except FacilitatorError as err:
+            assert "revoke it first" in str(err)
+        fac.revoke_client("cli-one", "you")
+        r = cli(e, "http", "forget", "cli-one", extra={"CLAUDECODE": "1"})
+        assert r.returncode == 1 and "refuses to run inside an agent's job" in r.stderr, r.stderr
+        assert fac.clients.get("cli-one") is not None
+        r = cli(e, "http", "forget", "cli-one")
+        assert r.returncode == 0 and "forgotten by you" in r.stdout and "http token cli-one" in r.stdout, (r.stdout, r.stderr)
+        assert fac.clients.get("cli-one") is None and fac.clients.check_token(tok) is None
+        assert cli(e, "http", "forget", "cli-one").returncode == 1                 # unknown now
+        new = fac.enrol_http("cli-one", "you")["token"]
+        assert fac.clients.check_token(new)[0] == "cli-one"
+        assert "forget" in [x["event"] for x in fac.clients.audit_log()] and fac.clients.audit_ok()[0]
+    finally:
+        e.close()
+
+
 def test_pending_clients_are_capped_and_the_audit_chain_shows_an_edit():
     e = env()
     try:

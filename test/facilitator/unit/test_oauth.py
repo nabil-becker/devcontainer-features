@@ -44,6 +44,7 @@ import warnings  # noqa: E402
 warnings.simplefilter("ignore")
 import oauth_issuer  # noqa: E402
 from facilitator import clients as clients_mod, endpoint, oauth, participants  # noqa: E402
+from facilitator.app import FacilitatorError  # noqa: E402
 from facilitator.participants import Issuer  # noqa: E402
 
 RES = "https://node.example/mcp"
@@ -378,6 +379,44 @@ def test_an_oauth_client_is_enrolled_held_approved_and_signed_as_oauth():
         log = fac.clients.audit_log()
         assert any(x["event"] == "enrolled" and x["client"] == "corp-alice" and x["by"] == "oauth: corp" for x in log)
         assert t not in json.dumps(fac.clients.all()) and t not in json.dumps(log)               # no token is kept
+    finally:
+        n.close()
+
+
+def test_forget_lets_a_revoked_or_denied_oauth_client_enrol_anew_and_refuses_a_live_one():
+    n = Node()
+    try:
+        fac = n.fac
+        t = n.tok(sub="alice", client_id="claude-web")
+        n.call(t, "who")
+        try:
+            fac.forget_client("corp-alice", "you")
+            raise AssertionError("a live (enrolled) client")
+        except FacilitatorError as err:
+            assert "revoke it first" in str(err), err
+        fac.approve_client("corp-alice", "you")
+        try:
+            fac.forget_client("corp-alice", "you")
+            raise AssertionError("a live (approved) client")
+        except FacilitatorError as err:
+            assert "revoke it first" in str(err), err
+        fac.revoke_client("corp-alice", "you")
+        assert n.raw(n.tok(sub="alice"))[0] == 401
+        r = fac.forget_client("corp-alice", "you")
+        assert r["was"] == "revoked" and fac.clients.get("corp-alice") is None
+        err, text = n.call(n.tok(sub="alice"), "say", {"text": "@jester hi"})        # new: enrolled, held
+        assert not err and "held" in text and fac.clients.get("corp-alice")["status"] == "enrolled", text
+        assert any(p["client"] == "corp-alice" for p in fac.pending_approvals())
+        fac.deny_client("corp-alice", "you")
+        assert fac.forget_client("corp-alice", "you")["was"] == "denied"
+        try:
+            fac.forget_client("nobody", "you")
+            raise AssertionError("unknown")
+        except FacilitatorError as err:
+            assert "no HTTP client nobody" in str(err)
+        evs = [x["event"] for x in fac.clients.audit_log()]
+        assert evs.count("forget") == 2 and fac.clients.audit_ok()[0]
+        assert [x["event"] for x in fac.audit.events()].count("forget") == 2 and fac.audit.verify()[0]
     finally:
         n.close()
 
