@@ -438,7 +438,7 @@ tasks:
         platforms: [linux, darwin]
 
   common:check:
-    desc: 'Fail if a Feature''s copy of a src/common helper (dcf-persist.sh, dcf-curl.sh) differs from the canonical file. Run `task common:sync` to refresh the copies.'
+    desc: 'Fail if a Feature''s copy of a src/common helper (dcf-persist.sh, dcf-curl.sh) differs from the canonical file, or a script''s embedded copy (dcf-skills.sh between its # >>> and # <<< markers in agent-adapter-claude and agent-adapter-copilot) differs from it or has its markers other than once. Run `task common:sync` to refresh the copies.'
     silent: true
     cmds:
       - cmd: |
@@ -450,6 +450,19 @@ tasks:
               [ "$copy" = "$canon" ] && continue
               [ -e "$copy" ] || continue
               if ! cmp -s "$canon" "$copy"; then echo "stale copy: $copy differs from $canon (task common:sync)"; rc=1; fi
+            done
+          done
+          # a helper carried inside a script, between "# >>> <name>" and "# <<< <name> <<<" lines
+          # (dcf-skills.sh in the CLI adapters, which stay one file each)
+          for canon in src/common/*.sh; do
+            name="$(basename "$canon")"
+            for f in $(grep -l -F "# >>> $name" src/*/*.sh local-features/*/*.sh 2>/dev/null); do
+              [ "$f" = "$canon" ] && continue
+              n="$(grep -c -F "# >>> $name" "$f")"
+              if [ "$n" -ne 1 ] || [ "$(grep -c -F "# <<< $name <<<" "$f")" -ne 1 ]; then echo "$f: the $name markers must appear once each"; rc=1; continue; fi
+              if ! awk -v b="# >>> $name" -v e="# <<< $name <<<" 'index($0, e) == 1 { p = 0 } p { print } index($0, b) == 1 { p = 1 }' "$f" | cmp -s "$canon" -; then
+                echo "stale embedded copy: $f differs from $canon between its markers (task common:sync)"; rc=1
+              fi
             done
           done
           [ "$rc" -eq 0 ] && echo "common helper copies are up to date"
@@ -501,9 +514,10 @@ tasks:
           exit "$rc"
 
   test:common-unit:
-    desc: 'Docker-free test of the download helper src/common/dcf-curl.sh: the retry flags (--retry-all-errors when curl has it, read without SIGPIPE; dropped on an older curl), the arguments passed through, curl --help read once; then the real curl against a local server that cuts the first connection mid-transfer (curl exit 56) and mid-TLS-handshake (exit 35, needs openssl): plain curl --retry gives up, dcf_curl gets the file; part of lint. Needs python3.'
+    desc: 'Docker-free test of the download helper src/common/dcf-curl.sh: the retry flags (--retry-all-errors when curl has it, read without SIGPIPE; dropped on an older curl), the arguments passed through, curl --help read once; then the real curl against a local server that cuts the first connection mid-transfer (curl exit 56) and mid-TLS-handshake (exit 35, needs openssl): plain curl --retry gives up, dcf_curl gets the file; and the shared skills hand-over src/common/dcf-skills.sh (skills-shared-helper) sourced alone with a made-up vendor''s settings: two views split into the shared personal folder and each agent''s own folder (SK_OWN), copies marked and an unmarked one untouched, the vendor''s clash and reload hooks called, skills_show, sk_add_dir once and never twice, the start line, shared, off, forget and a bad mode; each adapter carrying it verbatim between its markers. Part of lint. Needs python3.'
     cmds:
       - bash test/common/unit/dcf_curl_test.sh
+      - bash test/common/unit/dcf_skills_test.sh
 
   test:go-task-unit:
     desc: 'Docker-free test of the go-task Feature''s team task aliases: the task-aliases generator over the real task and yq in a temp workspace (the format and every rejected case, golden output with quoting, shadowing a real task, a task alias and an include alias refused, a missing target broken, an alias to an alias refused, never fatal with bad YAML, no team file, no Taskfile, no yq or task, regeneration idempotent and after a change, the flattened include reaching task --list, task <alias> passing its fixed vars, Task 3.54''s duplicate-name failure that is why shadows are refused) and task-features-registry (features.yml byte-identical with taskAliases off, the flattened include with it on); part of lint. Needs task; yq from PATH or the pinned release downloaded through dcf_curl.'
@@ -548,7 +562,7 @@ tasks:
           exit "$rc"
 
   common:sync:
-    desc: 'Copy every src/common/*.sh helper over the copies the other Features carry (a Feature folder must be self-contained when published, so the helper is vendored rather than depended on).'
+    desc: 'Copy every src/common/*.sh helper over the copies the other Features carry (a Feature folder must be self-contained when published, so the helper is vendored rather than depended on), and rewrite an embedded copy between its # >>> and # <<< markers (dcf-skills.sh in the CLI adapters), keeping the script''s own mode.'
     silent: true
     cmds:
       - cmd: |
@@ -559,6 +573,15 @@ tasks:
               [ "$copy" = "$canon" ] && continue
               [ -e "$copy" ] || continue
               cp "$canon" "$copy" && echo "synced $copy"
+            done
+            # an embedded copy: the lines between "# >>> <name>" and "# <<< <name> <<<" replaced
+            for f in $(grep -l -F "# >>> $name" src/*/*.sh local-features/*/*.sh 2>/dev/null); do
+              [ "$f" = "$canon" ] && continue
+              awk -v b="# >>> $name" -v e="# <<< $name <<<" -v c="$canon" '
+                index($0, e) == 1 { skip = 0 }
+                !skip { print }
+                index($0, b) == 1 { while ((getline l < c) > 0) print l; close(c); skip = 1 }' "$f" > "$f.sync.$$" &&
+                cat "$f.sync.$$" > "$f" && rm -f "$f.sync.$$" && echo "synced $f (embedded)"
             done
           done
 

@@ -96,11 +96,30 @@ repeat the bytes of the cut attempt, so a binary is always fetched with
 `dcf_curl`; a justified exception carries `dcf-curl: allow <reason>` on the
 same line.
 
+## `dcf-skills.sh`: the skills hand-over the CLI adapters share
+
+The component registry's skills hand-over (ADR-0064, ADR-0074, ADR-0077) was written twice, once in
+each CLI adapter that takes resolved skills (`agent-adapter-claude` in claude-code,
+`agent-adapter-copilot` in copilot). It is one file now, `src/common/dcf-skills.sh`: the split of an
+agent's view into the CLI's personal skills folder (what every agent's view has alike) and the
+agent's own folder (read through `--add-dir`), the modes `split`, `shared` and `off`, forget, the
+owned-copy marker `.component-registry`, `skills-show`, the `--add-dir` argument and the start line.
+What differs per CLI stays in the adapter as settings: `SK_CLI` (the word its lines start with),
+`SK_OWN` (`.claude/skills`, `.github/skills`), `sk_home` (`CLAUDE_CONFIG_DIR`, `COPILOT_HOME`) and
+three hooks for the CLI's own words (`sk_reload_note`, `sk_handover_clash`, `sk_start_clash`).
+
+Unlike the other two helpers it is neither installed nor a file beside the adapter: an adapter is
+installed and tested as one file, so each carries the helper verbatim **inside** it, between a line
+`# >>> dcf-skills.sh: ...` and a line `# <<< dcf-skills.sh <<<`. `task common:sync` rewrites what
+is between them, and `task common:check` (part of `task lint`) fails when it differs from this file
+or the markers are not there once each. A third CLI adapter adds the markers and its settings.
+`test/common/unit/dcf_skills_test.sh` runs it alone with a made-up vendor's settings.
+
 ## Why copies rather than a dependency
 
-Every Feature that needs `dcf-persist` or `dcf-curl` carries a verbatim copy of
-`src/common/dcf-persist.sh` or `src/common/dcf-curl.sh` (the first installed, the second
-sourced) rather than declaring
+Every Feature that needs `dcf-persist`, `dcf-curl` or `dcf-skills` carries a verbatim copy of
+`src/common/dcf-persist.sh`, `src/common/dcf-curl.sh` or `src/common/dcf-skills.sh` (the first
+installed, the second sourced, the third inside the adapter script) rather than declaring
 `dependsOn` on this Feature: `devcontainer features test` cannot resolve a
 `dependsOn` on an OCI reference that has not been published yet, so the
 Features could not be tested before the first release, and the official

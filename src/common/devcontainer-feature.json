@@ -1,8 +1,8 @@
 {
   "id": "common",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "name": "Common helpers (devcontainer-features)",
-  "description": "Shared helpers used by this collection's Features: dcf-persist (installed, also for a repo's own post-create scripts), which makes a tool's state directory (a named volume or a bind mount) usable by the remote user and reports what backs it; and dcf-curl.sh, the download helper every installer sources so each download retries every error.",
+  "description": "Shared helpers used by this collection's Features: dcf-persist (installed, also for a repo's own post-create scripts), which makes a tool's state directory (a named volume or a bind mount) usable by the remote user and reports what backs it; and dcf-curl.sh, the download helper every installer sources so each download retries every error; and dcf-skills.sh, the component registry's skills hand-over that each CLI adapter carries inside its script (not installed).",
   "documentationURL": "https://github.com/nabil-becker/devcontainer-features/tree/main/src/common",
   "licenseURL": "https://github.com/nabil-becker/devcontainer-features/blob/main/LICENSE",
   "options": {

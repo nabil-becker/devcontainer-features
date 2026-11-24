@@ -8,6 +8,15 @@ here; `task lint` fails when the entry is missing.
 
 Entries from 1.0.0 to 1.9.7 were generated from the commit history (`.github/scripts/changelog.py backfill`) and the "Changes in x.y.z" sections that NOTES.md used to hold; most list commit subjects as written then; the newest of them is in wording for users.
 
+## [1.14.2] - 2026-11-24
+
+### Changed
+
+- The skills hand-over code (`skills`, `skills-show`, the `--add-dir` folder and the start line) is
+  now the collection's shared helper `dcf-skills.sh`, carried inside `agent-adapter-claude` (backlog
+  `skills-shared-helper`). No change in behaviour: the same files, modes, folders and lines,
+  checked byte for byte before and after in `split`, `shared`, `off` and forget. Nothing to do.
+
 ## [1.14.1] - 2026-11-23
 
 ### Changed

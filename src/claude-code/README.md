@@ -249,6 +249,11 @@ here stay. How to override a template: the component-registry notes, "Vendor tem
 
 ### Each agent its own registry skills (1.14.0)
 
+The hand-over code (this verb, `skills-show`, the `--add-dir` folder and the start line) is the
+collection's shared helper `src/common/dcf-skills.sh`, carried inside the adapter and kept in step
+with Copilot's by `task common:check` (claude-code 1.14.2); only Claude Code's places and words are
+the adapter's own.
+
 Agents with different `registry-path`s in one container each read their own resolved skills, under
 one login and one Claude Code state ([ADR-0074](https://github.com/nabil-becker/devcontainer-features/blob/main/docs/adr/0074-each-agent-reads-the-skills-its-registry-path-resolves-through-an-added-directory-and-the-personal-folder-keeps-what-every-agent-shares.md)).
 
@@ -585,6 +590,15 @@ the CLI) contend for `.claude.json.lock`; run one.
 
 ## Changes
 
+### [1.14.2] - 2026-11-24
+
+#### Changed
+
+- The skills hand-over code (`skills`, `skills-show`, the `--add-dir` folder and the start line) is
+  now the collection's shared helper `dcf-skills.sh`, carried inside `agent-adapter-claude` (backlog
+  `skills-shared-helper`). No change in behaviour: the same files, modes, folders and lines,
+  checked byte for byte before and after in `split`, `shared`, `off` and forget. Nothing to do.
+
 ### [1.14.1] - 2026-11-23
 
 #### Changed
@@ -626,23 +640,6 @@ the CLI) contend for `.claude.json.lock`; run one.
 Nothing to do where every agent shares one who-you-are path: everything stays personal, and the
 added directory is empty. A background session started before this version lacks the flag; its
 wake says so, and `/add-dir <folder>` in it (the line names the folder) reads its own skills.
-
-### [1.13.0] - 2026-11-20
-
-#### Added
-
-- **The model of an agent definition.** `agent-adapter-claude` reads `AGENT_MODEL` (set by the
-  participant component 1.3.0 from the component registry's agent definition, component-registry
-  1.6.0) and passes it as `--model` on `start-bg`, `new` and `resume`, in place of any `--model`
-  (or `--model=`) in the agent's arguments: the registry wins (the Operator's ruling of
-  2026-11-21), and one line says what it replaced. A wake stays bare and keeps the options its
-  session was saved with; a value that is not one word is left out with a note.
-- With `participants: true`, the participant component 1.3.0: agent definitions from the component
-  registry at an agent's start (the model, and the skills, replacing the list entry's; see the
-  notes).
-
-Nothing to do: without the `component-registry` Feature, or with no agent definition, sessions start
-as before.
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/claude-code/CHANGELOG.md).
 

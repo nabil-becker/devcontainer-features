@@ -8,6 +8,16 @@ here; `task lint` fails when the entry is missing.
 
 Entries from 1.0.0 to 1.0.2 were generated from the commit history (`.github/scripts/changelog.py backfill`) and the "Changes in x.y.z" sections that NOTES.md used to hold; most list commit subjects as written then; the newest of them is in wording for users.
 
+## [1.0.5] - 2026-11-24
+
+### Added
+
+- `dcf-skills.sh` (backlog `skills-shared-helper`): the component registry's skills hand-over that
+  `agent-adapter-claude` and `agent-adapter-copilot` both carried, now one file; each adapter
+  carries it verbatim inside its script, between marker lines, and `task common:check` fails on a
+  stale copy (`task common:sync` refreshes it). Nothing is installed by this Feature for it; no
+  change in behaviour.
+
 ## [1.0.4] - 2026-11-03
 
 ### Changed
