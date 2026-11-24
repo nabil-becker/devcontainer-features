@@ -1415,7 +1415,7 @@ object = "cli-adapter"
 [node-role]
 type = "mechanism"
 term = "Node role"
-summary = "What a facilitator node is in a mesh, set in mesh.yml: standalone (default), spoke or hub."
+summary = "What a facilitator node is in a mesh, set in mesh.yml: standalone (default), spoke, hub or peer."
 
 [two-locks]
 type = "mechanism"
@@ -1471,3 +1471,33 @@ summary = "The data.via field naming the HTTP client the node vouches for on a m
 type = "mechanism"
 term = "Node issuer"
 summary = "What signs a domain's node certificates: the node itself by default, with the CA key in OpenBao, else an ssh-agent, else a file."
+
+[peer-node]
+type = "mechanism"
+term = "Peer node"
+summary = "A node with role peer: its own trust domain and CA, paired with other peers by invite and token."
+
+[public-domain]
+type = "mechanism"
+term = "Public domain"
+summary = "A second trust domain a node opens with its own join endpoint, listener and CA bundle; shows only public agents."
+
+[join-request]
+type = "mechanism"
+term = "Join request"
+summary = "A public node's ask to join, held until a person approves or denies it."
+
+[addressed-copy]
+type = "mechanism"
+term = "Addressed copy"
+summary = "Replication rule kept at conversation level: a public node gets only conversations it is a member of."
+
+[mesh-secret-rotation]
+type = "mechanism"
+term = "Mesh secret rotation"
+summary = "Replacing the mesh's SLIM shared secret after a revoke, handed to the remaining nodes under the old one."
+
+[audit-register]
+type = "mechanism"
+term = "Audit register"
+summary = "The signed register of type audit holding enrolment, join, approve, revoke and rotate events."

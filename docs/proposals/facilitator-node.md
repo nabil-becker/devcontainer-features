@@ -1505,3 +1505,16 @@ What slice N4 found where a ruling could not be built as written, and the Operat
   ssh-agent signs the certificate's bytes as they are, and SLIM accepts the result; RSA and ECDSA keys hash
   first and FIDO keys cannot sign. It also found that SLIM refuses every certificate from a CA carrying a URI
   name constraint, so the built-in issuer keeps only the DNS constraint (lock two still checks the domain).
+
+## Rulings on slice N5a (2026-11-24)
+
+What slice N5a found where a ruling could not be built as written, and the Operator's ruling on each, all as recommended.
+
+- **PP1, addressed copy at conversation level.** A public node gets only the conversations it is a member of, and in
+  those only messages addressed to it (other writes are refused); `verify` reports "partial (copy addressed)".
+  Rejected: true partial replicas (they need a register-engine change).
+- **PP2, a peer is its own issuer.** A CA (DNS-only name constraint) whose key is a file in its volume, mode 600, or in
+  OpenBao or an ssh-agent per K5. Widens ADR-0069 decision 4, as ADR 0078 does for a hub (ADR 0080).
+- **PP3, a node away during a secret rotation** gets the new secret by hand (`node secret`); an automatic re-fetch is a
+  later backlog item.
+- **PP4, a revoke stays per node.** One peer's revoke is not shared; each node revokes for itself.
