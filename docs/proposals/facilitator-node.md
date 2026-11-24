@@ -1559,3 +1559,11 @@ The Operator ruled HK1 to HK5 as recommended (the findings are in "Findings of s
   the mount, the import and the role.
 - **HK5, the Rancher Desktop overlay is run once on the Operator's workstation** before `hub-workstation-networking`
   closes; if its LoadBalancer binds loopback only, publish on all interfaces or name the hub `host.docker.internal`.
+
+## Rulings on slice N5b (2026-11-24)
+
+- **OA1, who an OAuth client is: option A, ruled 2026-11-24.** An OAuth client is an issuer and a subject (one
+  person's login), not the connector's `client_id`: one connector (one `client_id`) is shared by everyone who adds
+  it and may register a new `client_id` each time, so each person is enrolled and approved on their own (per
+  client, ruling HC4) and the record names who it was; `client_id` is kept as a label. Rejected: approving the
+  connector (B: one approval would let in everyone who uses it).
