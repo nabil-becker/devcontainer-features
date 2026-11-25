@@ -709,6 +709,69 @@ def test_the_http_commands_and_the_agent_job_refusal():
         e.close()
 
 
+def test_http_insecure_lets_a_lan_url_be_plain_http_with_a_warning_and_never_under_open():
+    """Ruling OA6: `http.insecure: true` waives https for http.url and TLS beyond loopback, warns, and is refused under open."""
+    lan = ("facilitator:\n  http:\n    listen: 0.0.0.0:8443\n    url: http://192.168.1.20:8443\n"
+           "    issuers:\n      - name: corp\n        issuer: https://idp.example\n")
+    # refused without the flag: the url must be https, and beyond loopback TLS is required
+    e = env(fac_yml=lan)
+    try:
+        ok, why = e.fac().http_ready()
+        assert not ok and "must be https" in why and "http.insecure: true" in why, why
+    finally:
+        e.close()
+    # accepted with it: the TLS waiver (no tls_cert, no behind_proxy) and the warning in check
+    e = env(fac_yml=lan.replace("    url:", "    insecure: true\n    url:"))
+    try:
+        assert e.fac().http_ready() == (True, "ok"), e.fac().http_ready()
+        h = e.fac().participants()[1].http
+        assert h.insecure is True and h.tls_cert is None and not h.behind_proxy
+        from facilitator import endpoint
+        assert endpoint.base_url(h) == "http://192.168.1.20:8443"      # the metadata advertises the url as given
+        assert endpoint.base_url(h) + endpoint.PATH == "http://192.168.1.20:8443/mcp"
+        chk = cli(e, "check", "--json")
+        parts = {p["part"]: p for p in json.loads(chk.stdout)}
+        w = parts["http insecure"]
+        assert w["ready"] is True and w["detail"].startswith("warning:") and "tokens travel in plain text" in w["detail"], w
+        assert "plain (http.insecure)" in parts["http endpoint"]["detail"]
+        from facilitator import oauth
+        iss = h.issuers
+        assert oauth.metadata(endpoint.base_url(h) + endpoint.PATH, iss)["resource"] == "http://192.168.1.20:8443/mcp"
+    finally:
+        e.close()
+    # bearer tokens (no issuers) follow the same rule: beyond loopback needs TLS unless insecure
+    for yml, want in (("facilitator:\n  http:\n    listen: 0.0.0.0:8443\n    url: http://10.0.0.5:8443\n", False),
+                      ("facilitator:\n  http:\n    listen: 0.0.0.0:8443\n    url: http://10.0.0.5:8443\n    insecure: true\n", True)):
+        e = env(fac_yml=yml)
+        try:
+            assert e.fac().http_ready()[0] is want, e.fac().http_ready()
+        finally:
+            e.close()
+    # refused under open, in check and for the endpoint
+    e = env(mesh="preset: open\n", fac_yml=lan.replace("    url:", "    insecure: true\n    url:"))
+    try:
+        ok, why = e.fac().http_ready()
+        assert not ok and "refused under preset: open" in why, why
+        chk = cli(e, "check", "--json")
+        parts = {p["part"]: p for p in json.loads(chk.stdout)}
+        assert parts["http endpoint"]["ready"] is False and "preset: open" in parts["http endpoint"]["detail"] and chk.returncode == 1
+        from facilitator import endpoint
+        try:
+            endpoint.Daemon(e.fac())
+            raise AssertionError("the endpoint started under open with http.insecure")
+        except endpoint.EndpointError as x:
+            assert "preset: open" in str(x)
+    finally:
+        e.close()
+    # a non-boolean value is a lint finding like the other flags
+    e = env(fac_yml="facilitator:\n  http:\n    listen: 127.0.0.1:8443\n    insecure: maybe\n")
+    try:
+        ok, why = e.fac().http_ready()
+        assert not ok and "insecure" in why, why
+    finally:
+        e.close()
+
+
 def test_check_says_why_http_is_refused():
     e = env(mesh="preset: solo\n")
     try:

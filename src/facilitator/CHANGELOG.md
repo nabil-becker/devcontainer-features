@@ -36,6 +36,7 @@ Python dependency: the bundle already carries PyJWT and `cryptography` (the `mcp
 - **`facilitator http issuers`** reads each issuer's keys now and says which are readable; `facilitator http list` shows an OAuth
   client's issuer and subject; `check` has an `http oauth` line.
 - **`facilitator http forget <client>`** (task `facilitator:http-forget`, ruling OA3): a person's act that drops a revoked or denied client's entry so the same login (OAuth: issuer and subject; bearer: the name) is new next time, enrolled again and held for approval; a live client is refused; a `forget` event is written to the audit log and register.
+- **`facilitator.http.insecure: true`** (ruling OA6): plain `http://` for `http.url` on any address, and the TLS rule beyond loopback waived, for a local machine or a test environment; every start and `check` warn that tokens travel in plain text; refused under `preset: open`.
 - NOTES: "MCP over HTTP for cloud AIs", a section per setting and how a person connects a claude.ai custom connector.
 - Tests: `test_oauth.py` (a local test issuer; the right and the wrong audience, expired, wrong issuer, wrong scope, alg none,
   HS256 forged with the public key, a rotated key, keys that cannot be read, the endpoint's statuses and challenges, enrolment,

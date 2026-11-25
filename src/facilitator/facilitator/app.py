@@ -212,11 +212,14 @@ class Facilitator:
         if self.mesh.limit(lv, "approval")[0] == "first-contact" and not cfg.humans:
             return False, ("approval: first-contact at level " + lv + " needs a person to approve, and facilitator.yml's "
                            "humans names nobody")
+        if h.insecure and self.mesh.preset == "open":
+            return False, ("http.insecure: true is refused under preset: open (a node reachable by strangers never runs "
+                           "OAuth or bearer tokens over plain http); remove it, or use TLS")
         if h.active:
             host, _ = mesh_mod.parse_addr(h.listen)
-            if not mesh_mod.is_loopback(host) and not (h.tls_cert and h.tls_key) and not h.behind_proxy:
+            if not mesh_mod.is_loopback(host) and not (h.tls_cert and h.tls_key) and not h.behind_proxy and not h.insecure:
                 return False, (f"http.listen {h.listen} is beyond loopback: TLS is required (http.tls_cert and "
-                               "http.tls_key) or http.behind_proxy: true (a proxy ends TLS)")
+                               "http.tls_key) or http.behind_proxy: true (a proxy ends TLS), or http.insecure: true for a local machine or a test environment")
             if not mesh_mod.is_loopback(host) and not (h.url or h.allowed_hosts):
                 return False, (f"http.listen {h.listen} is beyond loopback: name the address clients use (http.url) or "
                                "http.allowed_hosts, so the Host header can be checked (DNS rebinding)")

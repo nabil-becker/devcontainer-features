@@ -48,7 +48,7 @@ class Participant:
                 "description": self.description, "skills": list(self.skills), "definition": self.definition}
 
 
-HTTP_KEYS = ("enabled", "listen", "url", "tls_cert", "tls_key", "behind_proxy", "allowed_hosts", "allowed_origins",
+HTTP_KEYS = ("enabled", "listen", "url", "tls_cert", "tls_key", "behind_proxy", "insecure", "allowed_hosts", "allowed_origins",
              "issuers")
 
 
@@ -83,6 +83,7 @@ class HttpConfig:
     tls_cert: str | None = None
     tls_key: str | None = None
     behind_proxy: bool = False
+    insecure: bool = False                    # plain http on any address, for a local machine or a test environment (ruling OA6)
     allowed_hosts: list[str] = field(default_factory=list)
     allowed_origins: list[str] = field(default_factory=list)
     issuers: list["Issuer"] = field(default_factory=list)     # the OAuth authorization servers whose tokens are accepted (slice N5b)
@@ -251,7 +252,7 @@ def _parse_http(cfg: FacilitatorConfig, v, where: str) -> None:
         try:
             if k not in HTTP_KEYS:
                 err.append(f"{where}: facilitator.http.{k}: unknown; http has {', '.join(HTTP_KEYS)}")
-            elif k in ("enabled", "behind_proxy"):
+            elif k in ("enabled", "behind_proxy", "insecure"):
                 setattr(h, k, _bool(x, f"facilitator.http.{k}", where))
             elif k in ("listen", "url", "tls_cert", "tls_key"):
                 setattr(h, k, str(x) if x not in (None, "") else None)
@@ -273,9 +274,19 @@ def _parse_http(cfg: FacilitatorConfig, v, where: str) -> None:
         if not h.url:
             err.append(f"{where}: facilitator.http.issuers: needs http.url, the public HTTPS address of this node (a cloud AI "
                        "reaches it there, and the tokens' audience is that address)")
-        elif not _https_or_loopback(h.url):
+        elif not _https_or_loopback(h.url) and not (h.insecure and _http_url(h.url)):
             err.append(f"{where}: facilitator.http.url {h.url}: with issuers it must be https:// (http:// only for a loopback "
-                       "host, for tests)")
+                       "host, or on any address with http.insecure: true, for a local machine or a test environment)")
+
+
+def _http_url(url: str) -> bool:
+    """A plain http:// URL with a host and no query or fragment (what http.insecure admits)."""
+    from urllib.parse import urlsplit
+    try:
+        u = urlsplit(url)
+        return u.scheme == "http" and bool(u.hostname) and not u.fragment and not u.query
+    except ValueError:
+        return False
 
 
 def _https_or_loopback(url: str) -> bool:

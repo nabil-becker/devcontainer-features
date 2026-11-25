@@ -45,6 +45,9 @@ WELL_KNOWN = "/.well-known/"
 METADATA_PATHS = ("/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource" + PATH)
 
 
+INSECURE_WARNING = ("http.insecure: tokens travel in plain text; for a local machine or a test environment only")
+
+
 class EndpointError(RuntimeError):
     pass
 
@@ -432,6 +435,8 @@ class Daemon:
         status = h / "status.json"
         self.fac.state.write_private(status, json.dumps({"pid": os.getpid(), "listen": self.cfg.listen, "url": base_url(self.cfg),
                                                          "level": self.level, "started": clients_mod.now_iso()}) + "\n")
+        if self.cfg.insecure:
+            print("facilitator: warning: " + INSECURE_WARNING, file=sys.stderr, flush=True)
         conf = uvicorn.Config(self.build(), host=host, port=port, log_level="warning", access_log=False, server_header=False,
                               ssl_certfile=self.cfg.tls_cert, ssl_keyfile=self.cfg.tls_key,
                               proxy_headers=self.cfg.behind_proxy, forwarded_allow_ips="*" if self.cfg.behind_proxy else None,

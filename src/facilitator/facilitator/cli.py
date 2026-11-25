@@ -227,8 +227,8 @@ def http_parts(fac) -> list[tuple]:
     except ListError:
         return out
     cfg = fcfg.http
+    from . import endpoint
     if cfg.issuers and not fcfg.http_errors:
-        from . import endpoint
         b = endpoint.base_url(cfg)
         out.append(("http oauth", True, "resource server for " + ", ".join(f"{i.name} ({i.issuer})" for i in cfg.issuers)
                     + f"; resource {b}{endpoint.PATH}, metadata {b}{endpoint.METADATA_PATHS[1]}; a client is an (issuer, subject), "
@@ -238,9 +238,11 @@ def http_parts(fac) -> list[tuple]:
         out.append(("http endpoint", True, "off (facilitator.http.listen is not set: nothing is open)", False))
     else:
         detail = (f"{cfg.listen}" + (" (disabled: http.enabled false)" if not cfg.enabled else "")
-                  + (" TLS" if cfg.tls_cert else " behind a proxy" if cfg.behind_proxy else " plain, loopback")) if ok \
+                  + (" TLS" if cfg.tls_cert else " behind a proxy" if cfg.behind_proxy else " plain (http.insecure)" if cfg.insecure else " plain, loopback")) if ok \
             else f"refused: {why}"
         out.append(("http endpoint", ok, detail, cfg.active or bool(fcfg.http_errors)))
+    if cfg.insecure and not fcfg.http_errors:
+        out.append(("http insecure", True, "warning: " + endpoint.INSECURE_WARNING, False))
     if cfg.configured or fac.clients.all():
         lv = fac.mesh.http_level()
         ap = fac.mesh.limit(lv, "approval")[0]

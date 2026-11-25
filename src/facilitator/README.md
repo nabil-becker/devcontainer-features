@@ -787,6 +787,7 @@ facilitator:
 | `http.url` | from `listen` | What the clients dial (also the protected-resource metadata's name). |
 | `http.tls_cert`, `http.tls_key` | unset | PEM files; both or neither. Mode 600 for the key. |
 | `http.behind_proxy` | `false` | A proxy ends TLS; uvicorn then trusts the proxy's `X-Forwarded-For` for the per-address limits, so only the proxy may reach the port. |
+| `http.insecure` | `false` | Plain `http://` for a local machine or a test environment (0.8.0): `http.url` may be `http://` on any address, with or without issuers, and the TLS rule beyond loopback is waived. Every start logs, and `check` shows, a warning: "http.insecure: tokens travel in plain text; for a local machine or a test environment only" (bearer tokens included). Refused under `preset: open`: `check` fails and the endpoint does not start. |
 | `http.allowed_hosts`, `http.allowed_origins` | none | Host and Origin values accepted besides the derived ones. |
 | `http.issuers` | none | The OAuth authorization servers whose access tokens are accepted (0.8.0, below). Needs `http.url`. |
 
@@ -907,7 +908,7 @@ facilitator:
 | `issuers[].algorithms` | `[RS256, ES256]` | Any of RS256/384/512, PS256/384/512, ES256/384/512, EdDSA. **`none` and every `HS*` are refused, by `check` and again at the gate** (no shared-secret token, no algorithm confusion). |
 | `issuers[].scope` | `facilitator:participate` | One scope name the token must carry, in `scope` (space-separated) or `scp` (a list). |
 | `issuers[].audience` | the resource URL | The `aud` the token must carry. RFC 8707 says the token is issued for the resource, `<http.url>/mcp`; some servers fix their own audience (an API identifier), and then it is named here. |
-| `http.url` | required with `issuers` | The public address a cloud AI dials. With issuers it must be `https://` (`http://` only on a loopback host, for tests): TLS ends here (`tls_cert` and `tls_key`) or at a proxy (`behind_proxy: true`), as ADR-0070 decision 8 says for any address beyond loopback. |
+| `http.url` | required with `issuers` | The public address a cloud AI dials. With issuers it must be `https://` (`http://` only on a loopback host, or on any address with `http.insecure: true`, for a local machine or a test environment; the metadata then advertises the http URL as given, and `check` and the log warn that tokens travel in plain text): TLS ends here (`tls_cert` and `tls_key`) or at a proxy (`behind_proxy: true`), as ADR-0070 decision 8 says for any address beyond loopback. |
 
 `check` lints all of this and **fetches nothing** (it prints the issuers, the resource and the metadata URLs); a mistake is
 named by option and the endpoint does not open. `facilitator http issuers` is the one command that fetches: it reads each
@@ -1421,6 +1422,7 @@ Python dependency: the bundle already carries PyJWT and `cryptography` (the `mcp
 - **`facilitator http issuers`** reads each issuer's keys now and says which are readable; `facilitator http list` shows an OAuth
   client's issuer and subject; `check` has an `http oauth` line.
 - **`facilitator http forget <client>`** (task `facilitator:http-forget`, ruling OA3): a person's act that drops a revoked or denied client's entry so the same login (OAuth: issuer and subject; bearer: the name) is new next time, enrolled again and held for approval; a live client is refused; a `forget` event is written to the audit log and register.
+- **`facilitator.http.insecure: true`** (ruling OA6): plain `http://` for `http.url` on any address, and the TLS rule beyond loopback waived, for a local machine or a test environment; every start and `check` warn that tokens travel in plain text; refused under `preset: open`.
 - NOTES: "MCP over HTTP for cloud AIs", a section per setting and how a person connects a claude.ai custom connector.
 - Tests: `test_oauth.py` (a local test issuer; the right and the wrong audience, expired, wrong issuer, wrong scope, alg none,
   HS256 forged with the public key, a rotated key, keys that cannot be read, the endpoint's statuses and challenges, enrolment,
