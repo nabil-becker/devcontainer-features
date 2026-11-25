@@ -12,6 +12,8 @@
 # spokes; a private caller does not see A's local-only agent; a used token, a certificate from an untrusted CA
 # (lock one) and the spike's impostor (a partner.test certificate claiming corp.test: lock two) are refused; the
 # hub restarts and the spokes reconnect; a spoke that goes away gets its held message when it comes back; check
+# gate A (0.9.0): spoke-b's limits.private.approval: every-message holds each message of spoke-a until its person approves it
+# (mail lists it, the turn hook counts it, approve delivers, deny refuses with a signed notice, verify shows the approval);
 # names a TLS refusal from the SLIM log; a revoked spoke is refused, by the hub and by the other spoke, and gets no
 # renewal; and both spokes run an agent named echo: each is reached by its qualified name (@echo.spoke-a,
 # @echo.spoke-b), and the bare @echo is refused with both names (ruling H5). Removes every container, volume and
@@ -385,6 +387,50 @@ docker start "$p-spoke-b" >/dev/null
 if r="$(agent spoke-b answer b1 120 "back again")" && echo "$r" | grep -q 'this waits while you are away'; then
   ok "spoke-b came back and received the held message"; else no "the held message after spoke-b came back: $r"; fi
 
+# ---------------------------------------------------------------- gate A: spoke-b asks a person to approve every message (0.9.0)
+# spoke-b's own mesh.yml decides what it accepts: every message from another node is held until its person (pb) approves it.
+printf 'limits:\n  private:\n    approval: every-message\n' >>"$tmp/spoke-b/mesh.yml"
+docker restart "$p-spoke-b" >/dev/null
+wait_for 120 seen spoke-b a1 || true
+out="$(fx spoke-b check 2>&1 || true)"
+case "$out" in *"local none; private every-message (mesh.yml)"*) ok "check on spoke-b shows the effective approval: local none; private every-message (mesh.yml)" ;;
+  *) no "check's approval row on spoke-b: $(echo "$out" | grep approval)" ;; esac
+held_ids() { fx spoke-b mail --as pb --json | jget '" ".join(h["message_id"] for h in d["held"])'; }
+conv3="$(agent spoke-a open pa b1 -- "@b1 gate A, message one" | jget 'd["conversation"]')"
+# shellcheck disable=SC2329  # run by wait_for
+has_held() { [ -n "$(held_ids)" ]; }
+if wait_for 60 has_held; then
+  ok "spoke-b holds pa's message: it is in mail's held list"
+else no "no held message on spoke-b"; fi
+m1="$(held_ids | awk '{print $1}')"
+case "$(fx spoke-b mail --as pb)" in *"HELD $m1 from pa.spoke-a (node spoke-a, private, every-message) in $conv3"*"gate A, message one"*) ok "mail names the sender with its node, the conversation and the first line" ;;
+  *) no "mail's held line: $(fx spoke-b mail --as pb)" ;; esac
+case "$(fx spoke-b mail --as pb --notice)" in *"1 message held for your approval"*) ok "the turn hook line counts it: $(fx spoke-b mail --as pb --notice)" ;; *) no "the turn hook line: $(fx spoke-b mail --as pb --notice)" ;; esac
+if [ "$(agent spoke-b answer b1 8 "never sent" | jget 'd["received"]')" = None ]; then ok "b1 receives nothing while the message is held"; else no "b1 received a held message"; fi
+if wait_for 30 sh -c "docker exec $p-spoke-a facilitator transcript --conv $conv3 | grep -q 'held at spoke-b'"; then
+  ok "the sender's replica shows the signed notice 'held at spoke-b'"; else no "no held notice on spoke-a"; fi
+if out="$(fx spoke-b approve "$m1" --as pb 2>&1)"; then ok "approve: ${out#facilitator: }"; else no "approve: $out"; fi
+if r="$(agent spoke-b answer b1 30 "approved and answered")" && echo "$r" | grep -q 'gate A, message one'; then ok "after the approval b1 received the message"
+else no "b1 after the approval: $r"; fi
+if fx spoke-b verify --conv "$conv3" | grep -q "approved by a person at spoke-b (pb; audit entry"; then ok "verify shows that a person approved the message"
+else no "verify does not show the approval: $(fx spoke-b verify --conv "$conv3")"; fi
+if fx spoke-b audit show | grep -q "message-approved.*$m1"; then ok "the approval is an entry of the signed audit register"; else no "audit: $(fx spoke-b audit show)"; fi
+agent spoke-a say pa "$conv3" "@b1 gate A, message two" >/dev/null
+wait_for 60 has_held || true
+m2="$(held_ids | awk '{print $1}')"
+if [ -n "$m2" ] && [ "$m2" != "$m1" ] && out="$(fx spoke-b deny "$m2" --as pb 2>&1)"; then ok "deny: ${out#facilitator: }"; else no "deny of the second message ($m2): ${out:-}"; fi
+if [ "$(agent spoke-b answer b1 8 "never sent" | jget 'd["received"]')" = None ]; then ok "a denied message is never delivered to b1"; else no "b1 received the denied message"; fi
+if wait_for 30 sh -c "docker exec $p-spoke-a facilitator transcript --conv $conv3 | grep -q 'denied by pb at spoke-b'"; then
+  ok "the sender's node shows the signed notice 'denied by pb at spoke-b' (the message is refused)"; else no "no denied notice on spoke-a"; fi
+if [ -z "$(held_ids)" ]; then ok "nothing waits any more"; else no "still held: $(held_ids)"; fi
+if fx spoke-b approve "$m2" --as pb >/dev/null 2>&1; then no "a denied message was approved again"; else ok "a denied message cannot be approved again"; fi
+# spoke-a asks nothing: what spoke-b sends it flows (each node restricts by its own mesh.yml)
+agent spoke-b say pb "$conv3" "@pa one for spoke-a" >/dev/null 2>&1 || true
+if [ -z "$(fx spoke-a mail --as pa --json | jget '" ".join(h["message_id"] for h in d["held"])')" ]; then ok "spoke-a, which asks for no approval, holds nothing"; else no "spoke-a holds a message"; fi
+for n in spoke-a spoke-b; do
+  if out="$(fx "$n" verify --conv "$conv3" 2>&1)"; then ok "verify of $conv3 on $n: ${out##*: }"; else no "verify of $conv3 on $n: $out"; fi
+done
+
 # ---------------------------------------------------------------- check reads TLS refusals from the SLIM log
 sed -i 's/hub_name: .*/hub_name: wrong.corp.test/' "$tmp/spoke-a/mesh.yml"
 docker restart "$p-spoke-a" >/dev/null
@@ -406,7 +452,7 @@ if wait_for 30 sh -c "docker exec $p-spoke-a cat /var/lib/devcontainer-features/
 else no "spoke-a did not refuse spoke-b"; fi
 if wait_for 30 sh -c "docker exec $p-hub cat /var/lib/devcontainer-features/facilitator/mesh/refused.log | grep -q 'from spoke-b.*revoked'"; then
   ok "the hub refuses the revoked spoke-b (its hello and its renewal): $(docker exec "$p-hub" sh -c 'grep spoke-b /var/lib/devcontainer-features/facilitator/mesh/refused.log | tail -1')"
-else no "the hub did not refuse spoke-b"; fi
+else no "the hub did not refuse spoke-b"; docker exec "$p-hub" cat /var/lib/devcontainer-features/facilitator/mesh/refused.log || true; fi
 if out="$(fx spoke-a verify --conv "$conv" 2>&1)"; then ok "after the revoke, verify on spoke-a still passes: what spoke-b signed before stays readable"
 else no "verify on spoke-a after the revoke: $out"; fi
 out="$(fx spoke-b node join --token "$(docker exec "$p-hub" facilitator node invite 2>/dev/null)" 2>&1 || true)"

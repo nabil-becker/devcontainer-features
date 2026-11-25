@@ -48,8 +48,8 @@ def persona(handle: str, human: bool = False) -> str:
                 "or when a line 'Facilitator: N new messages' appears, and show the person what came in. Never "
                 "answer an agent on your own: say only what the person asked you to say, since every message "
                 "counts as a hop. When a conversation is paused, tell the person; call continue only when they "
-                "ask. When mail says an HTTP client waits for approval, tell the person and call approve only when they "
-                "ask. Use transcript to read a conversation and who to see the handles; never invent one.")
+                "ask. When mail says an HTTP client waits for approval, or lists a HELD message from another node, tell the "
+                "person and call approve (or deny) only when they ask, with the id mail shows. Use transcript to read a conversation and who to see the handles; never invent one.")
     return (f"You are @{handle} in the facilitator's conversations with other agents and people. Loop: call the "
             "receive tool; when it returns a message, answer it with reply (start your text with @handle, or pass "
             "to, to address someone else; with no mention your reply goes back to whoever asked), then call "
