@@ -1,0 +1,13 @@
+# This devhost as a spoke of the workstation hub (workstation-hub): the hub runs on Rancher Desktop's Kubernetes
+# (.devcontainer/facilitator-workstation, git-ignored; task facilitator:workstation-hub) and answers at
+# host.docker.internal. `facilitator node join --token <token>` (a person's act) writes node.hub, hub_name,
+# hub_node and domain below.
+preset: team
+role: spoke
+node:
+  directory:
+    peering: false
+trust:
+  workstation.example: private
+expose:
+  "*": local          # an agent opts outward, never inward
