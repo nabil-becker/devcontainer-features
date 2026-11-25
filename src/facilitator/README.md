@@ -1482,6 +1482,8 @@ Python dependency: the bundle already carries PyJWT and `cryptography` (the `mcp
   the node itself as its authorization server, which was wrong: a node hosts none).
 - A revoked or denied OAuth client is no longer refused for good: a person can `forget` it.
 - `facilitator.http.issuers` is no longer refused; a bare list of URLs is refused by name (an entry needs a `name`).
+- `bundleVersion` defaults to `0.8.0`: the Feature installs the published node bundle `facilitator-bundle-v0.8.0`
+  (amd64 and arm64), pinned by SHA-256 in `digests.txt`.
 
 ### [0.7.0] - 2026-11-24
 
