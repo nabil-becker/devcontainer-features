@@ -83,8 +83,16 @@ Rejected: it approves a sender once, not each command, and it asks nothing of la
 - Each devhost that joins the mesh needs the `mesh` agent and the exposure setting in its
   `mesh.yml`; the office gets them when it joins.
 
+## Rulings on the build (2026-11-25)
+
+The Operator ruled AP1 to AP4 as recommended: (AP1) under `per-conversation` a denial answers that message only, and the
+sender's next message is held again; (AP2) the gate holds what reaches an agent, and a message to a person still goes to
+their `mail`; (AP3) the receiving node holds delivery, not the replicated data; (AP4) the turn-hook count may lag after a
+held message ages past 7 days.
+
 ## Change log
 
 | Date | Change |
 |---|---|
 | 2026-11-25 | First draft; accepted by the Operator ("both, layered"). |
+| 2026-11-25 | The Operator ruled AP1 to AP4 as recommended. |
