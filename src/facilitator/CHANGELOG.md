@@ -37,6 +37,7 @@ Python dependency: the bundle already carries PyJWT and `cryptography` (the `mcp
   client's issuer and subject; `check` has an `http oauth` line.
 - **`facilitator http forget <client>`** (task `facilitator:http-forget`, ruling OA3): a person's act that drops a revoked or denied client's entry so the same login (OAuth: issuer and subject; bearer: the name) is new next time, enrolled again and held for approval; a live client is refused; a `forget` event is written to the audit log and register.
 - **`facilitator.http.insecure: true`** (ruling OA6): plain `http://` for `http.url` on any address, and the TLS rule beyond loopback waived, for a local machine or a test environment; every start and `check` warn that tokens travel in plain text; refused under `preset: open`.
+- **`task facilitator:oauth-local`** (`oauth-local-keycloak`): Claude Code's OAuth login tried on one machine with no public address: Keycloak 26.8.2 (pinned by digest) in the internal Docker as the login server and a node with `http.insecure`; `task test:facilitator-oauth-local` runs the browserless part (dynamic registration, code + PKCE + resource, the token, the node) against them.
 - NOTES: "MCP over HTTP for cloud AIs", a section per setting and how a person connects a claude.ai custom connector.
 - Tests: `test_oauth.py` (a local test issuer; the right and the wrong audience, expired, wrong issuer, wrong scope, alg none,
   HS256 forged with the public key, a rotated key, keys that cannot be read, the endpoint's statuses and challenges, enrolment,

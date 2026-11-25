@@ -930,6 +930,39 @@ What was checked here and what was not: the resource server (metadata, challenge
 OAuth token. How claude.ai (or any cloud AI) discovers, registers and logs in was read from the MCP authorization
 specification and the vendor's documentation, and has **not** been run against this node.
 
+### Test it locally (Keycloak and Claude Code)
+
+Without a public HTTPS address (the usual case on a workstation) the OAuth path is tried on one machine: **Keycloak** is the
+login server and **Claude Code** the OAuth client (which registers itself, as a cloud AI would). `task facilitator:oauth-local`
+starts both, waits for them and prints the steps; `-- down` removes the container and the state (no network, no volume).
+
+```
+ Claude Code ---- /mcp, Authenticate ---->  browser  --- login (tester) ---> Keycloak 26.8.2 (internal Docker, 127.0.0.1:8080)
+      |   registers itself (dynamic client registration), code + PKCE + resource=http://localhost:8765/mcp    |
+      +--- Bearer <JWT: aud, scope facilitator:participate> ---> node (127.0.0.1:8765, http.insecure, issuer kc) --> jester (test agent)
+```
+
+- **Keycloak**: `quay.io/keycloak/keycloak:26.8.2`, pinned by digest, `start-dev`, the realm `facilitator-test` imported from
+  `test/facilitator/oauth-local/realm.json`: a user `tester` whose password is made at each start and printed (never committed), the
+  client scope `facilitator:participate` (a default scope, in the token's `scope`) with an audience mapper that puts
+  `http://localhost:8765/mcp` in `aud`, the `sub` claim, RS256, and anonymous dynamic client registration for `localhost` redirect
+  URIs (Keycloak's Trusted Hosts and Allowed Client Scopes policies, set in the realm file). Tokens are plain JWTs, so the node's
+  checks needed no change.
+- **The node**: `http.url: http://localhost:8765`, `http.insecure: true` (plain http, warned about in the log and in `check`), one
+  issuer `kc`, and the test agent `jester` exposed `public`; run from the bundle's python (`FACILITATOR_BUNDLE` or `dist/`).
+- **Where the browser runs**: the page of the login is Keycloak's, so the browser must reach `localhost:8080`, and the port
+  Claude Code listens on for the redirect (`--callback-port 8976`); Claude Code must reach `localhost:8765`. This devhost
+  forwards no ports (no `forwardPorts` or `appPort`), so the simplest way is Claude Code on the workstation with `"appPort": [8080,
+  8765, 8976]` in the devhost's `devcontainer.json` (your own checkout, a rebuild applies it); the printed steps say the same.
+- **Steps** (printed with the real password): `claude mcp add --transport http --callback-port 8976 facilitator
+  http://localhost:8765/mcp`; in Claude Code `/mcp`, `facilitator`, Authenticate, sign in as `tester`; then ask it to say who is
+  there and send "hello" to `jester`. On the node: `task facilitator:oauth-local -- fx http list`, `fx http approve <handle>`,
+  `fx verify --conv <id>` (shows `via http (oauth, ...)`).
+- **What is proven without a browser**: `task test:facilitator-oauth-local` does what Claude Code does against this Keycloak and
+  node: the 401 and the metadata, dynamic registration, the login form posted, code + PKCE + `resource`, the token (RS256, `aud`,
+  `scope`), then enrolment, approval, the agent's answer and `verify`. Not proven here: Claude Code's own browser
+  login (which of the two redirects and which scope it asks for), which is why the steps above are for you to run once.
+
 ## Using it in devcontainer.json
 
 ```jsonc

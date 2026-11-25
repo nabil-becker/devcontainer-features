@@ -240,6 +240,16 @@ tasks:
     cmds:
       - bash test/facilitator/oauth_flow.sh
 
+  test:facilitator-oauth-local:
+    desc: 'The automatable part of facilitator:oauth-local (test/facilitator/oauth_local_check.sh; needs Docker, the internal context, and a bundle: FACILITATOR_BUNDLE or dist/): starts Keycloak 26.8.2 (pinned by digest) and the node, then does what Claude Code does at login without a browser: the 401 and the protected-resource metadata, dynamic client registration, authorization code with PKCE and the resource parameter (the login form posted), an RS256 JWT with aud = the node and scope facilitator:participate; calls the node with it (enrolled, held, approved, the test agent answers, verify shows via http (oauth, ...)) and takes everything down. Not part of lint.'
+    cmds:
+      - bash test/facilitator/oauth_local_check.sh
+
+  facilitator:oauth-local:
+    desc: 'Try the OAuth login of Claude Code locally, with no public https address (N5b): starts Keycloak (internal Docker, pinned by digest, dev mode on 127.0.0.1:8080, a realm from test/facilitator/oauth-local/realm.json with a test user, the scope facilitator:participate and the audience mapper) and a node on 127.0.0.1:8765 (http.insecure, Keycloak as the issuer, a test agent), waits for both and prints what to run: claude mcp add, /mcp to log in, the user and password, then facilitator http list, approve and verify. Needs a bundle (FACILITATOR_BUNDLE or dist/). Also: -- down (removes the container and the state), -- status, -- fx <facilitator args> (the node''s own command), -- info.'
+    cmds:
+      - bash test/facilitator/oauth-local/oauth_local.sh {{.CLI_ARGS}}
+
   test:packet-relay-unit:
     desc: 'Docker-free tests of the packet-relay Feature (src/packet-relay): two parties, three, a party away, a lossy folder, a slow partial sync between two machines'' copies, forged and misplaced files, a fork, a gap lost for good and its skip, a lost state, a folder without hard links, the guards on egress and ingress and the command (test_relay.py), and install.sh into a throwaway root with DESTDIR, alone with its own copy of sign-packet''s library, the guard options baked and refused when unusable (test_feature.py); part of lint. Needs python3 and ssh-keygen.'
     cmds:
