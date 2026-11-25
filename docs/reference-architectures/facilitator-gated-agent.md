@@ -205,9 +205,9 @@ Tiers as in [ADR 0045](../adr/0045-four-storage-tiers-govern-where-data-lives-an
 ### G1. Exposing the capable session, in auto mode
 
 - **Don't:** list the host session, running in auto mode, under `expose` for a level other nodes reach.
-- **Why:** the Operator's test of 2026-11-25: a request from another node reached an agent that ran its tools without
-  asking, so nothing between the sender's words and the checkout was a person. That is why ADR 0087 has two gates and
-  why this repository's `mesh` agent runs in `default` mode (PR #253) while the host session stays `local`.
+- **Why:** this repository's own setup, reviewed 2026-11-25: the host session runs in auto mode (it runs tools without
+  asking), so exposing it would let another node's request act on the checkout with no person in between. That is
+  why ADR 0087 has two gates and why the `mesh` agent runs in `default` mode (PR #253) while the host stays `local`.
 - **Instead:** expose only the gated agent; let it forward what needs the host.
 - **Caught by:** nothing yet for the host's mode; `facilitator check` shows what is exposed, and `mesh.template.yml` here
   exposes only `mesh`.
@@ -216,8 +216,8 @@ Tiers as in [ADR 0045](../adr/0045-four-storage-tiers-govern-where-data-lives-an
 
 - **Don't:** let the gated agent drop a request it will not act on, or let a person's decline of a tool end the turn
   silently.
-- **Why:** found in the 2026-11-25 test: a rejected tool call tells the sender nothing; the other node's agent waited on
-  an answer that never came and tried again, which spends the conversation's hop and message budget.
+- **Why:** found in the local test of 2026-11-25: the Operator declined `mesh`'s tool; the record shows the request
+  delivered and no reply, so the sender heard nothing and the conversation stayed open.
 - **Instead:** the `gate-request` skill's step 3: every request ends in an answer, a hand-over or a reasoned decline,
   sent in the conversation, so the signed record shows what became of it.
 - **Caught by:** nothing yet; the skill states it, and the record (`facilitator transcript`) shows a conversation that
