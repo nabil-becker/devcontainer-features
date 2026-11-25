@@ -65,6 +65,10 @@
     // personal skills folder. Who you are is COMPONENT_REGISTRY_WHOAMI in containerEnv below.
     "./features/component-registry": {},
     "./features/claude-code": { "participants": true },
+    // The first spoke of the workstation hub (workstation-hub, 2026-11-25): the node bundle 0.7.0, the hub's
+    // release, on Rancher Desktop's Kubernetes (task facilitator:workstation-hub). The mesh is .devcontainer/mesh.yml;
+    // the Operator joins once with a token (task facilitator -- node join), then `facilitator who`.
+    "./features/facilitator": { "mode": "node", "bundleVersion": "0.7.0" },
     "./features/devhost": {},
     // An SSH agent for the register's operator key. The Windows engines cannot forward the
     // host's agent, so the Operator turns on key mode per machine with SSH_AGENT_MODE=key in
