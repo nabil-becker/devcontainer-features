@@ -259,7 +259,7 @@ def _parse_http(cfg: FacilitatorConfig, v, where: str) -> None:
             elif k in ("allowed_hosts", "allowed_origins"):
                 setattr(h, k, _list(x))
             elif k == "issuers":
-                h.issuers = _parse_issuers(x, where, err)
+                h.issuers = _parse_issuers(x, where, err, insecure=str(v.get("insecure")).lower() in ("true", "yes", "on"))
         except ListError as e:
             err.append(str(e))
     if h.listen:
@@ -300,7 +300,7 @@ def _https_or_loopback(url: str) -> bool:
     return bool(host) and not u.fragment and not u.query and (u.scheme == "https" or (u.scheme == "http" and is_loopback(host)))
 
 
-def _parse_issuers(v, where: str, err: list[str]) -> list[Issuer]:
+def _parse_issuers(v, where: str, err: list[str], insecure: bool = False) -> list[Issuer]:
     """facilitator.http.issuers: a list of {name, issuer, jwks_uri?, algorithms?, scope?, audience?}; every problem is named."""
     at = f"{where}: facilitator.http.issuers"
     if not isinstance(v, list):
@@ -321,8 +321,8 @@ def _parse_issuers(v, where: str, err: list[str]) -> list[Issuer]:
         if not iss or not _https_or_loopback(iss):
             err.append(f"{here}: issuer '{iss}': an https:// URL (http:// only for a loopback host, for tests)")
         jwks = it.get("jwks_uri")
-        if jwks not in (None, "") and not _https_or_loopback(str(jwks)):
-            err.append(f"{here}: jwks_uri '{jwks}': an https:// URL")
+        if jwks not in (None, "") and not _https_or_loopback(str(jwks)) and not (insecure and _http_url(str(jwks))):
+            err.append(f"{here}: jwks_uri '{jwks}': an https:// URL (plain http:// only with http.insecure: true)")
         algs = _list(it["algorithms"]) if "algorithms" in it else list(DEFAULT_ALGS)
         for a in algs:
             if a.lower() == "none" or a.upper().startswith("HS"):

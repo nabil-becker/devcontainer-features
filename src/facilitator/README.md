@@ -1029,6 +1029,16 @@ starts both, waits for them and prints the steps; `-- down` removes the containe
   `scope`), then enrolment, approval, the agent's answer and `verify`. Not proven here: Claude Code's own browser
   login (which of the two redirects and which scope it asks for), which is why the steps above are for you to run once.
 
+#### On the workstation's Kubernetes (Rancher Desktop)
+
+`task facilitator:oauth-local-k8s` does the same in the cluster of Rancher Desktop, so Claude Code **on Windows** logs in with
+its own browser: namespace `facilitator-oauth-test`, Keycloak and the hub (the `rancher-desktop` overlay plus the HTTP endpoint,
+`test/facilitator/oauth-local/k8s/`) with `jester` beside it, Services of type LoadBalancer on 8080 and 8765 that Rancher
+Desktop forwards to Windows' `localhost`. The issuer is `http://localhost:8080/realms/facilitator-test` (what the browser and the
+token's `iss` say); the node reads the keys from `http://keycloak:8080/...` (`jwks_uri`, plain http allowed by `http.insecure`).
+The image is the one built on that Docker (`DOCKER_CONTEXT=host task bundle:image`, `imagePullPolicy: Never`). Commands for the
+approval: `-- fx http list`, `-- fx http approve <handle>`, `-- fx verify --conv <id>`; `-- down` deletes the namespace.
+
 ## Using it in devcontainer.json
 
 ```jsonc
@@ -1457,6 +1467,9 @@ Python dependency: the bundle already carries PyJWT and `cryptography` (the `mcp
 - **`facilitator http forget <client>`** (task `facilitator:http-forget`, ruling OA3): a person's act that drops a revoked or denied client's entry so the same login (OAuth: issuer and subject; bearer: the name) is new next time, enrolled again and held for approval; a live client is refused; a `forget` event is written to the audit log and register.
 - **`facilitator.http.insecure: true`** (ruling OA6): plain `http://` for `http.url` on any address, and the TLS rule beyond loopback waived, for a local machine or a test environment; every start and `check` warn that tokens travel in plain text; refused under `preset: open`.
 - **`task facilitator:oauth-local`** (`oauth-local-keycloak`): Claude Code's OAuth login tried on one machine with no public address: Keycloak 26.8.2 (pinned by digest) in the internal Docker as the login server and a node with `http.insecure`; `task test:facilitator-oauth-local` runs the browserless part (dynamic registration, code + PKCE + resource, the token, the node) against them.
+- **With `http.insecure`, an issuer's `jwks_uri` (and its discovery document) may be plain `http://` on any host**, so a node in a cluster reads the keys from the issuer's in-cluster service while the issuer URL the browser sees is `http://localhost:...` (`oauth.py`, `participants.py`; unit-tested). Without `insecure` the rule is as before: https, or http on loopback.
+- **`task facilitator:oauth-local-k8s`**: the same OAuth test in the workstation's Rancher Desktop cluster (`test/facilitator/oauth-local/k8s/`, namespace `facilitator-oauth-test`): Keycloak and the hub of the `rancher-desktop` overlay with its HTTP endpoint and a public test agent, both Services LoadBalancers that Rancher Desktop forwards to the machine's localhost, so Claude Code on Windows can log in.
+- **The hub's StatefulSet sets `fsGroupChangePolicy: OnRootMismatch`**: without it the kubelet adds group read/write to every file of the state volume at each pod start, and `ssh-keygen` then refuses the node's own signing key after the first restart. (Fix to the base manifests of this release; redeploy.)
 - NOTES: "MCP over HTTP for cloud AIs", a section per setting and how a person connects a claude.ai custom connector.
 - Tests: `test_oauth.py` (a local test issuer; the right and the wrong audience, expired, wrong issuer, wrong scope, alg none,
   HS256 forged with the public key, a rotated key, keys that cannot be read, the endpoint's statuses and challenges, enrolment,

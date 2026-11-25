@@ -245,6 +245,11 @@ tasks:
     cmds:
       - bash test/facilitator/oauth_local_check.sh
 
+  facilitator:oauth-local-k8s:
+    desc: 'The OAuth test (N5b) in the workstation''s Rancher Desktop Kubernetes (context rancher-desktop only; test/facilitator/oauth-local/oauth_local_k8s.sh): namespace facilitator-oauth-test with Keycloak, the hub of the rancher-desktop overlay with its HTTP endpoint (Keycloak the one issuer at http://localhost:8080, jwks_uri the in-cluster service) and the public test agent jester, Services of type LoadBalancer on 8080 and 8765 for Claude Code on Windows. Needs the image facilitator-node:<version>-local in that Docker (DOCKER_CONTEXT=host task bundle:image) and kustomize. Prints the test user''s throwaway password. Also: -- down (deletes the namespace), -- status, -- fx <facilitator args> (http list, http approve <handle>, verify --conv <id>).'
+    cmds:
+      - bash test/facilitator/oauth-local/oauth_local_k8s.sh {{.CLI_ARGS}}
+
   facilitator:oauth-local:
     desc: 'Try the OAuth login of Claude Code locally, with no public https address (N5b): starts Keycloak (internal Docker, pinned by digest, dev mode on 127.0.0.1:8080, a realm from test/facilitator/oauth-local/realm.json with a test user, the scope facilitator:participate and the audience mapper) and a node on 127.0.0.1:8765 (http.insecure, Keycloak as the issuer, a test agent), waits for both and prints what to run: claude mcp add, /mcp to log in, the user and password, then facilitator http list, approve and verify. Needs a bundle (FACILITATOR_BUNDLE or dist/). Also: -- down (removes the container and the state), -- status, -- fx <facilitator args> (the node''s own command), -- info.'
     cmds:

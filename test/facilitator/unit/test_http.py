@@ -156,6 +156,23 @@ def test_the_issuers_setting_is_linted_option_by_option():
             assert not ok and want in why, (text, why)
         finally:
             e.close()
+    # http.insecure admits a plain-http jwks_uri on any host (the issuer's in-cluster service); without it the entry is refused
+    insec = ("facilitator:\n  http:\n    listen: 0.0.0.0:8765\n    url: http://localhost:8765\n    insecure: true\n    issuers:\n"
+             "      - name: kc\n        issuer: http://localhost:8080/realms/t\n"
+             "        jwks_uri: http://keycloak:8080/realms/t/protocol/openid-connect/certs\n")
+    e = env(fac_yml=insec)
+    try:
+        ok, why = e.fac().http_ready()
+        assert ok, why
+        assert e.fac().participants()[1].http.issuers[0].jwks_uri.startswith("http://keycloak:8080/")
+    finally:
+        e.close()
+    e = env(fac_yml=insec.replace("    insecure: true\n", ""))
+    try:
+        ok, why = e.fac().http_ready()
+        assert not ok and "jwks_uri" in why, why
+    finally:
+        e.close()
     e = env(fac_yml=base + "    url: http://127.0.0.1:8443\n    issuers:\n      - name: corp\n        issuer: http://127.0.0.1:9000\n")
     try:
         assert e.fac().http_ready()[0]                    # http only on a loopback host, for tests

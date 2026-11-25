@@ -218,7 +218,7 @@ class Daemon:
         self.resource_url = f"{base}{PATH}"
         self.metadata_url = f"{base}{METADATA_PATHS[1]}"
         self.scope_default = clients_mod.SCOPE
-        self.oauth = oauth_mod.Verifier(self.cfg.issuers, self.resource_url) if self.cfg.issuers else None
+        self.oauth = oauth_mod.Verifier(self.cfg.issuers, self.resource_url, insecure=self.cfg.insecure) if self.cfg.issuers else None
         self.verified: dict[str, tuple] = {}                  # sha256(token) -> (Principal, until): a few seconds, never the token
         self.logged: dict[str, float] = {}
 

@@ -453,5 +453,20 @@ def test_the_entry_decides_the_audience_the_endpoint_accepts():
         n.close()
 
 
+def test_a_plain_http_jwks_uri_off_loopback_is_read_only_with_insecure():
+    """http.insecure (a local cluster: the issuer is localhost for the browser, its service name for the node)."""
+    url = "http://keycloak.invalid:8080/certs"
+    try:
+        oauth._get_json(url, "JWKS")
+        raise AssertionError("a plain http address off loopback was read")
+    except oauth.OAuthError as e:
+        assert "not an https:// address" in e.why, e.why
+    try:
+        oauth._get_json(url, "JWKS", insecure=True)
+        raise AssertionError("keycloak.invalid answered")
+    except oauth.OAuthError as e:                        # past the scheme check; the name does not resolve
+        assert "cannot be read" in e.why, e.why
+
+
 if __name__ == "__main__":
     helpers.run_tests(globals())

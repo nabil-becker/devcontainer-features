@@ -963,6 +963,16 @@ starts both, waits for them and prints the steps; `-- down` removes the containe
   `scope`), then enrolment, approval, the agent's answer and `verify`. Not proven here: Claude Code's own browser
   login (which of the two redirects and which scope it asks for), which is why the steps above are for you to run once.
 
+#### On the workstation's Kubernetes (Rancher Desktop)
+
+`task facilitator:oauth-local-k8s` does the same in the cluster of Rancher Desktop, so Claude Code **on Windows** logs in with
+its own browser: namespace `facilitator-oauth-test`, Keycloak and the hub (the `rancher-desktop` overlay plus the HTTP endpoint,
+`test/facilitator/oauth-local/k8s/`) with `jester` beside it, Services of type LoadBalancer on 8080 and 8765 that Rancher
+Desktop forwards to Windows' `localhost`. The issuer is `http://localhost:8080/realms/facilitator-test` (what the browser and the
+token's `iss` say); the node reads the keys from `http://keycloak:8080/...` (`jwks_uri`, plain http allowed by `http.insecure`).
+The image is the one built on that Docker (`DOCKER_CONTEXT=host task bundle:image`, `imagePullPolicy: Never`). Commands for the
+approval: `-- fx http list`, `-- fx http approve <handle>`, `-- fx verify --conv <id>`; `-- down` deletes the namespace.
+
 ## Using it in devcontainer.json
 
 ```jsonc

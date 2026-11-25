@@ -1051,7 +1051,7 @@ def _http_issuers(a, fac) -> int:
         _emit(a, [], "facilitator: no OAuth issuers (facilitator.http.issuers is empty): only bearer tokens are accepted")
         return 0
     base = endpoint.base_url(cfg)
-    ver = oauth.Verifier(cfg.issuers, f"{base}{endpoint.PATH}")
+    ver = oauth.Verifier(cfg.issuers, f"{base}{endpoint.PATH}", insecure=cfg.insecure)
     rows, bad = [], 0
     for i in cfg.issuers:
         ok, detail = ver.check_reachable(i)

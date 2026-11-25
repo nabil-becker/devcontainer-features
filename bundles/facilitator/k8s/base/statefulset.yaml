@@ -21,6 +21,10 @@ spec:
         runAsUser: 10001                       # the image's `facilitator` user
         runAsGroup: 10001
         fsGroup: 10001                         # the volume is writable by it (the state folder is mode 0700)
+        # the kubelet's fsGroup pass adds group rw to every file in the volume at each pod start, which makes ssh-keygen refuse the
+        # node's own signing key ("private key files are NOT accessible by others") after the first restart; this runs it only
+        # when the volume's root is not already the group's
+        fsGroupChangePolicy: OnRootMismatch
         seccompProfile:
           type: RuntimeDefault
       containers:

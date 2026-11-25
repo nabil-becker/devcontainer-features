@@ -73,10 +73,11 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def _get_json(url: str, what: str) -> dict:
-    """One JSON document over HTTPS (or loopback HTTP), no redirects, bounded; every failure is said in words."""
-    from .participants import _https_or_loopback
-    if not _https_or_loopback(url):
+def _get_json(url: str, what: str, insecure: bool = False) -> dict:
+    """One JSON document over HTTPS (or loopback HTTP; any plain http:// when `insecure`, http.insecure: a local machine or a
+    test environment), no redirects, bounded; every failure is said in words."""
+    from .participants import _http_url, _https_or_loopback
+    if not (_https_or_loopback(url) or (insecure and _http_url(url))):
         raise OAuthError("invalid_token", f"{what} {url}: not an https:// address", server=True)
     op = urllib.request.build_opener(_NoRedirect)
     try:
@@ -102,10 +103,13 @@ class Verifier:
     """The allow list of issuers, their keys, and the check of one token. Thread-safe (the endpoint calls it from worker
     threads); `clock` and `fetch` are there for the tests."""
 
-    def __init__(self, issuers, resource: str, clock=time.time, fetch=_get_json):
+    def __init__(self, issuers, resource: str, clock=time.time, fetch=None, insecure: bool = False):
         self.issuers = {i.issuer: i for i in issuers}
         self.resource = resource
-        self.clock, self.fetch = clock, fetch
+        self.clock = clock
+        # insecure (http.insecure): a jwks_uri or discovery document may be plain http on any host, e.g. the issuer's
+        # in-cluster service while the issuer URL the browser sees is localhost
+        self.fetch = fetch or (lambda url, what: _get_json(url, what, insecure=insecure))
         self.cache: dict[str, _Keys] = {}
         self.lock = threading.Lock()
 
