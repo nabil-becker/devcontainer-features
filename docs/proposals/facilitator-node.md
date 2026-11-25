@@ -1581,3 +1581,9 @@ The Operator ruled HK1 to HK5 as recommended (the findings are in "Findings of s
   issuer's key set, it answers 503 and stays closed: no OAuth client gets in until the keys can be read, the
   refusal is not counted against the caller's address (so an issuer outage cannot block a caller), and the
   node's log says why. Rejected: answering 401 like a bad token (B: it would count against the caller).
+- **OA5, a real cloud AI before N5b is done: option A, ruled 2026-11-25.** The Operator connects a claude.ai custom
+  connector once by hand (NOTES, "Connect a cloud AI"), and N5b counts as done only after that run.
+- **OA6, https for `http.url`: kept, with an opt-out flag, ruled 2026-11-25.** With issuers, `http.url` must be https,
+  except when `http.insecure: true` is set, for a local machine or a test environment: then plain http is accepted
+  on any address, `check` and the node's log warn on every start, and the flag is refused under `preset: open`
+  (a node reachable by strangers never runs OAuth over plain http).
