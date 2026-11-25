@@ -739,6 +739,23 @@ tasks:
           v="$(bash bundles/facilitator/install.sh --version)"
           docker build -t "facilitator-node:$v-local" --build-arg "BUNDLE_VERSION=$v" -f bundles/facilitator/Dockerfile "{{.OUT}}"
 
+  facilitator:workstation-hub:
+    desc: 'The lasting facilitator hub on this workstation''s Rancher Desktop Kubernetes (workstation-hub): renders, applies, shows the status of or deletes the git-ignored overlay .devcontainer/facilitator-workstation (kustomization.yaml, mesh.yml, facilitator.yml) in the namespace facilitator. -- render | apply | status (the default) | delete. Always --context rancher-desktop, never another cluster. delete removes the namespace and with it the hub''s volume (its CA); the person-only commands (node invite, issuer export-root) are run by the Operator with kubectl exec.'
+    silent: true
+    cmds:
+      - cmd: |
+          set -eu
+          d=.devcontainer/facilitator-workstation
+          [ -f "$d/kustomization.yaml" ] || { echo "no overlay at $d (git-ignored, one per workstation): copy bundles/facilitator/k8s/overlays/rancher-desktop there and adapt it (see src/facilitator/NOTES.md, Hub on Kubernetes)" >&2; exit 1; }
+          k() { kubectl --context rancher-desktop -n facilitator "$@"; }
+          case "{{.CLI_ARGS}}" in
+            render) kustomize build "$d" ;;
+            apply) kustomize build "$d" | kubeconform -strict -summary && kustomize build "$d" | kubectl --context rancher-desktop apply -f - && k rollout status statefulset/facilitator-hub --timeout=240s ;;
+            delete) kubectl --context rancher-desktop delete namespace facilitator ;;
+            ""|status) k get pods,svc,pvc && k exec facilitator-hub-0 -- facilitator check ;;
+            *) echo "usage: task facilitator:workstation-hub -- render|apply|status|delete" >&2; exit 2 ;;
+          esac
+
   bundle:k8s:
     desc: 'Render the facilitator hub''s kustomize base and its overlays (bundles/facilitator/k8s: base, overlays/rancher-desktop, overlays/ssh-agent) with kustomize and check each with kubeconform (-strict, the Kubernetes schemas of KUBERNETES_SCHEMA_VERSION): the StatefulSet with a volume, mesh.yml in a ConfigMap, a Service for SLIM and the join endpoint only. -- <overlay> renders one to standard output (task bundle:k8s -- overlays/rancher-desktop). kustomize and kubeconform come from the kustomize and kubeconform Features when they are on PATH at the pinned version, else the pinned, checksummed ones are fetched into ~/.cache/facilitator-k8s-tools (test/facilitator/k8s/tools.sh). Needs network for the schemas; not part of lint.'
     silent: true

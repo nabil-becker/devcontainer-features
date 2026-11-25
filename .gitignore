@@ -26,3 +26,7 @@ testResults.xml
 # (task bundle:stage); a released bundle is a release asset, never a file in git.
 /dist/
 /src/facilitator/bundle/
+
+# The workstation's own facilitator hub overlay (task facilitator:workstation-hub): a kustomize overlay for this
+# machine's Rancher Desktop, kept out of git (workstation-hub).
+.devcontainer/facilitator-workstation/
