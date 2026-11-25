@@ -22,10 +22,11 @@
       - 'release' environment (required by release.yaml) restricted to the
         default branch - the only place the packages:write token exists.
       - Ruleset 'protect-main': no deletion/force-push, linear history, PRs
-        required with 1 approval incl. code owners, stale reviews dismissed,
-        conversations resolved, required checks validate / lint / tests.
-        Repo admins may bypass *only through a PR* (solo-maintainer escape
-        hatch: own PRs can be merged without a second human).
+        required with no approval (a one-person repository: the approval was
+        the maintainer overriding their own review, 2026-11-25), conversations
+        resolved, required checks validate / lint / tests / DCO, squash only.
+        Auto-merge is allowed (a PR merges itself once its checks pass).
+        Repo admins may bypass *only through a PR*.
 
 .PARAMETER Repo
     owner/name. Defaults to the repo of the current directory.
@@ -61,6 +62,7 @@ function Invoke-Gh {
 if ($PSCmdlet.ShouldProcess($Repo, 'repository settings')) {
     Invoke-Gh PATCH "repos/$Repo" @{
         allow_squash_merge          = $true
+        allow_auto_merge            = $true
         allow_merge_commit          = $false
         allow_rebase_merge          = $false
         delete_branch_on_merge      = $true
@@ -74,7 +76,7 @@ if ($PSCmdlet.ShouldProcess($Repo, 'repository settings')) {
             secret_scanning_push_protection = @{ status = 'enabled' }
         }
     } | Out-Null
-    Write-Host '  repository: squash-only merges, branch cleanup, web commits signed off, secret scanning + push protection'
+    Write-Host '  repository: squash-only merges, auto-merge allowed, branch cleanup, web commits signed off, secret scanning + push protection'
 
     Invoke-Gh PUT "repos/$Repo/private-vulnerability-reporting" | Out-Null
     Invoke-Gh PUT "repos/$Repo/vulnerability-alerts" | Out-Null
@@ -122,9 +124,9 @@ if ($PSCmdlet.ShouldProcess($Repo, "ruleset 'protect-main'")) {
             @{ type = 'non_fast_forward' },
             @{ type = 'required_linear_history' },
             @{ type = 'pull_request'; parameters = @{
-                    required_approving_review_count   = 1
+                    required_approving_review_count   = 0
                     dismiss_stale_reviews_on_push     = $true
-                    require_code_owner_review         = $true
+                    require_code_owner_review         = $false
                     require_last_push_approval        = $false
                     required_review_thread_resolution = $true
                     allowed_merge_methods             = @('squash')
