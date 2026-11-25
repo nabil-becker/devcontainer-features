@@ -123,7 +123,12 @@
   // repository; the git Feature's wrapper maps the pointer onto it (ADR 0020).
   // Every git dir under ~/.git-dirs is visible here, accepted 2026-10-21.
   "mounts": [
-    "source=${localEnv:USERPROFILE}/.git-dirs,target=/git-dirs,type=bind"
+    "source=${localEnv:USERPROFILE}/.git-dirs,target=/git-dirs,type=bind",
+    // The workstation's Docker as a second context, `host` (docker-host-context, 2026-11-25):
+    // the daemon's own socket, set up by .devcontainer/docker-host.sh. docker-in-docker stays
+    // the default context. Needs a Docker runtime that has this socket (Rancher Desktop,
+    // Docker Desktop); a runtime without it refuses this mount.
+    "source=/var/run/docker.sock,target=/var/run/docker-host.sock,type=bind"
   ],
   "containerEnv": {
     // The handle on ledger entries and the cost report (committed, so never a
@@ -159,7 +164,8 @@
   "postCreateCommand": "bash .devcontainer/post-create.sh",
   // No Docker cache is kept between uses (dind-no-cache): every start empties the
   // docker-in-docker daemon, which is used only for `task test`.
-  "postStartCommand": "bash .devcontainer/dind-clean.sh --wait",
+  // The workstation's Docker is set up as the context `host` after it (docker-host.sh).
+  "postStartCommand": "bash .devcontainer/dind-clean.sh --wait; bash .devcontainer/docker-host.sh",
   "remoteUser": "vscode",
   "customizations": {
     "vscode": {
