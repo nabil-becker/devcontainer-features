@@ -6,8 +6,23 @@ name: "Release the facilitator node bundle"
 # (src/facilitator/facilitator/__init__.py). Next: a pull request pins the digests in
 # src/facilitator/digests.txt (task bundle:pin -- <version>), the Operator merges it and starts the Feature
 # release, then release-node-image.
+#
+# SUPERSEDED by release-facilitator.yaml, which calls this workflow (workflow_call) as its first stage and does the
+# pin, the Feature release and the node image after it. Still callable by hand as the manual fallback
+# (CONTRIBUTING.md, "Releasing the facilitator"). With dry_run it builds, smoke-tests and checks the sums but
+# publishes nothing (no attestation, no release).
 on:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      dry_run:
+        description: "Build and check only; publish nothing"
+        type: boolean
+        default: false
+    outputs:
+      version:
+        description: "The bundle version (the application's)"
+        value: ${{ jobs.publish.outputs.version }}
 
 permissions:
   contents: read
@@ -63,6 +78,8 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     environment: release
+    outputs:
+      version: ${{ steps.sums.outputs.version }}
     permissions:
       contents: write
       id-token: write
@@ -88,10 +105,12 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        if: ${{ !inputs.dry_run }}
         with:
           subject-path: dist/facilitator-*.tar.gz
 
       - name: "Publish the release facilitator-bundle-v${{ steps.sums.outputs.version }}"
+        if: ${{ !inputs.dry_run }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.sums.outputs.version }}

@@ -385,7 +385,7 @@ flowchart LR
     external-node-image["facilitator-node image"]
   end
   external-upstream["Upstream: python-build-standalone, AGNTCY dir and slim, PyPI"]
-  external-github -->|Operator starts| external-release-bundle
+  external-github -->|Operator starts release-facilitator, which runs the workflows below in order| external-release-bundle
   external-upstream -->|each download checked against a pinned SHA-256| external-release-bundle
   external-release-bundle -->|publishes| external-release-asset
   external-release-asset -->|digest pinned by a pull request in digests.txt| release

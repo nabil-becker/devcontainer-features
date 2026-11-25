@@ -99,7 +99,7 @@ tasks:
   lint:
     desc: 'shellcheck, yamllint, PSScriptAnalyzer, the vendored-helper and toolchain checks, the Feature version literals in container tests (versions:check), and every Docker-free unit test (test:*-unit and friends; see each task''s desc). CI runs exactly this inside .devcontainer/ci; the tools must be installed - this repo''s devcontainer has them, at the pinned versions.'
     cmds:
-      - shellcheck -x src/*/*.sh bundles/*/*.sh components/*/*.sh local-features/*/*.sh local-features/*/share/bin/*.sh local-features/*/share/jobs/*/*.sh test/*/*.sh test/*/unit/*.sh test/bootstrap/*.sh bootstrap/*.sh bootstrap/host/*.sh .githooks/* .devcontainer/*.sh
+      - shellcheck -x .github/scripts/*.sh src/*/*.sh bundles/*/*.sh components/*/*.sh local-features/*/*.sh local-features/*/share/bin/*.sh local-features/*/share/jobs/*/*.sh test/*/*.sh test/*/unit/*.sh test/bootstrap/*.sh bootstrap/*.sh bootstrap/host/*.sh .githooks/* .devcontainer/*.sh
       - yamllint --strict .
       - task: lint:toolchain
       - pwsh -NoLogo -NoProfile -File '{{.ROOT_DIR}}/.github/scripts/Invoke-PSScriptAnalyzer.ps1'
@@ -755,23 +755,12 @@ tasks:
           bash test/facilitator/k8s/shape.sh
 
   bundle:pin:
-    desc: 'After the Operator has run release-bundle: download the release facilitator-bundle-v<version> (`task bundle:pin -- 0.3.0`), check each asset against its SHA256SUMS, the digest GitHub records for it and its build attestation (gh attestation verify), and add the lines to src/facilitator/digests.txt, for the pull request that pins the bundle. Needs gh, logged in.'
+    desc: 'The manual fallback of the release-facilitator workflow''s pin stage: download the release facilitator-bundle-v<version> (`task bundle:pin -- 0.3.0`), check each asset against its SHA256SUMS, the digest GitHub records for it and its build attestation (gh attestation verify), add the lines to src/facilitator/digests.txt, say so in the CHANGELOG and re-render the README, for the pull request that pins the bundle (.github/scripts/pin-bundle.sh, the same script the workflow runs). Needs gh, logged in.'
     silent: true
     cmds:
       - cmd: |
-          set -eu
           v="{{.CLI_ARGS}}"; [ -n "$v" ] || { echo "usage: task bundle:pin -- <bundle version>"; exit 2; }
-          tag="facilitator-bundle-v$v"; repo=nabil-becker/devcontainer-features
-          work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
-          gh release download "$tag" --repo "$repo" --pattern SHA256SUMS --pattern "facilitator-$v-linux-*.tar.gz" --dir "$work"
-          (cd "$work" && sha256sum -c SHA256SUMS)
-          while read -r sum name; do
-            api="$(gh api "repos/$repo/releases/tags/$tag" --jq ".assets[] | select(.name == \"$name\") | .digest")"
-            [ "$api" = "sha256:$sum" ] || { echo "$name: SHA256SUMS says $sum, GitHub records $api"; exit 1; }
-            gh attestation verify "$work/$name" --repo "$repo" >/dev/null
-            grep -q "  $name\$" src/facilitator/digests.txt || echo "$sum  $name" >>src/facilitator/digests.txt
-            echo "pinned $name $sum"
-          done <"$work/SHA256SUMS"
+          bash '{{.ROOT_DIR}}/.github/scripts/pin-bundle.sh' "$v"
 
   repo:setup:
     desc: 'Once per clone: set core.hooksPath to .githooks (auto DCO sign-off) and the `git cs` alias directly in this clone''s git config, and remove an `include.path ../.gitconfig` and a `merge.devhost-todo` section that earlier runs wrote (the include resolves next to a git dir outside the worktree, ADR 0020, where any process could plant a config). Touches only this clone''s git config, never your global config. Idempotent.'

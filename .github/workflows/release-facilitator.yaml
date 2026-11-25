@@ -1,0 +1,326 @@
+name: "Release the facilitator (bundle, pin, Feature, node image)"
+# Manual, the Operator starts it, on main (an agent never does). One dispatch does what were four hand-offs:
+#
+#   plan      what would be released, and which stages are already done (a rerun resumes)
+#   bundle    release-bundle.yaml (workflow_call): both architectures built and smoke-tested, release
+#             facilitator-bundle-v<v> with SHA256SUMS and a build attestation per tarball
+#   pin       .github/scripts/pin-bundle.sh (what `task bundle:pin` runs): every asset checked against SHA256SUMS,
+#             GitHub's digest and its attestation; the lines go into src/facilitator/digests.txt on a branch; a pull
+#             request is opened, auto-merge is requested, and the job WAITS for the merge, then checks that the
+#             merge commit carries exactly the release's digests
+#   feature   release.yaml (workflow_call) on the merge commit
+#   image     release-node-image.yaml (workflow_call) on the merge commit: it refuses an asset that differs from
+#             the pin; then the image's provenance is verified
+#   summary   every artifact and digest, in the job summary
+# With dry_run the plan, the build and a rehearsal of the pin (digests and CHANGELOG edits, shown as a diff) run and
+# nothing is published, no branch pushed, no pull request opened.
+#
+# DESIGN NOTE: how the human pin pull request goes away while git == published
+# The pin has to be in git before the Feature is published (the Feature tarball carries digests.txt, and
+# install.sh trusts only the pinned digest), and the digest exists only after the bundle is built (a rebuild is not
+# byte-identical, ruling R5), so the pin cannot ride in the pull request that bumps the version (option c).
+# Verifying at install from the release's own SHA256SUMS (option a) would make the Feature trust whatever a release
+# of this repository says: the pin in git is the second key that a stolen release token alone cannot turn, and it
+# is what release-node-image checks against. So: option (b). The workflow pushes the pin to a topic branch, opens a
+# pull request, asks for auto-merge and waits until it is merged, then publishes from the merge commit. Branch
+# protection is untouched (a pull request, squash, required checks and review), the history keeps a pin pull request
+# per release, and the Feature and image are built from a commit on main.
+# What the workflow cannot do for itself, by design of the ruleset: the ruleset requires one approving, code-owner
+# review, which no workflow token can give. So the Operator's part shrinks to: start this workflow, approve the pin
+# pull request (one click; the run prints its link in the summary) and, if auto-merge is not enabled on the
+# repository, merge it. A pull request opened with the workflow's own token starts no pull_request workflows, so the
+# workflow dispatches validate, lint and tests on the branch (their results attach to the head commit and satisfy the
+# required checks); with the secret RELEASE_PR_TOKEN (a fine-grained token or App token with contents and
+# pull-requests write) the pull request is opened with it instead and the checks start normally.
+# Hard rules kept: no push to main; no schedule or other trigger; only actions/* and docker/gh CLI; the SHA-256,
+# GitHub digest and attestation checks are the ones `task bundle:pin` always ran, and a pinned digest is never
+# replaced.
+# Untested until the first real run: the check dispatch satisfying the required checks, auto-merge being enabled
+# (allow_auto_merge), and the wait loop against a real review.
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Plan, build and rehearse the pin; publish, push and open nothing"
+        type: boolean
+        default: false
+      wait_minutes:
+        description: "How long to wait for the pin pull request to merge before failing (at most 330; a rerun resumes)"
+        type: string
+        default: "240"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-facilitator
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      feature_version: ${{ steps.plan.outputs.feature_version }}
+      bundle_exists: ${{ steps.plan.outputs.bundle_exists }}
+      pinned: ${{ steps.plan.outputs.pinned }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: "Plan"
+        id: plan
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WAIT: ${{ inputs.wait_minutes }}
+          DRY: ${{ inputs.dry_run }}
+        run: |
+          set -eu
+          case "$WAIT" in '' | *[!0-9]*) echo "wait_minutes must be a number"; exit 1 ;; esac
+          [ "$WAIT" -le 330 ] || { echo "wait_minutes is at most 330 (a job lasts 6 hours)"; exit 1; }
+          version="$(bash bundles/facilitator/install.sh --version)"
+          fv="$(sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' src/facilitator/devcontainer-feature.json | head -n1)"
+          tag="facilitator-bundle-v$version"
+          exists=false; pinned=false
+          if gh release view "$tag" >/dev/null 2>&1; then
+            exists=true
+            # A rerun may reuse the release only when nothing it was built from changed since: a published bundle is
+            # never replaced, so a changed bundle needs a new application version.
+            src="$(git rev-list -n1 "$tag")"
+            if ! git diff --quiet "$src" HEAD -- bundles/facilitator src/facilitator/facilitator src/facilitator/bundle-build.sh; then
+              echo "$tag exists and the bundle's sources changed since it was built ($src). Bump the application version."; exit 1
+            fi
+          fi
+          a="facilitator-$version-linux-amd64.tar.gz"; b="facilitator-$version-linux-arm64.tar.gz"
+          if grep -q "  $a\$" src/facilitator/digests.txt && grep -q "  $b\$" src/facilitator/digests.txt; then pinned=true; fi
+          {
+            echo "version=$version"; echo "feature_version=$fv"; echo "bundle_exists=$exists"; echo "pinned=$pinned"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "## Plan"
+            echo
+            echo "| | |"; echo "|---|---|"
+            echo "| Commit | \`$GITHUB_SHA\` |"
+            echo "| Mode | $([ "$DRY" = true ] && echo 'dry run: nothing is published, pushed or opened' || echo 'release') |"
+            echo "| Bundle | \`$tag\`: $([ $exists = true ] && echo 'already released, reused after re-verification' || echo 'to be built and published') |"
+            echo "| Pin in \`digests.txt\` | $([ $pinned = true ] && echo 'already on main' || echo 'a pull request will add it') |"
+            echo "| Feature | \`facilitator\` $fv, with every other Feature whose version changed |"
+            echo "| Node image | \`ghcr.io/$GITHUB_REPOSITORY_OWNER/facilitator-node:$version\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  bundle:
+    needs: plan
+    if: ${{ needs.plan.outputs.bundle_exists != 'true' }}
+    uses: ./.github/workflows/release-bundle.yaml
+    with:
+      dry_run: ${{ inputs.dry_run }}
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+
+  # Dry run only: the pin's edits on the freshly built (not published) bundle, shown as a diff.
+  rehearse-pin:
+    needs: [plan, bundle]
+    if: ${{ inputs.dry_run && needs.bundle.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: bundle-*
+          path: parts
+
+      - name: "Rehearse the pin"
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -eu
+          mkdir dist
+          cp parts/*/facilitator-*.tar.gz dist/
+          cat parts/*/SHA256SUMS | sort -k2 > dist/SHA256SUMS
+          bash .github/scripts/pin-bundle.sh "$VERSION" --from-dir dist
+          {
+            echo "## Rehearsal of the pin (local sums only: no release exists yet to check against GitHub or attest)"
+            echo
+            echo '```diff'
+            git diff -- src/facilitator/digests.txt src/facilitator/CHANGELOG.md
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  pin:
+    needs: [plan, bundle]
+    if: ${{ !cancelled() && !inputs.dry_run && needs.plan.result == 'success' && contains(fromJSON('["success","skipped"]'), needs.bundle.result) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    outputs:
+      sha: ${{ steps.done.outputs.sha }}
+      pr: ${{ steps.pr.outputs.url }}
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      PINNED: ${{ needs.plan.outputs.pinned }}
+      # RELEASE_PR_TOKEN, when set, makes the pull request an ordinary one whose checks start by themselves.
+      GH_TOKEN: ${{ secrets.RELEASE_PR_TOKEN || secrets.GITHUB_TOKEN }}
+      CUSTOM_TOKEN: ${{ secrets.RELEASE_PR_TOKEN != '' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PR_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: "Check the release and put the pin on a branch"
+        id: branch
+        if: ${{ needs.plan.outputs.pinned != 'true' }}
+        run: |
+          set -eu
+          branch="chore/facilitator-bundle-pin-$VERSION/1"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          bash .github/scripts/pin-bundle.sh "$VERSION"
+          git add src/facilitator
+          git diff --cached --quiet && { echo "the pin changed nothing"; exit 1; }
+          git commit -s -m "chore(facilitator): pin node bundle $VERSION (facilitator-release-one-workflow)" \
+            -m "Opened by the release-facilitator workflow after release facilitator-bundle-v$VERSION: every asset checked against SHA256SUMS, GitHub's digest and its attestation."
+          # A branch left by an earlier failed run is ours; replace it.
+          git push --force origin "$branch"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+
+      - name: "Open the pull request and ask for auto-merge"
+        id: pr
+        if: ${{ needs.plan.outputs.pinned != 'true' }}
+        env:
+          BRANCH: ${{ steps.branch.outputs.branch }}
+        run: |
+          set -eu
+          url="$(gh pr list --head "$BRANCH" --state open --json url --jq '.[0].url // empty')"
+          if [ -z "$url" ]; then
+            body="$(printf '%s\n' \
+              '## What' '' "Pins the node bundle $VERSION (release facilitator-bundle-v$VERSION) in src/facilitator/digests.txt and says so in the CHANGELOG, as the release-facilitator workflow's pin stage." '' \
+              '## Why' '' 'The Feature installs a bundle only when its digest is pinned in git. The workflow waits for this pull request to merge, then publishes the Feature and the node image from the merge commit.' '' \
+              '## Checklist' '' \
+              '- [x] Every commit is signed off' \
+              '- [x] The digests were checked against SHA256SUMS, GitHub'"'"'s digest and the build attestation' \
+              '- [ ] Review: approve and merge (squash); the workflow continues by itself')"
+            url="$(gh pr create --base main --head "$BRANCH" --title "chore(facilitator): pin node bundle $VERSION (facilitator-release-one-workflow)" --body "$body")"
+          fi
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          # A pull request opened with the workflow's own token starts no pull_request workflows: run the required
+          # checks on the branch, where their results attach to the same head commit.
+          if [ "$CUSTOM_TOKEN" != true ]; then
+            for w in validate.yml lint.yaml test.yaml; do gh workflow run "$w" --ref "$BRANCH" || echo "::warning::could not start $w on $BRANCH"; done
+          fi
+          if ! gh pr merge "$url" --auto --squash; then
+            echo "::warning::auto-merge could not be enabled (allow_auto_merge off?); merge the pull request by hand once it is approved"
+          fi
+          {
+            echo "## Pin pull request"
+            echo
+            echo "Approve and merge: $url"
+            echo
+            echo "The run waits for it (up to ${{ inputs.wait_minutes }} minutes); a rerun after a timeout resumes here."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: "Wait for the merge"
+        id: wait
+        if: ${{ needs.plan.outputs.pinned != 'true' }}
+        env:
+          URL: ${{ steps.pr.outputs.url }}
+          WAIT: ${{ inputs.wait_minutes }}
+        run: |
+          set -eu
+          deadline=$((SECONDS + WAIT * 60)); last=""
+          while :; do
+            row="$(gh pr view "$URL" --json state,mergeStateStatus,reviewDecision,mergeCommit --jq '[.state, .mergeStateStatus, (.reviewDecision // "none"), (.mergeCommit.oid // "")] | @tsv')"
+            IFS=$'\t' read -r state merge review sha <<<"$row"
+            [ "$row" = "$last" ] || echo "$(date -u +%H:%M:%S) $URL: $state, merge state $merge, review $review"
+            last="$row"
+            case "$state" in
+              MERGED) echo "sha=$sha" >> "$GITHUB_OUTPUT"; exit 0 ;;
+              CLOSED) echo "$URL was closed without merging; nothing further is published"; exit 1 ;;
+            esac
+            [ "$merge" != BEHIND ] || echo "::notice::$URL is behind main: update the branch (the required checks are strict)"
+            [ "$SECONDS" -lt "$deadline" ] || { echo "Not merged in $WAIT minutes. Rerun the workflow: it resumes at this pull request."; exit 1; }
+            sleep 30
+          done
+
+      - name: "The commit to publish from carries exactly the release's digests"
+        id: done
+        env:
+          MERGED: ${{ steps.wait.outputs.sha }}
+        run: |
+          set -eu
+          sha="${MERGED:-$GITHUB_SHA}"
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$sha" origin/main || { echo "$sha is not on main"; exit 1; }
+          sums="$(mktemp -d)"
+          gh release download "facilitator-bundle-v$VERSION" --pattern SHA256SUMS --dir "$sums"
+          while read -r sum name; do
+            have="$(git show "$sha:src/facilitator/digests.txt" | awk -v n="$name" '$2 == n { print $1 }')"
+            [ "$have" = "$sum" ] || { echo "$name: the release has $sum, $sha pins '$have'"; exit 1; }
+          done < "$sums/SHA256SUMS"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "The Feature and the image are published from $sha"
+
+  feature:
+    needs: pin
+    uses: ./.github/workflows/release.yaml
+    with:
+      ref: ${{ needs.pin.outputs.sha }}
+    permissions:
+      contents: read
+      packages: write
+
+  image:
+    needs: [pin, feature]
+    uses: ./.github/workflows/release-node-image.yaml
+    with:
+      ref: ${{ needs.pin.outputs.sha }}
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+
+  summary:
+    needs: [plan, pin, feature, image]
+    if: ${{ !cancelled() && !inputs.dry_run && needs.image.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      VERSION: ${{ needs.plan.outputs.version }}
+      FEATURE_VERSION: ${{ needs.plan.outputs.feature_version }}
+      DIGEST: ${{ needs.image.outputs.digest }}
+      SHA: ${{ needs.pin.outputs.sha }}
+      PR: ${{ needs.pin.outputs.pr }}
+    steps:
+      - name: "Verify the image's provenance and list what was published"
+        run: |
+          set -eu
+          owner="$GITHUB_REPOSITORY_OWNER"
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          image="ghcr.io/$owner/facilitator-node"
+          gh attestation verify "oci://$image@$DIGEST" --repo "$GITHUB_REPOSITORY" >/dev/null
+          feature="ghcr.io/$owner/devcontainer-features/facilitator"
+          fdigest="$(docker buildx imagetools inspect "$feature:$FEATURE_VERSION" --format '{{json .Manifest}}' | jq -r .digest)"
+          sums="$(mktemp -d)"
+          gh release download "facilitator-bundle-v$VERSION" --repo "$GITHUB_REPOSITORY" --pattern SHA256SUMS --dir "$sums"
+          {
+            echo "## Released"
+            echo
+            echo "| Artifact | Digest |"; echo "|---|---|"
+            while read -r sum name; do echo "| bundle asset \`$name\` (release \`facilitator-bundle-v$VERSION\`, attested) | \`sha256:$sum\` |"; done < "$sums/SHA256SUMS"
+            echo "| pin on main: ${PR:-already pinned} | merge commit \`$SHA\` |"
+            echo "| Feature \`$feature:$FEATURE_VERSION\` | \`$fdigest\` |"
+            echo "| node image \`$image:$VERSION\` (amd64, arm64; provenance verified with \`gh attestation verify\`) | \`$DIGEST\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
