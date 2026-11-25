@@ -648,3 +648,20 @@ renamed. Each project is a tree growing in its own ground.
 - **Protected-resource metadata**: the RFC 9728 document at `/.well-known/oauth-protected-resource`
   naming the node's resource URL and its authorization servers, which the 401 `WWW-Authenticate`
   challenge points to so a cloud client can find where to sign in (ADR-0082).
+- **Message approval**: the setting `limits.<level>.approval: every-message | per-conversation` in a
+  receiving node's `mesh.yml` (beside `none` and `first-contact`), valid at `private`, `public` and for
+  HTTP clients, refused at `local`: each message from another node (`every-message`), or the first of each
+  new cross-node conversation (`per-conversation`), is held until a person approves it; the receiving node
+  enforces it (facilitator 0.9.0, ADR-0087).
+- **Held message**: a cross-node message written to the record and marked held, not delivered to the local
+  agent until a person approves it with `facilitator approve` or the `approve` tool; `deny` drops it with a
+  signed notice to the sender, one held more than 7 days is never delivered, and `mail` and the turn hook
+  line list and count them (facilitator 0.9.0, ADR-0087).
+- **Mesh agent**: the agent a devhost exposes to the mesh (`mesh: private`) while the host session stays
+  local; it runs in the CLI's default permission mode, so it asks the person before every tool it runs on a
+  request from another devcontainer (ADR-0087).
+- **Gated agent**: a mesh agent run on a tested prompt that sorts each request from another node into one
+  of three paths: answer it (read-only, such as listing files) without asking anyone, forward it in a new
+  conversation with `@host` for a person to decide (anything that changes state), or refuse it (secrets such
+  as an OpenBao token). Tested with Haiku; the prompt is `gated-agent/mesh-prompt.txt` in the reference
+  architecture.
