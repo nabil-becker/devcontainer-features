@@ -1593,3 +1593,9 @@ The Operator ruled HK1 to HK5 as recommended (the findings are in "Findings of s
   connector run waits in the backlog until a public address exists. (OpenBao was weighed as the login server and
   set aside: its OIDC provider is not believed to issue JWT access tokens with an audience, nor to let clients
   register themselves.)
+- **OA5 met, 2026-11-25.** The Operator ran Claude Code on Windows against the OAuth test on Rancher Desktop's
+  cluster (Keycloak and a 0.8.0 hub in the namespace `facilitator-oauth-test`): it discovered Keycloak, registered
+  itself, the Operator logged in, the first message was held and approved by the Operator, jester answered, and
+  `verify` showed `via http (oauth, ..., issuer http://localhost:8080/realms/facilitator-test, subject ...)` with
+  every chain verifying back to a human. The test realm had to grant `offline_access`, since Claude Code asks for a
+  refresh token. The same run answers HK5: Rancher Desktop's LoadBalancer services answer at Windows `localhost`.
