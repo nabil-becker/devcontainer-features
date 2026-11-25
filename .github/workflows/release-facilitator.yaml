@@ -23,15 +23,14 @@ name: "Release the facilitator (bundle, pin, Feature, node image)"
 # of this repository says: the pin in git is the second key that a stolen release token alone cannot turn, and it
 # is what release-node-image checks against. So: option (b). The workflow pushes the pin to a topic branch, opens a
 # pull request, asks for auto-merge and waits until it is merged, then publishes from the merge commit. Branch
-# protection is untouched (a pull request, squash, required checks and review), the history keeps a pin pull request
+# protection is untouched (a pull request, squash and the required checks), the history keeps a pin pull request
 # per release, and the Feature and image are built from a commit on main.
-# What the workflow cannot do for itself, by design of the ruleset: the ruleset requires one approving, code-owner
-# review, which no workflow token can give. So the Operator's part shrinks to: start this workflow, approve the pin
-# pull request (one click; the run prints its link in the summary) and, if auto-merge is not enabled on the
-# repository, merge it. A pull request opened with the workflow's own token starts no pull_request workflows, so the
-# workflow dispatches validate, lint and tests on the branch (their results attach to the head commit and satisfy the
-# required checks); with the secret RELEASE_PR_TOKEN (a fine-grained token or App token with contents and
-# pull-requests write) the pull request is opened with it instead and the checks start normally.
+# No approval is required on main (#251) and auto-merge is on, so the pin pull request merges itself once its checks
+# pass: the Operator's part is to start this workflow. With the secret RELEASE_PR_TOKEN (a fine-grained token with
+# contents, pull-requests and actions write; rulings RW1-RW3, ADR 0086) the pull request is an ordinary one whose
+# checks start by themselves. Without it, a pull request opened with the workflow's own token starts no
+# pull_request workflows, so the workflow dispatches validate, lint and tests on the branch (their results attach to
+# the head commit) and the Operator may have to merge by hand.
 # Hard rules kept: no push to main; no schedule or other trigger; only actions/* and docker/gh CLI; the SHA-256,
 # GitHub digest and attestation checks are the ones `task bundle:pin` always ran, and a pinned digest is never
 # replaced.
@@ -208,7 +207,7 @@ jobs:
               '## Checklist' '' \
               '- [x] Every commit is signed off' \
               '- [x] The digests were checked against SHA256SUMS, GitHub'"'"'s digest and the build attestation' \
-              '- [ ] Review: approve and merge (squash); the workflow continues by itself')"
+              '- [ ] Merges itself once the checks pass (auto-merge); the workflow continues by itself')"
             url="$(gh pr create --base main --head "$BRANCH" --title "chore(facilitator): pin node bundle $VERSION (facilitator-release-one-workflow)" --body "$body")"
           fi
           echo "url=$url" >> "$GITHUB_OUTPUT"
@@ -218,12 +217,12 @@ jobs:
             for w in validate.yml lint.yaml test.yaml; do gh workflow run "$w" --ref "$BRANCH" || echo "::warning::could not start $w on $BRANCH"; done
           fi
           if ! gh pr merge "$url" --auto --squash; then
-            echo "::warning::auto-merge could not be enabled (allow_auto_merge off?); merge the pull request by hand once it is approved"
+            echo "::warning::auto-merge could not be enabled (allow_auto_merge off?); merge the pull request by hand once its checks pass"
           fi
           {
             echo "## Pin pull request"
             echo
-            echo "Approve and merge: $url"
+            echo "Pin pull request (merges itself when green): $url"
             echo
             echo "The run waits for it (up to ${{ inputs.wait_minutes }} minutes); a rerun after a timeout resumes here."
           } >> "$GITHUB_STEP_SUMMARY"

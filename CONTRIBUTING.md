@@ -38,8 +38,8 @@ reach anyone who references them. The rules below keep that safe.
    `task lint` and, on Linux/macOS or inside the devcontainer,
    `task test FEATURE=<id>`.
 3. Open a pull request using the template. CI (`validate`, `lint`, `tests`,
-   `DCO`) must pass and a code owner must approve; `main` only accepts
-   squash merges through pull requests.
+   `DCO`) must pass; no approval is required (one maintainer, #251), and
+   `main` only accepts squash merges through pull requests.
 4. A maintainer runs the release workflow, which publishes to
    `ghcr.io/nabil-becker/devcontainer-features/<id>`.
 
@@ -52,8 +52,8 @@ digests in `src/facilitator/digests.txt`, waits for it to merge, then publishes 
 and the node image (`ghcr.io/nabil-becker/facilitator-node:<v>`) from the merge commit and
 verifies the image's provenance; its job summary lists every artifact and digest. Run it with
 `dry_run` first to see the plan, the build and the pin's edits without publishing anything.
-Your part: start it, approve the pin pull request when the run links it (the ruleset's one
-code-owner review stays), and merge it if auto-merge is not enabled on the repository. If the
+Your part: start it. The pin pull request merges itself once its checks pass (auto-merge, no
+approval required, the `RELEASE_PR_TOKEN` secret; ADR 0086). If the
 wait times out, rerun the workflow: it resumes where it stopped (a published bundle is
 reused after it is checked again; a bump of the application version is needed when its
 sources changed). Optional secret `RELEASE_PR_TOKEN` (a fine-grained token with contents and
