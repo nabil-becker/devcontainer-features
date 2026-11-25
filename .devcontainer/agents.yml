@@ -11,3 +11,13 @@ agents:
     folder: .
     args: [--remote-control]
     default: true          # task dc:agent with no name starts it
+  # The one agent the workstation mesh may reach (cross-node-approval, gate B, 2026-11-25): Claude Code in
+  # its default permission mode, so it asks a person before every tool it runs on a request from another
+  # node. The host session (auto mode) stays local: mesh.template.yml exposes only this agent. Gate A,
+  # the facilitator holding each cross-node message for a person (approval: every-message), comes with
+  # facilitator 0.9.0.
+  - name: mesh
+    cli: claude
+    kind: on-demand
+    folder: .
+    args: [--permission-mode, default]
