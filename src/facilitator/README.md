@@ -1,7 +1,7 @@
 
 # facilitator (conversations between agents of any vendor, on AGNTCY) (facilitator)
 
-The communication layer between agents of any vendor running in the devcontainer: an MCP server each participant's CLI starts (receive, reply, say, who) and a person's own Claude Code or Copilot session attaches to (say, mail, transcript, continue, who), one shared entry with the handle from FACILITATOR_HANDLE, deterministic routing by @handle with hop, budget and rate limits, every message a sign-packet packet in a register-engine conversation register, verified back to the human who began it. Installs the facilitator node bundle (its own CPython, dirctl, slimctl and the application, checksummed; the same bundle as the server image) and runs the AGNTCY Agent Directory and a SLIM node on loopback, started as infrastructure (mode node), or only the thin client (mode leaf); never starts, stops or configures a participant. A node is standalone (nothing open) unless its mesh.yml (FACILITATOR_MESH_FILE) makes it a hub or a spoke: nodes link over SLIM with mutual TLS, certificates from an OpenBao PKI per trust domain, a listener per trust level and the application's SPIFFE ID check (local and private trust; join tokens, revoke). Serves its MCP tools over HTTP to CLIs with static bearer tokens and to cloud AIs with OAuth 2.1 access tokens (facilitator.http.listen in facilitator.yml; off by default, refused under the preset solo; the node is a resource server only: it accepts tokens from the issuers in facilitator.http.issuers and publishes the protected-resource metadata; a person approves each client; the node signs for it and every packet says so) and includes a local-model wrapper for any OpenAI-compatible endpoint and a turn hook line for Claude Code ('Facilitator: N new messages').
+The communication layer between agents of any vendor running in the devcontainer: an MCP server each participant's CLI starts (receive, reply, say, who) and a person's own Claude Code or Copilot session attaches to (say, mail, transcript, continue, who), one shared entry with the handle from FACILITATOR_HANDLE, deterministic routing by @handle with hop, budget and rate limits, every message a sign-packet packet in a register-engine conversation register, verified back to the human who began it. Installs the facilitator node bundle (its own CPython, dirctl, slimctl and the application, checksummed; the same bundle as the server image) and runs the AGNTCY Agent Directory and a SLIM node on loopback, started as infrastructure (mode node), or only the thin client (mode leaf); never starts, stops or configures a participant. A node is standalone (nothing open) unless its mesh.yml (FACILITATOR_MESH_FILE) makes it a hub or a spoke: nodes link over SLIM with mutual TLS, certificates from an OpenBao PKI per trust domain, a listener per trust level and the application's SPIFFE ID check (local and private trust; join tokens, revoke). Serves its MCP tools over HTTP to CLIs with static bearer tokens and to cloud AIs with OAuth 2.1 access tokens (facilitator.http.listen in facilitator.yml; off by default, refused under the preset solo; the node is a resource server only: it accepts tokens from the issuers in facilitator.http.issuers and publishes the protected-resource metadata; a person approves each client; the node signs for it and every packet says so), and holds what crosses between nodes for a person's approval where mesh.yml's limits.<level>.approval says so (every-message, per-conversation, first-contact) and includes a local-model wrapper for any OpenAI-compatible endpoint and a turn hook line for Claude Code ('Facilitator: N new messages').
 
 ## Example Usage
 
@@ -18,7 +18,7 @@ The communication layer between agents of any vendor running in the devcontainer
 | installTaskfile | Install this Feature's Taskfile into /usr/local/share/go-task/includes.d so its tasks appear under facilitator: in a root Taskfile that includes /usr/local/share/go-task/features.yml (the go-task Feature). | boolean | true |
 | backend | What carries the directory and delivery: agntcy (the AGNTCY Agent Directory and SLIM). lean (packet-relay) is refused in this version: not yet, slice 5. FACILITATOR_BACKEND overrides. | string | agntcy |
 | mode | node (the default): the whole bundle, and the Directory, the SLIM node and the facilitator's ssh-agent run here (autostart). leaf: the thin client only (facilitator mcp and what it needs; no slimctl): no daemon is started, infra up and node run are refused; a leaf reaching a node over the network is not built yet (slice N3 built hubs and spokes). FACILITATOR_MODE. | string | node |
-| bundleVersion | The facilitator node bundle to install (a release asset of this repository, facilitator-bundle-v<version>), verified against the SHA-256 pinned in digests.txt. latest means the bundle this Feature version was made with (0.8.0). With no pin for it, the bundle is built from the Feature's own source, every upstream download checked against the SHA-256 pinned in bundle-build.sh. | string | 0.8.0 |
+| bundleVersion | The facilitator node bundle to install (a release asset of this repository, facilitator-bundle-v<version>), verified against the SHA-256 pinned in digests.txt. latest means the bundle this Feature version was made with (0.9.0). With no pin for it, the bundle is built from the Feature's own source, every upstream download checked against the SHA-256 pinned in bundle-build.sh. | string | 0.9.0 |
 | dirVersion | Deprecated in 0.3.0 (removed in 1.0.0): use bundleVersion. The bundle fixes dirctl's version (1.9.1); 1.9.1 or latest are accepted, with a deprecation line from install, version and check, and any other version is refused. | string | - |
 | slimVersion | Deprecated in 0.3.0 (removed in 1.0.0): use bundleVersion. The bundle fixes slimctl's version (3.4.6); 3.4.6 or latest are accepted, with a deprecation line from install, version and check, and any other version is refused. | string | - |
 | hopLimit | Hops since the message that began the chain (a person's later messages count too) before the conversation pauses; a person's continue resumes it. The default of the local and private trust levels; mesh.yml limits override it per level. FACILITATOR_HOP_LIMIT. | string | 6 |
@@ -53,7 +53,11 @@ The communication layer between agents of any vendor running in the devcontainer
   SLIM secret rotates to the nodes that remain. What it already holds is not recalled.
 - **Who restricts what.** The receiving node enforces everything from its own `mesh.yml` (a peer's claim about its level,
   limits or exposure is never believed); the sender applies the same rules as a courtesy. `expose` says how far an agent may
-  be reached; `limits` per level bound hops, budget, rate, size, copy and approval.
+  be reached; `limits` per level bound hops, budget, rate, size, copy and approval. **Each node restricts the other**: what a
+  node asks a person to approve (`limits.<level>.approval`: nothing, each new sender, each message, or each new conversation) is
+  its own `mesh.yml`'s, applied on arrival, before anything is handed to its agent; a node that asks for nothing is not
+  bound by the other's wish, and a sender's claim that "a person approved it" over there counts for nothing here
+  ([Approval of what crosses between nodes](#approval-of-what-crosses-between-nodes-gate-a)).
 
 - **Who can use a node locally.** A process becomes a participant only when (1) it is listed in `participants.yml` (a
   reviewed repository change; only listed handles get a token, made at container start) and (2) its MCP entry carries its
@@ -514,7 +518,7 @@ A hub's `node.issuer` picks, **in this order**, who holds the CA key and signs:
 | `node.issuer.ssh_agent.socket` | the agent's socket path, or `$SSH_AUTH_SOCK` (a `
 # facilitator (conversations between agents of any vendor, on AGNTCY) (facilitator)
 
-The communication layer between agents of any vendor running in the devcontainer: an MCP server each participant's CLI starts (receive, reply, say, who) and a person's own Claude Code or Copilot session attaches to (say, mail, transcript, continue, who), one shared entry with the handle from FACILITATOR_HANDLE, deterministic routing by @handle with hop, budget and rate limits, every message a sign-packet packet in a register-engine conversation register, verified back to the human who began it. Installs the facilitator node bundle (its own CPython, dirctl, slimctl and the application, checksummed; the same bundle as the server image) and runs the AGNTCY Agent Directory and a SLIM node on loopback, started as infrastructure (mode node), or only the thin client (mode leaf); never starts, stops or configures a participant. A node is standalone (nothing open) unless its mesh.yml (FACILITATOR_MESH_FILE) makes it a hub or a spoke: nodes link over SLIM with mutual TLS, certificates from an OpenBao PKI per trust domain, a listener per trust level and the application's SPIFFE ID check (local and private trust; join tokens, revoke). Serves its MCP tools over HTTP to CLIs with static bearer tokens and to cloud AIs with OAuth 2.1 access tokens (facilitator.http.listen in facilitator.yml; off by default, refused under the preset solo; the node is a resource server only: it accepts tokens from the issuers in facilitator.http.issuers and publishes the protected-resource metadata; a person approves each client; the node signs for it and every packet says so) and includes a local-model wrapper for any OpenAI-compatible endpoint and a turn hook line for Claude Code ('Facilitator: N new messages').
+The communication layer between agents of any vendor running in the devcontainer: an MCP server each participant's CLI starts (receive, reply, say, who) and a person's own Claude Code or Copilot session attaches to (say, mail, transcript, continue, who), one shared entry with the handle from FACILITATOR_HANDLE, deterministic routing by @handle with hop, budget and rate limits, every message a sign-packet packet in a register-engine conversation register, verified back to the human who began it. Installs the facilitator node bundle (its own CPython, dirctl, slimctl and the application, checksummed; the same bundle as the server image) and runs the AGNTCY Agent Directory and a SLIM node on loopback, started as infrastructure (mode node), or only the thin client (mode leaf); never starts, stops or configures a participant. A node is standalone (nothing open) unless its mesh.yml (FACILITATOR_MESH_FILE) makes it a hub or a spoke: nodes link over SLIM with mutual TLS, certificates from an OpenBao PKI per trust domain, a listener per trust level and the application's SPIFFE ID check (local and private trust; join tokens, revoke). Serves its MCP tools over HTTP to CLIs with static bearer tokens and to cloud AIs with OAuth 2.1 access tokens (facilitator.http.listen in facilitator.yml; off by default, refused under the preset solo; the node is a resource server only: it accepts tokens from the issuers in facilitator.http.issuers and publishes the protected-resource metadata; a person approves each client; the node signs for it and every packet says so), and holds what crosses between nodes for a person's approval where mesh.yml's limits.<level>.approval says so (every-message, per-conversation, first-contact) and includes a local-model wrapper for any OpenAI-compatible endpoint and a turn hook line for Claude Code ('Facilitator: N new messages').
 
 ## Example Usage
 
@@ -531,7 +535,7 @@ The communication layer between agents of any vendor running in the devcontainer
 | installTaskfile | Install this Feature's Taskfile into /usr/local/share/go-task/includes.d so its tasks appear under facilitator: in a root Taskfile that includes /usr/local/share/go-task/features.yml (the go-task Feature). | boolean | true |
 | backend | What carries the directory and delivery: agntcy (the AGNTCY Agent Directory and SLIM). lean (packet-relay) is refused in this version: not yet, slice 5. FACILITATOR_BACKEND overrides. | string | agntcy |
 | mode | node (the default): the whole bundle, and the Directory, the SLIM node and the facilitator's ssh-agent run here (autostart). leaf: the thin client only (facilitator mcp and what it needs; no slimctl): no daemon is started, infra up and node run are refused; a leaf reaching a node over the network is not built yet (slice N3 built hubs and spokes). FACILITATOR_MODE. | string | node |
-| bundleVersion | The facilitator node bundle to install (a release asset of this repository, facilitator-bundle-v<version>), verified against the SHA-256 pinned in digests.txt. latest means the bundle this Feature version was made with (0.8.0). With no pin for it, the bundle is built from the Feature's own source, every upstream download checked against the SHA-256 pinned in bundle-build.sh. | string | 0.8.0 |
+| bundleVersion | The facilitator node bundle to install (a release asset of this repository, facilitator-bundle-v<version>), verified against the SHA-256 pinned in digests.txt. latest means the bundle this Feature version was made with (0.9.0). With no pin for it, the bundle is built from the Feature's own source, every upstream download checked against the SHA-256 pinned in bundle-build.sh. | string | 0.9.0 |
 | dirVersion | Deprecated in 0.3.0 (removed in 1.0.0): use bundleVersion. The bundle fixes dirctl's version (1.9.1); 1.9.1 or latest are accepted, with a deprecation line from install, version and check, and any other version is refused. | string | - |
 | slimVersion | Deprecated in 0.3.0 (removed in 1.0.0): use bundleVersion. The bundle fixes slimctl's version (3.4.6); 3.4.6 or latest are accepted, with a deprecation line from install, version and check, and any other version is refused. | string | - |
 | hopLimit | Hops since the message that began the chain (a person's later messages count too) before the conversation pauses; a person's continue resumes it. The default of the local and private trust levels; mesh.yml limits override it per level. FACILITATOR_HOP_LIMIT. | string | 6 |
@@ -715,6 +719,55 @@ until they revoke it too. A third peer pairs with either; for three nodes with n
   renewal, so the node's certificate expires within the hour and no new handshake succeeds after; lock two refuses what it
   sends from the moment of the revoke. What it already holds is not recalled.
 
+### Approval of what crosses between nodes (gate A)
+
+The Operator's ruling of 2026-11-25 ("both, layered") has two gates. Gate A, here: the receiving node **holds a message that
+arrives from another node until a person approves it**, configurable per trust level. (Gate B, a person on the sending side,
+is a separate slice.) The setting is `limits.<level>.approval` in the **receiving** node's `mesh.yml`, for the level the
+sender's card puts it at (private or public), and for HTTP clients at the level they are mapped to:
+
+| Value | A person approves | Default at |
+| --- | --- | --- |
+| `none` | nothing: messages flow | local, private |
+| `first-contact` | each new sender once (an agent of another node, an HTTP client), for `approval_ttl` | public |
+| `every-message` | each message that arrives from another node, one by one | (set it) |
+| `per-conversation` | the first message of each new conversation with another node; once approved, that sender's rest of the conversation flows | (set it) |
+
+`every-message` and `per-conversation` are refused at `local` by `check` (the local level is this node's own agents, whose
+messages never cross). `first-contact` is as before and is **enforced at private too** when set there (the receiver reads
+the sender's card level, whatever it is). `facilitator check` shows the effective approval of each level, and `facilitator
+explain <handle or SPIFFE ID>` the one a sender gets and where it came from.
+
+```yaml
+# a person approves every message between my devcontainers (on each node that should ask)
+limits:
+  private:
+    approval: every-message
+```
+
+- **Held, in the record.** The message is written (a replica holds it like any other) and the receiving node's facilitator
+  adds a signed notice `approval` to the conversation ("held at <node>: a person there must approve ...") that the sender's
+  replica shows too. The local agent's `receive` does not return it. It is the **receiving node's own answers** that count:
+  an `approved` or `denied` notice signed by another node's facilitator never answers for this node.
+- **The person sees it.** `mail` (the MCP tool, or `facilitator mail`) lists each held message: its id, the sender with its
+  node, the level and mode, the conversation, the first line and its age; the turn hook line says `N messages held for your
+  approval`.
+- **Answering.** `facilitator approve <message or conversation id>` and `facilitator deny ...` (a conversation id answers
+  every message of it that waits), or the person's MCP tools `approve` (its `client` argument now also takes a message or
+  conversation id) and `deny`. A person's act only: the commands refuse inside an agent's job, the tools refuse a session
+  that is not a human of `facilitator.yml`, and an HTTP client has neither. Approval delivers (a message of another node's
+  agent is handed to `receive`; an HTTP client's is routed now). Denial drops it with a signed notice `denied` in the
+  conversation, which the sender's node shows. Under `per-conversation` a denial answers that message only: the sender's next
+  message in the conversation is held again.
+- **Seven days.** A message held longer than 7 days (ruling BG) is never delivered, and approving it says so in a notice
+  instead of delivering.
+- **Audit.** Each answer is an entry of the signed audit register (`message-approved`, `message-denied`: the message id, the
+  person, the conversation, the sender, the mode and level) and the signed notice above. `facilitator verify` prints, under
+  the message, that it was held and that a person approved or denied it, at which node, and the audit entry.
+- **What it does not do.** It does not stop the sender's node from writing: the register is replicated whatever the receiver
+  asks, so the receiver holds the delivery, not the bytes. A message to a **person** is shown in their `mail` as before (they
+  read it themselves); the gate guards what reaches an agent.
+
 ### The mesh secret's rotation (ruling H4)
 
 SLIM checks no revocation list, so a revoked node's link could still form until its certificate expired. On every `node revoke`
@@ -800,7 +853,8 @@ facilitator:
   **private**; unlisted they are **public**. Never local.
 - `expose: { <handle>: public }` is allowed under `team`: public means reachable by this node's HTTP clients only.
   Under `solo` it is refused. An agent is never public unless a file says so.
-- `limits.<level>`: `approval` (`none`, or `first-contact`; default `first-contact` at public), `approval_ttl` (`none`, or
+- `limits.<level>`: `approval` (`none`, `first-contact`, `every-message` or `per-conversation`; default `first-contact` at public,
+  `none` elsewhere; the last two are [described below](#approval-of-what-crosses-between-nodes-gate-a)), `approval_ttl` (`none`, or
   a duration such as `30d`, the default at public), `http_receive_wait` (the longest a `receive` blocks; 300s, 60s, 25s).
   The public defaults of hops 2, budget 10, rate 3 and `max_packet` 16KiB apply to a client's conversations.
 
@@ -1232,6 +1286,7 @@ mistake, not an attacker.
 | `facilitator:node-issuer` | `facilitator node issuer status\|export-root --out <file>\|migrate [--openbao <url>] [--mount <m>] [--token-file <f>]` | The hub's issuer tier (read only); the built-in root CA's key out of the volume to a new file; the built-in CA moved into an OpenBao PKI, the same CA. `export-root` and `migrate` are a person's acts: refused inside an agent's job. |
 | `facilitator:node-status` | `facilitator node status` | The peers part, the admitted cards, a hub's roster, the last refusals (JSON). |
 | (no task) | `facilitator node bundle <domain> --file <pem>`, `node renew`, `node restore-roster`, `node peers` | A federated domain's trust bundle; renew this spoke's certificate now; a hub's roster back from OpenBao or from its volume; the peers part in the foreground (`infra up` starts it). |
+| `facilitator:approve`, `facilitator:deny` | `facilitator approve\|deny <message id \| conversation id \| client>` | A person's answer to what waits (`mail` lists it; gate A, `every-message` and `per-conversation`): approve delivers, deny drops it with a signed notice. `approve` also takes an HTTP client or another node's agent (first contact). Refused inside an agent's job. |
 | `facilitator:http-token` | `facilitator http token <client> [--label ..] [--as <person>]` | A bearer token for an HTTP client, shown once (only its hash is kept). A person's act: refused inside an agent's job. |
 | `facilitator:http-forget` | `facilitator http forget <client>` | Lets a revoked or denied client back as new (an OAuth login enrols again, held for approval). A person's act; a live client is refused. |
 | `facilitator:http` | `facilitator http list\|audit\|approve <client>\|deny <client>\|revoke <client>` | The clients (no secret), the audit chain, first-contact approval, the end of a client's token. `approve`, `deny` and `revoke` are a person's acts. `http serve` is what the `http` infra part runs. |
@@ -1273,7 +1328,8 @@ A person's (none of them waits):
 | `mail` | `limit?` (1 to 200, default 20) | The unread messages of every conversation you are in, by conversation (the one with the oldest unread first), each in its order, with `from`, `hops`, whether it was addressed to you and whether it was held; then marked read. `more` counts what stays unread; paused conversations are named. `no new messages` when there are none. |
 | `transcript` | `conversation`, `limit?` (1 to 500, default 50) | A conversation you are in: its last `limit` messages with their routes and notices, and how many earlier ones are not shown. |
 | `continue` | `conversation` | A paused conversation runs another hop limit (and its budget is reset); its last held message is delivered. The only thing that resets the hops. |
-| `approve` | `client` | An HTTP client's first contact (slice N4): its held messages are delivered. `mail` names the clients that wait. |
+| `approve` | `client` | An HTTP client's or another node's agent's first contact (its name), or one held message or conversation (its id, `m-...` or `c-...`, from `mail`): what waits is delivered. |
+| `deny` | `message` | A held message or conversation (its id from `mail`): not delivered; the sender's node gets a signed notice in the conversation. |
 | `who` | none | As an agent's. |
 
 An **HTTP client's** (over `facilitator http serve`, never `human`; "MCP over HTTP for CLIs" above): `who` (only what its
@@ -1382,6 +1438,13 @@ the Directory's data) is kept. A new AGNTCY or CPython version is a new bundle (
 `release-bundle` and pinned in `digests.txt`. 0.x: the MCP tools, the packet fields and the CLI verbs may still
 change before 1.0.
 
+**From 0.8.0 to 0.9.0:** rebuild the container. Nothing changes unless `mesh.yml` sets `limits.<level>.approval` to the new
+`every-message` or `per-conversation` (a node that does not is exactly 0.8.0's). New: those two values, `mail` and the turn hook
+line for held messages, `facilitator approve` and `deny` and the person's MCP tool `deny`, the audit events `message-approved` and
+`message-denied`, `check`'s approval row. A 0.8.0 node that meets a 0.9.0 node's `approved` or `denied` notice reads it as it
+read the HTTP ones (the codes exist since 0.5.0). The bundle is 0.9.0 (unreleased: until `release-bundle` runs and `digests.txt` pins
+it, the Feature builds it from its own source).
+
 **From 0.6.0 to 0.7.0:** rebuild the container (the Feature, and the node image). Nothing changes for a node that is not a
 hub, and a hub with `node.issuer.openbao` keeps its OpenBao PKI. A hub with **no** `openbao` (it had a single built-in CA
 from 0.6.0, or none) keeps working: a hub with no CA yet now makes a root and an issuing CA, and one made by 0.6.0 keeps its
@@ -1437,6 +1500,41 @@ two spokes) and
 CLI for real, and a leaf client otherwise; `test_http.py` and `test_http_endpoint.py` are its unit tests).
 
 ## Changes
+
+### [0.9.0] - 2026-11-25
+
+Gate A of the Operator's ruling of 2026-11-25 ("both, layered"): a node **holds what arrives from another node until a person
+approves it**, set per trust level in the receiving node's own `mesh.yml`. A node that sets nothing behaves as 0.8.0. Rebuild the
+container. No new Python dependency.
+
+#### Added
+
+- **`limits.<level>.approval: every-message`**: each message that arrives from another node at that level (or from an HTTP client
+  mapped to it) is written and held until a person approves that message. **`per-conversation`**: the first message of each new
+  conversation with another node is held; once approved, that sender's rest of the conversation flows. Valid at `private` and
+  `public`; `check` refuses them at `local`. `none` and `first-contact` are unchanged.
+- **Held messages are listed**: the person's `mail` (the MCP tool and `facilitator mail`) shows each one (id, sender with its node,
+  level and mode, conversation, first line, age) and the turn hook line counts them ("N messages held for your approval").
+- **`facilitator approve <message | conversation | client>`** and **`facilitator deny ...`** (tasks `facilitator:approve` and
+  `facilitator:deny`), and the person's MCP tool **`deny`**; the `approve` tool's `client` argument also takes a held message or
+  conversation id. A person's acts only: refused inside an agent's job, refused to an agent's or an HTTP client's session. A deny
+  drops the message with a signed `denied` notice in the conversation, which the sender's node shows.
+- The receiving node writes a signed `approval` notice in the record when it holds a message, and an `approved` or `denied` notice
+  when a person answers; each answer is also an entry of the audit register (`message-approved`, `message-denied`). Only a notice
+  signed by **this** node's facilitator answers for this node. `verify` shows, under the message, that it was held and that a
+  person approved or denied it.
+- A message held more than 7 days is not delivered, approved or not (ruling BG, as for first contact).
+- `check` shows the effective approval of each level, and `explain` the one a handle or SPIFFE ID gets and where it came from.
+
+#### Facts established
+
+- `first-contact` was already enforced for another node's agents at **private** when `mesh.yml` sets it there (the receiver reads
+  the sender's card level); only the default (public) made it look public-only. A unit test now says so.
+
+#### Changed
+
+- `http_ready` asks for a person in `facilitator.yml` whenever the HTTP level's approval is not `none` (it asked for
+  `first-contact` only).
 
 ### [0.8.0] - 2026-11-24
 
@@ -1523,48 +1621,6 @@ node that is not a hub, and a hub with `node.issuer.openbao` keeps its OpenBao P
 #### Changed
 
 - A hub's `check` no longer says it needs OpenBao: its issuer "must answer" (the built-in CA always does).
-
-### [0.6.0] - 2026-11-23
-
-Peer to peer and the cross-node public rules (slice N5a of the facilitator-node proposal; rulings AH, H4, HC3, ID2, PB3). Nothing
-changes unless `mesh.yml` says `role: peer`, `preset: open` or `node.public`: no port opens. Rebuild the container.
-
-#### Added
-
-- **`role: peer`** (nodes linked with no hub) and **`preset: open`** (the public level may be used). A peer is the issuer of
-  its own domain with a CA it keeps (name-constrained to that domain; no OpenBao needed), lists the nodes it links to in
-  `node.peers` (`host:port`, or `incoming` when the peer dials it) and pairs with another peer by a token:
-  `facilitator node invite` on one, `facilitator node peer --token` on the other. Cards are exchanged by `hello`.
-- **The cross-node public rules.** A node with `node.public` (`domain`, `join`) and a `public` entry in `node.listen`
-  issues certificates for a public domain; a public node joins by its **key plus a person's approval**:
-  `node invite --level public` (a 15 minute request window, prints the info), `node request` and `node collect` on the
-  public node, `node requests` and `node approve <request>` (or `node deny`) on the issuer. A public certificate lasts
-  `limits.public.svid_ttl` (1 h), renewed at half life while the issuer allows it; the public listener and the public join
-  endpoint are separate from the private ones (one CA bundle each). A public node is shown the issuer's own card, restricted
-  to what is exposed `public`, and no other node's.
-- **`copy: addressed`** (the public default): the node replicates only the conversations a public node is a member of, and a
-  conversation with a member on such a node carries only messages addressed to it: the write is refused otherwise, and the
-  register is withheld before sending if it holds more. `verify` reports a lineage that leaves such a replica as partial
-  (exit 0). **Did not hold as written:** register-engine cannot hold a part of a register (see the NOTES).
-- **First contact across nodes:** a message from a public node's agent waits until a person approves that agent (`approve`
-  tool or `facilitator http approve handle.node`), for `approval_ttl` (30 d).
-- **Revoke and cut-off:** `node revoke` on a hub or a peer: no renewal, lock two refuses the node at once, and **the mesh's
-  SLIM app secret rotates** (ruling H4): the nodes that remain are handed the new one and restart their peers part on it;
-  `node secret` shows or sets it for a node that missed a rotation.
-- **A signed audit register** of the type `audit` (the second type of `types.d/facilitator.py`): every HTTP enrolment event
-  and every join request, approval, denial, revocation and rotation is a signed entry; `facilitator audit verify|replay|show`;
-  the lines of `http/audit.jsonl` are replayed into it once each (ruling HC3).
-- **`badge`**, an opaque optional field of each participant entry of a node card (ruling ID2): carried and signed with the card,
-  ignored by lock two. The `identity` option stays refused.
-- `limits.<level>.svid_ttl` may be as short as 1 minute (tests); `check` shows the public certificate, waiting requests,
-  peers and the secret rotation.
-
-#### Changed
-
-- `node approve` works (it was refused until now); `node invite`, `node revoke` also serve a peer; `trust` may map a domain
-  `public` under `preset: open`; `copy: addressed` is accepted (and the only value at public).
-- `bundleVersion` defaults to `0.6.0`: the Feature installs the published node bundle `facilitator-bundle-v0.6.0`
-  (amd64 and arm64), pinned by SHA-256 in `digests.txt`.
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/facilitator/CHANGELOG.md).
 

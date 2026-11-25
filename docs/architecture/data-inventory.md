@@ -422,3 +422,11 @@ register entry.
 | The subject and issuer in the record | `data.via` of every message and status the client writes (a signed packet in the conversation register, replicated like the rest) | as the subject: choose an issuer whose subjects are opaque when that matters |
 | An OAuth access token | never stored; read from the `Authorization` header and checked | yes; a log line keeps a reason, never the token |
 
+
+## Facilitator node, approval of what crosses (facilitator 0.9.0)
+
+| Data | Where | Sensitive |
+| --- | --- | --- |
+| The approval a node asks per level | `mesh.yml` `limits.<level>.approval` (`none`, `first-contact`, `every-message`, `per-conversation`), tier 1 in git | no |
+| A held message | the conversation register as any message (replicated whatever the receiver asks); the receiving node's own `approval` notice marks it held | as the message |
+| A person's answer | a signed `approved` or `denied` notice of the receiving node's facilitator in the conversation, and a `message-approved` or `message-denied` entry of the audit register (the message id, the person's handle, the conversation, the sender, the mode and level; no text) | no |

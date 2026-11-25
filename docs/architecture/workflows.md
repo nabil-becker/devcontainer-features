@@ -335,3 +335,24 @@ sequenceDiagram
   P->>N: http list, http approve corp-alice
   N-->>C: delivered; the agent's answer; every packet carries via: oauth, issuer, subject
 ```
+
+## 13. A person approves a message that crosses between nodes (facilitator 0.9.0, gate A)
+
+```mermaid
+sequenceDiagram
+  participant A as agent a1 (node A)
+  participant FA as node A (sender)
+  participant FB as node B (receiver, limits.private.approval: every-message)
+  participant P as a person on B (terminal or session)
+  participant B as agent b1 (node B)
+  A->>FA: say @b1.node-b
+  FA->>FB: the conversation's entries (message, route with b1's task)
+  Note over FB: its own mesh.yml decides; the message is in the record
+  FB-->>FA: signed notice approval: held at node-b
+  B->>FB: receive (nothing: the task is not handed over)
+  P->>FB: mail lists it (sender, node, conversation, first line, age)
+  P->>FB: facilitator approve m-... (or the approve tool)
+  FB-->>FA: signed notice approved (and an audit entry)
+  B->>FB: receive: the message
+  Note over P,FB: deny instead: signed notice denied, never delivered; 7 days held: never delivered
+```

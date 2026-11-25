@@ -68,7 +68,8 @@ FINGERPRINT_RE = re.compile(r"SHA256:[A-Za-z0-9+/]{43}")
 DIRECTORY_KEYS = ("peering", "firewall", "open_oci")
 LIMIT_KEYS = ("hops", "budget", "rate", "copy", "approval", "approval_ttl", "svid_ttl", "max_packet", "http_receive_wait")
 COPIES = ("full", "member", "addressed")
-APPROVALS = ("none", "first-contact")
+APPROVALS = ("none", "first-contact", "every-message", "per-conversation")
+MESSAGE_APPROVALS = ("every-message", "per-conversation")      # a person answers for messages, not for a sender
 # The defaults of each level (proposal 7, the limits table). hops, budget and rate of local and private come
 # from the Feature's options (ruling AD), which set them in Mesh.limit.
 DEFAULT_LIMITS = {
@@ -459,6 +460,9 @@ def _check(m: Mesh, raw: dict, text: str) -> None:
                 elif k == "approval":
                     if v not in APPROVALS:
                         raise MeshError(f"{v!r}: {', '.join(APPROVALS)}")
+                    if lv == "local" and v in MESSAGE_APPROVALS:
+                        raise MeshError(f"{v}: the local level is this node's own agents, whose messages never cross; a person "
+                                        "approves what comes from another node at private or public, or from an HTTP client")
                     good[k] = v
                 elif k == "approval_ttl":
                     if str(v) != "none":

@@ -817,6 +817,10 @@ class Daemon:
                      + "; ".join(f"{i[:12]} {c_[0]}" for i, c_ in list(rep.refused.items())[:3]))
             if old is None and not any(store.ids()):
                 (self.store.convs / f"{conv}.json").unlink(missing_ok=True)
+        try:
+            self.fac.note_held(conv)           # every-message, per-conversation: mark in the record what waits here
+        except Exception as e:                 # noqa: BLE001 - a missing notice is not a lost message: it waits anyway
+            self.err(f"{conv}: held notice not written: {e}")
         return []
 
     def on_renew(self, env: dict, c: dict) -> list:

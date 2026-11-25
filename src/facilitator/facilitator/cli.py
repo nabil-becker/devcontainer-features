@@ -292,6 +292,10 @@ def cmd_check(a) -> int:
     part("keys", True, f"OpenBao {st}" + ("; some keys are in the 0.1.0 fallback file (keys/FALLBACK)" if fb else ""))
     for p_ in mesh_parts(fac):
         part(*p_)
+    part("approval", True, "; ".join(f"{lv} {fac.mesh.limit(lv, 'approval')[0]}"
+                                     + ("" if fac.mesh.limit(lv, 'approval')[1].startswith("the default") else " (mesh.yml)")
+                                     for lv in ("local", "private", "public")) + " (what a person must approve before a message "
+         "that crosses from another node, or from an HTTP client, is delivered)", needed=False)
     for p_ in http_parts(fac):
         part(*p_)
     try:
@@ -376,6 +380,9 @@ def cmd_explain(a) -> int:
         else:
             out.update({"handle": x, "node": m.node_id, "exposure": m.exposure(x),
                         "id": f"spiffe://{m.domain or m.home_domain}/node/{m.node_id}/agent/{x}"})
+    if out.get("level") in mesh_mod.LEVELS:
+        mode, src = m.limit(out["level"], "approval")
+        out["approval"] = f"{mode} ({src}): " + APPROVAL_TEXT[mode]
     for lv in ("local", "private", "public"):
         out.setdefault("limits", {})[lv] = {k: f"{v} ({src})" for k in mesh_mod.LIMIT_KEYS
                                             for v, src in [m.limit(lv, k, fac.s)]}
@@ -970,6 +977,33 @@ def _by(fac, a) -> str:
     return humans[0]
 
 
+APPROVAL_TEXT = {"none": "nothing a person must approve",
+                 "first-contact": "a person approves each new sender once (for approval_ttl)",
+                 "every-message": "a person approves every message that arrives from another node",
+                 "per-conversation": "a person approves the first message of each new conversation from another node"}
+
+
+def cmd_answer(a) -> int:
+    """facilitator approve | deny <message | conversation | client>: a person's answer to what waits (mail lists it)."""
+    approve = a.cmd == "approve"
+    refuse_in_agent_job(f"facilitator {a.cmd}")
+    fac = _fac(a)
+    by = _by(fac, a)
+    if a.target[:2] in ("m-", "c-"):
+        r = fac.answer_message(a.target, by, approve)
+        _emit(a, r, "\n".join(f"facilitator: {x['conversation']}/{x['message_id']} from {x['from']} {x['answer']} by {by}"
+                              + (", delivered" if x["delivered"] else ", not delivered") for x in r["answered"]))
+        return 0
+    if not approve:
+        raise FacilitatorError(f"deny: {a.target!r} is not a held message or conversation id (facilitator mail lists them); "
+                               "a client is denied with facilitator http deny <client>")
+    r = fac.approve_client(a.target, by)
+    _emit(a, r, f"facilitator: {a.target} approved by {by}: " + (", ".join(
+        f"{x['conversation']}/{x['message_id']} {'delivered' if x['delivered'] else 'not delivered'}" for x in r["released"])
+        or "no held message"))
+    return 0
+
+
 def cmd_http(a) -> int:
     """facilitator http serve | token | list | approve | deny | revoke | forget | audit (slice N4)."""
     fac = _fac(a)
@@ -1346,6 +1380,12 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("client", nargs="?")
     c.add_argument("--label", help="token: a note for the list")
     c.add_argument("--as", dest="as_", help="the person acting (a human of facilitator.yml; default the first)")
+    for verb, what in (("approve", "approves"), ("deny", "denies")):
+        c = command(verb, cmd_answer, f"a person {what} what waits: a held message (m-...) or conversation (c-...) from "
+                                      "facilitator mail" + ("; or an HTTP client, or another node's agent (first contact)"
+                                                            if verb == "approve" else "; the sender gets a signed notice"))
+        c.add_argument("target")
+        c.add_argument("--as", dest="as_", help="the person acting (a human of facilitator.yml; default the first)")
     command("participants", cmd_participants, "the participant list and who is registered")
     command("status", cmd_status, "who is attached, and each conversation's hops, budget and pause")
     c = command("mail", cmd_mail, "a person's unread messages, read only (the MCP tool mail marks them read); "

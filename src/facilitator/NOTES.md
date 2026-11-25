@@ -20,7 +20,11 @@
   SLIM secret rotates to the nodes that remain. What it already holds is not recalled.
 - **Who restricts what.** The receiving node enforces everything from its own `mesh.yml` (a peer's claim about its level,
   limits or exposure is never believed); the sender applies the same rules as a courtesy. `expose` says how far an agent may
-  be reached; `limits` per level bound hops, budget, rate, size, copy and approval.
+  be reached; `limits` per level bound hops, budget, rate, size, copy and approval. **Each node restricts the other**: what a
+  node asks a person to approve (`limits.<level>.approval`: nothing, each new sender, each message, or each new conversation) is
+  its own `mesh.yml`'s, applied on arrival, before anything is handed to its agent; a node that asks for nothing is not
+  bound by the other's wish, and a sender's claim that "a person approved it" over there counts for nothing here
+  ([Approval of what crosses between nodes](#approval-of-what-crosses-between-nodes-gate-a)).
 
 - **Who can use a node locally.** A process becomes a participant only when (1) it is listed in `participants.yml` (a
   reviewed repository change; only listed handles get a token, made at container start) and (2) its MCP entry carries its
@@ -649,6 +653,55 @@ until they revoke it too. A third peer pairs with either; for three nodes with n
   renewal, so the node's certificate expires within the hour and no new handshake succeeds after; lock two refuses what it
   sends from the moment of the revoke. What it already holds is not recalled.
 
+### Approval of what crosses between nodes (gate A)
+
+The Operator's ruling of 2026-11-25 ("both, layered") has two gates. Gate A, here: the receiving node **holds a message that
+arrives from another node until a person approves it**, configurable per trust level. (Gate B, a person on the sending side,
+is a separate slice.) The setting is `limits.<level>.approval` in the **receiving** node's `mesh.yml`, for the level the
+sender's card puts it at (private or public), and for HTTP clients at the level they are mapped to:
+
+| Value | A person approves | Default at |
+| --- | --- | --- |
+| `none` | nothing: messages flow | local, private |
+| `first-contact` | each new sender once (an agent of another node, an HTTP client), for `approval_ttl` | public |
+| `every-message` | each message that arrives from another node, one by one | (set it) |
+| `per-conversation` | the first message of each new conversation with another node; once approved, that sender's rest of the conversation flows | (set it) |
+
+`every-message` and `per-conversation` are refused at `local` by `check` (the local level is this node's own agents, whose
+messages never cross). `first-contact` is as before and is **enforced at private too** when set there (the receiver reads
+the sender's card level, whatever it is). `facilitator check` shows the effective approval of each level, and `facilitator
+explain <handle or SPIFFE ID>` the one a sender gets and where it came from.
+
+```yaml
+# a person approves every message between my devcontainers (on each node that should ask)
+limits:
+  private:
+    approval: every-message
+```
+
+- **Held, in the record.** The message is written (a replica holds it like any other) and the receiving node's facilitator
+  adds a signed notice `approval` to the conversation ("held at <node>: a person there must approve ...") that the sender's
+  replica shows too. The local agent's `receive` does not return it. It is the **receiving node's own answers** that count:
+  an `approved` or `denied` notice signed by another node's facilitator never answers for this node.
+- **The person sees it.** `mail` (the MCP tool, or `facilitator mail`) lists each held message: its id, the sender with its
+  node, the level and mode, the conversation, the first line and its age; the turn hook line says `N messages held for your
+  approval`.
+- **Answering.** `facilitator approve <message or conversation id>` and `facilitator deny ...` (a conversation id answers
+  every message of it that waits), or the person's MCP tools `approve` (its `client` argument now also takes a message or
+  conversation id) and `deny`. A person's act only: the commands refuse inside an agent's job, the tools refuse a session
+  that is not a human of `facilitator.yml`, and an HTTP client has neither. Approval delivers (a message of another node's
+  agent is handed to `receive`; an HTTP client's is routed now). Denial drops it with a signed notice `denied` in the
+  conversation, which the sender's node shows. Under `per-conversation` a denial answers that message only: the sender's next
+  message in the conversation is held again.
+- **Seven days.** A message held longer than 7 days (ruling BG) is never delivered, and approving it says so in a notice
+  instead of delivering.
+- **Audit.** Each answer is an entry of the signed audit register (`message-approved`, `message-denied`: the message id, the
+  person, the conversation, the sender, the mode and level) and the signed notice above. `facilitator verify` prints, under
+  the message, that it was held and that a person approved or denied it, at which node, and the audit entry.
+- **What it does not do.** It does not stop the sender's node from writing: the register is replicated whatever the receiver
+  asks, so the receiver holds the delivery, not the bytes. A message to a **person** is shown in their `mail` as before (they
+  read it themselves); the gate guards what reaches an agent.
+
 ### The mesh secret's rotation (ruling H4)
 
 SLIM checks no revocation list, so a revoked node's link could still form until its certificate expired. On every `node revoke`
@@ -734,7 +787,8 @@ facilitator:
   **private**; unlisted they are **public**. Never local.
 - `expose: { <handle>: public }` is allowed under `team`: public means reachable by this node's HTTP clients only.
   Under `solo` it is refused. An agent is never public unless a file says so.
-- `limits.<level>`: `approval` (`none`, or `first-contact`; default `first-contact` at public), `approval_ttl` (`none`, or
+- `limits.<level>`: `approval` (`none`, `first-contact`, `every-message` or `per-conversation`; default `first-contact` at public,
+  `none` elsewhere; the last two are [described below](#approval-of-what-crosses-between-nodes-gate-a)), `approval_ttl` (`none`, or
   a duration such as `30d`, the default at public), `http_receive_wait` (the longest a `receive` blocks; 300s, 60s, 25s).
   The public defaults of hops 2, budget 10, rate 3 and `max_packet` 16KiB apply to a client's conversations.
 
@@ -1166,6 +1220,7 @@ mistake, not an attacker.
 | `facilitator:node-issuer` | `facilitator node issuer status\|export-root --out <file>\|migrate [--openbao <url>] [--mount <m>] [--token-file <f>]` | The hub's issuer tier (read only); the built-in root CA's key out of the volume to a new file; the built-in CA moved into an OpenBao PKI, the same CA. `export-root` and `migrate` are a person's acts: refused inside an agent's job. |
 | `facilitator:node-status` | `facilitator node status` | The peers part, the admitted cards, a hub's roster, the last refusals (JSON). |
 | (no task) | `facilitator node bundle <domain> --file <pem>`, `node renew`, `node restore-roster`, `node peers` | A federated domain's trust bundle; renew this spoke's certificate now; a hub's roster back from OpenBao or from its volume; the peers part in the foreground (`infra up` starts it). |
+| `facilitator:approve`, `facilitator:deny` | `facilitator approve\|deny <message id \| conversation id \| client>` | A person's answer to what waits (`mail` lists it; gate A, `every-message` and `per-conversation`): approve delivers, deny drops it with a signed notice. `approve` also takes an HTTP client or another node's agent (first contact). Refused inside an agent's job. |
 | `facilitator:http-token` | `facilitator http token <client> [--label ..] [--as <person>]` | A bearer token for an HTTP client, shown once (only its hash is kept). A person's act: refused inside an agent's job. |
 | `facilitator:http-forget` | `facilitator http forget <client>` | Lets a revoked or denied client back as new (an OAuth login enrols again, held for approval). A person's act; a live client is refused. |
 | `facilitator:http` | `facilitator http list\|audit\|approve <client>\|deny <client>\|revoke <client>` | The clients (no secret), the audit chain, first-contact approval, the end of a client's token. `approve`, `deny` and `revoke` are a person's acts. `http serve` is what the `http` infra part runs. |
@@ -1207,7 +1262,8 @@ A person's (none of them waits):
 | `mail` | `limit?` (1 to 200, default 20) | The unread messages of every conversation you are in, by conversation (the one with the oldest unread first), each in its order, with `from`, `hops`, whether it was addressed to you and whether it was held; then marked read. `more` counts what stays unread; paused conversations are named. `no new messages` when there are none. |
 | `transcript` | `conversation`, `limit?` (1 to 500, default 50) | A conversation you are in: its last `limit` messages with their routes and notices, and how many earlier ones are not shown. |
 | `continue` | `conversation` | A paused conversation runs another hop limit (and its budget is reset); its last held message is delivered. The only thing that resets the hops. |
-| `approve` | `client` | An HTTP client's first contact (slice N4): its held messages are delivered. `mail` names the clients that wait. |
+| `approve` | `client` | An HTTP client's or another node's agent's first contact (its name), or one held message or conversation (its id, `m-...` or `c-...`, from `mail`): what waits is delivered. |
+| `deny` | `message` | A held message or conversation (its id from `mail`): not delivered; the sender's node gets a signed notice in the conversation. |
 | `who` | none | As an agent's. |
 
 An **HTTP client's** (over `facilitator http serve`, never `human`; "MCP over HTTP for CLIs" above): `who` (only what its
@@ -1315,6 +1371,13 @@ together), and `mcp` 2.3.0 with its 27 dependency wheels, each by SHA-256 (the t
 the Directory's data) is kept. A new AGNTCY or CPython version is a new bundle (the script's pins), released by
 `release-bundle` and pinned in `digests.txt`. 0.x: the MCP tools, the packet fields and the CLI verbs may still
 change before 1.0.
+
+**From 0.8.0 to 0.9.0:** rebuild the container. Nothing changes unless `mesh.yml` sets `limits.<level>.approval` to the new
+`every-message` or `per-conversation` (a node that does not is exactly 0.8.0's). New: those two values, `mail` and the turn hook
+line for held messages, `facilitator approve` and `deny` and the person's MCP tool `deny`, the audit events `message-approved` and
+`message-denied`, `check`'s approval row. A 0.8.0 node that meets a 0.9.0 node's `approved` or `denied` notice reads it as it
+read the HTTP ones (the codes exist since 0.5.0). The bundle is 0.9.0 (unreleased: until `release-bundle` runs and `digests.txt` pins
+it, the Feature builds it from its own source).
 
 **From 0.6.0 to 0.7.0:** rebuild the container (the Feature, and the node image). Nothing changes for a node that is not a
 hub, and a hub with `node.issuer.openbao` keeps its OpenBao PKI. A hub with **no** `openbao` (it had a single built-in CA

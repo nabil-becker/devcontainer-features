@@ -6,6 +6,41 @@ of the Feature and whether they must act (an option renamed, a task removed, a r
 The version in `devcontainer-feature.json` is bumped in the same change that adds its entry
 here; `task lint` fails when the entry is missing.
 
+## [0.9.0] - 2026-11-25
+
+Gate A of the Operator's ruling of 2026-11-25 ("both, layered"): a node **holds what arrives from another node until a person
+approves it**, set per trust level in the receiving node's own `mesh.yml`. A node that sets nothing behaves as 0.8.0. Rebuild the
+container. No new Python dependency.
+
+### Added
+
+- **`limits.<level>.approval: every-message`**: each message that arrives from another node at that level (or from an HTTP client
+  mapped to it) is written and held until a person approves that message. **`per-conversation`**: the first message of each new
+  conversation with another node is held; once approved, that sender's rest of the conversation flows. Valid at `private` and
+  `public`; `check` refuses them at `local`. `none` and `first-contact` are unchanged.
+- **Held messages are listed**: the person's `mail` (the MCP tool and `facilitator mail`) shows each one (id, sender with its node,
+  level and mode, conversation, first line, age) and the turn hook line counts them ("N messages held for your approval").
+- **`facilitator approve <message | conversation | client>`** and **`facilitator deny ...`** (tasks `facilitator:approve` and
+  `facilitator:deny`), and the person's MCP tool **`deny`**; the `approve` tool's `client` argument also takes a held message or
+  conversation id. A person's acts only: refused inside an agent's job, refused to an agent's or an HTTP client's session. A deny
+  drops the message with a signed `denied` notice in the conversation, which the sender's node shows.
+- The receiving node writes a signed `approval` notice in the record when it holds a message, and an `approved` or `denied` notice
+  when a person answers; each answer is also an entry of the audit register (`message-approved`, `message-denied`). Only a notice
+  signed by **this** node's facilitator answers for this node. `verify` shows, under the message, that it was held and that a
+  person approved or denied it.
+- A message held more than 7 days is not delivered, approved or not (ruling BG, as for first contact).
+- `check` shows the effective approval of each level, and `explain` the one a handle or SPIFFE ID gets and where it came from.
+
+### Facts established
+
+- `first-contact` was already enforced for another node's agents at **private** when `mesh.yml` sets it there (the receiver reads
+  the sender's card level); only the default (public) made it look public-only. A unit test now says so.
+
+### Changed
+
+- `http_ready` asks for a person in `facilitator.yml` whenever the HTTP level's approval is not `none` (it asked for
+  `first-contact` only).
+
 ## [0.8.0] - 2026-11-24
 
 Cloud AIs over OAuth 2.1 (slice N5b of the facilitator-node proposal; ruling PB3, ADR-0070 decisions 1, 2 and 5 to 8). The node is

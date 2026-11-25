@@ -17,6 +17,7 @@ from .signer import Signer
 from .state import State
 
 
+MESSAGE_APPROVALS = mesh_mod.MESSAGE_APPROVALS
 HELD_DAYS = 7            # a first-contact message nobody answers is held this long (ruling BG)
 
 
@@ -133,21 +134,197 @@ class Facilitator:
             raise FacilitatorError(f"rate limit: {handle} wrote {count} messages in the last minute; the {level} level allows "
                                    f"{rate} a minute for a client, counted across all its conversations; this one was not written")
 
-    def approval_gate(self, handle: str, now: float) -> guard.Verdict | None:
-        """First-contact approval (proposal 7, limits.<level>.approval): a Verdict that holds an HTTP client's message
-        until a person approves the client; None when no approval is needed or it stands."""
+    def approval_gate(self, handle: str, now: float, conv: str | None = None, mid: str | None = None,
+                      led=None, proj=None) -> guard.Verdict | None:
+        """The approval of limits.<level>.approval for an HTTP client's message (proposal 7): a Verdict that holds it
+        until a person approves; None when no approval is needed or it stands. first-contact asks once per client
+        (and per approval_ttl); every-message asks for each message, per-conversation for the first of each of the
+        client's conversations (the person's answer is a notice of this node's facilitator in the conversation)."""
+        handle = self.local_of(handle) or handle
         if not self.is_http(handle):
             return None
         level = self.mesh.http_level()
-        if self.mesh.limit(level, "approval")[0] != "first-contact":
+        mode = self.mesh.limit(level, "approval")[0]
+        if mode == "none":
             return None
-        ttl = mesh_mod.seconds(self.mesh.limit(level, "approval_ttl")[0])
-        if self.clients.approved(handle, ttl, now):
+        how = (f"(facilitator approve {mid or '<message>'}, or the approve tool of a person's session); held up to "
+               f"{HELD_DAYS} days")
+        if mode == "first-contact":
+            ttl = mesh_mod.seconds(self.mesh.limit(level, "approval_ttl")[0])
+            if self.clients.approved(handle, ttl, now):
+                return None
+            return guard.Verdict(False, "approval", f"first contact: {handle} is an HTTP client at level {level}; a person "
+                                                    f"must approve it before its messages are delivered (facilitator http "
+                                                    f"approve {handle}, or the approve tool of a person's session); held up to "
+                                                    f"{HELD_DAYS} days")
+        if led is None or proj is None or mid is None:
             return None
-        return guard.Verdict(False, "approval", f"first contact: {handle} is an HTTP client at level {level}; a person "
-                                                f"must approve it before its messages are delivered (facilitator http "
-                                                f"approve {handle}, or the approve tool of a person's session); held up to "
-                                                f"{HELD_DAYS} days")
+        state = self.hold_state(conv, led, proj, mid, mode)
+        if state == "":
+            return None
+        if state == "denied":
+            return guard.Verdict(False, "approval", f"a person denied this message ({mode} at level {level}); it is not delivered")
+        return guard.Verdict(False, "approval", f"{mode}: {handle} is an HTTP client at level {level}; a person must approve "
+                                                f"this {'message' if mode == 'every-message' else 'conversation'} before it is "
+                                                f"delivered {how}")
+
+    # ------------------------------------------------------------ approval of messages that cross (every-message, per-conversation)
+
+    def sender_of(self, author: str) -> str:
+        """Who a message crosses from: its node (another node's agent or person), or this node's HTTP client."""
+        h, n = router.split(author)
+        return n if n and n != self.mesh.node_id else h
+
+    def message_mode(self, author: str) -> tuple[str, str]:
+        """(the approval mode, the level) this node applies to a message by `author` that did not start in this node's own
+        agents: another node's by its card's level, an HTTP client's by the HTTP level; ('none', 'local') otherwise. The
+        receiving node decides, whatever the sender's node did."""
+        local = self.local_of(author)
+        if local is not None:
+            if self.is_http(local):
+                lv = self.mesh.http_level()
+                return self.mesh.limit(lv, "approval")[0], lv
+            return "none", "local"
+        n = router.split(author)[1]
+        card = self.net.cards().get(n) if self.net.active else None
+        if not card:
+            return "none", "local"
+        return self.mesh.limit(card["level"], "approval")[0], card["level"]
+
+    def own_answers(self, conv: str, led, proj: dict) -> tuple[set, set, set]:
+        """(message ids approved, message ids denied, message ids with a held notice) by notices that THIS node's
+        facilitator signed in the conversation: another node's notice never answers for this node."""
+        key = self.record.facilitator_key()
+        ok, no, held = set(), set(), set()
+        for n in proj["notices"]:
+            if n["code"] not in ("approved", "denied", "approval") or led.valid[n["entry"]].key != key:
+                continue
+            for r in n.get("refs", []):
+                if r.get("thread") == conv and "message_id" in r:
+                    {"approved": ok, "denied": no, "approval": held}[n["code"]].add(r["message_id"])
+        return ok, no, held
+
+    def hold_state(self, conv: str, led, proj: dict, mid: str, mode: str | None = None) -> str:
+        """'' (delivered or no approval needed), 'held' (waits for a person), 'denied' or 'expired' (held more than
+        HELD_DAYS: never delivered) for a message under every-message or per-conversation."""
+        m = proj["messages"][mid]
+        if mode is None:
+            mode = self.message_mode(m["from"])[0]
+        if mode not in MESSAGE_APPROVALS:
+            return ""
+        ok, no, _ = self.own_answers(conv, led, proj)
+        if mid in no:
+            return "denied"
+        if mode == "every-message":
+            approved = mid in ok
+        else:
+            who = self.sender_of(m["from"])
+            approved = any(x in proj["messages"] and self.sender_of(proj["messages"][x]["from"]) == who for x in ok)
+        if approved:
+            return ""
+        if time.time() - clients_mod.parse_iso(m["at"]) > HELD_DAYS * 86400:
+            return "expired"
+        return "held"
+
+    def held_messages(self) -> list[dict]:
+        """The messages that wait for a person under every-message or per-conversation, oldest first: from another
+        node's agents (with a task for one of this node's) and from this node's HTTP clients. The mail tool shows
+        them; `facilitator approve` and `deny` answer them."""
+        out = []
+        now = time.time()
+        for c in self.record.conversations():
+            try:
+                led, proj, _ = self.record.read(c)
+            except RecordError:
+                continue
+            for mid in proj["order"]:
+                m = proj["messages"][mid]
+                mode, level = self.message_mode(m["from"])
+                if mode not in MESSAGE_APPROVALS:
+                    continue
+                rs = proj["routes"].get(mid, [])
+                if self.local_of(m["from"]) is None:
+                    if not any(self.local_of(t["assignee"]) and proj["tasks"][t["task"]]["state"] == "submitted"
+                               for r in rs for t in r["tasks"]):
+                        continue
+                elif not (rs and not any(r["tasks"] for r in rs) and any(h["reason"] == "approval" for h in rs[-1]["held"])):
+                    continue
+                if self.hold_state(c, led, proj, mid, mode) not in ("held", "expired"):
+                    continue
+                age = now - clients_mod.parse_iso(m["at"])
+                out.append({"conversation": c, "message_id": mid, "from": m["from"], "node": self.sender_of(m["from"]),
+                            "level": level, "mode": mode, "line": (m["text"].strip().splitlines() or [""])[0][:80],
+                            "at": m["at"], "age": int(age), "expired": age > HELD_DAYS * 86400})
+        out.sort(key=lambda h: h["at"])             # stable: a conversation's own order within a second
+        return out
+
+    def answer_message(self, target: str, by: str, approve: bool) -> dict:
+        """A person's answer to held messages: `target` is a message id (m-...) or a conversation id (c-...: every
+        message of it that waits). Each answer is a signed notice of this node's facilitator in the conversation (the
+        sender's node sees it in its replica) and an entry of the audit register. Approving delivers: a message of
+        another node's agent is handed to the local agent's receive, an HTTP client's is dispatched now. One held longer
+        than HELD_DAYS is not delivered, and says so."""
+        held = [h for h in self.held_messages() if target in (h["message_id"], h["conversation"])]
+        if not held:
+            raise FacilitatorError(f"nothing waits for approval under {target} (facilitator mail lists what waits)")
+        out = []
+        for h in held:
+            c, mid = h["conversation"], h["message_id"]
+            ref = [{"thread": c, "message_id": mid}]
+            what = {"mode": h["mode"], "level": h["level"], "from": h["from"]}
+            if not approve:
+                self.record.add(c, FACILITATOR, "notice", {"thread": c, "code": "denied", "text":
+                                f"denied by {by} at {self.mesh.node_id}: this message from {h['from']} is not delivered "
+                                f"({h['mode']} at level {h['level']})", "refs": ref})
+                self.audit_event("message-denied", mid, by, f"{c} from {h['from']} ({h['mode']}, {h['level']})")
+                out.append({**what, "conversation": c, "message_id": mid, "delivered": False, "answer": "denied"})
+                continue
+            if h["expired"]:
+                self.record.add(c, FACILITATOR, "notice", {"thread": c, "code": "approval", "text":
+                                f"{by} approved this message from {h['from']}, but it was held more than {HELD_DAYS} days and "
+                                "is not delivered (ruling BG)", "refs": ref})
+                out.append({**what, "conversation": c, "message_id": mid, "delivered": False, "answer": "expired"})
+                continue
+            self.record.add(c, FACILITATOR, "notice", {"thread": c, "code": "approved", "text":
+                            f"approved by {by} at {self.mesh.node_id}: this message from {h['from']} is delivered now "
+                            f"({h['mode']} at level {h['level']})", "refs": ref})
+            self.audit_event("message-approved", mid, by, f"{c} from {h['from']} ({h['mode']}, {h['level']})")
+            delivered = True
+            if self.local_of(h["from"]) is not None:          # an HTTP client's: it was not routed, so route it now
+                delivered = self.dispatch(c, mid)["delivered"]
+            out.append({**what, "conversation": c, "message_id": mid, "delivered": delivered, "answer": "approved"})
+        return {"target": target, "by": by, "answered": out}
+
+    def audit_event(self, event: str, subject: str, by: str, detail: str) -> None:
+        try:
+            self.audit.append(event, subject, by, detail)
+        except Exception:                      # noqa: BLE001 - the notice in the conversation is the record; audit replay catches up
+            pass
+
+    def note_held(self, conv: str) -> int:
+        """Marks in the record, with a notice of this node's facilitator, each message of another node that waits here for
+        a person (every-message, per-conversation), so the sender's replica shows it is held and why. Once per message."""
+        try:
+            led, proj, _ = self.record.read(conv)
+        except RecordError:
+            return 0
+        _, _, seen = self.own_answers(conv, led, proj)
+        n = 0
+        for mid in proj["order"]:
+            m = proj["messages"][mid]
+            mode, level = self.message_mode(m["from"])
+            if mode not in MESSAGE_APPROVALS or self.local_of(m["from"]) is not None or mid in seen:
+                continue
+            if not any(self.local_of(t["assignee"]) for r in proj["routes"].get(mid, []) for t in r["tasks"]):
+                continue
+            if self.hold_state(conv, led, proj, mid, mode) != "held":
+                continue
+            self.record.add(conv, FACILITATOR, "notice", {"thread": conv, "code": "approval", "text":
+                            f"held at {self.mesh.node_id}: a person there must approve this message from {m['from']} before it "
+                            f"is delivered (limits.{level}.approval: {mode}); held up to {HELD_DAYS} days",
+                            "refs": [{"thread": conv, "message_id": mid}]})
+            n += 1
+        return n
 
     def enrol_http(self, name: str, by: str, label: str = "") -> dict:
         """A person's act: a client, its token (returned once) and the key the node signs with for it."""
@@ -209,8 +386,8 @@ class Facilitator:
             return False, "; ".join(cfg.http_errors)
         h = cfg.http
         lv = self.mesh.http_level()
-        if self.mesh.limit(lv, "approval")[0] == "first-contact" and not cfg.humans:
-            return False, ("approval: first-contact at level " + lv + " needs a person to approve, and facilitator.yml's "
+        if self.mesh.limit(lv, "approval")[0] != "none" and not cfg.humans:
+            return False, ("approval: " + self.mesh.limit(lv, "approval")[0] + " at level " + lv + " needs a person to approve, and facilitator.yml's "
                            "humans names nobody")
         if h.insecure and self.mesh.preset == "open":
             return False, ("http.insecure: true is refused under preset: open (a node reachable by strangers never runs "
@@ -296,6 +473,8 @@ class Facilitator:
         longer than HELD_DAYS is not (ruling BG)."""
         out = []
         now = time.time()
+        if self.mesh.limit(self.mesh.http_level(), "approval")[0] in MESSAGE_APPROVALS:
+            return out                         # these wait per message: facilitator approve <message> (answer_message)
         for c, mid in self.held_for_approval(name):
             _, proj, _ = self.record.read(c)
             age = now - clients_mod.parse_iso(proj["messages"][mid]["at"])
@@ -342,7 +521,8 @@ class Facilitator:
             for who, convs in sorted(seen.items()):
                 out.append({"client": who, "held": len(convs), "conversations": sorted(convs), "id": f"spiffe://{self.net.cards()[router.split(who)[1]]['card']['domain']}/node/{router.split(who)[1]}/agent/{router.split(who)[0]}"})
         for name, c in sorted(self.clients.all().items()):
-            if c["status"] not in ("enrolled", "approved") or not self.is_http(name):
+            if c["status"] not in ("enrolled", "approved") or not self.is_http(name) \
+                    or self.mesh.limit(self.mesh.http_level(), "approval")[0] in MESSAGE_APPROVALS:
                 continue
             held = self.held_for_approval(name)
             if held:
@@ -591,10 +771,10 @@ class Facilitator:
     def dispatch(self, conv: str, mid: str, tr=None) -> dict:
         """Route one message: the guard's verdict, the router's choice, a route entry with one A2A task per
         participant it goes to, notices for what is held, then a SLIM delivery to every attached one."""
-        _, proj, _ = self.record.read(conv)
+        led, proj, _ = self.record.read(conv)
         th, m = proj["thread"], proj["messages"][mid]
         humans = set(th["humans"])
-        verdict = self.approval_gate(m["from"], time.time()) or guard.check(
+        verdict = self.approval_gate(m["from"], time.time(), conv, mid, led, proj) or guard.check(
             proj, m["from"], m["from"] in humans, m["hops"], m["root"], self.limits_for(self.level_of_message(proj, mid)))
         dec = router.route(th, proj["messages"], m["from"], m["text"], m.get("to"), m.get("reply_to"),
                            self.participants()[1].fallback,
@@ -724,7 +904,9 @@ class Facilitator:
                 if t["assignee"] == self.p(c, handle) and t["state"] == "submitted":
                     m = proj["messages"][t["message_id"]]
                     if self.remote_first_contact(m["from"]):
-                        continue                        # a public node's agent a person has not approved: held, shown to them
+                        continue                        # another node's agent a person has not approved: held, shown to them
+                    if self.local_of(m["from"]) is None and self.hold_state(c, led, proj, t["message_id"]):
+                        continue                        # every-message, per-conversation: held, denied or expired
                     out.append({"conv": c, "task": t["task"], "message": m, "pos": (t["at"], pos.get(t["history"][0][2], 0)),
                                 "members": proj["thread"]["members"]})
         out.sort(key=lambda p: p["pos"])
@@ -859,13 +1041,14 @@ class Facilitator:
         msgs, convs = self.unread(handle)
         out, rest = msgs[:limit], msgs[limit:]
         approvals = self.pending_approvals() if handle in self.humans() else []
+        held = self.held_messages() if handle in self.humans() else []
         if mark:
             read: dict[str, list[str]] = {}
             for m in out:
                 read.setdefault(m["conversation"], []).append(m["message_id"])
             self.state.mark_read(handle, read)
         return {"messages": out, "more": len(rest), "conversations": convs,
-                "paused": [c["conversation"] for c in convs if c["paused"]], "approvals": approvals}
+                "paused": [c["conversation"] for c in convs if c["paused"]], "approvals": approvals, "held": held}
 
     def mail_notice(self, handle: str) -> str:
         """The turn hook's one line ('' when nothing is unread), read only. A fingerprint of the
@@ -879,7 +1062,8 @@ class Facilitator:
         except (OSError, ValueError):
             pass
         msgs, convs = self.unread(handle)
-        line = notice_line(msgs, convs, self.pending_approvals() if handle in self.humans() else [])
+        human = handle in self.humans()
+        line = notice_line(msgs, convs, self.pending_approvals() if human else [], self.held_messages() if human else [])
         try:
             self.state.write_private(cache, json.dumps({"fp": fp, "line": line}) + "\n")
         except OSError:
@@ -887,12 +1071,16 @@ class Facilitator:
         return line
 
 
-def notice_line(msgs: list[dict], convs: list[dict], approvals: list[dict] | None = None) -> str:
+def notice_line(msgs: list[dict], convs: list[dict], approvals: list[dict] | None = None,
+                held: list[dict] | None = None) -> str:
+    waits = f"{len(held)} message{'s' if len(held) != 1 else ''} held for your approval" if held else ""
     if not msgs:
-        if approvals:
-            return ("Facilitator: " + ", ".join(f"HTTP client {a['client']} waits for approval ({a['held']} held)" for a in approvals)
-                    + " (the approve tool, or facilitator http approve)")
-        return ""
+        parts = [f"{a['client']} waits for approval ({a['held']} held)" for a in approvals or []]
+        if waits:
+            parts.append(waits + " (facilitator mail; the approve and deny tools, or facilitator approve <message>)")
+        elif parts:
+            parts[-1] += " (the approve tool, or facilitator http approve)"
+        return ("Facilitator: " + ", ".join(parts)) if parts else ""
     ids = list(dict.fromkeys(m["conversation"] for m in msgs))
     paused = [c["conversation"] for c in convs if c["paused"] and c["conversation"] in ids]
     n = len(msgs)
@@ -901,6 +1089,8 @@ def notice_line(msgs: list[dict], convs: list[dict], approvals: list[dict] | Non
         line += f" ({', '.join(paused)} paused: continue it to let the agents go on)"
     if approvals:
         line += "; waiting for approval: " + ", ".join(a["client"] for a in approvals)
+    if waits:
+        line += "; " + waits
     return line
 
 
@@ -993,9 +1183,20 @@ class Session:
         return self.fac.continue_(self.handle, conv, self.tr)
 
     def approve(self, client: str) -> dict:
-        """A person approves an HTTP client (first contact): its held messages are delivered."""
+        """A person approves an HTTP client or another node's agent (first contact), or a held message or conversation
+        (every-message, per-conversation: an id of mail's list): what waits is delivered."""
         self._human_only("approve")
+        if client[:2] in ("m-", "c-"):
+            return self.fac.answer_message(client, self.handle, True)
         return self.fac.approve_client(client, self.handle)
+
+    def deny(self, target: str) -> dict:
+        """A person denies a held message or conversation: it is not delivered, and the sender is told by a signed notice."""
+        self._human_only("deny")
+        if target[:2] not in ("m-", "c-"):
+            raise FacilitatorError(f"deny takes a held message or conversation id ({'facilitator mail lists them'}); "
+                                   "a client is denied with facilitator http deny")
+        return self.fac.answer_message(target, self.handle, False)
 
 
 class HttpSession(Session):
@@ -1034,3 +1235,6 @@ class HttpSession(Session):
 
     def approve(self, client: str) -> dict:
         raise FacilitatorError("approve is a person's tool: an HTTP client cannot approve anything (ADR-0070)")
+
+    def deny(self, target: str) -> dict:
+        raise FacilitatorError("deny is a person's tool: an HTTP client cannot answer anything (ADR-0070)")
