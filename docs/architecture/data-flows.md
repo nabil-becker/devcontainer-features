@@ -337,8 +337,8 @@ flowchart LR
 
 ## 6. Code to GitHub, release to the registry
 
-The host (the session) commits, pushes and opens pull requests. The Operator reviews and merges
-(ADR 0040). The Operator starts the release; an agent never does.
+The host (the session) commits, pushes and opens pull requests. The host merges its own green, ready
+pull requests (ADR 0085). The Operator starts the release; an agent never does.
 
 ```mermaid
 flowchart LR

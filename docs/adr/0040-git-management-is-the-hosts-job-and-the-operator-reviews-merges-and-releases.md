@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | accepted |
+| **Status** | accepted (merging superseded by ADR 0085) |
 | **Date** | 2026-10-30 |
 | **Deciders** | the Operator; proposed by the host |
 
@@ -50,3 +50,4 @@ failed lint was already merged by hand once in this session.
 | Date | Change |
 |---|---|
 | 2026-10-30 | First draft, accepted by the Operator. |
+| 2026-11-25 | The merging part is superseded by ADR 0085: the host merges its own green, ready pull requests, with three exceptions. The host's git job stays. |

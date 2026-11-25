@@ -159,7 +159,7 @@ The records are the point of this architecture, so where each lives matters most
 | `initializeCommand`: staging the local Features | `task agents`, `agents:list`, `agents:leases`, `agents:check`; `agents up` at every container start, never fatal |
 | the Operator's terminal or phone (Remote Control) | the git wrapper: bot identity for any process Claude Code starts; the person's own terminal keeps their identity |
 | a workstation session, used only for work outside the checkout: no backs, so the records are done by hand at close | the guards: `devhost-verify` at commit, the register guard on every entry, `phi-check` in the hook and CI |
-| nothing scheduled: no background process of ours on the host (ADR 0024) | commits and pull requests on topic branches by the host session; the Operator reviews, merges and releases (ADR 0040) |
+| nothing scheduled: no background process of ours on the host (ADR 0024) | commits and pull requests on topic branches by the host session; the host merges its own green, ready ones (ADR 0085); the Operator releases |
 
 ## Best practices
 
