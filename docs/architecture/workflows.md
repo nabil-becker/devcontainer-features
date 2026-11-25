@@ -6,7 +6,7 @@ Part of the [six](README.md). Node ids are ontology ids where they name a model 
 
 ## 1. A session, start to close
 
-The host commits and pushes; the Operator reviews and merges (ADR 0040).
+The host commits and pushes; the host merges its own green, ready pull requests (ADR 0085); the Operator starts releases.
 
 ```mermaid
 sequenceDiagram
@@ -23,7 +23,7 @@ sequenceDiagram
   host->>guards: task devhost:verify
   guards-->>host: green
   host->>gh: commit, push, open PR
-  operator->>gh: review, squash merge
+  host->>gh: squash merge when green (ADR 0085)
 ```
 
 The briefing arrives on its own. Work happens on a topic branch, never on `main`. Close runs the
@@ -58,7 +58,7 @@ flowchart TB
   checks --> lint["lint"]
   checks --> tests["tests"]
   checks --> dco["DCO"]
-  val --> m["Operator squash merges"]
+  val --> m["Host squash merges when green<br/>(Operator, if governance)"]
   lint --> m
   tests --> m
   dco --> m
@@ -77,11 +77,11 @@ started by the Operator:
 ```mermaid
 flowchart TB
   b["Topic branch: the application or bundles/facilitator/install.sh"] --> pr1["Pull request, required checks<br/>(the Feature tests build the bundle from source)"]
-  pr1 --> m1["Operator squash merges"]
+  pr1 --> m1["Host squash merges when green<br/>(Operator, if governance)"]
   m1 --> rb["release-bundle workflow<br/>manual, the Operator starts<br/>amd64 on ubuntu-latest, arm64 on ubuntu-24.04-arm"]
   rb --> asset["Release facilitator-bundle-v version<br/>two tarballs, SHA256SUMS, build attestations"]
   asset --> pr2["Pull request: task bundle:pin<br/>the digests into src/facilitator/digests.txt"]
-  pr2 --> m2["Operator squash merges"]
+  pr2 --> m2["Host squash merges when green<br/>(Operator, if governance)"]
   m2 --> rel["release workflow<br/>manual, the Operator starts"]
   rel --> reg["feature-registry"]
   m2 --> img["release-node-image workflow<br/>manual, the Operator starts<br/>refuses an asset that differs from the pin"]

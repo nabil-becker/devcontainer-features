@@ -20,7 +20,7 @@ by `DEVHOST_LEDGER_REGISTER`; read either with `devhost-ledger show`), the ADRs 
 3. **Close:** `/close-session`: the records checked (the scribe's entries, the backlog, the
    lexicon, the ADRs), `task devhost:verify` green, a Conventional Commit on a topic branch, the
    report in the hand-off shape (Outcome, Outputs, Friction, For the repository, Decisions
-   needed). The host commits and pushes; the Operator merges (ADR 0040).
+   needed). The host commits, pushes and merges its own green, ready pull requests (ADR 0085); the Operator starts releases.
 
 ## The ledger
 
@@ -68,7 +68,7 @@ a superseded status), the **tester** runs the suite when code changed.
 - Paths and ids, never content: nothing committed holds real data, credentials, identifiers or a
   name from `.devhost/redact-names.txt` (ignored by git; the person is "the Operator").
 - Git is the host's job (ADR 0040): it commits, pushes and opens the pull requests on topic
-  branches and keeps the checkout current; the Operator reviews, merges and starts releases.
+  branches and keeps the checkout current; the host merges its own green, ready pull requests, except governance, a review the Operator asked for and a bump the consumers have not been told of (ADR 0085); the Operator starts releases.
 
 ## Tasks are the API
 

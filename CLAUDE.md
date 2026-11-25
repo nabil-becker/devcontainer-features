@@ -56,7 +56,7 @@ Delivery OS, whose learnings become a white paper: [docs/iterations.md](docs/ite
 commit (`task repo:setup` makes it automatic), required checks `validate`,
 `lint`, `tests`, `DCO`. Work on a topic branch; bump the Feature `version` and add its
 `CHANGELOG.md` entry in the same change; run `task docs` and commit the README; the host commits, pushes and
-opens the pull requests; the Operator reviews and merges them (ADR 0040). Releases are a manual workflow on `main` that the Operator starts: an agent says a
+opens the pull requests; the host merges its own green, ready ones, except governance, a review the Operator asked for and a bump the consumers have not been told of (ADR 0085). Releases are a manual workflow on `main` that the Operator starts: an agent says a
 release is due and what it would publish, and never runs it. An unpublished Feature cannot be
 named in `installsAfter` or pulled by a consumer until then.
 
