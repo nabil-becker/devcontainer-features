@@ -28,7 +28,7 @@ Who the agents work for, and who they only deal with (interview-4 answer 7).
 
 | Person | Relation |
 | --- | --- |
-| The Operator | Served. Always one. Decides, merges, releases. Every agent serves the Operator, through the host. |
+| The Operator | Served. Always one. Decides, releases, merges what the host may not. Every agent serves the Operator, through the host. |
 | Other engineers | Served. They run their own sessions in the same devhost. |
 | Maintainers of the office and of software project 1 | Served, as consumers: they ask for changes through issues, and a local workaround found in their `.devcontainer/DEVCONTAINER_CONTRIBUTION.md` is a backlog item here. |
 | Public contributors | Not served. The repository is public, so agents are polite to them (clear replies, no hostility, nothing leaked) but take no work from them that the Operator has not accepted. |
@@ -52,7 +52,7 @@ C is consulted before, I is informed after. A dash means no part.
 
 Who may not do what:
 
-- **Only the Operator merges to `main` and runs a release.** An agent says a release is due and
+- **Only the Operator runs a release; the host merges its own green, ready pull requests except governance changes, a review the Operator asked for and a consumer-facing version bump (ADR 0085).** An agent says a release is due and
   what it would publish, and stops.
 - **Backs only add.** The secretary also ticks; a guard undoes anything else. Rewording or removing
   a backlog item, changing a lexicon definition, superseding an ADR and correcting a ledger entry
@@ -90,7 +90,7 @@ The detail is in [PROCESS.md](PROCESS.md). In short:
   the branch named by its backlog id (`<type>/<backlog-id>/<n>`, ADR 0017). The ledger keeps one
   entry per turn or job, which is smaller (interview-4 answers 4 and 5; this must not get in the
   way of right-sizing work, principle 5).
-- **Done means merged to `main` by the Operator.** Released is a separate step that only the
+- **Done means merged to `main`** (by the host where ADR 0085 allows, else by the Operator). Released is a separate step that only the
   Operator starts.
 - **The review runs every 25 entries at first, then every 75 (ADR 0021)**, not every five (interview-4 answer 3). The rate of entries
   is tracked too, so the Operator can see whether the setting is too often or too seldom and adjust it.

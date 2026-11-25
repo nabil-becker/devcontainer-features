@@ -177,8 +177,7 @@ The way of working grows from what real work shows it lacks, never ahead of it:
 - A pull request's ready or draft is the host's status on the work, not CI's: the host marks it
   ready when its work is done and it is confident CI passes (the checks run here, a trial merge
   against `main` and the other ready pull requests); a red CI on a ready pull request is fixed in
-  place, not flipped back to draft (no flapping between the two). The Operator reviews and merges what is ready (ADR 0040,
-  ADR 0053).
+  place, not flipped back to draft (no flapping between the two). The host merges its own ready pull requests when every required check is green and no Operator decision is open, except governance, a review the Operator asked for and a consumer-facing bump (ADR 0085; ADR 0053).
 - One draft pull request per deliverable, fed by any number of streams (worktrees); it is marked
   ready when every stream is done.
 - Records that only grow (the ledger, the lexicon, the ADRs) are corrected by adding, never by
