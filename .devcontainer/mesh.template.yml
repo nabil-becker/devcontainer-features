@@ -11,3 +11,4 @@ trust:
   workstation.example: private
 expose:
   "*": local          # an agent opts outward, never inward
+  mesh: private       # the one agent other devcontainers reach; it asks before every tool (agents.yml, gate B)
