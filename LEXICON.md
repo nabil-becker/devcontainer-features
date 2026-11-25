@@ -636,3 +636,15 @@ renamed. Each project is a tree growing in its own ground.
 - **Agent tier**: the issuer tier `node.issuer.ssh_agent: {socket, key}`: the CA key stays in an
   ssh-agent, an ed25519 key matched by its SHA256 fingerprint and never "the first key"; with the agent
   gone the node issues nothing, and the certificates already issued stay valid (facilitator 0.7.0).
+- **OAuth client**: a cloud AI's caller as the node knows it, identified by issuer plus subject (not by
+  the OAuth `client_id`, which only labels it); enrolled on the first valid token and mapped like a
+  bearer client: kind `http`, `http.<home domain>` level, never a person, first contact held for a
+  person's approval (facilitator 0.8.0, ADR-0082).
+- **Resource server**: what the node is to OAuth: it validates JWT access tokens (issuer in the
+  `http.issuers` allow list, signature, `exp`, audience, scope) and hosts no authorization server
+  (ADR-0070, ADR-0082).
+- **Authorization server**: the issuer entry, named in `http.issuers`, that signs the access tokens a
+  node accepts; the node names it in its protected-resource metadata and in `check` (ADR-0082).
+- **Protected-resource metadata**: the RFC 9728 document at `/.well-known/oauth-protected-resource`
+  naming the node's resource URL and its authorization servers, which the 401 `WWW-Authenticate`
+  challenge points to so a cloud client can find where to sign in (ADR-0082).

@@ -1587,3 +1587,9 @@ The Operator ruled HK1 to HK5 as recommended (the findings are in "Findings of s
   except when `http.insecure: true` is set, for a local machine or a test environment: then plain http is accepted
   on any address, `check` and the node's log warn on every start, and the flag is refused under `preset: open`
   (a node reachable by strangers never runs OAuth over plain http).
+- **OA5, revised 2026-11-25.** The Operator has no public https address for now, so N5b counts as done after a
+  local end-to-end run: Keycloak in Docker as the login server and Claude Code as the OAuth client
+  (`claude mcp add --transport http`), against a node on localhost (`task facilitator:oauth-local`). A claude.ai
+  connector run waits in the backlog until a public address exists. (OpenBao was weighed as the login server and
+  set aside: its OIDC provider is not believed to issue JWT access tokens with an audience, nor to let clients
+  register themselves.)

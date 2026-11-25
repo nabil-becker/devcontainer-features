@@ -1526,3 +1526,23 @@ summary = "One of the places a node's CA key lives, tried in order: OpenBao, ssh
 type = "mechanism"
 term = "Agent tier"
 summary = "The issuer tier that keeps the CA key in an ssh-agent, an ed25519 key matched by fingerprint."
+
+[oauth-client]
+type = "mechanism"
+term = "OAuth client"
+summary = "A cloud AI's caller, identified by issuer plus subject and mapped like a bearer client under first-contact approval."
+
+[resource-server]
+type = "mechanism"
+term = "Resource server"
+summary = "What the node is to OAuth: it validates JWT access tokens from allowed issuers and hosts no authorization server."
+
+[authorization-server]
+type = "mechanism"
+term = "Authorization server"
+summary = "The named issuer entry in http.issuers that signs the access tokens a node accepts."
+
+[protected-resource-metadata]
+type = "mechanism"
+term = "Protected-resource metadata"
+summary = "The RFC 9728 document naming the node's resource URL and authorization servers, pointed to by the 401 challenge."
