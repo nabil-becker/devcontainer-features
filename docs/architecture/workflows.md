@@ -88,6 +88,11 @@ flowchart TB
   img --> ghcr["ghcr.io facilitator-node: version<br/>amd64 and arm64, attested"]
 ```
 
+**One workflow does all of it.** `release-facilitator.yaml` (manual, the Operator starts it) calls `release-bundle`,
+opens and waits for the pin pull request (the Operator approves it; the ruleset's review stays), then calls
+`release.yaml` and `release-node-image` on the merge commit and verifies the image's provenance. The diagram above is
+the sequence it runs and the manual fallback.
+
 `release-bundle` needs `contents: write`, `id-token: write` and `attestations: write`; `release-node-image`
 `packages: write` too; `release.yaml` keeps `contents: read` and `packages: write`. Sources:
 `.github/workflows/release-bundle.yaml`, `.github/workflows/release-node-image.yaml`, `src/facilitator/NOTES.md`

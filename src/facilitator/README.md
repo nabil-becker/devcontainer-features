@@ -212,16 +212,19 @@ gh attestation verify facilitator-$v-linux-amd64.tar.gz --repo nabil-becker/devc
 tar -xzOf facilitator-$v-linux-amd64.tar.gz facilitator/MANIFEST.json   # what is inside, and each piece's SHA-256
 ```
 
-**The release sequence** (ruling AC; the Operator starts each workflow, an agent never does):
+**The release** (ruling AC; the Operator starts it, an agent never does) is one workflow, **`release-facilitator`**:
+it runs the four steps below in order, opens the pin pull request itself and waits for it to merge (the Operator
+approves it; the ruleset's review stays), then publishes the Feature and the image from the merge commit. The steps,
+which are also the manual fallback (each workflow and `task bundle:pin` still runs alone):
 
 1. A pull request changes the application or the bundle script and bumps the application version; it merges.
-2. The Operator runs **`release-bundle`** (Actions, on `main`): amd64 on `ubuntu-latest`, arm64 on
+2. **`release-bundle`** (Actions, on `main`): amd64 on `ubuntu-latest`, arm64 on
    `ubuntu-24.04-arm`, each built natively and smoke-tested, then one release `facilitator-bundle-v<v>` with both
    tarballs, one `SHA256SUMS` and a build attestation per tarball.
-3. A pull request pins it: `task bundle:pin -- <v>` checks each asset against `SHA256SUMS`, GitHub's digest and its
+3. A pull request pins it (the workflow opens it; by hand `task bundle:pin -- <v>`): the script checks each asset against `SHA256SUMS`, GitHub's digest and its
    attestation, and appends the lines to `digests.txt`; the Feature's version and CHANGELOG move with it.
-4. The Operator merges it and runs the Feature **release**.
-5. The Operator runs **`release-node-image`**: the released assets, refused unless they match `digests.txt` on
+4. The pin merges and the Feature **release** (`release.yaml`) runs.
+5. **`release-node-image`**: the released assets, refused unless they match `digests.txt` on
    `main`, become `ghcr.io/nabil-becker/facilitator-node:<v>` (amd64 and arm64) with an attestation.
 
 ## The node image (a hub)

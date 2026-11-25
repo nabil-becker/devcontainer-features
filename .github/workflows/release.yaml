@@ -1,6 +1,14 @@
 name: "Release dev container features"
+# release-facilitator.yaml calls this workflow (workflow_call) for the Feature stage of a facilitator release, with
+# `ref` set to the commit that carries the merged bundle pin, so the published Feature is what git has.
 on:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        description: "The commit to publish from (default: the one the run started on)"
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -15,6 +23,8 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
 
       # Publishes each src/<id> as ghcr.io/nabil-becker/devcontainer-features/<id>
       # (tags: <major>, <major>.<minor>, <major>.<minor>.<patch>, latest).

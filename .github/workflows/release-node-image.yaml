@@ -5,8 +5,25 @@ name: "Release the facilitator node image"
 # on main, and pushes ghcr.io/<owner>/facilitator-node:<version> for linux/amd64 and linux/arm64 (each architecture
 # built natively on its own runner, then joined into one multi-arch tag), with a build attestation. It uses the
 # docker CLI the runners carry, so it needs no action outside the repository's allow-list (GitHub's own only).
+#
+# SUPERSEDED by release-facilitator.yaml, which calls this workflow (workflow_call, with `ref` set to the commit
+# that carries the merged pin) as its last stage. Still callable by hand as the manual fallback
+# (CONTRIBUTING.md, "Releasing the facilitator").
 on:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        description: "The commit to build from (default: the one the run started on)"
+        type: string
+        default: ""
+    outputs:
+      version:
+        description: "The image tag (the bundle version)"
+        value: ${{ jobs.publish.outputs.version }}
+      digest:
+        description: "The digest of the multi-arch image"
+        value: ${{ jobs.publish.outputs.digest }}
 
 permissions:
   contents: read
@@ -30,6 +47,8 @@ jobs:
       version: ${{ steps.bundle.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
 
       - name: "The released bundle, checked against the pins"
         id: bundle
@@ -68,6 +87,9 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     environment: release
+    outputs:
+      version: ${{ needs.build.outputs.version }}
+      digest: ${{ steps.push.outputs.digest }}
     permissions:
       contents: read
       packages: write
