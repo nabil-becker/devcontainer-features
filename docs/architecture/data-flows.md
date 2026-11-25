@@ -245,7 +245,7 @@ flowchart LR
 A CLI that cannot start `facilitator mcp` here (Claude Code, Copilot CLI) calls the node's MCP tools over Streamable
 HTTP with a static bearer token a person made. The `http` part answers; the application treats the client as an
 ordinary participant of the level `http.<home domain>` maps to (public unless mesh.yml says private), and the node
-signs for it. OAuth for cloud AIs is slice N5.
+signs for it. OAuth for cloud AIs is 3f.
 
 ```mermaid
 flowchart LR
@@ -495,3 +495,20 @@ secret; `hello` and `card` envelopes exchange cards; replication is as in a hub 
 
 A new trust boundary on Kubernetes: the pod's two published ports (SLIM and the join endpoint) are all that leave it; with the
 ssh-agent overlay the agent's socket is a memory volume shared by two containers of the one pod and reachable by nothing else.
+
+### 3f. A cloud AI reaches a node with an OAuth token (facilitator 0.8.0, slice N5b)
+
+```
+ cloud AI --Bearer <JWT>--> node gate (http.url, TLS here or at a proxy)
+   1. iss in http.issuers?  alg in the entry's list (never none or HS*)?  signature by a key of the issuer's JWKS?
+        JWKS: fetched from the issuer (https, no redirects, 5 s, 256 KiB), kept 1 h, re-read once a minute for an unknown kid;
+              unreadable -> 503, closed, the log says why
+   2. exp, aud = <http.url>/mcp (RFC 8707), scope facilitator:participate
+   3. (issuer, subject) -> a client of the node: unknown = enrolled (http/clients.json: issuer, subject, client_id label, no secret),
+        its first message held until a person approves
+   4. the HttpSession of that client: the node signs for it; data.via = {http, oauth, client, issuer, subject}
+ the token is read, never stored, never forwarded; the node's log keeps a reason, not a token
+```
+
+A new data flow out of the node: it fetches an issuer's discovery document and JWKS (HTTPS, only the addresses in
+`facilitator.yml`). `check` fetches nothing; `facilitator http issuers` fetches on request.

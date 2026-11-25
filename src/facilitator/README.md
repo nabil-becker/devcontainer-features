@@ -1,7 +1,7 @@
 
 # facilitator (conversations between agents of any vendor, on AGNTCY) (facilitator)
 
-The communication layer between agents of any vendor running in the devcontainer: an MCP server each participant's CLI starts (receive, reply, say, who) and a person's own Claude Code or Copilot session attaches to (say, mail, transcript, continue, who), one shared entry with the handle from FACILITATOR_HANDLE, deterministic routing by @handle with hop, budget and rate limits, every message a sign-packet packet in a register-engine conversation register, verified back to the human who began it. Installs the facilitator node bundle (its own CPython, dirctl, slimctl and the application, checksummed; the same bundle as the server image) and runs the AGNTCY Agent Directory and a SLIM node on loopback, started as infrastructure (mode node), or only the thin client (mode leaf); never starts, stops or configures a participant. A node is standalone (nothing open) unless its mesh.yml (FACILITATOR_MESH_FILE) makes it a hub or a spoke: nodes link over SLIM with mutual TLS, certificates from an OpenBao PKI per trust domain, a listener per trust level and the application's SPIFFE ID check (local and private trust; join tokens, revoke). Serves its MCP tools over HTTP to CLIs with static bearer tokens (facilitator.http.listen in facilitator.yml; off by default, refused under the preset solo; a person creates and approves each client; the node signs for it and every packet says so) and includes a local-model wrapper for any OpenAI-compatible endpoint and a turn hook line for Claude Code ('Facilitator: N new messages').
+The communication layer between agents of any vendor running in the devcontainer: an MCP server each participant's CLI starts (receive, reply, say, who) and a person's own Claude Code or Copilot session attaches to (say, mail, transcript, continue, who), one shared entry with the handle from FACILITATOR_HANDLE, deterministic routing by @handle with hop, budget and rate limits, every message a sign-packet packet in a register-engine conversation register, verified back to the human who began it. Installs the facilitator node bundle (its own CPython, dirctl, slimctl and the application, checksummed; the same bundle as the server image) and runs the AGNTCY Agent Directory and a SLIM node on loopback, started as infrastructure (mode node), or only the thin client (mode leaf); never starts, stops or configures a participant. A node is standalone (nothing open) unless its mesh.yml (FACILITATOR_MESH_FILE) makes it a hub or a spoke: nodes link over SLIM with mutual TLS, certificates from an OpenBao PKI per trust domain, a listener per trust level and the application's SPIFFE ID check (local and private trust; join tokens, revoke). Serves its MCP tools over HTTP to CLIs with static bearer tokens and to cloud AIs with OAuth 2.1 access tokens (facilitator.http.listen in facilitator.yml; off by default, refused under the preset solo; the node is a resource server only: it accepts tokens from the issuers in facilitator.http.issuers and publishes the protected-resource metadata; a person approves each client; the node signs for it and every packet says so) and includes a local-model wrapper for any OpenAI-compatible endpoint and a turn hook line for Claude Code ('Facilitator: N new messages').
 
 ## Example Usage
 
@@ -18,7 +18,7 @@ The communication layer between agents of any vendor running in the devcontainer
 | installTaskfile | Install this Feature's Taskfile into /usr/local/share/go-task/includes.d so its tasks appear under facilitator: in a root Taskfile that includes /usr/local/share/go-task/features.yml (the go-task Feature). | boolean | true |
 | backend | What carries the directory and delivery: agntcy (the AGNTCY Agent Directory and SLIM). lean (packet-relay) is refused in this version: not yet, slice 5. FACILITATOR_BACKEND overrides. | string | agntcy |
 | mode | node (the default): the whole bundle, and the Directory, the SLIM node and the facilitator's ssh-agent run here (autostart). leaf: the thin client only (facilitator mcp and what it needs; no slimctl): no daemon is started, infra up and node run are refused; a leaf reaching a node over the network is not built yet (slice N3 built hubs and spokes). FACILITATOR_MODE. | string | node |
-| bundleVersion | The facilitator node bundle to install (a release asset of this repository, facilitator-bundle-v<version>), verified against the SHA-256 pinned in digests.txt. latest means the bundle this Feature version was made with (0.7.0). With no pin for it, the bundle is built from the Feature's own source, every upstream download checked against the SHA-256 pinned in bundle-build.sh. | string | 0.7.0 |
+| bundleVersion | The facilitator node bundle to install (a release asset of this repository, facilitator-bundle-v<version>), verified against the SHA-256 pinned in digests.txt. latest means the bundle this Feature version was made with (0.8.0). With no pin for it, the bundle is built from the Feature's own source, every upstream download checked against the SHA-256 pinned in bundle-build.sh. | string | 0.8.0 |
 | dirVersion | Deprecated in 0.3.0 (removed in 1.0.0): use bundleVersion. The bundle fixes dirctl's version (1.9.1); 1.9.1 or latest are accepted, with a deprecation line from install, version and check, and any other version is refused. | string | - |
 | slimVersion | Deprecated in 0.3.0 (removed in 1.0.0): use bundleVersion. The bundle fixes slimctl's version (3.4.6); 3.4.6 or latest are accepted, with a deprecation line from install, version and check, and any other version is refused. | string | - |
 | hopLimit | Hops since the message that began the chain (a person's later messages count too) before the conversation pauses; a person's continue resumes it. The default of the local and private trust levels; mesh.yml limits override it per level. FACILITATOR_HOP_LIMIT. | string | 6 |
@@ -260,7 +260,7 @@ processes a node needs and no bundle shared with this Feature (not checked again
 From 0.4.0 a node can be a **hub** (an intranet node other nodes link to) or a **spoke** (a node that links to one
 hub), beside the default **standalone** (0.3.0's behaviour, nothing open). Two levels of trust are built: **local**
 (this machine, unrestricted) and **private** (an intranet domain). Public trust across nodes, approving a stranger's node
-and peer-to-peer meshes are slice N5a (below); cloud AIs are slice N5b and are refused by name until then (MCP over HTTP
+and peer-to-peer meshes are slice N5a (below); cloud AIs reach a node over HTTP with OAuth 2.1 access tokens from the issuers it lists (slice N5b, 0.8.0; MCP over HTTP
 for CLIs is slice N4)
 ([proposal facilitator-node](../../docs/proposals/facilitator-node.md), ADR-0067 to ADR-0071).
 
@@ -511,7 +511,7 @@ A hub's `node.issuer` picks, **in this order**, who holds the CA key and signs:
 | `node.issuer.ssh_agent.socket` | the agent's socket path, or `$SSH_AUTH_SOCK` (a `
 # facilitator (conversations between agents of any vendor, on AGNTCY) (facilitator)
 
-The communication layer between agents of any vendor running in the devcontainer: an MCP server each participant's CLI starts (receive, reply, say, who) and a person's own Claude Code or Copilot session attaches to (say, mail, transcript, continue, who), one shared entry with the handle from FACILITATOR_HANDLE, deterministic routing by @handle with hop, budget and rate limits, every message a sign-packet packet in a register-engine conversation register, verified back to the human who began it. Installs the facilitator node bundle (its own CPython, dirctl, slimctl and the application, checksummed; the same bundle as the server image) and runs the AGNTCY Agent Directory and a SLIM node on loopback, started as infrastructure (mode node), or only the thin client (mode leaf); never starts, stops or configures a participant. A node is standalone (nothing open) unless its mesh.yml (FACILITATOR_MESH_FILE) makes it a hub or a spoke: nodes link over SLIM with mutual TLS, certificates from an OpenBao PKI per trust domain, a listener per trust level and the application's SPIFFE ID check (local and private trust; join tokens, revoke). Serves its MCP tools over HTTP to CLIs with static bearer tokens (facilitator.http.listen in facilitator.yml; off by default, refused under the preset solo; a person creates and approves each client; the node signs for it and every packet says so) and includes a local-model wrapper for any OpenAI-compatible endpoint and a turn hook line for Claude Code ('Facilitator: N new messages').
+The communication layer between agents of any vendor running in the devcontainer: an MCP server each participant's CLI starts (receive, reply, say, who) and a person's own Claude Code or Copilot session attaches to (say, mail, transcript, continue, who), one shared entry with the handle from FACILITATOR_HANDLE, deterministic routing by @handle with hop, budget and rate limits, every message a sign-packet packet in a register-engine conversation register, verified back to the human who began it. Installs the facilitator node bundle (its own CPython, dirctl, slimctl and the application, checksummed; the same bundle as the server image) and runs the AGNTCY Agent Directory and a SLIM node on loopback, started as infrastructure (mode node), or only the thin client (mode leaf); never starts, stops or configures a participant. A node is standalone (nothing open) unless its mesh.yml (FACILITATOR_MESH_FILE) makes it a hub or a spoke: nodes link over SLIM with mutual TLS, certificates from an OpenBao PKI per trust domain, a listener per trust level and the application's SPIFFE ID check (local and private trust; join tokens, revoke). Serves its MCP tools over HTTP to CLIs with static bearer tokens and to cloud AIs with OAuth 2.1 access tokens (facilitator.http.listen in facilitator.yml; off by default, refused under the preset solo; the node is a resource server only: it accepts tokens from the issuers in facilitator.http.issuers and publishes the protected-resource metadata; a person approves each client; the node signs for it and every packet says so) and includes a local-model wrapper for any OpenAI-compatible endpoint and a turn hook line for Claude Code ('Facilitator: N new messages').
 
 ## Example Usage
 
@@ -528,7 +528,7 @@ The communication layer between agents of any vendor running in the devcontainer
 | installTaskfile | Install this Feature's Taskfile into /usr/local/share/go-task/includes.d so its tasks appear under facilitator: in a root Taskfile that includes /usr/local/share/go-task/features.yml (the go-task Feature). | boolean | true |
 | backend | What carries the directory and delivery: agntcy (the AGNTCY Agent Directory and SLIM). lean (packet-relay) is refused in this version: not yet, slice 5. FACILITATOR_BACKEND overrides. | string | agntcy |
 | mode | node (the default): the whole bundle, and the Directory, the SLIM node and the facilitator's ssh-agent run here (autostart). leaf: the thin client only (facilitator mcp and what it needs; no slimctl): no daemon is started, infra up and node run are refused; a leaf reaching a node over the network is not built yet (slice N3 built hubs and spokes). FACILITATOR_MODE. | string | node |
-| bundleVersion | The facilitator node bundle to install (a release asset of this repository, facilitator-bundle-v<version>), verified against the SHA-256 pinned in digests.txt. latest means the bundle this Feature version was made with (0.7.0). With no pin for it, the bundle is built from the Feature's own source, every upstream download checked against the SHA-256 pinned in bundle-build.sh. | string | 0.7.0 |
+| bundleVersion | The facilitator node bundle to install (a release asset of this repository, facilitator-bundle-v<version>), verified against the SHA-256 pinned in digests.txt. latest means the bundle this Feature version was made with (0.8.0). With no pin for it, the bundle is built from the Feature's own source, every upstream download checked against the SHA-256 pinned in bundle-build.sh. | string | 0.8.0 |
 | dirVersion | Deprecated in 0.3.0 (removed in 1.0.0): use bundleVersion. The bundle fixes dirctl's version (1.9.1); 1.9.1 or latest are accepted, with a deprecation line from install, version and check, and any other version is refused. | string | - |
 | slimVersion | Deprecated in 0.3.0 (removed in 1.0.0): use bundleVersion. The bundle fixes slimctl's version (3.4.6); 3.4.6 or latest are accepted, with a deprecation line from install, version and check, and any other version is refused. | string | - |
 | hopLimit | Hops since the message that began the chain (a person's later messages count too) before the conversation pauses; a person's continue resumes it. The default of the local and private trust levels; mesh.yml limits override it per level. FACILITATOR_HOP_LIMIT. | string | 6 |
@@ -745,7 +745,7 @@ for this key on this node; the spike is `docs/spikes/2026-11-23-agntcy-identity.
 From 0.5.0 a node can serve its MCP tools over HTTP (Streamable HTTP), so a CLI that cannot start `facilitator mcp` here
 reaches the node with a **static bearer token**: Claude Code (`claude mcp add --transport http`) and GitHub Copilot CLI
 (`copilot mcp add --transport http`), both run for real against this endpoint (test/facilitator/http_flow.sh).
-**Cloud AIs (OAuth 2.1, a public HTTPS address) are slice N5b**: `http.issuers` is refused by name until then. The
+**Cloud AIs (OAuth 2.1, a public HTTPS address) are slice N5b, from 0.8.0**: see "MCP over HTTP for cloud AIs" below. The
 endpoint is the `mcp` Python library 2.3.0 (MIT; 28 hash-pinned wheels in the bundle) on uvicorn; an install without the
 bundle needs it importable only when the endpoint is on ([proposal](../../docs/proposals/facilitator-node.md) section 11;
 ADR-0070, ADR-0071, ADR-0068).
@@ -777,7 +777,7 @@ facilitator:
     behind_proxy: false        # ... or true when a reverse proxy ends TLS (then only the proxy may reach the node)
     allowed_hosts: []          # extra Host header values
     allowed_origins: []        # Origin header values allowed (CLIs send none; a browser's is refused unless listed)
-    # issuers: [...]           # OAuth issuers: not yet, slice N5b
+    # issuers: [...]           # OAuth authorization servers whose tokens are accepted (slice N5b, below)
 ```
 
 | Key | Default | Meaning |
@@ -787,8 +787,9 @@ facilitator:
 | `http.url` | from `listen` | What the clients dial (also the protected-resource metadata's name). |
 | `http.tls_cert`, `http.tls_key` | unset | PEM files; both or neither. Mode 600 for the key. |
 | `http.behind_proxy` | `false` | A proxy ends TLS; uvicorn then trusts the proxy's `X-Forwarded-For` for the per-address limits, so only the proxy may reach the port. |
+| `http.insecure` | `false` | Plain `http://` for a local machine or a test environment (0.8.0): `http.url` may be `http://` on any address, with or without issuers, and the TLS rule beyond loopback is waived. Every start logs, and `check` shows, a warning: "http.insecure: tokens travel in plain text; for a local machine or a test environment only" (bearer tokens included). Refused under `preset: open`: `check` fails and the endpoint does not start. |
 | `http.allowed_hosts`, `http.allowed_origins` | none | Host and Origin values accepted besides the derived ones. |
-| `http.issuers` | none | Refused: slice N5b. |
+| `http.issuers` | none | The OAuth authorization servers whose access tokens are accepted (0.8.0, below). Needs `http.url`. |
 
 `mesh.yml` gains, for this slice (the single-node public rules, ruling AH):
 
@@ -807,10 +808,11 @@ facilitator http token <client> [--label ..]   # prints the token once; only its
 facilitator http list | audit                  # the clients (no secret), the audit chain
 facilitator http approve <client>              # first contact: its held messages are delivered (also the person's MCP tool approve)
 facilitator http deny <client> | revoke <client>   # the token stops working at once
+facilitator http forget <client>               # a revoked or denied client's entry dropped: the same login is new next time
 ```
 
-A **token** is `<client>.<secret>` (the secret is 256 random bits). It is a person's act: `token`, `approve`, `deny` and
-`revoke` refuse to run inside an agent's job (`CLAUDECODE`, `DEVHOST_JOB_CHILD`, `FACILITATOR_HANDLE`, or the variables
+A **token** is `<client>.<secret>` (the secret is 256 random bits). It is a person's act: `token`, `approve`, `deny`,
+`revoke` and `forget` refuse to run inside an agent's job (`CLAUDECODE`, `DEVHOST_JOB_CHILD`, `FACILITATOR_HANDLE`, or the variables
 `FACILITATOR_AGENT_JOB_VARS` names). At most 20 clients may be enrolled and not yet approved. The approver is the person
 acting (`--as`, a human of `facilitator.yml`, default the first): on a node with no person attached, the hub's own
 `humans:` list, which `check` requires to name one while a level asks for first contact.
@@ -824,6 +826,11 @@ acting (`--as`, a human of `facilitator.yml`, default the first): on a node with
   the line before it (`facilitator http audit` checks the chain). It is **not** a signed register (see Limits); the
   approval and denial are also signed notices in the conversations they concern.
 - Revocation closes the client's future calls at once and discards its token's hash; what it wrote stays in the record.
+- **Forget** (`facilitator http forget <client>`, task `facilitator:http-forget`) lets a refused client back: it drops the
+  entry of a **revoked or denied** client (a live one is refused: revoke it first), so the same login is new next time: an
+  OAuth login (issuer and subject) enrols again on its next valid token and is held for a person's approval; a bearer client
+  name can be given a new `http token`. A `forget` event goes to the audit log and the signed register; past records keep
+  naming the client.
 
 ### What an HTTP client is, and sees
 
@@ -855,6 +862,182 @@ copilot mcp add --transport http facilitator http://127.0.0.1:8765/mcp --header 
 
 Both put the header in their own config file (Claude Code's `.claude.json` or `.mcp.json`, Copilot's
 `mcp-config.json`): treat that file as a secret. A token has no expiry; revoke it with `facilitator http revoke`.
+
+## MCP over HTTP for cloud AIs (slice N5b, OAuth 2.1)
+
+From 0.8.0 the same endpoint also takes **OAuth 2.1 access tokens**, so a cloud AI (a claude.ai custom connector, or another
+vendor's hosted assistant) can reach the agents of a node that is on a public HTTPS address. The node is an **OAuth
+resource server only** (ADR-0070 decision 2): it hosts no authorization server. A person points it at the
+authorization server they already use (the organisation's identity provider, or any provider that issues JWT access tokens
+and supports what the cloud AI needs) and the cloud AI logs the person in there. Bearer tokens keep working beside it.
+
+```
+ cloud AI (claude.ai)                   authorization server (yours)          the node (http.url = https://node.example)
+   POST /mcp (no token)  ------------------------------------------------>   401, WWW-Authenticate: Bearer resource_metadata=".../.well-known/oauth-protected-resource/mcp"
+   GET  the metadata     ------------------------------------------------>   { resource, authorization_servers: [issuer], scopes_supported }
+   log in (OAuth 2.1 + PKCE, resource=https://node.example/mcp)  ----->  access token (JWT: iss, sub, aud, exp, scope)
+   POST /mcp  Authorization: Bearer <JWT>  --------------------------------->  gate: issuer in the list, alg, signature (JWKS), exp,
+                                                                                aud = this resource (RFC 8707), scope; then the (iss, sub)
+                                                                                client: enrolled on its first token, held until a person
+                                                                                approves; the same HttpSession, signer and via as a bearer client
+```
+
+### Settings: `facilitator.http.issuers`
+
+```yaml
+facilitator:
+  humans: [you]
+  http:
+    listen: 0.0.0.0:8443
+    behind_proxy: true                       # or tls_cert and tls_key: beyond loopback TLS is required (ADR-0070 decision 8)
+    url: https://node.example                # the PUBLIC HTTPS address: required with issuers; its /mcp is the resource
+    issuers:
+      - name: corp                           # a handle of at most 24 characters: names the server here and starts its clients' handles
+        issuer: https://login.example.org    # the `iss` its tokens carry, exactly
+        jwks_uri: https://login.example.org/keys   # optional: else found from <issuer>/.well-known/openid-configuration, then oauth-authorization-server
+        algorithms: [RS256, ES256]           # optional: the signature algorithms accepted (default these two)
+        scope: facilitator:participate       # optional: the scope a token must carry (default this)
+        audience: https://node.example/mcp   # optional: the `aud` a token must carry (default the resource URL)
+```
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `issuers[].name` | required | A lowercase handle of at most 24 characters, unique. It is the authorization server's name in `check`, `http issuers`, the metadata's docs and the first part of each of its clients' handles (`corp-alice`). |
+| `issuers[].issuer` | required | The authorization server's issuer URL, `https://` (`http://` only on a loopback host, for tests), unique. A token's `iss` must equal it exactly; the protected-resource metadata names it as the authorization server. |
+| `issuers[].jwks_uri` | discovered | Where the issuer's signing keys are. Unset: read from the issuer's OIDC discovery document, else its RFC 8414 one; that document must name the same `issuer`. |
+| `issuers[].algorithms` | `[RS256, ES256]` | Any of RS256/384/512, PS256/384/512, ES256/384/512, EdDSA. **`none` and every `HS*` are refused, by `check` and again at the gate** (no shared-secret token, no algorithm confusion). |
+| `issuers[].scope` | `facilitator:participate` | One scope name the token must carry, in `scope` (space-separated) or `scp` (a list). |
+| `issuers[].audience` | the resource URL | The `aud` the token must carry. RFC 8707 says the token is issued for the resource, `<http.url>/mcp`; some servers fix their own audience (an API identifier), and then it is named here. |
+| `http.url` | required with `issuers` | The public address a cloud AI dials. With issuers it must be `https://` (`http://` only on a loopback host, or on any address with `http.insecure: true`, for a local machine or a test environment; the metadata then advertises the http URL as given, and `check` and the log warn that tokens travel in plain text): TLS ends here (`tls_cert` and `tls_key`) or at a proxy (`behind_proxy: true`), as ADR-0070 decision 8 says for any address beyond loopback. |
+
+`check` lints all of this and **fetches nothing** (it prints the issuers, the resource and the metadata URLs); a mistake is
+named by option and the endpoint does not open. `facilitator http issuers` is the one command that fetches: it reads each
+issuer's keys now and says `ok: JWKS <uri>: N key(s)` or `NOT READABLE: <why>` (exit 1 when one is not).
+
+### What the node checks, in this order
+
+1. **The issuer**: `iss` is exactly an allow-listed `issuer` (the token is read unverified only to find that).
+2. **The algorithm**: in the entry's `algorithms`, before any key is touched.
+3. **The signature**: by a key in the issuer's JWKS, found by `kid` (a token with no `kid` is accepted only when the JWKS
+   holds one key). The JWKS is fetched over HTTPS without redirects (5 s, 256 KiB), kept an hour, and read again at most
+   once a minute when a `kid` is unknown (a rotation).
+4. **`exp`** (and `nbf`, `iat`) with 30 s leeway; `exp`, `iss`, `aud` and `sub` must be present.
+5. **The audience** (RFC 8707): `aud` is, or contains, this node's resource URL (or the entry's `audience`).
+6. **The scope**: present, else **403 `insufficient_scope`**.
+
+Every refusal is a **401** with `WWW-Authenticate: Bearer error="invalid_token", resource_metadata="<url>"` and no detail in
+the answer (the reason goes to the node's log, one line a reason a minute, never a token); a missing token is a 401 with
+only `resource_metadata` (that is how a cloud AI finds where to log in, and it is not counted as a failure). Ten refused
+tokens from an address block it, as for bearer tokens. **When an issuer's keys cannot be read the node fails closed**: a
+token of that issuer is refused with **503** (`retry-after`), not counted against the caller, and the log says why
+(`issuer corp: JWKS https://...: the server answered 500`, `no discovery document ..., set jwks_uri`, `its discovery
+document names the issuer ...`). Keys already cached keep working for their hour, then are dropped if they still cannot be read.
+`/.well-known/oauth-protected-resource` and `.../mcp` (RFC 9728) answer only when issuers are set:
+`{resource, authorization_servers, scopes_supported, bearer_methods_supported: [header]}`. The token is read from the
+`Authorization` header only and is never passed on or stored.
+
+### Who the client is: the (issuer, subject)
+
+An OAuth client of the node is **the issuer and the subject** of its token. The subject is the account the authorization
+server vouches for, so a person approves a person; it is stable across logins. The other candidate, the OAuth `client_id`,
+is the *application*: one claude.ai connector has one `client_id` for every user of it, and dynamic registration may give
+a new one each time, so approving a `client_id` would approve everyone who uses that connector, or nobody twice. The
+`client_id` (or `azp`) is recorded as a label in `http list --json`.
+
+- **Enrolment.** The first valid token of an unknown (issuer, subject) enrols the client (`enrolled`, no secret kept; an
+  `enrolled` line in `http/audit.jsonl` and the signed audit register, by `oauth: <issuer name>`). Its first message is
+  **held** until a person approves it (`facilitator http approve <client>`, or the approve tool): exactly as for a bearer
+  client, for `approval_ttl` (30 days at public, ruling HC4), and a person's `mail` names it. Enrolled-and-unapproved
+  clients count towards the same cap of 20 (a new subject past it is refused, 401).
+- **Handle.** `<issuer name>-<subject>`: the subject lowercased, other characters turned to `-`, cut at 28 characters; when
+  that changed it, an 8-hex hash of (issuer, subject) is added, so two subjects never share a handle by their look alone
+  (`corp-alice`, `corp-bob-smith-ops-1f3a9c20`). A handle that is a participant's or a person's is refused. The table keeps
+  the issuer and subject: a handle held by another pair is refused too.
+- **Mapped like a bearer client**: the roster entry is kind `http`, signed for by the node, level `http.<home domain>`
+  (public unless `mesh.yml` maps it private), **never `human`**, the participant tools only (no `continue`, no
+  `approve`), the public limits, the reach rule. `data.via` is `{transport: http, auth: oauth, client, issuer, subject}`;
+  `transcript` says `(via HTTP, authenticated by OAuth, client corp-alice, issuer https://login.example.org, subject alice)` and
+  `verify` shows `via http (oauth, client corp-alice, issuer ..., subject alice)` and fails a packet that says OAuth and
+  names no issuer and subject. **The subject is written into the record**: when your issuer's subject is an email address or
+  another personal identifier, so is it there (an opaque subject, such as a UUID, is kept as one).
+- **Revoke and deny** close the client at once, as for bearer; a revoked or denied OAuth client **stays refused**: a new
+  token of the same subject does not bring it back (a person's decision stands) until a person runs `http forget`.
+
+### Connect a cloud AI (a claude.ai custom connector)
+
+Not run from the devhost (no cloud AI reaches it): run it once by hand, and report what differs.
+
+1. **A public HTTPS address** for the node, reachable from the vendor's cloud: a reverse proxy with a certificate in front of
+   `http.listen` (`behind_proxy: true`), or `tls_cert` and `tls_key` on a port that is open. Set `http.url` to it. A node on a
+   laptop behind NAT has none and stays local-only for cloud AIs.
+2. **An authorization server** that issues **JWT access tokens** (not opaque ones) and supports OAuth 2.1 with PKCE and the
+   `resource` parameter (RFC 8707), and how the cloud AI registers: a pre-registered client (claude.ai asks for a client ID and
+   secret under "advanced settings" of the connector), dynamic client registration, or client ID metadata documents. Its
+   discovery document (`/.well-known/openid-configuration` or `/.well-known/oauth-authorization-server`) must be reachable from
+   the node, or set `jwks_uri`. The authorization server must allow the cloud AI's redirect URI (claude.ai's callback
+   is `https://claude.ai/api/mcp/auth_callback`). Access tokens must carry `aud` = `<http.url>/mcp` (the node's resource), or you name the
+   `audience` your server uses, and the scope `facilitator:participate` (or the `scope` you set), so create that scope or
+   permission at the server and grant it to the people who may connect.
+3. **List it** in `facilitator.yml` (`http.issuers`) with a `name`, run `facilitator check` (names the issuers and the metadata
+   URL) and `facilitator http issuers` (reads the keys now), and start the node (`infra up`, or `facilitator http serve`).
+4. **In claude.ai**: Settings, Connectors, "Add custom connector": the name `facilitator` and the URL
+   `https://<host>/mcp` (the resource, with `/mcp`). claude.ai calls it, receives the 401 with `resource_metadata`, reads the
+   protected-resource metadata (`https://<host>/.well-known/oauth-protected-resource/mcp`, which names your authorization
+   server), and sends the person to log in there; after that it calls the tools with the access token.
+5. **On the node**: `facilitator http list` shows the new client (`OAuth, subject ... of <issuer>`, enrolled); its first `say`
+   is held; a person approves it (`facilitator http approve <handle>`); then it converses with the agents the node exposes
+   `public`, and `facilitator verify --conv <id>` shows `via http (oauth, ...)`.
+6. **If it does not connect**: the node's log (`facilitator infra logs http`) says why a token was refused (the audience, the
+   scope, the issuer, the algorithm, or keys that cannot be read); `curl -i https://<host>/mcp` must show a 401 with
+   `resource_metadata`, and the metadata URL must answer 200 with your server in `authorization_servers`.
+
+What was checked here and what was not: the resource server (metadata, challenges, every token check, enrolment, approval,
+`via`) is exercised end to end by test/facilitator/oauth_flow.sh with a local test issuer and an MCP client that holds an
+OAuth token. How claude.ai (or any cloud AI) discovers, registers and logs in was read from the MCP authorization
+specification and the vendor's documentation, and has **not** been run against this node.
+
+### Test it locally (Keycloak and Claude Code)
+
+Without a public HTTPS address (the usual case on a workstation) the OAuth path is tried on one machine: **Keycloak** is the
+login server and **Claude Code** the OAuth client (which registers itself, as a cloud AI would). `task facilitator:oauth-local`
+starts both, waits for them and prints the steps; `-- down` removes the container and the state (no network, no volume).
+
+```
+ Claude Code ---- /mcp, Authenticate ---->  browser  --- login (tester) ---> Keycloak 26.8.2 (internal Docker, 127.0.0.1:8080)
+      |   registers itself (dynamic client registration), code + PKCE + resource=http://localhost:8765/mcp    |
+      +--- Bearer <JWT: aud, scope facilitator:participate> ---> node (127.0.0.1:8765, http.insecure, issuer kc) --> jester (test agent)
+```
+
+- **Keycloak**: `quay.io/keycloak/keycloak:26.8.2`, pinned by digest, `start-dev`, the realm `facilitator-test` imported from
+  `test/facilitator/oauth-local/realm.json`: a user `tester` whose password is made at each start and printed (never committed), the
+  client scope `facilitator:participate` (a default scope, in the token's `scope`) with an audience mapper that puts
+  `http://localhost:8765/mcp` in `aud`, the `sub` claim, RS256, and anonymous dynamic client registration for `localhost` redirect
+  URIs (Keycloak's Trusted Hosts and Allowed Client Scopes policies, set in the realm file). Tokens are plain JWTs, so the node's
+  checks needed no change.
+- **The node**: `http.url: http://localhost:8765`, `http.insecure: true` (plain http, warned about in the log and in `check`), one
+  issuer `kc`, and the test agent `jester` exposed `public`; run from the bundle's python (`FACILITATOR_BUNDLE` or `dist/`).
+- **Where the browser runs**: the page of the login is Keycloak's, so the browser must reach `localhost:8080`, and the port
+  Claude Code listens on for the redirect (`--callback-port 8976`); Claude Code must reach `localhost:8765`. This devhost
+  forwards no ports (no `forwardPorts` or `appPort`), so the simplest way is Claude Code on the workstation with `"appPort": [8080,
+  8765, 8976]` in the devhost's `devcontainer.json` (your own checkout, a rebuild applies it); the printed steps say the same.
+- **Steps** (printed with the real password): `claude mcp add --transport http --callback-port 8976 facilitator
+  http://localhost:8765/mcp`; in Claude Code `/mcp`, `facilitator`, Authenticate, sign in as `tester`; then ask it to say who is
+  there and send "hello" to `jester`. On the node: `task facilitator:oauth-local -- fx http list`, `fx http approve <handle>`,
+  `fx verify --conv <id>` (shows `via http (oauth, ...)`).
+- **What is proven without a browser**: `task test:facilitator-oauth-local` does what Claude Code does against this Keycloak and
+  node: the 401 and the metadata, dynamic registration, the login form posted, code + PKCE + `resource`, the token (RS256, `aud`,
+  `scope`), then enrolment, approval, the agent's answer and `verify`. Not proven here: Claude Code's own browser
+  login (which of the two redirects and which scope it asks for), which is why the steps above are for you to run once.
+
+#### On the workstation's Kubernetes (Rancher Desktop)
+
+`task facilitator:oauth-local-k8s` does the same in the cluster of Rancher Desktop, so Claude Code **on Windows** logs in with
+its own browser: namespace `facilitator-oauth-test`, Keycloak and the hub (the `rancher-desktop` overlay plus the HTTP endpoint,
+`test/facilitator/oauth-local/k8s/`) with `jester` beside it, Services of type LoadBalancer on 8080 and 8765 that Rancher
+Desktop forwards to Windows' `localhost`. The issuer is `http://localhost:8080/realms/facilitator-test` (what the browser and the
+token's `iss` say); the node reads the keys from `http://keycloak:8080/...` (`jwks_uri`, plain http allowed by `http.insecure`).
+The image is the one built on that Docker (`DOCKER_CONTEXT=host task bundle:image`, `imagePullPolicy: Never`). Commands for the
+approval: `-- fx http list`, `-- fx http approve <handle>`, `-- fx verify --conv <id>`; `-- down` deletes the namespace.
 
 ## Using it in devcontainer.json
 
@@ -1047,6 +1230,7 @@ mistake, not an attacker.
 | `facilitator:node-status` | `facilitator node status` | The peers part, the admitted cards, a hub's roster, the last refusals (JSON). |
 | (no task) | `facilitator node bundle <domain> --file <pem>`, `node renew`, `node restore-roster`, `node peers` | A federated domain's trust bundle; renew this spoke's certificate now; a hub's roster back from OpenBao or from its volume; the peers part in the foreground (`infra up` starts it). |
 | `facilitator:http-token` | `facilitator http token <client> [--label ..] [--as <person>]` | A bearer token for an HTTP client, shown once (only its hash is kept). A person's act: refused inside an agent's job. |
+| `facilitator:http-forget` | `facilitator http forget <client>` | Lets a revoked or denied client back as new (an OAuth login enrols again, held for approval). A person's act; a live client is refused. |
 | `facilitator:http` | `facilitator http list\|audit\|approve <client>\|deny <client>\|revoke <client>` | The clients (no secret), the audit chain, first-contact approval, the end of a client's token. `approve`, `deny` and `revoke` are a person's acts. `http serve` is what the `http` infra part runs. |
 | `facilitator:setup` | `facilitator-setup` | The state folder and the facilitator's key (idempotent, never fatal). |
 | `facilitator:infra` | `facilitator infra up\|down\|status\|logs [agent\|dir\|slim\|peers\|http]` | The infrastructure; `up` is idempotent, nothing is restarted on a crash (`status` says so). |
@@ -1128,9 +1312,14 @@ each delivery in its route.
 ## Limits
 
 - Hub and spoke with local and private trust across nodes (slice N3); MCP over HTTP serves CLIs with static bearer
-  tokens on one node (slice N4); public trust across nodes, a node joining by key and approval, peer to peer, OAuth and
-  cloud AIs are slice N5b. The endpoint serves one node: a client reaches the agents of the node it dials only.
-- A bearer token has no expiry and no rotation but revoke and a new token; there is no per-token scope.
+  tokens (slice N4) and cloud AIs with OAuth tokens from an allow-listed issuer (slice N5b) on one node; public trust across
+  nodes, a node joining by key and approval, and peer to peer are slice N5a. The endpoint serves one node: a client reaches
+  the agents of the node it dials only.
+- A bearer token has no expiry and no rotation but revoke and a new token; there is no per-token scope. An OAuth token
+  expires as its issuer says, and its issuer's scope is checked on every call; the node does not introspect or revoke
+  tokens at the issuer (a person's revoke of the client is the node's own, immediate).
+- A revoked or denied OAuth client stays refused until a person runs `facilitator http forget <client>`; its next token then enrols it anew.
+- Only JWT access tokens are accepted (no token introspection, no opaque tokens), from issuers named in `facilitator.yml`.
 - The audit of enrolments is a hash-chained log in the volume, not a signed register: a person with the volume can
   rewrite it whole (a cut or an edit shows; a rewrite of the chain does not). A signed `audit` register type is a
   backlog item; approvals and denials are also signed notices in the conversations.
@@ -1246,6 +1435,54 @@ CLI for real, and a leaf client otherwise; `test_http.py` and `test_http_endpoin
 
 ## Changes
 
+### [0.8.0] - 2026-11-24
+
+Cloud AIs over OAuth 2.1 (slice N5b of the facilitator-node proposal; ruling PB3, ADR-0070 decisions 1, 2 and 5 to 8). The node is
+an OAuth **resource server only**; bearer tokens keep working beside it, and a node that sets no `http.issuers` behaves as
+0.7.0 (except that the well-known metadata path now answers 404 until issuers are set). Rebuild the container. No new
+Python dependency: the bundle already carries PyJWT and `cryptography` (the `mcp` library's).
+
+#### Added
+
+- **`facilitator.http.issuers`**: the allow list of authorization servers whose JWT access tokens are accepted. Each entry has a
+  `name` (a handle, at most 24 characters), the `issuer` URL, and optionally `jwks_uri` (else found from the issuer's
+  discovery document), `algorithms` (default RS256 and ES256; `none` and `HS*` are refused), `scope` (default
+  `facilitator:participate`) and `audience` (default the node's resource URL). It needs `http.url`, the public HTTPS
+  address, and beyond loopback TLS or `behind_proxy: true` as before (ADR-0070 decision 8). `check` lints every option and
+  fetches nothing.
+- **The token checks** (`oauth.py`): issuer, algorithm, signature against the issuer's JWKS (fetched over HTTPS, kept an hour,
+  re-read once a minute for an unknown `kid`), `exp`, the audience of this node's `/mcp` URL (RFC 8707), the scope. A refused
+  token is a 401 with `WWW-Authenticate: Bearer error="invalid_token", resource_metadata=...` and no detail; a token without
+  the scope is a 403 `insufficient_scope`; **keys that cannot be read close the door** (503, not counted against the caller,
+  the log says why).
+- **The RFC 9728 protected-resource metadata** at `/.well-known/oauth-protected-resource` and `.../mcp`, naming the node's
+  resource, the authorization servers and the scope; and a 401 with `resource_metadata` for a request with no token, so a cloud
+  AI finds where to log in.
+- **An OAuth client is the (issuer, subject)** of its token, enrolled on its first valid token and held until a person approves
+  it (first contact, as for a bearer client); handle `<issuer name>-<subject>`; the same HTTP client in every other way (never
+  `human`, the participant tools only, `http.<home domain>`, the public limits). Its packets carry `via` = `{transport: http,
+  auth: oauth, client, issuer, subject}`; `transcript` and `verify` show it. The conversation type accepts `subject` in `via`.
+- **`facilitator http issuers`** reads each issuer's keys now and says which are readable; `facilitator http list` shows an OAuth
+  client's issuer and subject; `check` has an `http oauth` line.
+- **`facilitator http forget <client>`** (task `facilitator:http-forget`, ruling OA3): a person's act that drops a revoked or denied client's entry so the same login (OAuth: issuer and subject; bearer: the name) is new next time, enrolled again and held for approval; a live client is refused; a `forget` event is written to the audit log and register.
+- **`facilitator.http.insecure: true`** (ruling OA6): plain `http://` for `http.url` on any address, and the TLS rule beyond loopback waived, for a local machine or a test environment; every start and `check` warn that tokens travel in plain text; refused under `preset: open`.
+- **`task facilitator:oauth-local`** (`oauth-local-keycloak`): Claude Code's OAuth login tried on one machine with no public address: Keycloak 26.8.2 (pinned by digest) in the internal Docker as the login server and a node with `http.insecure`; `task test:facilitator-oauth-local` runs the browserless part (dynamic registration, code + PKCE + resource, the token, the node) against them.
+- **With `http.insecure`, an issuer's `jwks_uri` (and its discovery document) may be plain `http://` on any host**, so a node in a cluster reads the keys from the issuer's in-cluster service while the issuer URL the browser sees is `http://localhost:...` (`oauth.py`, `participants.py`; unit-tested). Without `insecure` the rule is as before: https, or http on loopback.
+- **`task facilitator:oauth-local-k8s`**: the same OAuth test in the workstation's Rancher Desktop cluster (`test/facilitator/oauth-local/k8s/`, namespace `facilitator-oauth-test`): Keycloak and the hub of the `rancher-desktop` overlay with its HTTP endpoint and a public test agent, both Services LoadBalancers that Rancher Desktop forwards to the machine's localhost, so Claude Code on Windows can log in.
+- **The hub's StatefulSet sets `fsGroupChangePolicy: OnRootMismatch`**: without it the kubelet adds group read/write to every file of the state volume at each pod start, and `ssh-keygen` then refuses the node's own signing key after the first restart. (Fix to the base manifests of this release; redeploy.)
+- NOTES: "MCP over HTTP for cloud AIs", a section per setting and how a person connects a claude.ai custom connector.
+- Tests: `test_oauth.py` (a local test issuer; the right and the wrong audience, expired, wrong issuer, wrong scope, alg none,
+  HS256 forged with the public key, a rotated key, keys that cannot be read, the endpoint's statuses and challenges, enrolment,
+  approval, `via`), more in `test_http.py`, and `test/facilitator/oauth_flow.sh` (`task test:facilitator-oauth`): an MCP
+  client holding an OAuth token end to end through a built bundle's endpoint.
+
+#### Changed
+
+- The well-known metadata path answers **404** on a node with no `http.issuers` (0.7.0 answered the library's metadata naming
+  the node itself as its authorization server, which was wrong: a node hosts none).
+- A revoked or denied OAuth client is no longer refused for good: a person can `forget` it.
+- `facilitator.http.issuers` is no longer refused; a bare list of URLs is refused by name (an entry needs a `name`).
+
 ### [0.7.0] - 2026-11-24
 
 The hub on Kubernetes (slice hub-on-kubernetes of the facilitator-node proposal; rulings K2 to K5, ADR-0078). Nothing changes for a
@@ -1322,47 +1559,6 @@ changes unless `mesh.yml` says `role: peer`, `preset: open` or `node.public`: no
 - `node approve` works (it was refused until now); `node invite`, `node revoke` also serve a peer; `trust` may map a domain
   `public` under `preset: open`; `copy: addressed` is accepted (and the only value at public).
 - `bundleVersion` defaults to `0.6.0`: the Feature installs the published node bundle `facilitator-bundle-v0.6.0`
-  (amd64 and arm64), pinned by SHA-256 in `digests.txt`.
-
-### [0.5.0] - 2026-11-23
-
-MCP over HTTP for CLIs (slice N4 of the facilitator-node proposal; ADR-0070, ADR-0071, ADR-0068). Nothing changes unless
-`facilitator.http.listen` is set in `facilitator.yml`: no port opens and no client exists. Rebuild the container.
-
-#### Added
-
-- **The endpoint** (`facilitator http serve`, the `http` part of `infra up`): the node's MCP tools over Streamable HTTP, on
-  the `mcp` library 2.3.0, for Claude Code and GitHub Copilot CLI with a static `Authorization: Bearer` token (both run
-  for real in `task test:facilitator-http`). Off unless `facilitator.http.listen` is set; refused under `preset: solo`;
-  beyond loopback it needs TLS (`http.tls_cert`, `http.tls_key`) or `http.behind_proxy: true`, and `http.url` or
-  `http.allowed_hosts`; `http.enabled: false` is the kill switch. `check` says why it refuses; `http.issuers` (OAuth for
-  cloud AIs) is refused: slice N5.
-- **Clients and tokens:** `facilitator http token <client>` (a person's act, refused inside an agent's job: the token is
-  shown once and only its SHA-256 is kept), `list`, `approve`, `deny`, `revoke`, `audit`; a person's MCP session gains the
-  `approve` tool. At most 20 clients may wait for approval. Every enrolment, approval, denial and revocation is a line of
-  a hash-chained audit log.
-- **The node signs for an HTTP client** (ADR-0068): every message and task state it makes carries `data.via`
-  (`{transport: http, auth: bearer, client}`); `transcript` shows it and `verify` checks it and accepts a chain that begins
-  with such a client. A client is **never a person**: `who`, `say`, `reply`, `receive`, `mail` and a read-only
-  `transcript`; never `continue` or `approve`.
-- **The single-node public rules** (ruling AH): a client maps through `http.<home domain>`, **public** unless `mesh.yml`
-  maps it to private; it sees only agents exposed `public` (an unreachable agent reads as one that does not exist); its
-  first message is held until a person approves it (`limits.public.approval: first-contact`, a held message is dropped
-  after 7 days, an approval lasts 30 days); the public limits (rate 3 a minute across all its conversations, hops 2,
-  budget 10, `max_packet` 16 KiB). `mesh.yml` accepts `expose: public` under `team`, `trust: http.<home domain>`, and the
-  limit keys `approval`, `approval_ttl` and `http_receive_wait`.
-- **Abuse limits at the edge:** 10 failed authentications in a minute block the address for 10 minutes, 20 open requests
-  per address, a 64 KiB body, Host and Origin checks, a `receive` that blocks at most `http_receive_wait` (25 s at public)
-  and 2 at a time per client.
-- `check` shows the endpoint, the clients' level and the audit chain, and the `mcp` library; `explain` prints the public
-  level's limits; `version` prints `mcp`. The bundle carries `mcp` 2.3.0 and 27 dependency wheels, each pinned by SHA-256
-  (about 40 MB more).
-
-#### Changed
-
-- The conversation type accepts the optional `via` field on a message and a status, and the notice codes `approval`,
-  `approved` and `denied`. A conversation with a `via` does not load on a 0.4.0 node.
-- `bundleVersion` defaults to `0.5.0`: the Feature installs the published node bundle `facilitator-bundle-v0.5.0`
   (amd64 and arm64), pinned by SHA-256 in `digests.txt`.
 
 The full history is in [CHANGELOG.md](https://github.com/nabil-becker/devcontainer-features/blob/main/src/facilitator/CHANGELOG.md).

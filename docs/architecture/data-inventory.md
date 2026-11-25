@@ -411,3 +411,14 @@ register entry.
 | The CA key of the ssh-agent tier | the agent's memory only (an `ssh-agent` container beside the hub on Kubernetes); never a file | yes; custody is the person's backup of the key |
 | The hub's roster backup (built-in or ssh-agent tier) | `mesh/roster.backup.json`, mode 600, the same volume | no secrets; node ids and serials |
 | The hub's manifests | `bundles/facilitator/k8s` (base, overlays), `mesh.yml` in a ConfigMap, the state in a StatefulSet's volume claim | tier 1 in git; the claim is tier 4 |
+
+## Facilitator node, cloud AI (OAuth) additions (facilitator 0.8.0)
+
+| Data | Where | Sensitive |
+| --- | --- | --- |
+| The issuers the node trusts | `facilitator.yml` `http.issuers` (name, issuer URL, jwks_uri, algorithms, scope, audience), tier 1 in git | no |
+| An issuer's signing keys (public) | memory only, fetched from the issuer's JWKS, kept an hour | no |
+| An OAuth client | an entry of `http/clients.json` (mode 600): issuer, subject, the OAuth client_id as a label, status; **no token and no hash** | the subject can identify a person (an email, say) |
+| The subject and issuer in the record | `data.via` of every message and status the client writes (a signed packet in the conversation register, replicated like the rest) | as the subject: choose an issuer whose subjects are opaque when that matters |
+| An OAuth access token | never stored; read from the `Authorization` header and checked | yes; a log line keeps a reason, never the token |
+

@@ -2,7 +2,7 @@
 
 Nodes with no hub, each the issuer of its own domain, linked in pairs; and, for a node you do not run, a public domain
 with its own listener, certificates of one hour and a person's approval of every stranger. Cloud AIs reach a node
-over OAuth later. The design is the proposal [facilitator-node](../proposals/facilitator-node.md) (sections 5, 8, 10,
+over OAuth 2.1 (facilitator 0.8.0). The design is the proposal [facilitator-node](../proposals/facilitator-node.md) (sections 5, 8, 10,
 11) and ADRs
 [0067](../adr/0067-the-facilitator-is-a-network-node-built-as-a-bundle-with-topology-as-configuration-and-trust-levels-over-spiffe.md),
 [0070](../adr/0070-mcp-over-http-serves-cli-bearer-tokens-first-and-cloud-ai-oauth-later-with-the-node-as-resource-server-only.md),
@@ -32,7 +32,7 @@ Dated 2026-11-23. The current release is `facilitator` 0.5.0.
 | `copy: addressed`, first contact across nodes, `verify` reporting a partial replica | being built | 0.6.0 |
 | Revoke with the rotation of the mesh's SLIM secret, the signed audit register (`audit verify`, `replay`) | being built | 0.6.0 |
 | `badge`, an opaque signed field in a card (AGNTCY Identity as a seam; the `identity` option stays refused) | being built; the badge layer itself is not scheduled | 0.6.0 |
-| Cloud AIs over OAuth 2.1: the protected-resource metadata, an issuer allow list (`http.issuers`), a public HTTPS address | planned (N5b); `http.issuers` is refused today | 0.7.0 |
+| Cloud AIs over OAuth 2.1: the protected-resource metadata, an issuer allow list (`http.issuers`), a public HTTPS address (`http.url`), clients named by (issuer, subject), `http issuers` | built (N5b), end to end against a local test issuer (`test:facilitator-oauth`); not yet run with a real cloud AI | 0.8.0 |
 | Three nodes in a mesh with no hub, run end to end | the p2p flow test is written; not released | 0.6.0 |
 
 Anything marked "being built" is on a branch that has not merged and not been released; names and options may move.
@@ -53,7 +53,7 @@ Anything marked "being built" is on a branch that has not merged and not been re
      |                 |  public listener (own port, own CA bundle)  refuses that node THERE only
      |                 |  public join endpoint (own port, no token)
      |                 v
-     |       PUBLIC NODE P  (a stranger's)                    CLOUD AI (planned, N5b: OAuth 2.1,
+     |       PUBLIC NODE P  (a stranger's)                    CLOUD AI (built, N5b: OAuth 2.1,
      |         node request  --- its key, signed --->          protected-resource metadata,
      |         a person on A: node requests; node approve      a named authorization server,
      |         node collect <--- certificate 1 h, bundle ---   a public HTTPS address on the node)
@@ -119,9 +119,33 @@ facilitator node requests; facilitator node approve <id>   # on the issuer: a pe
 facilitator node collect                      # on the public node: the certificate (1 h), the bundle, the mesh secret
 ```
 
-For cloud AIs the design is a resource server only: the node validates tokens from the issuers you list and publishes
-the protected-resource metadata; it does not host an authorization server. Nothing of it is built (`http.issuers` is
-refused), so there is no fragment: the planned `facilitator.yml` keys are in the proposal's section 11.1.
+For cloud AIs the node is a resource server only: it validates the JWT access tokens of the issuers you list and publishes
+the protected-resource metadata; it does not host an authorization server (facilitator 0.8.0):
+
+```yaml
+# .devcontainer/facilitator.yml
+facilitator:
+  humans: [you]
+  http:
+    listen: 0.0.0.0:8443
+    behind_proxy: true                    # a reverse proxy ends TLS; or tls_cert and tls_key
+    url: https://node.example             # the public HTTPS address; the resource is https://node.example/mcp
+    issuers:
+      - name: corp                        # names the server and starts its clients' handles (corp-alice)
+        issuer: https://login.example.org # the token's `iss`; its JWKS is found from its discovery document
+        # jwks_uri, algorithms (default RS256, ES256), scope (default facilitator:participate), audience (default the resource)
+```
+
+```text
+facilitator http issuers                  # reads each issuer's keys now: ok, or NOT READABLE and why
+facilitator http list                     # an OAuth client: OAuth, subject alice of https://login.example.org
+facilitator http approve corp-alice       # first contact, as for a bearer client
+```
+
+A cloud AI that gets a 401 with `resource_metadata` reads the metadata, logs the person in at your authorization server
+and calls with the token; the first valid token of a new (issuer, subject) enrols a client whose first message waits for a
+person. How a person connects a claude.ai custom connector is in the Feature's NOTES ("Connect a cloud AI"); it has not
+been run against a real cloud AI yet.
 
 ## Data and its storage tier
 
@@ -144,7 +168,7 @@ refused), so there is no fragment: the planned `facilitator.yml` keys are in the
 | the channel that carries a token or a public join's info (a message, a call) | the node, its CA, its listeners, `node invite`, `peer`, `request`, `collect`, `approve`, `revoke` |
 | the person's judgement on each stranger: `node requests`, `node approve` | `facilitator check`, `explain`, `audit verify`, `verify` |
 | a firewall or a router that opens the listener's port for a node others must reach | the Directory on loopback; `directory.peering` stays off beside a public domain |
-| the DNS name and TLS endpoint a cloud AI will use (N5b, planned) | the participants and the HTTP endpoint |
+| the DNS name and TLS endpoint a cloud AI will use (`http.url`, N5b) | the participants and the HTTP endpoint |
 
 ## Best practices
 
@@ -161,7 +185,9 @@ refused), so there is no fragment: the planned `facilitator.yml` keys are in the
 - **Keep the public listener and join endpoint on their own ports.** The public one is refused if it is equal to the private
   one, and its CA bundle holds public domains only.
 - **Do not put a node on a laptop behind NAT in front of a cloud AI.** It has no public HTTPS address; use a node
-  that does, when N5b exists.
+  that does (`http.url`).
+- **Name each issuer's audience and scope at the authorization server.** The token must carry `aud` = `<http.url>/mcp` (or the
+  entry's `audience`) and the scope `facilitator:participate`; a mismatch is a 401 or 403 and the node's log says which.
 - **Rotate and read the audit.** After a revoke, `facilitator check` shows the rotation and that every remaining
   node holds the new secret; `facilitator audit verify` checks the chain.
 

@@ -281,3 +281,11 @@ root key leaves the volume, still `issuing`) -> `migrated` (`node issuer migrate
 gone from the volume) | `replaced` (a new CA: every node joins again). ssh-agent: `none` -> `made` (the agent signs a
 self-signed root once) -> `issuing` <-> `agent away` (issuing and renewing stop; issued certificates stay valid; back when the
 agent answers and holds the key) -> `replaced` (the fingerprint changed: a new CA, every node joins again).
+
+## An OAuth client (facilitator 0.8.0, slice N5b)
+
+`unknown` -> `enrolled` (the first valid token of an issuer's subject; no secret kept) -> `approved` (a person, first contact;
+lasts `approval_ttl`, 30 days at public) -> `enrolled` again when the approval expires (its next first message is held) ->
+`revoked` | `denied` (a person; the client stays refused, a new token of the same subject does not undo it). The token itself
+lives only as long as its issuer says (`exp`); the node never extends or stores it.
+

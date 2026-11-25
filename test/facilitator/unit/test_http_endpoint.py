@@ -1,6 +1,6 @@
 """The MCP endpoint over HTTP (slice N4; the `http` module, endpoint.py) on loopback with the `mcp` library 2.3.0: a
 bearer token or a 401 with no detail; a per-address back-off after 10 failed authentications (the right token
-refused too, before it is parsed); a 64 KiB body; a wrong Origin or Host; only /mcp and the well-known metadata; the
+refused too, before it is parsed); a 64 KiB body; a wrong Origin or Host; only /mcp and (with http.issuers, test_oauth.py) the well-known metadata; the
 tools an HTTP client is offered (who, say, reply, receive, mail, transcript) and never continue or approve; who showing
 a public client only the public-exposed agents; a first message held, released by a person's approve, answered by an
 agent and received by the client; `receive` capped at the level's http_receive_wait and at two at a time; a revoked
@@ -128,7 +128,7 @@ def test_auth_origin_host_size_and_paths():
         assert n.raw(body=body, headers={"Origin": "https://evil.example"})[0] == 403
         assert n.raw(body=body, headers={"Host": "evil.example"})[0] in (400, 403, 421)
         assert n.raw(path="/other")[0] == 404 and n.raw(path="/")[0] == 404
-        assert n.raw(path="/.well-known/oauth-protected-resource/mcp", token=None, method="GET")[0] == 200
+        assert n.raw(path="/.well-known/oauth-protected-resource/mcp", token=None, method="GET")[0] == 404   # no issuers: nothing to publish (N5b)
         st, _, _ = n.raw(body=b"x" * (endpoint.MAX_BODY + 1))
         assert st == 413
         st, _, _ = n.raw(body=b"x" * 10, headers={"Content-Length": str(endpoint.MAX_BODY + 5)})

@@ -27,6 +27,21 @@ def test_type_is_given_beside_the_conversation_type():
     assert conversation_type().name == "conversation"
 
 
+def test_a_forget_is_signed_and_verifies():
+    e, fac = _fac()
+    try:
+        fac.clients.create("claude-one", "you")
+        fac.clients.revoke("claude-one", "you")
+        fac.clients.forget("claude-one", "you")
+        evs = fac.audit.events()
+        assert [x["event"] for x in evs] == ["enrolled", "revoked", "forget"] and evs[-1]["subject"] == "claude-one", evs
+        ok, detail = fac.audit.verify()
+        assert ok and "3 signed event(s)" in detail, detail
+        assert fac.clients.audit_ok()[0]
+    finally:
+        e.close()
+
+
 def test_events_are_written_signed_as_they_happen():
     e, fac = _fac()
     try:

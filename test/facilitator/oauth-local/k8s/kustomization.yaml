@@ -1,0 +1,79 @@
+# N5b on the workstation's Kubernetes (Rancher Desktop), the OAuth test of Claude Code on Windows: a Keycloak (the login server) and
+# the facilitator hub of the rancher-desktop overlay with its HTTP endpoint on, Keycloak as its one issuer, and a public test agent
+# (jester) beside the hub. One namespace, facilitator-oauth-test; tearing it down is `kubectl delete namespace facilitator-oauth-test`.
+# For a local machine only: plain http, a throwaway realm, a throwaway password set by hand (oauth_local_k8s.sh), the image built on
+# the machine (facilitator-node:<version>-local, imagePullPolicy Never). Build with
+#   kustomize build --load-restrictor LoadRestrictionsNone test/facilitator/oauth-local/k8s
+# (the realm and the test agent are files of this repository outside this folder; `task bundle:k8s` does not render this overlay).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: facilitator-oauth-test
+resources:
+  - ../../../../bundles/facilitator/k8s/overlays/rancher-desktop
+  - keycloak.yaml
+images:
+  - name: ghcr.io/nabil-becker/facilitator-node
+    newName: facilitator-node
+    newTag: 0.8.0-local
+configMapGenerator:
+  - name: facilitator-hub-config
+    behavior: merge                 # facilitator.yml, mesh.yml and participants.yml are this overlay's; the agent script is added
+    files:
+      - facilitator.yml
+      - mesh.yml
+      - participants.yml
+      - http_agent.py=../../integration/http_agent.py
+  - name: keycloak-realm
+    files:
+      - realm.json=../realm.json
+generatorOptions:
+  disableNameSuffixHash: false
+patches:
+  - target: {kind: Service, name: facilitator-hub}
+    patch: |-
+      - op: add
+        path: /spec/ports/-
+        value: {name: http, port: 8765, targetPort: http, protocol: TCP}
+  - target: {kind: StatefulSet, name: facilitator-hub}
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: Never
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: {name: FACILITATOR_KEYS, value: file}      # keys in files, not an ssh-agent: `kubectl exec` commands sign too
+      - op: add
+        path: /spec/template/spec/containers/0/ports/-
+        value: {name: http, containerPort: 8765, protocol: TCP}
+      - op: add
+        path: /spec/template/spec/containers/-
+        value:
+          # jester, the test agent, beside the hub: waits for the hub, registers the participants, then answers every message
+          # with a joke (the same script the scripted check uses); it shares the hub's state volume and configuration.
+          name: jester
+          image: ghcr.io/nabil-becker/facilitator-node:0.8.0
+          imagePullPolicy: Never
+          env:
+            - {name: FACILITATOR_MESH_FILE, value: /etc/facilitator/mesh.yml}
+            - {name: FACILITATOR_KEYS, value: file}
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -u
+              until [ -f "$FACILITATOR_HOME/http/status.json" ]; do sleep 3; done      # the hub's HTTP part is up (another process namespace: no infra status here)
+              facilitator register --all --no-directory
+              exec /opt/facilitator/python/bin/python3 -I /etc/facilitator/http_agent.py jester 31536000 \
+                "Why did the packet cross the network? To get to the other site."
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests: {cpu: 20m, memory: 64Mi}
+            limits: {memory: 256Mi}
+          volumeMounts:
+            - {name: state, mountPath: /var/lib/devcontainer-features/facilitator}
+            - {name: tmp, mountPath: /tmp}
+            - {name: config, mountPath: /etc/facilitator, readOnly: true}

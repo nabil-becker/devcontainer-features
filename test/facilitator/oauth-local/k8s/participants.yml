@@ -1,0 +1,5 @@
+participants:
+  - name: jester
+    cli: openai-compatible
+    kind: resident
+    description: tells jokes (the test agent of the OAuth test)

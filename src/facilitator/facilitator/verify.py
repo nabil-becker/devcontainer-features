@@ -73,8 +73,11 @@ class Walker:
                     who = f"  this node ({self.fac.mesh.node_id})"
             via = m.get("via")
             if via:
-                who += (f"  via {via.get('transport')} ({via.get('auth')}, client {via.get('client')}): this node signed on "
+                oa = f", issuer {via.get('issuer')}, subject {via.get('subject')}" if via.get("auth") == "oauth" else ""
+                who += (f"  via {via.get('transport')} ({via.get('auth')}, client {via.get('client')}{oa}): this node signed on "
                         "the client's behalf")
+                if via.get("auth") == "oauth" and not (via.get("issuer") and via.get("subject")):
+                    self.problems.append(f"{c}/{mid}: via says OAuth and names no issuer and subject")
                 if via.get("client") != router.split(m["from"])[0]:
                     self.problems.append(f"{c}/{mid}: via names the client {via.get('client')}, but the message is by {m['from']}")
             elif self.fac.is_http(router.split(m["from"])[0]):

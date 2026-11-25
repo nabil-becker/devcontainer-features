@@ -96,8 +96,14 @@ tasks:
     dir: '{{.USER_WORKING_DIR}}'
     cmds: ['facilitator http token {{.CLI_ARGS}}']
 
+  http-forget:
+    desc: 'Let a revoked or denied HTTP client back as new (ruling OA3): -- <client> [--as <person>]. Drops its entry, so its OAuth login (issuer and subject) enrols again on its next valid token and is held for a person''s approval, or a bearer client name can be given a new token; written to the audit register; past records keep naming it. A live client is refused (revoke it first). A person''s act: refused inside an agent''s job.'
+    interactive: true
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['facilitator http forget {{.CLI_ARGS}}']
+
   http:
-    desc: 'The HTTP clients of this node: -- list (the default; no secret shown) | audit (the hash chain of enrolments, approvals, denials and revocations) | approve <client> (first contact: its held messages are delivered) | deny <client> | revoke <client> (its token stops working at once). approve, deny and revoke are a person''s acts, refused inside an agent''s job.'
+    desc: 'The HTTP clients of this node: -- list (the default; no secret shown) | audit (the hash chain of enrolments, approvals, denials and revocations) | issuers (the OAuth authorization servers of http.issuers and whether their keys can be read now) | approve <client> (first contact: its held messages are delivered; a cloud AI''s client is its OAuth issuer and subject) | deny <client> | revoke <client> (its token or OAuth login stops working at once). approve, deny and revoke are a person''s acts, refused inside an agent''s job.'
     interactive: true
     dir: '{{.USER_WORKING_DIR}}'
     cmds: ['facilitator http {{.CLI_ARGS | default "list"}}']

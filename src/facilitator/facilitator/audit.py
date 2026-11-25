@@ -152,4 +152,4 @@ class Audit:
                       if lines else f"{len(proj['events'])} signed event(s), the chain holds")
 
 
-_EVENTS = {"enrolled": "enrolled", "approved": "approved", "denied": "denied", "revoked": "revoked"}
+_EVENTS = {"enrolled": "enrolled", "approved": "approved", "denied": "denied", "revoked": "revoked", "forget": "forget"}

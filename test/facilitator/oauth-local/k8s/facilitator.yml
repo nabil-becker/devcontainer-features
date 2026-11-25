@@ -1,0 +1,13 @@
+# The HTTP endpoint (N5b). The browser and Claude Code see Keycloak and the node at localhost (Rancher Desktop forwards the
+# LoadBalancer ports to the machine), so the issuer, and the tokens' iss, are http://localhost:8080/...; the node itself reads the
+# keys from Keycloak's service in the cluster (jwks_uri), which http.insecure allows to be plain http.
+facilitator:
+  humans: [you]
+  http:
+    listen: 0.0.0.0:8765
+    url: http://localhost:8765
+    insecure: true
+    issuers:
+      - name: kc
+        issuer: http://localhost:8080/realms/facilitator-test
+        jwks_uri: http://keycloak:8080/realms/facilitator-test/protocol/openid-connect/certs

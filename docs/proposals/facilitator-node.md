@@ -1559,3 +1559,43 @@ The Operator ruled HK1 to HK5 as recommended (the findings are in "Findings of s
   the mount, the import and the role.
 - **HK5, the Rancher Desktop overlay is run once on the Operator's workstation** before `hub-workstation-networking`
   closes; if its LoadBalancer binds loopback only, publish on all interfaces or name the hub `host.docker.internal`.
+
+## Rulings on slice N5b (2026-11-24)
+
+- **OA1, who an OAuth client is: option A, ruled 2026-11-24.** An OAuth client is an issuer and a subject (one
+  person's login), not the connector's `client_id`: one connector (one `client_id`) is shared by everyone who adds
+  it and may register a new `client_id` each time, so each person is enrolled and approved on their own (per
+  client, ruling HC4) and the record names who it was; `client_id` is kept as a label. Rejected: approving the
+  connector (B: one approval would let in everyone who uses it).
+- **OA2, the login's subject in the record: option A, ruled 2026-11-24.** `via` carries the issuer's subject as
+  given, so the record names exactly who it was; it is kept and replicated like every entry. NOTES warns that a
+  login server whose subjects are emails puts those emails in the record: prefer one with opaque subjects where
+  that matters. Rejected: a fingerprint of the subject (B: the record could no longer say who it was without the
+  login server).
+- **OA3, letting a refused client back: option B, ruled 2026-11-24.** `facilitator http forget <client>` is built
+  in N5b: a person's act (refused inside an agent's job) that drops a revoked or denied client's entry, so the
+  same login (issuer and subject) is treated as new next time and held for a person's approval; a live client is
+  refused (revoke it first). The forget is written to the audit register; past records keep naming the client.
+  Rejected: leaving it to a later slice (A).
+- **OA4, the issuer's keys unreadable: option A, ruled 2026-11-24.** When the node cannot fetch or read an
+  issuer's key set, it answers 503 and stays closed: no OAuth client gets in until the keys can be read, the
+  refusal is not counted against the caller's address (so an issuer outage cannot block a caller), and the
+  node's log says why. Rejected: answering 401 like a bad token (B: it would count against the caller).
+- **OA5, a real cloud AI before N5b is done: option A, ruled 2026-11-25.** The Operator connects a claude.ai custom
+  connector once by hand (NOTES, "Connect a cloud AI"), and N5b counts as done only after that run.
+- **OA6, https for `http.url`: kept, with an opt-out flag, ruled 2026-11-25.** With issuers, `http.url` must be https,
+  except when `http.insecure: true` is set, for a local machine or a test environment: then plain http is accepted
+  on any address, `check` and the node's log warn on every start, and the flag is refused under `preset: open`
+  (a node reachable by strangers never runs OAuth over plain http).
+- **OA5, revised 2026-11-25.** The Operator has no public https address for now, so N5b counts as done after a
+  local end-to-end run: Keycloak in Docker as the login server and Claude Code as the OAuth client
+  (`claude mcp add --transport http`), against a node on localhost (`task facilitator:oauth-local`). A claude.ai
+  connector run waits in the backlog until a public address exists. (OpenBao was weighed as the login server and
+  set aside: its OIDC provider is not believed to issue JWT access tokens with an audience, nor to let clients
+  register themselves.)
+- **OA5 met, 2026-11-25.** The Operator ran Claude Code on Windows against the OAuth test on Rancher Desktop's
+  cluster (Keycloak and a 0.8.0 hub in the namespace `facilitator-oauth-test`): it discovered Keycloak, registered
+  itself, the Operator logged in, the first message was held and approved by the Operator, jester answered, and
+  `verify` showed `via http (oauth, ..., issuer http://localhost:8080/realms/facilitator-test, subject ...)` with
+  every chain verifying back to a human. The test realm had to grant `offline_access`, since Claude Code asks for a
+  refresh token. The same run answers HK5: Rancher Desktop's LoadBalancer services answer at Windows `localhost`.

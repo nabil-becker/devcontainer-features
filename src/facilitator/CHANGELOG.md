@@ -6,6 +6,54 @@ of the Feature and whether they must act (an option renamed, a task removed, a r
 The version in `devcontainer-feature.json` is bumped in the same change that adds its entry
 here; `task lint` fails when the entry is missing.
 
+## [0.8.0] - 2026-11-24
+
+Cloud AIs over OAuth 2.1 (slice N5b of the facilitator-node proposal; ruling PB3, ADR-0070 decisions 1, 2 and 5 to 8). The node is
+an OAuth **resource server only**; bearer tokens keep working beside it, and a node that sets no `http.issuers` behaves as
+0.7.0 (except that the well-known metadata path now answers 404 until issuers are set). Rebuild the container. No new
+Python dependency: the bundle already carries PyJWT and `cryptography` (the `mcp` library's).
+
+### Added
+
+- **`facilitator.http.issuers`**: the allow list of authorization servers whose JWT access tokens are accepted. Each entry has a
+  `name` (a handle, at most 24 characters), the `issuer` URL, and optionally `jwks_uri` (else found from the issuer's
+  discovery document), `algorithms` (default RS256 and ES256; `none` and `HS*` are refused), `scope` (default
+  `facilitator:participate`) and `audience` (default the node's resource URL). It needs `http.url`, the public HTTPS
+  address, and beyond loopback TLS or `behind_proxy: true` as before (ADR-0070 decision 8). `check` lints every option and
+  fetches nothing.
+- **The token checks** (`oauth.py`): issuer, algorithm, signature against the issuer's JWKS (fetched over HTTPS, kept an hour,
+  re-read once a minute for an unknown `kid`), `exp`, the audience of this node's `/mcp` URL (RFC 8707), the scope. A refused
+  token is a 401 with `WWW-Authenticate: Bearer error="invalid_token", resource_metadata=...` and no detail; a token without
+  the scope is a 403 `insufficient_scope`; **keys that cannot be read close the door** (503, not counted against the caller,
+  the log says why).
+- **The RFC 9728 protected-resource metadata** at `/.well-known/oauth-protected-resource` and `.../mcp`, naming the node's
+  resource, the authorization servers and the scope; and a 401 with `resource_metadata` for a request with no token, so a cloud
+  AI finds where to log in.
+- **An OAuth client is the (issuer, subject)** of its token, enrolled on its first valid token and held until a person approves
+  it (first contact, as for a bearer client); handle `<issuer name>-<subject>`; the same HTTP client in every other way (never
+  `human`, the participant tools only, `http.<home domain>`, the public limits). Its packets carry `via` = `{transport: http,
+  auth: oauth, client, issuer, subject}`; `transcript` and `verify` show it. The conversation type accepts `subject` in `via`.
+- **`facilitator http issuers`** reads each issuer's keys now and says which are readable; `facilitator http list` shows an OAuth
+  client's issuer and subject; `check` has an `http oauth` line.
+- **`facilitator http forget <client>`** (task `facilitator:http-forget`, ruling OA3): a person's act that drops a revoked or denied client's entry so the same login (OAuth: issuer and subject; bearer: the name) is new next time, enrolled again and held for approval; a live client is refused; a `forget` event is written to the audit log and register.
+- **`facilitator.http.insecure: true`** (ruling OA6): plain `http://` for `http.url` on any address, and the TLS rule beyond loopback waived, for a local machine or a test environment; every start and `check` warn that tokens travel in plain text; refused under `preset: open`.
+- **`task facilitator:oauth-local`** (`oauth-local-keycloak`): Claude Code's OAuth login tried on one machine with no public address: Keycloak 26.8.2 (pinned by digest) in the internal Docker as the login server and a node with `http.insecure`; `task test:facilitator-oauth-local` runs the browserless part (dynamic registration, code + PKCE + resource, the token, the node) against them.
+- **With `http.insecure`, an issuer's `jwks_uri` (and its discovery document) may be plain `http://` on any host**, so a node in a cluster reads the keys from the issuer's in-cluster service while the issuer URL the browser sees is `http://localhost:...` (`oauth.py`, `participants.py`; unit-tested). Without `insecure` the rule is as before: https, or http on loopback.
+- **`task facilitator:oauth-local-k8s`**: the same OAuth test in the workstation's Rancher Desktop cluster (`test/facilitator/oauth-local/k8s/`, namespace `facilitator-oauth-test`): Keycloak and the hub of the `rancher-desktop` overlay with its HTTP endpoint and a public test agent, both Services LoadBalancers that Rancher Desktop forwards to the machine's localhost, so Claude Code on Windows can log in.
+- **The hub's StatefulSet sets `fsGroupChangePolicy: OnRootMismatch`**: without it the kubelet adds group read/write to every file of the state volume at each pod start, and `ssh-keygen` then refuses the node's own signing key after the first restart. (Fix to the base manifests of this release; redeploy.)
+- NOTES: "MCP over HTTP for cloud AIs", a section per setting and how a person connects a claude.ai custom connector.
+- Tests: `test_oauth.py` (a local test issuer; the right and the wrong audience, expired, wrong issuer, wrong scope, alg none,
+  HS256 forged with the public key, a rotated key, keys that cannot be read, the endpoint's statuses and challenges, enrolment,
+  approval, `via`), more in `test_http.py`, and `test/facilitator/oauth_flow.sh` (`task test:facilitator-oauth`): an MCP
+  client holding an OAuth token end to end through a built bundle's endpoint.
+
+### Changed
+
+- The well-known metadata path answers **404** on a node with no `http.issuers` (0.7.0 answered the library's metadata naming
+  the node itself as its authorization server, which was wrong: a node hosts none).
+- A revoked or denied OAuth client is no longer refused for good: a person can `forget` it.
+- `facilitator.http.issuers` is no longer refused; a bare list of URLs is refused by name (an entry needs a `name`).
+
 ## [0.7.0] - 2026-11-24
 
 The hub on Kubernetes (slice hub-on-kubernetes of the facilitator-node proposal; rulings K2 to K5, ADR-0078). Nothing changes for a

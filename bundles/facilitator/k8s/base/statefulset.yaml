@@ -21,11 +21,15 @@ spec:
         runAsUser: 10001                       # the image's `facilitator` user
         runAsGroup: 10001
         fsGroup: 10001                         # the volume is writable by it (the state folder is mode 0700)
+        # the kubelet's fsGroup pass adds group rw to every file in the volume at each pod start, which makes ssh-keygen refuse the
+        # node's own signing key ("private key files are NOT accessible by others") after the first restart; this runs it only
+        # when the volume's root is not already the group's
+        fsGroupChangePolicy: OnRootMismatch
         seccompProfile:
           type: RuntimeDefault
       containers:
         - name: hub
-          image: ghcr.io/nabil-becker/facilitator-node:0.7.0   # the tag is set by `images:` in kustomization.yaml
+          image: ghcr.io/nabil-becker/facilitator-node:0.8.0   # the tag is set by `images:` in kustomization.yaml
           imagePullPolicy: IfNotPresent
           # the image's entrypoint is `facilitator node run`; the role comes from the mounted mesh.yml
           env:

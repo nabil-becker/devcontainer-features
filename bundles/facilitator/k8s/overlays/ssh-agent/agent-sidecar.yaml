@@ -10,7 +10,7 @@ spec:
           volumeMounts:
             - {name: ca-agent, mountPath: /run/ssh-ca}
         - name: ca-agent
-          image: ghcr.io/nabil-becker/facilitator-node:0.7.0
+          image: ghcr.io/nabil-becker/facilitator-node:0.8.0
           imagePullPolicy: IfNotPresent
           command: [ssh-agent, -D, -a, /run/ssh-ca/agent.sock]
           env:

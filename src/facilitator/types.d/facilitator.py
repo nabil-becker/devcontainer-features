@@ -103,11 +103,12 @@ def _via(d: dict) -> None:
     if "via" not in d:
         return
     v = d["via"]
-    _need(isinstance(v, dict) and set(v) <= {"transport", "auth", "client", "issuer"}
+    _need(isinstance(v, dict) and set(v) <= {"transport", "auth", "client", "issuer", "subject"}
           and v.get("transport") in VIA_TRANSPORTS and v.get("auth") in VIA_AUTHS
           and isinstance(v.get("client"), str) and ID_RE.fullmatch(v["client"])
-          and ("issuer" not in v or (isinstance(v["issuer"], str) and 0 < len(v["issuer"]) <= 200)),
-          "via: {transport: http, auth: bearer|oauth, client, issuer?}")
+          and ("issuer" not in v or (isinstance(v["issuer"], str) and 0 < len(v["issuer"]) <= 200))
+          and ("subject" not in v or (isinstance(v["subject"], str) and 0 < len(v["subject"]) <= 200)),
+          "via: {transport: http, auth: bearer|oauth, client, issuer?, subject?}")
 
 
 def _message(d: dict) -> None:
@@ -256,7 +257,7 @@ def project(led) -> tuple[dict, dict[str, list[str]]]:
     return conv, flags
 
 
-AUDIT_EVENTS = ("enrolled", "approved", "denied", "revoked",                      # an HTTP client's token and its approval (slice N4)
+AUDIT_EVENTS = ("enrolled", "approved", "denied", "revoked", "forget",                    # an HTTP client's token and its approval (slice N4)
                 "join-requested", "join-approved", "join-denied", "node-revoked",   # a node's join and its cut-off (slice N5a)
                 "secret-rotated")
 SUBJECT_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.@:/-]{0,127}")

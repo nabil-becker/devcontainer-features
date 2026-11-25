@@ -18,7 +18,7 @@ def via_text(v: dict | None) -> str:
         return ""
     auth = {"bearer": "bearer token", "oauth": "OAuth"}.get(v.get("auth"), v.get("auth"))
     return f" (via {v.get('transport', '?').upper()}, authenticated by {auth}, client {v.get('client')}" \
-           + (f", issuer {v['issuer']}" if v.get("issuer") else "") + ")"
+           + (f", issuer {v['issuer']}" if v.get("issuer") else "") + (f", subject {v['subject']}" if v.get("subject") else "") + ")"
 
 
 def events(proj: dict, led) -> list[tuple[str, str]]:

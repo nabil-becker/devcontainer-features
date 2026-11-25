@@ -1,0 +1,19 @@
+# The hub of workstation.example (as the rancher-desktop overlay), with the one public agent for the OAuth test.
+preset: team
+role: hub
+node:
+  id: hub-1
+  name: hub.workstation.example
+  listen:
+    private: 0.0.0.0:46358
+  join: 0.0.0.0:46359
+  issuer:
+    domain: workstation.example
+trust:
+  workstation.example: private
+expose:
+  jester: public
+  "*": local
+limits:
+  public:
+    http_receive_wait: 25s

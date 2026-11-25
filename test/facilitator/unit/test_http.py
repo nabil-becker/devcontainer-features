@@ -93,7 +93,6 @@ def test_beyond_loopback_needs_tls_or_a_proxy_and_a_host_name():
         ("facilitator:\n  http:\n    listen: 0.0.0.0:8443\n    behind_proxy: true\n", "http.url"),
         ("facilitator:\n  http:\n    listen: 0.0.0.0:8443\n    tls_cert: /c.pem\n", "go together"),
         ("facilitator:\n  http:\n    listen: nonsense\n", "host:port"),
-        ("facilitator:\n  http:\n    listen: 127.0.0.1:8443\n    issuers: [https://idp.example]\n", "slice N5"),
         ("facilitator:\n  http:\n    listen: 127.0.0.1:8443\n    bogus: 1\n", "unknown"),
         ("facilitator:\n  humans: []\n  http:\n    listen: 127.0.0.1:8443\n", "names nobody"),
     ]
@@ -113,6 +112,128 @@ def test_beyond_loopback_needs_tls_or_a_proxy_and_a_host_name():
             assert e.fac().http_ready()[0], e.fac().http_ready()
         finally:
             e.close()
+
+
+ISS = "    url: https://node.example\n    issuers:\n"
+
+
+def test_the_issuers_setting_is_linted_option_by_option():
+    """facilitator.http.issuers (slice N5b): each option, accepted and refused; nothing is fetched to lint it."""
+    base = "facilitator:\n  http:\n    listen: 127.0.0.1:8443\n"
+    good = base + ISS + ("      - name: corp\n        issuer: https://login.example.org\n        jwks_uri: https://login.example.org/keys\n"
+                         "        algorithms: [RS256, ES256, PS384, EdDSA]\n        scope: node.use\n        audience: api://node\n"
+                         "      - name: two\n        issuer: https://b.example\n")
+    e = env(fac_yml=good)
+    try:
+        fac = e.fac()
+        assert fac.http_ready()[0], fac.http_ready()
+        iss = fac.participants()[1].http.issuers
+        assert [i.name for i in iss] == ["corp", "two"] and iss[0].algorithms == ["RS256", "ES256", "PS384", "EdDSA"]
+        assert iss[0].jwks_uri == "https://login.example.org/keys" and iss[0].scope == "node.use" and iss[0].audience == "api://node"
+        assert iss[1].algorithms == ["RS256", "ES256"] and iss[1].jwks_uri is None and iss[1].scope is None
+    finally:
+        e.close()
+    bad = [
+        (base + "    issuers: [https://idp.example]\n", "a bare URL has no name"),
+        (base + "    issuers:\n      - name: corp\n        issuer: https://idp.example\n", "needs http.url"),
+        (base + "    url: http://node.example\n    issuers:\n      - name: corp\n        issuer: https://idp.example\n", "must be https"),
+        (base + ISS + "      - name: Corp\n        issuer: https://idp.example\n", "a lowercase handle"),
+        (base + ISS + "      - name: corp\n", "an https:// URL"),
+        (base + ISS + "      - name: corp\n        issuer: http://idp.example\n", "an https:// URL"),
+        (base + ISS + "      - name: corp\n        issuer: https://idp.example\n        jwks_uri: http://idp.example/k\n", "jwks_uri"),
+        (base + ISS + "      - name: corp\n        issuer: https://idp.example\n        algorithms: [none]\n", "is refused"),
+        (base + ISS + "      - name: corp\n        issuer: https://idp.example\n        algorithms: [HS256]\n", "shared-secret"),
+        (base + ISS + "      - name: corp\n        issuer: https://idp.example\n        algorithms: [RS999]\n", "is not one of"),
+        (base + ISS + "      - name: corp\n        issuer: https://idp.example\n        scope: a b\n", "one scope name"),
+        (base + ISS + "      - name: corp\n        issuer: https://idp.example\n        colour: red\n", "unknown colour"),
+        (base + ISS + "      - name: corp\n        issuer: https://a.example\n      - name: corp\n        issuer: https://b.example\n", "used twice"),
+        (base + ISS + "      - name: a\n        issuer: https://a.example\n      - name: b\n        issuer: https://a.example\n", "listed twice"),
+    ]
+    for text, want in bad:
+        e = env(fac_yml=text)
+        try:
+            ok, why = e.fac().http_ready()
+            assert not ok and want in why, (text, why)
+        finally:
+            e.close()
+    # http.insecure admits a plain-http jwks_uri on any host (the issuer's in-cluster service); without it the entry is refused
+    insec = ("facilitator:\n  http:\n    listen: 0.0.0.0:8765\n    url: http://localhost:8765\n    insecure: true\n    issuers:\n"
+             "      - name: kc\n        issuer: http://localhost:8080/realms/t\n"
+             "        jwks_uri: http://keycloak:8080/realms/t/protocol/openid-connect/certs\n")
+    e = env(fac_yml=insec)
+    try:
+        ok, why = e.fac().http_ready()
+        assert ok, why
+        assert e.fac().participants()[1].http.issuers[0].jwks_uri.startswith("http://keycloak:8080/")
+    finally:
+        e.close()
+    e = env(fac_yml=insec.replace("    insecure: true\n", ""))
+    try:
+        ok, why = e.fac().http_ready()
+        assert not ok and "jwks_uri" in why, why
+    finally:
+        e.close()
+    e = env(fac_yml=base + "    url: http://127.0.0.1:8443\n    issuers:\n      - name: corp\n        issuer: http://127.0.0.1:9000\n")
+    try:
+        assert e.fac().http_ready()[0]                    # http only on a loopback host, for tests
+    finally:
+        e.close()
+
+
+def test_an_oauth_client_entry_is_the_issuer_and_subject_and_has_no_token():
+    e = env()
+    try:
+        fac = e.fac()
+        name, c = fac.oauth_client("corp", "https://idp.example", "alice", "claude-web")
+        assert name == "corp-alice" and c["status"] == "enrolled" and c["token_hash"] == "" and c["auth"] == "oauth"
+        assert fac.is_http(name) and fac.caller_level(name) == "public"
+        again, c2 = fac.oauth_client("corp", "https://idp.example", "alice", "claude-web")
+        assert again == name and c2["created"] == c["created"]
+        assert fac.clients.via(name) == {"transport": "http", "auth": "oauth", "client": name, "issuer": "https://idp.example",
+                                         "subject": "alice"}
+        assert fac.clients.via("cli-one") == {"transport": "http", "auth": "bearer", "client": "cli-one"}
+        assert fac.record.via(name)["auth"] == "oauth"
+        view = clients_mod.public_view(name, fac.clients.get(name))
+        assert view["auth"] == "oauth" and view["subject"] == "alice" and "token_hash" not in view
+        try:                                              # the same handle for another (issuer, subject) is refused
+            fac.clients.ensure_oauth(name, "corp", "https://evil.example", "alice", "")
+            raise AssertionError("taken")
+        except clients_mod.ClientError as err:
+            assert "taken" in str(err)
+        try:                                              # a name of a participant is never an OAuth client's
+            fac.oauth_client("domain", "https://idp.example", "expert-one", "")
+            raise AssertionError("participant")
+        except FacilitatorError:
+            pass
+        fac.revoke_client(name, "you")
+        _, c3 = fac.oauth_client("corp", "https://idp.example", "alice", "claude-web")
+        assert c3["status"] == "revoked"                  # a person's revoke stands; a new token does not undo it
+        out = cli(e, "http", "list").stdout
+        assert "OAuth, subject alice of https://idp.example" in out and "revoked" in out, out
+    finally:
+        e.close()
+
+
+def test_check_names_the_issuers_without_fetching_and_http_issuers_says_when_there_are_none():
+    e = env()
+    try:
+        out = cli(e, "http", "issuers")
+        assert out.returncode == 0 and "no OAuth issuers" in out.stdout, out.stdout + out.stderr
+    finally:
+        e.close()
+    text = ("facilitator:\n  humans: [you]\n  http:\n    listen: 127.0.0.1:18765\n    url: https://node.example\n    issuers:\n"
+            "      - name: corp\n        issuer: https://127.0.0.1:9\n")           # nothing listens there: a fetch would fail loudly
+    e = env(fac_yml=text)
+    try:
+        t0 = time.time()
+        chk = cli(e, "check", "--json")
+        parts = {p["part"]: p for p in json.loads(chk.stdout)}
+        d = parts["http oauth"]["detail"]
+        assert "corp (https://127.0.0.1:9)" in d and "https://node.example/mcp" in d and \
+            "https://node.example/.well-known/oauth-protected-resource/mcp" in d, d
+        assert time.time() - t0 < 20
+    finally:
+        e.close()
 
 
 def test_the_kill_switch_and_the_infra_part():
@@ -196,6 +317,31 @@ def test_a_token_is_shown_once_kept_as_a_hash_and_revoked_at_once():
         assert '"token_hash": ""' in (fac.state.home / "http" / "clients.json").read_text()
         again = fac.enrol_http("cli-one", "you")["token"]                 # a new token after a revoke
         assert fac.clients.check_token(again) and fac.clients.check_token(tok) is None
+    finally:
+        e.close()
+
+
+def test_forget_a_bearer_client_gives_its_name_a_new_token_and_is_a_persons_act():
+    e = env()
+    try:
+        fac = e.register_all()
+        tok = fac.enrol_http("cli-one", "you")["token"]
+        try:
+            fac.forget_client("cli-one", "you")
+            raise AssertionError("a live client")
+        except FacilitatorError as err:
+            assert "revoke it first" in str(err)
+        fac.revoke_client("cli-one", "you")
+        r = cli(e, "http", "forget", "cli-one", extra={"CLAUDECODE": "1"})
+        assert r.returncode == 1 and "refuses to run inside an agent's job" in r.stderr, r.stderr
+        assert fac.clients.get("cli-one") is not None
+        r = cli(e, "http", "forget", "cli-one")
+        assert r.returncode == 0 and "forgotten by you" in r.stdout and "http token cli-one" in r.stdout, (r.stdout, r.stderr)
+        assert fac.clients.get("cli-one") is None and fac.clients.check_token(tok) is None
+        assert cli(e, "http", "forget", "cli-one").returncode == 1                 # unknown now
+        new = fac.enrol_http("cli-one", "you")["token"]
+        assert fac.clients.check_token(new)[0] == "cli-one"
+        assert "forget" in [x["event"] for x in fac.clients.audit_log()] and fac.clients.audit_ok()[0]
     finally:
         e.close()
 
@@ -576,6 +722,69 @@ def test_the_http_commands_and_the_agent_job_refusal():
         assert parts["http endpoint"]["detail"].startswith("127.0.0.1:18765") and "http clients" in parts and "http level" in parts
         low = cli(e, "explain", "jester")
         assert "public:" in low.stdout and "approval" in low.stdout
+    finally:
+        e.close()
+
+
+def test_http_insecure_lets_a_lan_url_be_plain_http_with_a_warning_and_never_under_open():
+    """Ruling OA6: `http.insecure: true` waives https for http.url and TLS beyond loopback, warns, and is refused under open."""
+    lan = ("facilitator:\n  http:\n    listen: 0.0.0.0:8443\n    url: http://192.168.1.20:8443\n"
+           "    issuers:\n      - name: corp\n        issuer: https://idp.example\n")
+    # refused without the flag: the url must be https, and beyond loopback TLS is required
+    e = env(fac_yml=lan)
+    try:
+        ok, why = e.fac().http_ready()
+        assert not ok and "must be https" in why and "http.insecure: true" in why, why
+    finally:
+        e.close()
+    # accepted with it: the TLS waiver (no tls_cert, no behind_proxy) and the warning in check
+    e = env(fac_yml=lan.replace("    url:", "    insecure: true\n    url:"))
+    try:
+        assert e.fac().http_ready() == (True, "ok"), e.fac().http_ready()
+        h = e.fac().participants()[1].http
+        assert h.insecure is True and h.tls_cert is None and not h.behind_proxy
+        from facilitator import endpoint
+        assert endpoint.base_url(h) == "http://192.168.1.20:8443"      # the metadata advertises the url as given
+        assert endpoint.base_url(h) + endpoint.PATH == "http://192.168.1.20:8443/mcp"
+        chk = cli(e, "check", "--json")
+        parts = {p["part"]: p for p in json.loads(chk.stdout)}
+        w = parts["http insecure"]
+        assert w["ready"] is True and w["detail"].startswith("warning:") and "tokens travel in plain text" in w["detail"], w
+        assert "plain (http.insecure)" in parts["http endpoint"]["detail"]
+        from facilitator import oauth
+        iss = h.issuers
+        assert oauth.metadata(endpoint.base_url(h) + endpoint.PATH, iss)["resource"] == "http://192.168.1.20:8443/mcp"
+    finally:
+        e.close()
+    # bearer tokens (no issuers) follow the same rule: beyond loopback needs TLS unless insecure
+    for yml, want in (("facilitator:\n  http:\n    listen: 0.0.0.0:8443\n    url: http://10.0.0.5:8443\n", False),
+                      ("facilitator:\n  http:\n    listen: 0.0.0.0:8443\n    url: http://10.0.0.5:8443\n    insecure: true\n", True)):
+        e = env(fac_yml=yml)
+        try:
+            assert e.fac().http_ready()[0] is want, e.fac().http_ready()
+        finally:
+            e.close()
+    # refused under open, in check and for the endpoint
+    e = env(mesh="preset: open\n", fac_yml=lan.replace("    url:", "    insecure: true\n    url:"))
+    try:
+        ok, why = e.fac().http_ready()
+        assert not ok and "refused under preset: open" in why, why
+        chk = cli(e, "check", "--json")
+        parts = {p["part"]: p for p in json.loads(chk.stdout)}
+        assert parts["http endpoint"]["ready"] is False and "preset: open" in parts["http endpoint"]["detail"] and chk.returncode == 1
+        from facilitator import endpoint
+        try:
+            endpoint.Daemon(e.fac())
+            raise AssertionError("the endpoint started under open with http.insecure")
+        except endpoint.EndpointError as x:
+            assert "preset: open" in str(x)
+    finally:
+        e.close()
+    # a non-boolean value is a lint finding like the other flags
+    e = env(fac_yml="facilitator:\n  http:\n    listen: 127.0.0.1:8443\n    insecure: maybe\n")
+    try:
+        ok, why = e.fac().http_ready()
+        assert not ok and "insecure" in why, why
     finally:
         e.close()
 
