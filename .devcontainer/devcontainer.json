@@ -66,7 +66,7 @@
     "./features/component-registry": {},
     "./features/claude-code": { "participants": true },
     // The first spoke of the workstation hub (workstation-hub, 2026-11-25): the node bundle 0.7.0, the hub's
-    // release, on Rancher Desktop's Kubernetes (task facilitator:workstation-hub). The mesh is .devcontainer/mesh.yml;
+    // release, on Rancher Desktop's Kubernetes (task facilitator:workstation-hub). The mesh is FACILITATOR_MESH_FILE in the volume, seeded from .devcontainer/mesh.template.yml;
     // the Operator joins once with a token (task facilitator -- node join), then `facilitator who`.
     "./features/facilitator": { "mode": "node" },
     "./features/devhost": {},
@@ -148,6 +148,9 @@
     "source=${localEnv:USERPROFILE}/.kube,target=/home/vscode/.kube-host,type=bind,readonly"
   ],
   "containerEnv": {
+    // The node's mesh.yml in the facilitator volume, seeded from .devcontainer/mesh.template.yml
+    // by mesh-seed.sh, so `node join` never edits a committed file (workstation-hub, ruling A).
+    "FACILITATOR_MESH_FILE": "/var/lib/devcontainer-features/facilitator/mesh.yml",
     // The handle on ledger entries and the cost report (committed, so never a
     // name): set DEVHOST_ENGINEER on the workstation to tell engineers apart.
     "DEVHOST_ENGINEER": "${localEnv:DEVHOST_ENGINEER:operator}",
@@ -182,7 +185,7 @@
   // No Docker cache is kept between uses (dind-no-cache): every start empties the
   // docker-in-docker daemon, which is used only for `task test`.
   // The workstation's Docker is set up as the context `host` after it (docker-host.sh).
-  "postStartCommand": "bash .devcontainer/dind-clean.sh --wait; bash .devcontainer/docker-host.sh; bash .devcontainer/kube-host.sh",
+  "postStartCommand": "bash .devcontainer/dind-clean.sh --wait; bash .devcontainer/docker-host.sh; bash .devcontainer/kube-host.sh; bash .devcontainer/mesh-seed.sh",
   "remoteUser": "vscode",
   "customizations": {
     "vscode": {
