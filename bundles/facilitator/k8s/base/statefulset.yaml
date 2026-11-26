@@ -29,7 +29,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: hub
-          image: ghcr.io/nabil-becker/facilitator-node:0.8.0   # the tag is set by `images:` in kustomization.yaml
+          image: ghcr.io/nabil-becker/facilitator-node:0.9.0   # the tag is set by `images:` in kustomization.yaml
           imagePullPolicy: IfNotPresent
           # the image's entrypoint is `facilitator node run`; the role comes from the mounted mesh.yml
           env:

@@ -45,6 +45,28 @@ class Walker:
         return (other != c and self.fac.net.active and self.fac.net.meta(c) is not None
                 and not self.fac.record.exists(other))
 
+    def approval_lines(self, c: str, mid: str, led, proj: dict) -> list[str]:
+        """What the record says of a person's answer to a message that waited (every-message, per-conversation): the notices of
+        a node's facilitator that refer to it, who signed them, and the audit entry of the node that holds the answer."""
+        out = []
+        audit = {}
+        try:
+            audit = {e["subject"]: e for e in self.fac.audit.events() if e["event"] in ("message-approved", "message-denied")}
+        except Exception:                      # noqa: BLE001 - the notice is the record; the audit register may be absent here
+            pass
+        for n in proj["notices"]:
+            if n["code"] not in ("approval", "approved", "denied") or {"thread": c, "message_id": mid} not in n.get("refs", []):
+                continue
+            key = led.valid[n["entry"]].key
+            node = self.fac.mesh.node_id
+            if self.fac.net.active and (b := self.fac.net.binding(key)):
+                node = b[0]
+            verb = {"approval": "held for a person's approval", "approved": "approved by a person", "denied": "denied by a person"}[n["code"]]
+            e = audit.get(mid)
+            by = f" ({e['by']}; audit entry {e['entry'][:12]})" if e and n["code"] != "approval" and node == self.fac.mesh.node_id else ""
+            out.append(f"{c}/{mid}  {verb} at {node}{by}: notice {n['entry'][:12]} signed by that node's facilitator")
+        return out
+
     def walk(self, c: str, mid: str) -> list[str]:
         """The chain from one message to its root, one line per hop; problems are collected."""
         lines, seen = [], set()
@@ -83,6 +105,7 @@ class Walker:
             elif self.fac.is_http(router.split(m["from"])[0]):
                 self.problems.append(f"{c}/{mid}: by the HTTP client {m['from']}, and it carries no via")
             lines.append(f"{c}/{mid}  hops {m['hops']}  from {m['from']}  signed by {e.key[:28]}...{who}  entry {m['entry'][:12]}")
+            lines.extend(self.approval_lines(c, mid, led, proj))
             for r in m.get("refs", []):
                 if "message_id" in r and not self.not_copied(c, r["thread"]):
                     _, rp, _ = self.conv(r["thread"])

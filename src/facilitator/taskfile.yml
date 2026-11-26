@@ -90,6 +90,18 @@ tasks:
     dir: '{{.USER_WORKING_DIR}}'
     cmds: ['facilitator node status']
 
+  approve:
+    desc: 'A person approves what waits (gate A: limits.<level>.approval every-message or per-conversation): -- <message id | conversation id> [--as <person>] (ids from the mail task), or a client or another node''s agent at first contact. The held message is delivered; the answer is a signed notice in the conversation and an audit entry. A person''s act: refused inside an agent''s job.'
+    interactive: true
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['facilitator approve {{.CLI_ARGS}}']
+
+  deny:
+    desc: 'A person denies what waits (gate A): -- <message id | conversation id> [--as <person>] (ids from the mail task). It is not delivered; the sender''s node gets a signed notice in the conversation; an audit entry records it. A person''s act: refused inside an agent''s job.'
+    interactive: true
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds: ['facilitator deny {{.CLI_ARGS}}']
+
   http-token:
     desc: 'Make a bearer token for an HTTP client of this node (slice N4): -- <client> [--label <note>] [--as <person>]. Prints the token once (only its SHA-256 is kept) and how to add it to Claude Code and Copilot CLI. A person''s act: refused inside an agent''s job. Needs facilitator.http.listen in facilitator.yml and a preset above solo in mesh.yml.'
     interactive: true

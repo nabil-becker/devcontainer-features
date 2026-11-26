@@ -14,7 +14,9 @@ A person (a human of facilitator.yml, registered) gets six, none of which blocks
     mail       {limit?}                     the unread messages of your conversations, then marked read
     transcript {conversation, limit?}       a conversation of yours, its last `limit` messages
     continue   {conversation}               a paused conversation runs another hop limit (the only reset)
-    approve    {client}                     an HTTP client's first contact: its held messages are delivered (slice N4)
+    approve    {client}                     an HTTP client's or another node's agent's first contact, or a held message or
+                                            conversation (an id from mail): what waits is delivered
+    deny       {message}                    a held message or conversation: not delivered, the sender gets a signed notice
     who        {}
 
 The tools offered follow the handle's kind in the roster; a tool of the other kind is refused. The
@@ -46,8 +48,8 @@ def persona(handle: str, human: bool = False) -> str:
                 "or when a line 'Facilitator: N new messages' appears, and show the person what came in. Never "
                 "answer an agent on your own: say only what the person asked you to say, since every message "
                 "counts as a hop. When a conversation is paused, tell the person; call continue only when they "
-                "ask. When mail says an HTTP client waits for approval, tell the person and call approve only when they "
-                "ask. Use transcript to read a conversation and who to see the handles; never invent one.")
+                "ask. When mail says an HTTP client waits for approval, or lists a HELD message from another node, tell the "
+                "person and call approve (or deny) only when they ask, with the id mail shows. Use transcript to read a conversation and who to see the handles; never invent one.")
     return (f"You are @{handle} in the facilitator's conversations with other agents and people. Loop: call the "
             "receive tool; when it returns a message, answer it with reply (start your text with @handle, or pass "
             "to, to address someone else; with no mention your reply goes back to whoever asked), then call "
@@ -105,11 +107,18 @@ HUMAN_TOOLS = [
                                         "may; it is the only thing that resets the hops.",
      "inputSchema": {"type": "object", "properties": {"conversation": {"type": "string"}},
                      "required": ["conversation"], "additionalProperties": False}},
-    {"name": "approve", "description": "Approve an HTTP client the node signs for (first contact, level public): its "
-                                       "held messages are delivered. mail names the clients that wait. Only a person "
-                                       "may; an HTTP client never can.",
-     "inputSchema": {"type": "object", "properties": {"client": {"type": "string"}},
+    {"name": "approve", "description": "Approve what waits for a person: an HTTP client or another node's agent at first "
+                                       "contact (pass its name), or a held message or conversation (pass its id, "
+                                       "m-... or c-..., from mail's list). What waits is delivered. Only a person "
+                                       "may; an agent or HTTP client never can.",
+     "inputSchema": {"type": "object", "properties": {"client": {"type": "string", "description": "a client or "
+                                                       "agent name, or a held message or conversation id"}},
                      "required": ["client"], "additionalProperties": False}},
+    {"name": "deny", "description": "Deny a held message or conversation (its id, m-... or c-..., from mail's list): it "
+                                    "is not delivered, and the sender gets a signed notice in the conversation. Only a "
+                                    "person may.",
+     "inputSchema": {"type": "object", "properties": {"message": {"type": "string"}},
+                     "required": ["message"], "additionalProperties": False}},
     TOOLS[3],
 ]
 
@@ -137,6 +146,12 @@ def mail_text(r: dict) -> str:
     rest = [c for c in r["paused"] if c not in {m["conversation"] for m in r["messages"]}]
     if rest:
         out += f"\npaused, nothing new: {', '.join(rest)}"
+    for h in r.get("held", []):
+        age = h["age"]
+        ago = f"{age // 86400} d" if age >= 86400 else f"{age // 3600} h" if age >= 3600 else f"{age // 60} min"
+        out += (f"\nHELD {h['message_id']} from {h['from']} (node {h['node']}, {h['level']}, {h['mode']}) in {h['conversation']}, "
+                f"{ago} ago: {h['line']}" + (" (older than 7 days: never delivered)" if h["expired"] else "")
+                + f"\n  approve: the approve tool or facilitator approve {h['message_id']}; deny: the deny tool or facilitator deny {h['message_id']}")
     for a in r.get("approvals", []):
         out += (f"\nHTTP client {a['client']} waits for your approval ({a['held']} message(s) held in "
                 f"{', '.join(a['conversations'])}; {a['id']}): the approve tool, or facilitator http approve {a['client']}")
@@ -199,7 +214,7 @@ class Server:
             s = self.get_session()
             if name in ("receive", "reply") and s.human:
                 return text(f"{name} is an agent's tool; a person reads with mail and writes with say", err=True)
-            if name in ("mail", "transcript", "continue", "approve") and not s.human:
+            if name in ("mail", "transcript", "continue", "approve", "deny") and not s.human:
                 return text(f"{name} is refused: only a person (a human of facilitator.yml) may call it; "
                             f"@{self.handle} is an agent", err=True)
             if name == "mail":
@@ -233,9 +248,20 @@ class Server:
                     return text("approve needs a client (mail names the ones that wait)", err=True)
                 with self.tool_lock:
                     r = s.approve(client)
+                if "answered" in r:
+                    n = sum(1 for x in r["answered"] if x["delivered"])
+                    return text(f"approved {client}: {n} message(s) delivered"
+                                + (f", {len(r['answered']) - n} not (see the transcript)" if len(r["answered"]) != n else "") + ".", r)
                 n = sum(1 for x in r["released"] if x["delivered"])
                 return text(f"approved {client}: {n} held message(s) delivered"
                             + (f", {len(r['released']) - n} not (see the transcript)" if len(r["released"]) != n else "") + ".", r)
+            if name == "deny":
+                target = args.get("message")
+                if not isinstance(target, str) or not target:
+                    return text("deny needs a held message or conversation id (mail lists them)", err=True)
+                with self.tool_lock:
+                    r = s.deny(target)
+                return text(f"denied {target}: {len(r['answered'])} message(s) not delivered; the sender is told by a signed notice.", r)
             if name == "receive":
                 wait = args.get("wait_seconds", self.wait_default)
                 if not isinstance(wait, int) or isinstance(wait, bool) or not 0 <= wait <= MAX_WAIT:

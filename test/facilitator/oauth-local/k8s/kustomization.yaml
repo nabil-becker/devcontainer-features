@@ -14,7 +14,7 @@ resources:
 images:
   - name: ghcr.io/nabil-becker/facilitator-node
     newName: facilitator-node
-    newTag: 0.8.0-local
+    newTag: 0.9.0-local
 configMapGenerator:
   - name: facilitator-hub-config
     behavior: merge                 # facilitator.yml, mesh.yml and participants.yml are this overlay's; the agent script is added
@@ -51,7 +51,7 @@ patches:
           # jester, the test agent, beside the hub: waits for the hub, registers the participants, then answers every message
           # with a joke (the same script the scripted check uses); it shares the hub's state volume and configuration.
           name: jester
-          image: ghcr.io/nabil-becker/facilitator-node:0.8.0
+          image: ghcr.io/nabil-becker/facilitator-node:0.9.0
           imagePullPolicy: Never
           env:
             - {name: FACILITATOR_MESH_FILE, value: /etc/facilitator/mesh.yml}
