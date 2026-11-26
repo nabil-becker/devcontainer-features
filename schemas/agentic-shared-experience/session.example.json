@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "1",
+  "id": "example-session-001",
+  "agent": {
+    "id": "example-agent",
+    "sessionId": "native-session-001"
+  },
+  "workspace": {
+    "id": "example-project"
+  },
+  "createdAt": "2026-10-12T13:00:00Z",
+  "updatedAt": "2026-10-12T13:05:00Z",
+  "status": "paused",
+  "state": {
+    "summary": "Initial session storage contract drafted.",
+    "nextAction": "Choose a persistence backend and define adapter behavior."
+  }
+}
