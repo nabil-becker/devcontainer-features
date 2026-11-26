@@ -1,6 +1,6 @@
 # Reference architectures
 
-Eight ways the Features of this collection are assembled, each with what runs where, where its data lives and what
+Nine ways the Features of this collection are assembled, each with what runs where, where its data lives and what
 has gone wrong in the combination. They are for an engineer or a consumer's maintainer who wants to assemble an
 environment from the Features without working out how they combine. The rules behind them are in the root
 [README](../../README.md) ("How the pieces fit") and in [CONTRIBUTING.md](../../CONTRIBUTING.md); the decisions are
@@ -16,6 +16,7 @@ the [ADRs](../adr/README.md).
 | [Facilitator: a hub on the workstation](facilitator-workstation-hub.md) | a hub beside the machine's devcontainers, which are its spokes; no OpenBao by default (hub on Kubernetes and the built-in issuer are planned) | `facilitator`, `claude-code`, `go-task`; planned `kustomize`, `kubeconform`, `helm` |
 | [Facilitator: a team intranet hub](facilitator-team-hub.md) | a hub on a server with its OpenBao PKI, spokes on engineers' machines, CLIs over MCP on HTTP with bearer tokens and approval | `facilitator`, `claude-code`, `copilot`, `go-task` |
 | [Facilitator: peer to peer and public](facilitator-peer-and-public.md) | nodes with no hub, a public domain, approval of a stranger's node; cloud AIs later (mostly not released) | `facilitator`, `claude-code`, `go-task` |
+| [Facilitator: the gated agent](facilitator-gated-agent.md) | other nodes' agents may send requests to yours without free rein: one cheap agent with gating skills is the only one exposed, behind a person's approval (gate A, planned for 0.9.0) and its own ask before every tool (gate B) | `facilitator`, `claude-code`, `go-task` |
 
 They combine. This repository's own devhost is the Windows workstation devhost with the agentic devhost on top, and
 the secrets architecture is the next layer for the keys both of them use. The Kubernetes toolbox stands apart: none

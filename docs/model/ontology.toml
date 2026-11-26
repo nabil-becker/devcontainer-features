@@ -1546,3 +1546,23 @@ summary = "The named issuer entry in http.issuers that signs the access tokens a
 type = "mechanism"
 term = "Protected-resource metadata"
 summary = "The RFC 9728 document naming the node's resource URL and authorization servers, pointed to by the 401 challenge."
+[message-approval]
+type = "mechanism"
+term = "Message approval"
+summary = "The approval setting every-message or per-conversation: a receiving node holds cross-node messages until a person approves."
+
+[held-message]
+type = "mechanism"
+term = "Held message"
+summary = "A cross-node message recorded but not delivered until a person approves it; a denial or 7 days drops it."
+
+[mesh-agent]
+type = "mechanism"
+term = "Mesh agent"
+summary = "The only agent a devhost exposes to the mesh, run in default permission mode so it asks before every tool."
+
+[gated-agent]
+type = "mechanism"
+term = "Gated agent"
+summary = "A mesh agent on a tested prompt that answers read-only requests, forwards state changes to @host and refuses secrets."
+
