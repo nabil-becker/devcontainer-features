@@ -1535,6 +1535,8 @@ container. No new Python dependency.
 
 - `http_ready` asks for a person in `facilitator.yml` whenever the HTTP level's approval is not `none` (it asked for
   `first-contact` only).
+- `bundleVersion` defaults to `0.9.0`: the Feature installs the published node bundle `facilitator-bundle-v0.9.0`
+  (amd64 and arm64), pinned by SHA-256 in `digests.txt`.
 
 ### [0.8.0] - 2026-11-24
 
