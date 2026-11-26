@@ -16,3 +16,5 @@ d986f9dad139939ca7be47750c8b022418843c3becd1bede654d8ae5f22cda48  facilitator-0.
 bcf183750306e3cf439793e6d1f91e9bb3dae1bc59027ea0c45a15ff2e3138d9  facilitator-0.7.0-linux-arm64.tar.gz
 909f693cbb1d268ed9fa3a7115ee62a2c145270ed70dfa0c5fe583ba3e106d90  facilitator-0.8.0-linux-amd64.tar.gz
 a1fd8619395746c35fc6d92dc16eb39f7043faca1bb00feed9749596720ceb25  facilitator-0.8.0-linux-arm64.tar.gz
+dff416c39d5b7b318c8ef87dac67ed2db294fdfd0f02c796ba55f13acec1b7d5  facilitator-0.9.0-linux-amd64.tar.gz
+19f4775372f6093643fc4583571b1dbb77454e6215e934396c6dc0c22ebf8c0e  facilitator-0.9.0-linux-arm64.tar.gz
